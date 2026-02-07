@@ -513,97 +513,85 @@ app.get('/api/costs', async (req, res) => {
 // ========== API: Scout — Real SmålandWebb lead data ==========
 app.get('/api/scout', (req, res) => {
   try {
-    // Read leads CSV
-    let leads = [];
+    // Read scout results from scout-engine.js output
+    let scoutData = { opportunities: [], lastScan: null };
     try {
-      const raw = fs.readFileSync('/home/ubuntu/clawd/smalandwebb/leads.csv', 'utf8');
-      leads = parseCSV(raw);
+      scoutData = JSON.parse(fs.readFileSync(path.join(__dirname, 'scout-results.json'), 'utf8'));
     } catch (e) {
-      console.error('[Scout] Failed to read leads.csv:', e.message);
+      console.log('[Scout] No scout-results.json yet — run: node scout-engine.js');
     }
 
-    // Read sent_log CSV
-    let sentLog = [];
-    try {
-      const raw = fs.readFileSync('/home/ubuntu/clawd/smalandwebb/sent_log.csv', 'utf8');
-      sentLog = parseCSV(raw);
-    } catch (e) {
-      console.error('[Scout] Failed to read sent_log.csv:', e.message);
-    }
+    // Filter out junk (score < 15)
+    const opportunities = (scoutData.opportunities || []).filter(o => o.score >= 15);
 
-    // Build email->status map from sent log
-    // Priority: sent > other statuses (DUPLICATE entries shouldn't override "sent")
-    const statusPriority = { 'sent': 10, 'declined': 5, 'bounced': 4 };
-    const emailStatus = {};
-    sentLog.forEach(entry => {
-      const email = (entry.email || '').trim().toLowerCase();
-      if (!email) return;
-      const status = (entry.status || 'unknown').trim();
-      const statusLower = status.toLowerCase();
-
-      const existing = emailStatus[email];
-      const existingPrio = existing ? (statusPriority[existing.status.toLowerCase()] || 0) : -1;
-      const newPrio = statusPriority[statusLower] || 0;
-
-      // Keep the most meaningful status (sent > declined > duplicate)
-      if (!existing || (statusLower !== 'duplicate' && newPrio >= existingPrio)) {
-        emailStatus[email] = {
-          status: status,
-          date: entry.date || '',
-          company: entry.company || '',
-        };
-      }
+    res.json({
+      opportunities,
+      lastScan: scoutData.lastScan || null,
+      queryCount: scoutData.queryCount || 0,
+      stats: {
+        total: opportunities.length,
+        new: opportunities.filter(o => o.status === 'new').length,
+        deployed: opportunities.filter(o => o.status === 'deployed').length,
+        dismissed: opportunities.filter(o => o.status === 'dismissed').length,
+        avgScore: opportunities.length ? Math.round(opportunities.reduce((a, o) => a + o.score, 0) / opportunities.length) : 0,
+      },
     });
-
-    // Map leads to opportunity format
-    const opportunities = leads.map((lead, i) => {
-      const email = (lead.email || '').trim().toLowerCase();
-      const logEntry = emailStatus[email];
-
-      // Determine status
-      let status = 'new';
-      let statusDetail = 'Not contacted';
-      if (logEntry) {
-        const s = (logEntry.status || '').toLowerCase();
-        if (s === 'sent') { status = 'contacted'; statusDetail = `Email sent ${logEntry.date}`; }
-        else if (s.includes('bounce')) { status = 'bounced'; statusDetail = logEntry.status; }
-        else if (s.includes('duplicate')) { status = 'duplicate'; statusDetail = 'Duplicate entry'; }
-        else if (s.includes('error') || s.includes('has-website')) { status = 'has-website'; statusDetail = 'Already has a website'; }
-        else if (s.includes('blacklist')) { status = 'blacklisted'; statusDetail = logEntry.status; }
-        else if (s.includes('declined') || s.includes('rejected')) { status = 'declined'; statusDetail = logEntry.status; }
-        else { status = logEntry.status; statusDetail = logEntry.status; }
-      }
-
-      return {
-        id: `lead-${i + 1}`,
-        title: lead.company || lead.name || 'Unknown',
-        summary: `${lead.company || lead.name} — ${lead.city || 'Unknown city'}`,
-        email: lead.email || '',
-        city: lead.city || '',
-        score: status === 'new' ? 80 : (status === 'contacted' ? 90 : 30),
-        source: 'SmålandWebb Lead Gen',
-        found: logEntry?.date ? `${logEntry.date}T12:00:00Z` : '2026-02-02T12:00:00Z',
-        status,
-        statusDetail,
-        tags: ['småland', lead.city || ''].filter(Boolean),
-      };
-    });
-
-    // Summary stats
-    const stats = {
-      total: opportunities.length,
-      new: opportunities.filter(o => o.status === 'new').length,
-      contacted: opportunities.filter(o => o.status === 'contacted').length,
-      hasWebsite: opportunities.filter(o => o.status === 'has-website').length,
-      bounced: opportunities.filter(o => o.status === 'bounced').length,
-      declined: opportunities.filter(o => o.status === 'declined').length,
-      blacklisted: opportunities.filter(o => o.status === 'blacklisted').length,
-    };
-
-    res.json({ opportunities, stats });
   } catch (e) {
     console.error('[Scout API]', e.message);
     res.json({ opportunities: [], stats: {}, error: e.message });
+  }
+});
+
+// Scout: Deploy opportunity → adds to Workshop tasks
+app.post('/api/scout/deploy', (req, res) => {
+  try {
+    const { opportunityId } = req.body;
+    if (!opportunityId) return res.status(400).json({ error: 'Missing opportunityId' });
+
+    // Update scout results status
+    const scoutFile = path.join(__dirname, 'scout-results.json');
+    const scoutData = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
+    const opp = scoutData.opportunities.find(o => o.id === opportunityId);
+    if (!opp) return res.status(404).json({ error: 'Opportunity not found' });
+    
+    opp.status = 'deployed';
+    fs.writeFileSync(scoutFile, JSON.stringify(scoutData, null, 2));
+
+    // Add to tasks.json queue
+    const tasksFile = path.join(__dirname, 'tasks.json');
+    const tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
+    tasks.columns.queue.unshift({
+      id: `scout-${Date.now()}`,
+      title: opp.title.substring(0, 80),
+      description: `${opp.summary}\n\nSource: ${opp.source} | Score: ${opp.score}\nURL: ${opp.url}`,
+      priority: opp.score >= 80 ? 'high' : opp.score >= 50 ? 'medium' : 'low',
+      created: new Date().toISOString(),
+      tags: opp.tags || [opp.category],
+      source: 'scout',
+    });
+    fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
+
+    res.json({ ok: true, task: tasks.columns.queue[0] });
+  } catch (e) {
+    console.error('[Scout deploy]', e.message);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Scout: Dismiss opportunity
+app.post('/api/scout/dismiss', (req, res) => {
+  try {
+    const { opportunityId } = req.body;
+    const scoutFile = path.join(__dirname, 'scout-results.json');
+    const scoutData = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
+    const opp = scoutData.opportunities.find(o => o.id === opportunityId);
+    if (opp) {
+      opp.status = 'dismissed';
+      fs.writeFileSync(scoutFile, JSON.stringify(scoutData, null, 2));
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
