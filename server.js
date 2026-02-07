@@ -1790,18 +1790,70 @@ app.post('/api/sessions/:sessionKey/send', async (req, res) => {
     const gwToken = cfg.gateway?.auth?.token || 'mc-zinbot-2026';
     const gwPort = cfg.gateway?.port || 18789;
     
-    const response = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-      body: JSON.stringify({
-        tool: 'sessions_send',
-        input: { sessionKey, message, timeoutSeconds: 120 }
-      })
-    });
+    // Use AbortController for timeout
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 90000); // 90s max
     
-    const data = await response.json();
-    const resultText = data?.result?.content?.[0]?.text || '';
-    res.json({ ok: response.ok, result: resultText });
+    try {
+      const response = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
+        signal: controller.signal,
+        body: JSON.stringify({
+          tool: 'sessions_send',
+          args: { sessionKey, message, timeoutSeconds: 90 }
+        })
+      });
+      
+      clearTimeout(timeout);
+      const data = await response.json();
+      let resultText = data?.result?.content?.[0]?.text || '';
+      
+      // sessions_send returns JSON with {reply: "..."} — extract the reply
+      try {
+        const parsed = JSON.parse(resultText);
+        if (parsed.reply) resultText = parsed.reply;
+      } catch(e) {
+        // Not JSON, use as-is
+      }
+      
+      res.json({ ok: !!resultText, result: resultText });
+    } catch (fetchErr) {
+      clearTimeout(timeout);
+      
+      // If timed out, try reading last message from transcript
+      let resultText = '';
+      try {
+        const sessionsFile = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
+        const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+        const sessionInfo = sessions[sessionKey] || {};
+        const sessionId = sessionInfo.sessionId || '';
+        if (sessionId) {
+          const transcriptPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
+          if (fs.existsSync(transcriptPath)) {
+            const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
+            for (let i = lines.length - 1; i >= 0; i--) {
+              try {
+                const evt = JSON.parse(lines[i]);
+                if (evt.type === 'message' && evt.message?.role === 'assistant') {
+                  const content = evt.message.content;
+                  resultText = Array.isArray(content) 
+                    ? content.filter(c => c.type === 'text').map(c => c.text).join('\n')
+                    : typeof content === 'string' ? content : '';
+                  if (resultText) break;
+                }
+              } catch(e) {}
+            }
+          }
+        }
+      } catch(e) {}
+      
+      if (resultText) {
+        res.json({ ok: true, result: resultText });
+      } else {
+        res.json({ ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' });
+      }
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
