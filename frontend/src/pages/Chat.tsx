@@ -525,7 +525,7 @@ export default function Chat() {
                   disabled={closingSession === s.key}
                   style={{
                     position: 'absolute',
-                    top: m ? 8 : 12,
+                    bottom: m ? 8 : 12,
                     right: m ? 8 : 12,
                     width: 24,
                     height: 24,
