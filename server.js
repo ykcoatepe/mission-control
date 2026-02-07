@@ -693,7 +693,7 @@ Be thorough. Your output will be shown directly to the user as the task result.`
             doneTask.status = 'done';
             doneTask.completed = new Date().toISOString();
             doneTask.result = resultText.substring(0, 3000) || 'Task completed (no output captured)';
-            delete doneTask.childSessionKey;
+            // Keep childSessionKey for continued chat
             tasksNow.columns.done.unshift(doneTask);
             fs.writeFileSync(TASKS_FILE, JSON.stringify(tasksNow, null, 2));
             console.log(`[Task Execute] ✅ ${taskId} done, result: ${resultText.substring(0, 80)}...`);
@@ -715,7 +715,7 @@ Be thorough. Your output will be shown directly to the user as the task result.`
             timedOut.status = 'done';
             timedOut.completed = new Date().toISOString();
             timedOut.result = 'Task timed out after 6 minutes. Check sub-agent session for results.';
-            delete timedOut.childSessionKey;
+            // Keep childSessionKey for continued chat
             tasksNow.columns.done.unshift(timedOut);
             fs.writeFileSync(TASKS_FILE, JSON.stringify(tasksNow, null, 2));
           }
