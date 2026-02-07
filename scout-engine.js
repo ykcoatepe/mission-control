@@ -24,8 +24,8 @@ const GOALS = {
   openclaw: ['openclaw', 'clawd', 'mission control', 'ai agent', 'skill', 'sub-agent', 'heartbeat', 'cron job', 'gateway'],
 };
 
-// Search queries grouped by category
-const QUERIES = [
+// Default queries (fallback)
+const DEFAULT_QUERIES = [
   // === OPENCLAW ECOSYSTEM ===
   { q: 'site:x.com openclaw OR clawd "mission control" OR "skill" OR "built" OR "agent"', category: 'openclaw', source: 'twitter', weight: 1.0 },
   { q: 'site:x.com openclaw "new feature" OR "just shipped" OR "update" OR "tip"', category: 'openclaw', source: 'twitter', weight: 1.0 },
@@ -60,6 +60,29 @@ const QUERIES = [
   { q: 'hackerone OR bugcrowd "new scope" OR "increased bounty" OR "bonus" 2026', category: 'bounty', source: 'web', weight: 0.9 },
   { q: 'site:reddit.com/r/bugbounty "just found" OR "payout" OR "tips" OR "methodology"', category: 'bounty', source: 'reddit', weight: 0.85 },
 ];
+
+// Load queries from mc-config.json, fallback to defaults
+function loadQueries() {
+  try {
+    const configPath = path.join(__dirname, 'mc-config.json');
+    if (fs.existsSync(configPath)) {
+      const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      if (config.scout?.queries && Array.isArray(config.scout.queries) && config.scout.queries.length > 0) {
+        console.log(`📋 Loaded ${config.scout.queries.length} queries from mc-config.json`);
+        return config.scout.queries;
+      }
+    }
+  } catch (e) {
+    console.warn('⚠️  Could not load queries from mc-config.json, using defaults:', e.message);
+  }
+
+  // Default fallback queries
+  console.log(`📋 Using ${DEFAULT_QUERIES.length} default queries`);
+  return DEFAULT_QUERIES;
+}
+
+// Load queries on startup
+const QUERIES = loadQueries();
 
 async function braveSearch(query, count = MAX_RESULTS_PER_QUERY) {
   const url = `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=${count}&freshness=pw`;
@@ -119,7 +142,7 @@ function scoreOpportunity(result, query) {
   for (const kw of GOALS.openclaw) {
     if (text.includes(kw)) score += 12;
   }
-  if (query.category.startsWith('openclaw')) score += 15; // Boost all openclaw results
+  if (query.category && query.category.startsWith('openclaw')) score += 15; // Boost all openclaw results
   if (text.includes('new skill') || text.includes('built a skill') || text.includes('automation')) score += 10;
   if (text.includes('tutorial') || text.includes('guide') || text.includes('how to')) score += 8;
   
@@ -130,7 +153,7 @@ function scoreOpportunity(result, query) {
   if (query.category === 'bounty') score += 15;
   
   // Source weight
-  score = Math.round(score * query.weight);
+  score = Math.round(score * (query.weight || 1.0));
   
   // Freshness bonus
   if (result.published) {
@@ -140,110 +163,88 @@ function scoreOpportunity(result, query) {
     else if (age.includes('day') && parseInt(age) <= 7) score += 5;
   }
   
-  // Cap at 100
-  return Math.min(100, Math.max(5, score));
+  return Math.max(5, Math.min(100, score)); // Clamp to 5-100
 }
 
-function detectSource(url) {
-  if (url.includes('x.com') || url.includes('twitter.com')) return 'Twitter';
-  if (url.includes('linkedin.com')) return 'LinkedIn';
-  if (url.includes('reddit.com')) return 'Reddit';
-  if (url.includes('upwork.com')) return 'Upwork';
-  if (url.includes('fiverr.com')) return 'Fiverr';
-  if (url.includes('github.com')) return 'GitHub';
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'YouTube';
-  if (url.includes('clawhub.com')) return 'ClawHub';
-  if (url.includes('hackerone.com')) return 'HackerOne';
-  if (url.includes('bugcrowd.com')) return 'Bugcrowd';
-  if (url.includes('openclaw.ai') || url.includes('docs.openclaw')) return 'OpenClaw';
-  return 'Web';
+function dedupe(results) {
+  const seen = new Set();
+  return results.filter(r => {
+    const key = r.url.split('?')[0]; // Ignore query params
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
-async function runScout() {
-  console.log(`🔍 Scout Engine starting — ${QUERIES.length} queries`);
+async function main() {
+  const isDryRun = process.argv.includes('--dry-run');
+  
+  console.log('🔍 Scout Engine starting...');
+  console.log(`📊 Running ${QUERIES.length} queries (${isDryRun ? 'DRY RUN' : 'LIVE'})`);
+  
+  if (isDryRun) {
+    console.log('✅ Config loaded successfully, queries:', QUERIES.slice(0, 3).map(q => q.q));
+    return;
+  }
   
   const allResults = [];
-  const seen = new Set();
   
-  for (const q of QUERIES) {
-    console.log(`  Searching: ${q.q.substring(0, 60)}...`);
+  for (const query of QUERIES) {
+    console.log(`🔍 ${query.category}: "${query.q.substring(0, 60)}..."`);
     
     try {
-      const results = await braveSearch(q.q);
+      const results = await braveSearch(query.q);
+      console.log(`   ${results.length} results found`);
       
-      for (const r of results) {
-        // Dedup by URL
-        if (seen.has(r.url)) continue;
-        seen.add(r.url);
+      for (const result of results) {
+        const scored = {
+          ...result,
+          query: query.q,
+          category: query.category,
+          source: query.source,
+          score: scoreOpportunity(result, query),
+          scannedAt: new Date().toISOString(),
+        };
         
-        const score = scoreOpportunity(r, q);
-        
-        allResults.push({
-          id: `scout-${Date.now()}-${allResults.length}`,
-          title: r.title.replace(/<\/?[^>]+(>|$)/g, '').substring(0, 120),
-          summary: r.description?.replace(/<\/?[^>]+(>|$)/g, '').substring(0, 300) || '',
-          url: r.url,
-          score,
-          source: detectSource(r.url),
-          category: q.category,
-          found: new Date().toISOString(),
-          status: 'new',
-          published: r.published || null,
-          tags: [q.category, q.source],
-        });
+        if (scored.score >= 35) { // Only keep decent opportunities
+          allResults.push(scored);
+        }
       }
-      
-      // Rate limit: 1 req/sec
-      await new Promise(r => setTimeout(r, 1100));
-    } catch (err) {
-      console.error(`  Error on query: ${err.message}`);
+    } catch (e) {
+      console.error(`❌ Query failed: ${e.message}`);
     }
+    
+    // Rate limiting
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
   
-  // Sort by score descending
-  allResults.sort((a, b) => b.score - a.score);
+  // Dedupe and sort
+  const deduped = dedupe(allResults);
+  const sorted = deduped.sort((a, b) => b.score - a.score).slice(0, MAX_TOTAL);
   
-  // Limit
-  const trimmed = allResults.slice(0, MAX_TOTAL);
+  console.log(`\n📈 Found ${sorted.length} opportunities (${deduped.length} before limit)`);
   
-  // Load existing results to preserve statuses
-  let existing = {};
-  try {
-    const old = JSON.parse(fs.readFileSync(RESULTS_FILE, 'utf8'));
-    for (const o of (old.opportunities || [])) {
-      existing[o.url] = o.status;
-    }
-  } catch {}
-  
-  // Preserve old statuses
-  for (const r of trimmed) {
-    if (existing[r.url] && existing[r.url] !== 'new') {
-      r.status = existing[r.url];
-    }
-  }
-  
+  // Write results
   const output = {
-    lastScan: new Date().toISOString(),
-    queryCount: QUERIES.length,
-    resultCount: trimmed.length,
-    opportunities: trimmed,
+    generatedAt: new Date().toISOString(),
+    totalQueries: QUERIES.length,
+    totalResults: sorted.length,
+    opportunities: sorted,
   };
   
   fs.writeFileSync(RESULTS_FILE, JSON.stringify(output, null, 2));
-  console.log(`\n✅ Scout complete: ${trimmed.length} opportunities found (${allResults.length} raw)`);
-  console.log(`   Top score: ${trimmed[0]?.score || 0} — ${trimmed[0]?.title?.substring(0, 60) || 'none'}`);
+  console.log(`💾 Results saved to ${RESULTS_FILE}`);
   
-  return output;
-}
-
-// Run
-const dryRun = process.argv.includes('--dry-run');
-if (dryRun) {
-  console.log('DRY RUN — queries that would be executed:');
-  QUERIES.forEach((q, i) => console.log(`  ${i + 1}. [${q.category}] ${q.q.substring(0, 80)}`));
-} else {
-  runScout().catch(err => {
-    console.error('Scout failed:', err);
-    process.exit(1);
+  // Show top 5
+  console.log('\n🏆 Top opportunities:');
+  sorted.slice(0, 5).forEach((opp, i) => {
+    console.log(`${i + 1}. [${opp.score}] ${opp.title} (${opp.category})`);
+    console.log(`   ${opp.url}`);
   });
 }
+
+if (require.main === module) {
+  main().catch(console.error);
+}
+
+module.exports = { loadQueries, scoreOpportunity, GOALS };

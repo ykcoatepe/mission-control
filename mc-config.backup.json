@@ -1,0 +1,38 @@
+{
+  "name": "Zinbot HQ",
+  "subtitle": "Mission Control",
+  "modules": {
+    "dashboard": true,
+    "chat": true,
+    "workshop": true,
+    "costs": true,
+    "cron": true,
+    "scout": true,
+    "docs": true,
+    "agents": true,
+    "settings": true,
+    "skills": true,
+    "aws": true
+  },
+  "gateway": {
+    "port": 18789,
+    "token": "mc-zinbot-2026"
+  },
+  "aws": {
+    "enabled": true,
+    "bucket": "zinbot-resources-239541130189",
+    "region": "us-east-1"
+  },
+  "notion": {
+    "enabled": true,
+    "dbId": "c540b580-22b5-4481-b33d-e55585d76771",
+    "token": "ntn_R18444199542F0vXHK0KOITqdSPpebU5GfT2rTJMAS1hpC"
+  },
+  "scout": {
+    "enabled": true,
+    "braveApiKey": ""
+  },
+  "workspace": "/home/ubuntu/clawd",
+  "skillsPath": "/home/ubuntu/clawd/skills",
+  "memoryPath": "/home/ubuntu/clawd/memory"
+}

@@ -1647,31 +1647,64 @@ app.get('/api/setup', async (req, res) => {
   try {
     // Check if gateway is running
     let gatewayRunning = false;
+    let gatewayVersion = '';
     try {
       const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/status`, { 
         method: 'GET',
         timeout: 3000 
       });
-      gatewayRunning = response.ok;
+      if (response.ok) {
+        gatewayRunning = true;
+        const status = await response.json();
+        gatewayVersion = status.version || '';
+      }
     } catch {
       gatewayRunning = false;
     }
 
-    // Check if config exists
-    const configExists = fs.existsSync(MC_CONFIG_PATH);
+    // Check if setup is needed (config doesn't exist OR equals default)
+    let needsSetup = !fs.existsSync(MC_CONFIG_PATH);
+    if (!needsSetup && fs.existsSync(MC_DEFAULT_CONFIG_PATH)) {
+      const currentConfig = fs.readFileSync(MC_CONFIG_PATH, 'utf8');
+      const defaultConfig = fs.readFileSync(MC_DEFAULT_CONFIG_PATH, 'utf8');
+      needsSetup = currentConfig === defaultConfig;
+    }
 
-    // Get gateway token (mask it for security)
-    const maskedToken = GATEWAY_TOKEN ? GATEWAY_TOKEN.substring(0, 8) + '...' : '';
+    // Detect OpenClaw config
+    let detectedConfig = {
+      model: '',
+      channels: [],
+      agentName: '',
+      workspacePath: ''
+    };
 
-    // Get modules status
-    const modules = mcConfig.modules || {};
+    try {
+      const openclawConfigPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
+      if (fs.existsSync(openclawConfigPath)) {
+        const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
+        detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || '';
+        detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || '';
+        
+        // Extract enabled channels
+        if (openclawConfig.channels) {
+          detectedConfig.channels = Object.keys(openclawConfig.channels).filter(channel => 
+            openclawConfig.channels[channel]?.enabled !== false
+          );
+        }
+        
+        // Try to detect agent name from workspace or default to "Assistant"
+        detectedConfig.agentName = 'OpenClaw Agent';
+      }
+    } catch (e) {
+      console.warn('Could not read OpenClaw config:', e.message);
+    }
 
     res.json({
+      needsSetup,
       gatewayRunning,
-      configExists,
       gatewayPort: GATEWAY_PORT,
-      gatewayToken: maskedToken,
-      modules
+      gatewayVersion,
+      detectedConfig
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1681,27 +1714,40 @@ app.get('/api/setup', async (req, res) => {
 // POST: Update setup configuration
 app.post('/api/setup', (req, res) => {
   try {
-    const { name, subtitle, gatewayPort, gatewayToken, modules, aws, workspace, skillsPath, memoryPath } = req.body;
-    if (name) mcConfig.name = name;
-    if (subtitle) mcConfig.subtitle = subtitle;
-    if (gatewayPort) mcConfig.gateway.port = gatewayPort;
-    if (gatewayToken) mcConfig.gateway.token = gatewayToken;
+    const { dashboardName, gateway, modules, scout } = req.body;
+    
+    // Update dashboard name
+    if (dashboardName) {
+      mcConfig.name = dashboardName;
+      mcConfig.subtitle = dashboardName;
+    }
+    
+    // Update gateway config
+    if (gateway && typeof gateway === 'object') {
+      if (gateway.port) mcConfig.gateway.port = gateway.port;
+      if (gateway.token) mcConfig.gateway.token = gateway.token;
+    }
+    
+    // Update modules
     if (modules && typeof modules === 'object') {
       mcConfig.modules = { ...mcConfig.modules, ...modules };
     }
-    if (aws && typeof aws === 'object') {
-      mcConfig.aws = { ...mcConfig.aws, ...aws };
+    
+    // Update scout config
+    if (scout && typeof scout === 'object') {
+      mcConfig.scout = { ...mcConfig.scout, ...scout };
     }
-    if (workspace) mcConfig.workspace = workspace;
-    if (skillsPath) mcConfig.skillsPath = skillsPath;
-    if (memoryPath) mcConfig.memoryPath = memoryPath;
+
+    // Write the updated config
     fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
-    // Return safe copy
+    
+    // Return sanitized config
     const safe = JSON.parse(JSON.stringify(mcConfig));
     if (safe.gateway) safe.gateway = { port: safe.gateway.port };
     if (safe.notion) delete safe.notion.token;
     if (safe.scout) delete safe.scout.braveApiKey;
-    res.json({ ok: true, config: safe });
+    
+    res.json({ success: true, config: safe });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
