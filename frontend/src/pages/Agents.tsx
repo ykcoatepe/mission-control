@@ -14,8 +14,8 @@ export default function Agents() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div className="flex items-center justify-center h-64">
-          <div className="w-8 h-8 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
+          <div style={{ width: 32, height: 32, border: '2px solid #BF5AF2', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
         </div>
       </PageTransition>
     )
@@ -26,20 +26,19 @@ export default function Agents() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "28px" }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 28 }}>
         {/* Header */}
         <div>
-          <h1 style={{ color: 'rgba(255,255,255,0.92)' }} className="text-3xl font-bold tracking-tight flex items-center gap-3">
-            <Bot size={24} className="text-violet-300/60" strokeWidth={1.5} />
-            Agent Hub
+          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Bot size={22} style={{ color: '#BF5AF2' }} /> Agent Hub
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.45)' }} className="text-sm mt-1">Multi-agent orchestration & communication</p>
+          <p className="text-body" style={{ marginTop: 4 }}>Multi-agent orchestration & communication</p>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "24px" }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
           {/* Agent Grid */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: "16px" }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
               {agents.map((agent: any, i: number) => (
                 <motion.div
                   key={agent.id}
@@ -48,38 +47,36 @@ export default function Agents() {
                   transition={{ delay: i * 0.06 }}
                   whileHover={{ y: -3, scale: 1.01 }}
                   onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
-                  className={`liquid-glass cursor-pointer transition-all duration-300 ${
-                    selectedAgent === agent.id
-                      ? '!border-purple-400/40 !bg-purple-500/[0.08]'
-                      : ''
-                  }`}
-                  style={{ borderRadius: '20px', padding: 20 }}
+                  className="macos-panel"
+                  style={{
+                    borderRadius: 16, padding: 20, cursor: 'pointer',
+                    borderColor: selectedAgent === agent.id ? 'rgba(191,90,242,0.4)' : undefined,
+                    background: selectedAgent === agent.id ? 'rgba(191,90,242,0.08)' : undefined,
+                  }}
                 >
-                  <div className="relative z-10">
-                    <div className="flex items-start gap-3 mb-4">
-                      <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-xl shadow-inner">
-                        {agent.avatar}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h3 style={{ color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} className="text-sm font-semibold">{agent.name}</h3>
-                          <StatusBadge status={agent.status} pulse={agent.status === 'active'} />
-                        </div>
-                        <p style={{ color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} className="text-[11px]">{agent.role} · {agent.model}</p>
-                      </div>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+                      {agent.avatar}
                     </div>
-                    <p style={{ color: 'rgba(255,255,255,0.45)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }} className="text-xs mb-4">{agent.description}</p>
-                    <div style={{ color: 'rgba(255,255,255,0.45)' }} className="flex items-center gap-4 text-[11px]">
-                      <span className="flex items-center gap-1">
-                        <BarChart3 size={11} className="text-white/40" /> {agent.tasksCompleted} tasks
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Activity size={11} className="text-white/40" /> {agent.uptime} uptime
-                      </span>
-                      <span className="ml-auto">
-                        {timeAgo(agent.lastActive)}
-                      </span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</h3>
+                        <StatusBadge status={agent.status} pulse={agent.status === 'active'} />
+                      </div>
+                      <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.role} · {agent.model}</p>
                     </div>
+                  </div>
+                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 16, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.5 }}>{agent.description}</p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <BarChart3 size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> {agent.tasksCompleted} tasks
+                    </span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Activity size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> {agent.uptime} uptime
+                    </span>
+                    <span style={{ marginLeft: 'auto' }}>
+                      {timeAgo(agent.lastActive)}
+                    </span>
                   </div>
                 </motion.div>
               ))}
@@ -93,39 +90,40 @@ export default function Agents() {
                   animate={{ opacity: 1, height: 'auto', scale: 1 }}
                   exit={{ opacity: 0, height: 0, scale: 0.98 }}
                   transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
-                  className="overflow-hidden"
+                  style={{ overflow: 'hidden' }}
                 >
                   <GlassCard hover={false} noPad>
                     <div style={{ padding: 24 }}>
-                      <div className="flex items-center justify-between mb-5">
-                        <div className="flex items-center gap-4">
-                          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-2xl">
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                          <div style={{ width: 56, height: 56, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
                             {selected.avatar}
                           </div>
                           <div style={{ minWidth: 0 }}>
-                            <h3 style={{ color: 'rgba(255,255,255,0.92)' }} className="text-base font-bold">{selected.name}</h3>
-                            <p style={{ color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} className="text-xs">{selected.description}</p>
+                            <h3 style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>{selected.name}</h3>
+                            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.description}</p>
                           </div>
                         </div>
                         <motion.button
                           whileHover={{ scale: 1.1 }}
                           whileTap={{ scale: 0.9 }}
+                          className="macos-button"
+                          style={{ padding: 8 }}
                           onClick={() => setSelectedAgent(null)}
-                          className="macos-button p-2"
                         >
-                          <X size={16} className="text-white/60" />
+                          <X size={16} style={{ color: 'rgba(255,255,255,0.6)' }} />
                         </motion.button>
                       </div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "16px" }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
                         {[
-                          { label: 'Tasks Done', value: <AnimatedCounter end={selected.tasksCompleted} />, },
+                          { label: 'Tasks Done', value: <AnimatedCounter end={selected.tasksCompleted} /> },
                           { label: 'Uptime', value: selected.uptime },
                           { label: 'Model', value: selected.model },
                           { label: 'Status', value: <StatusBadge status={selected.status} size="md" /> },
                         ].map((item, idx) => (
-                          <div key={idx} className="text-center" style={{ padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                            <p style={{ color: 'rgba(255,255,255,0.92)' }} className="text-xl font-light">{item.value}</p>
-                            <p style={{ color: 'rgba(255,255,255,0.45)' }} className="text-[10px] font-semibold mt-1 uppercase tracking-wider">{item.label}</p>
+                          <div key={idx} style={{ textAlign: 'center', padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                            <p style={{ fontSize: 20, fontWeight: 300, color: 'rgba(255,255,255,0.92)' }}>{item.value}</p>
+                            <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.45)', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{item.label}</p>
                           </div>
                         ))}
                       </div>
@@ -139,10 +137,10 @@ export default function Agents() {
           {/* Chat Feed */}
           <GlassCard delay={0.15} hover={false} noPad>
             <div style={{ padding: 24 }}>
-              <h3 style={{ color: 'rgba(255,255,255,0.65)' }} className="text-sm font-semibold mb-5 flex items-center gap-2">
-                <MessageSquare size={14} className="text-indigo-300/60" /> Inter-Agent Chat
+              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <MessageSquare size={14} style={{ color: '#BF5AF2' }} /> Inter-Agent Chat
               </h3>
-              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 520, overflowY: 'auto', paddingRight: 4 }}>
                 {conversations.map((msg: any, i: number) => {
                   const fromAgent = agents.find((a: any) => a.id === msg.from)
                   const isLeft = i % 2 === 0
@@ -152,22 +150,23 @@ export default function Agents() {
                       initial={{ opacity: 0, y: 10 }}
                       animate={{ opacity: 1, y: 0 }}
                       transition={{ delay: 0.2 + i * 0.04 }}
-                      className={`flex gap-2.5 ${isLeft ? '' : 'flex-row-reverse'}`}
+                      style={{ display: 'flex', gap: 10, flexDirection: isLeft ? 'row' : 'row-reverse' }}
                     >
-                      <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-white/10 to-white/5 border border-white/10 flex items-center justify-center text-xs shrink-0">
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, flexShrink: 0 }}>
                         {fromAgent?.avatar || '🤖'}
                       </div>
-                      <div className={`max-w-[80%] ${isLeft ? '' : 'text-right'}`}>
-                        <div className={`flex items-center gap-1.5 mb-1 ${isLeft ? '' : 'justify-end'}`}>
-                          <span style={{ color: 'rgba(255,255,255,0.65)' }} className="text-[10px] font-semibold">{fromAgent?.name || msg.from}</span>
-                          <span style={{ color: 'rgba(255,255,255,0.45)' }} className="text-[10px]">→ {msg.to}</span>
+                      <div style={{ maxWidth: '80%', textAlign: isLeft ? 'left' : 'right' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, justifyContent: isLeft ? 'flex-start' : 'flex-end' }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.65)' }}>{fromAgent?.name || msg.from}</span>
+                          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>→ {msg.to}</span>
                         </div>
-                        <div style={{ color: 'rgba(255,255,255,0.65)' }} className={`px-3.5 py-2.5 text-xs ${
-                          isLeft ? 'glass-bubble-left' : 'glass-bubble-right'
-                        }`}>
+                        <div style={{
+                          padding: '10px 14px', fontSize: 12, color: 'rgba(255,255,255,0.65)', lineHeight: 1.5,
+                          borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)',
+                        }}>
                           {msg.message}
                         </div>
-                        <span style={{ color: 'rgba(255,255,255,0.45)' }} className="text-[9px] mt-1 block">{timeAgo(msg.time)}</span>
+                        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 4, display: 'block' }}>{timeAgo(msg.time)}</span>
                       </div>
                     </motion.div>
                   )

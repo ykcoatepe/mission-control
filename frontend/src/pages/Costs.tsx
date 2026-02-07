@@ -29,8 +29,8 @@ export default function Costs() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div className="flex items-center justify-center h-64">
-          <div className="w-8 h-8 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
+          <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
         </div>
       </PageTransition>
     )
@@ -41,48 +41,45 @@ export default function Costs() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", flexDirection: "column", gap: "28px" }}>
+      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 28 }}>
         {/* Header */}
         <div>
-          <h1 style={{ color: 'rgba(255,255,255,0.92)' }} className="text-3xl font-bold tracking-tight flex items-center gap-3">
-            <DollarSign size={24} className="text-emerald-300/60" strokeWidth={1.5} />
-            Cost Tracker
+          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <DollarSign size={22} style={{ color: '#32D74B' }} /> Cost Tracker
           </h1>
-          <p style={{ color: 'rgba(255,255,255,0.45)' }} className="text-sm mt-1">Monitor spending across all services</p>
+          <p className="text-body" style={{ marginTop: 4 }}>Monitor spending across all services</p>
         </div>
 
         {/* Key Metrics */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: "20px" }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
           {[
-            { label: 'Today', value: summary.today, icon: DollarSign, prefix: '$', gradient: 'from-emerald-400/25 to-emerald-600/15' },
-            { label: 'This Week', value: summary.thisWeek, icon: TrendingUp, prefix: '$', gradient: 'from-blue-400/25 to-blue-600/15' },
-            { label: 'This Month', value: summary.thisMonth, icon: TrendingDown, prefix: '$', gradient: 'from-purple-400/25 to-purple-600/15' },
-            { label: 'Budget Used', value: parseFloat(budgetPct), icon: Target, suffix: '%', gradient: 'from-amber-400/25 to-amber-600/15' },
+            { label: 'Today', value: summary.today, icon: DollarSign, prefix: '$', color: '#32D74B' },
+            { label: 'This Week', value: summary.thisWeek, icon: TrendingUp, prefix: '$', color: '#007AFF' },
+            { label: 'This Month', value: summary.thisMonth, icon: TrendingDown, prefix: '$', color: '#BF5AF2' },
+            { label: 'Budget Used', value: parseFloat(budgetPct), icon: Target, suffix: '%', color: '#FF9500' },
           ].map((m, i) => (
             <GlassCard key={m.label} delay={i * 0.05} noPad>
               <div style={{ padding: 20 }}>
-                <div className="flex flex-col gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className={`w-10 h-10 rounded-2xl bg-gradient-to-br ${m.gradient} border border-white/15 flex items-center justify-center shadow-lg`}>
-                      <m.icon size={18} className="text-white/80" strokeWidth={1.5} />
-                    </div>
-                    <span style={{ color: 'rgba(255,255,255,0.45)' }} className="text-[9px] font-bold uppercase tracking-[0.15em]">{m.label}</span>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 12, background: `${m.color}20`, border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <m.icon size={18} style={{ color: m.color }} />
                   </div>
-                  <p style={{ color: 'rgba(255,255,255,0.92)' }} className="text-2xl font-light tracking-tight">
-                    <AnimatedCounter end={m.value} decimals={2} prefix={m.prefix || ''} suffix={m.suffix || ''} />
-                  </p>
+                  <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>{m.label}</span>
                 </div>
+                <p style={{ fontSize: 24, fontWeight: 300, color: 'rgba(255,255,255,0.92)' }}>
+                  <AnimatedCounter end={m.value} decimals={2} prefix={m.prefix || ''} suffix={m.suffix || ''} />
+                </p>
               </div>
             </GlassCard>
           ))}
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: "24px" }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
           {/* Spend Chart */}
           <GlassCard delay={0.15} hover={false} noPad>
             <div style={{ padding: 24 }}>
-              <h3 style={{ color: 'rgba(255,255,255,0.65)' }} className="text-sm font-semibold mb-5">Monthly Spend</h3>
-              <div className="h-64">
+              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>Monthly Spend</h3>
+              <div style={{ height: 256 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={daily}>
                     <defs>
@@ -108,28 +105,10 @@ export default function Costs() {
                       </filter>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                    <XAxis
-                      dataKey="date"
-                      tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }}
-                      tickFormatter={(v) => v.slice(5)}
-                      axisLine={false}
-                      tickLine={false}
-                    />
-                    <YAxis
-                      tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }}
-                      tickFormatter={(v) => `$${v}`}
-                      axisLine={false}
-                      tickLine={false}
-                    />
+                    <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => v.slice(5)} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => `$${v}`} axisLine={false} tickLine={false} />
                     <Tooltip content={<CustomTooltip />} />
-                    <Area
-                      type="monotone"
-                      dataKey="total"
-                      stroke="url(#costStroke)"
-                      strokeWidth={3}
-                      fill="url(#costGradientLG)"
-                      filter="url(#glow)"
-                    />
+                    <Area type="monotone" dataKey="total" stroke="url(#costStroke)" strokeWidth={3} fill="url(#costGradientLG)" filter="url(#glow)" />
                   </AreaChart>
                 </ResponsiveContainer>
               </div>
@@ -139,20 +118,11 @@ export default function Costs() {
           {/* Service Breakdown */}
           <GlassCard delay={0.2} hover={false} noPad>
             <div style={{ padding: 24 }}>
-              <h3 style={{ color: 'rgba(255,255,255,0.65)' }} className="text-sm font-semibold mb-5">By Service</h3>
-              <div className="h-48 mb-4">
+              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>By Service</h3>
+              <div style={{ height: 192, marginBottom: 16 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie
-                      data={byService}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={72}
-                      dataKey="cost"
-                      nameKey="name"
-                      strokeWidth={0}
-                    >
+                    <Pie data={byService} cx="50%" cy="50%" innerRadius={50} outerRadius={72} dataKey="cost" nameKey="name" strokeWidth={0}>
                       {byService.map((_: any, i: number) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} opacity={0.8} />
                       ))}
@@ -162,12 +132,12 @@ export default function Costs() {
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {byService.map((s: any, i: number) => (
-                  <div key={s.name} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2.5" style={{ overflow: 'hidden' }}>
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ background: COLORS[i % COLORS.length], flexShrink: 0 }} />
+                  <div key={s.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
+                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: COLORS[i % COLORS.length], flexShrink: 0 }} />
                       <span style={{ color: 'rgba(255,255,255,0.65)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
                     </div>
-                    <span style={{ color: 'rgba(255,255,255,0.92)' }} className="font-semibold">${s.cost.toFixed(2)}</span>
+                    <span style={{ color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>${s.cost.toFixed(2)}</span>
                   </div>
                 ))}
               </div>
@@ -178,24 +148,26 @@ export default function Costs() {
         {/* Budget Progress */}
         <GlassCard delay={0.25} hover={false} noPad>
           <div style={{ padding: 24 }}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 style={{ color: 'rgba(255,255,255,0.65)' }} className="text-sm font-semibold">Budget Utilization</h3>
-              <span style={{ color: 'rgba(255,255,255,0.45)' }} className="text-xs font-medium">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)' }}>Budget Utilization</h3>
+              <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.45)' }}>
                 ${summary.thisMonth.toFixed(2)} / ${summary.budget.monthly}
               </span>
             </div>
-            <div className="macos-progress h-3.5">
+            <div style={{ height: 14, borderRadius: 7, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
               <div
-                className={`macos-progress-fill h-full ${
-                  parseFloat(budgetPct) > 75
-                    ? 'bg-gradient-to-r from-amber-500 via-orange-500 to-red-500'
-                    : 'bg-gradient-to-r from-indigo-500 via-purple-500 to-pink-500'
-                }`}
-                style={{ width: `${Math.min(parseFloat(budgetPct), 100)}%` }}
+                style={{
+                  height: '100%', borderRadius: 7,
+                  width: `${Math.min(parseFloat(budgetPct), 100)}%`,
+                  background: parseFloat(budgetPct) > 75
+                    ? 'linear-gradient(to right, #FF9500, #FF453A)'
+                    : 'linear-gradient(to right, #007AFF, #BF5AF2)',
+                  transition: 'width 0.6s ease',
+                }}
               />
             </div>
             {summary.thisMonth >= summary.budget.warning && (
-              <p className="text-xs text-amber-300 mt-2.5 font-medium">⚠️ Approaching budget warning threshold</p>
+              <p style={{ fontSize: 12, color: '#FF9500', marginTop: 10, fontWeight: 500 }}>⚠️ Approaching budget warning threshold</p>
             )}
           </div>
         </GlassCard>
@@ -203,8 +175,8 @@ export default function Costs() {
         {/* Daily Cost Bars */}
         <GlassCard delay={0.3} hover={false} noPad>
           <div style={{ padding: 24 }}>
-            <h3 style={{ color: 'rgba(255,255,255,0.65)' }} className="text-sm font-semibold mb-5">Daily Breakdown</h3>
-            <div className="h-48">
+            <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>Daily Breakdown</h3>
+            <div style={{ height: 192 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={daily.slice(-14)}>
                   <defs>
@@ -223,19 +195,8 @@ export default function Costs() {
                     </filter>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }}
-                    tickFormatter={(v) => v.slice(8)}
-                    axisLine={false}
-                    tickLine={false}
-                  />
-                  <YAxis
-                    tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }}
-                    tickFormatter={(v) => `$${v}`}
-                    axisLine={false}
-                    tickLine={false}
-                  />
+                  <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => v.slice(8)} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => `$${v}`} axisLine={false} tickLine={false} />
                   <Tooltip content={<CustomTooltip />} />
                   <Bar dataKey="total" fill="url(#barGradient)" radius={[12, 12, 0, 0]} filter="url(#barGlow)" />
                 </BarChart>

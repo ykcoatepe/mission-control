@@ -30,36 +30,35 @@ const navItems = [
 
 export default function Sidebar() {
   return (
-    <aside className="w-64 h-screen flex flex-col macos-sidebar" style={{ position: 'relative' }}>
+    <aside style={{ width: 256, height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }} className="macos-sidebar">
       {/* Logo Section */}
-      <div className="p-4 pb-3" style={{ position: 'relative', zIndex: 2 }}>
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-[#007AFF] flex items-center justify-center">
-            <Activity size={16} className="text-white" />
+      <div style={{ padding: '16px 16px 12px', position: 'relative', zIndex: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#007AFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Activity size={16} style={{ color: '#fff' }} />
           </div>
           <div>
-            <h1 className="text-sm font-semibold text-[rgba(255,255,255,0.92)]">Mission Control</h1>
-            <p className="text-[10px] text-[rgba(255,255,255,0.45)] font-medium">System Monitor</p>
+            <h1 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Mission Control</h1>
+            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontWeight: 500 }}>System Monitor</p>
           </div>
         </div>
       </div>
 
       {/* Divider */}
-      <div className="divider-h mx-4" style={{ position: "relative", zIndex: 2 }} />
+      <div className="divider-h" style={{ margin: '0 16px', position: 'relative', zIndex: 2 }} />
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 mt-3" style={{ position: "relative", zIndex: 2 }}>
-        <div className="space-y-1.5">
+      <nav style={{ flex: 1, padding: '12px 12px 0', position: 'relative', zIndex: 2 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {navItems.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.to === '/'}
               className={({ isActive }) =>
-                `macos-list-item flex items-center gap-3 ${
-                  isActive ? 'active' : ''
-                }`
+                `macos-list-item ${isActive ? 'active' : ''}`
               }
+              style={{ display: 'flex', alignItems: 'center', gap: 12 }}
             >
               <item.icon size={16} strokeWidth={2} />
               <span>{item.label}</span>
@@ -69,20 +68,20 @@ export default function Sidebar() {
       </nav>
 
       {/* Divider */}
-      <div className="divider-h mx-4" style={{ position: "relative", zIndex: 2 }} />
+      <div className="divider-h" style={{ margin: '0 16px', position: 'relative', zIndex: 2 }} />
 
       {/* Footer */}
-      <div className="p-4" style={{ position: "relative", zIndex: 2 }}>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <div className="w-8 h-8 rounded-lg bg-[rgba(255,255,255,0.1)] flex items-center justify-center">
-              <Bot size={16} className="text-[rgba(255,255,255,0.65)]" />
+      <div style={{ padding: 16, position: 'relative', zIndex: 2 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div style={{ position: 'relative' }}>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Bot size={16} style={{ color: 'rgba(255,255,255,0.65)' }} />
             </div>
-            <span className="absolute -top-1 -right-1 status-dot status-dot-green" />
+            <span className="status-dot status-dot-green" style={{ position: 'absolute', top: -4, right: -4 }} />
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-xs font-semibold text-[rgba(255,255,255,0.92)]">Zinbot</p>
-            <p className="text-[10px] text-[#32D74B] font-medium">Active</p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <p style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Zinbot</p>
+            <p style={{ fontSize: 10, color: '#32D74B', fontWeight: 500 }}>Active</p>
           </div>
         </div>
       </div>

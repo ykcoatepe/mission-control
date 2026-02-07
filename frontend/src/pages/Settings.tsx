@@ -23,7 +23,6 @@ export default function Settings() {
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
 
-  // Available models from Bedrock
   const availableModels = [
     { id: 'anthropic.claude-3-opus-20240229-v1:0', name: 'Claude Opus 4.6', description: 'Most capable model' },
     { id: 'anthropic.claude-3-5-sonnet-20241022-v2:0', name: 'Claude Sonnet 4', description: 'Balanced performance' },
@@ -72,187 +71,200 @@ export default function Settings() {
 
   return (
     <PageTransition>
-      <div className="page-header">
-        <Settings2 className="page-icon" />
-        <h1 className="page-title">Settings</h1>
-      </div>
+      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 24 }}>
+        {/* Header */}
+        <div>
+          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Settings2 size={22} style={{ color: '#007AFF' }} /> Settings
+          </h1>
+          <p className="text-body" style={{ marginTop: 4 }}>Configuration & system management</p>
+        </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Model Configuration Card */}
-        <GlassCard>
-          <div className="p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <Cpu className="text-blue-400" size={24} />
-              <h2 className="text-heading">Model Configuration</h2>
-            </div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+          {/* Model Configuration Card */}
+          <GlassCard noPad>
+            <div style={{ padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(0,122,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Cpu size={18} style={{ color: '#007AFF' }} />
+                </div>
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Model Configuration</h2>
+              </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="text-label text-quaternary mb-2 block">Active Model</label>
-                <div className="relative">
-                  <button
-                    onClick={() => setShowDropdown(!showDropdown)}
-                    className="macos-control w-full flex items-center justify-between px-4 py-3 rounded-lg"
-                  >
-                    <span className="text-primary">{getCurrentModelName()}</span>
-                    <ChevronDown
-                      size={16}
-                      className={`text-tertiary transition-transform ${showDropdown ? 'rotate-180' : ''}`}
-                    />
-                  </button>
-
-                  {showDropdown && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="absolute z-10 w-full mt-2 macos-panel overflow-hidden"
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Active Model</label>
+                  <div style={{ position: 'relative' }}>
+                    <button
+                      onClick={() => setShowDropdown(!showDropdown)}
+                      className="macos-control"
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderRadius: 10, cursor: 'pointer', border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13 }}
                     >
-                      {availableModels.map((model) => (
-                        <button
-                          key={model.id}
-                          onClick={() => {
-                            setSelectedModel(model.id)
-                            setShowDropdown(false)
-                          }}
-                          className={`w-full text-left px-4 py-3 hover:bg-white/5 transition-colors ${
-                            selectedModel === model.id ? 'bg-blue-500/20' : ''
-                          }`}
-                        >
-                          <div className="font-medium text-primary">{model.name}</div>
-                          <div className="text-caption text-tertiary mt-1">{model.description}</div>
-                        </button>
-                      ))}
-                    </motion.div>
+                      <span>{getCurrentModelName()}</span>
+                      <ChevronDown
+                        size={16}
+                        style={{ color: 'rgba(255,255,255,0.45)', transition: 'transform 0.2s', transform: showDropdown ? 'rotate(180deg)' : 'none' }}
+                      />
+                    </button>
+
+                    {showDropdown && (
+                      <motion.div
+                        initial={{ opacity: 0, y: -10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        style={{ position: 'absolute', zIndex: 10, width: '100%', marginTop: 8, borderRadius: 12, overflow: 'hidden', background: 'rgba(30,30,40,0.95)', border: '1px solid rgba(255,255,255,0.1)', backdropFilter: 'blur(40px)', boxShadow: '0 10px 40px rgba(0,0,0,0.4)' }}
+                      >
+                        {availableModels.map((model) => (
+                          <button
+                            key={model.id}
+                            onClick={() => {
+                              setSelectedModel(model.id)
+                              setShowDropdown(false)
+                            }}
+                            style={{
+                              width: '100%', textAlign: 'left', padding: '12px 16px', cursor: 'pointer',
+                              border: 'none',
+                              background: selectedModel === model.id ? 'rgba(0,122,255,0.15)' : 'transparent',
+                              transition: 'background 0.15s',
+                            }}
+                            onMouseEnter={(e) => { if (selectedModel !== model.id) e.currentTarget.style.background = 'rgba(255,255,255,0.05)' }}
+                            onMouseLeave={(e) => { e.currentTarget.style.background = selectedModel === model.id ? 'rgba(0,122,255,0.15)' : 'transparent' }}
+                          >
+                            <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.92)' }}>{model.name}</div>
+                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2 }}>{model.description}</div>
+                          </button>
+                        ))}
+                      </motion.div>
+                    )}
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleModelSwitch}
+                  disabled={saving || selectedModel === configData?.model}
+                  style={{
+                    width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '12px 16px', borderRadius: 10, border: 'none', cursor: saving || selectedModel === configData?.model ? 'not-allowed' : 'pointer',
+                    background: saving || selectedModel === configData?.model ? 'rgba(0,122,255,0.3)' : '#007AFF',
+                    color: '#fff', fontSize: 13, fontWeight: 500,
+                    opacity: saving || selectedModel === configData?.model ? 0.5 : 1,
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  {saving ? (
+                    <>
+                      <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                      <span>Switching Model...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} />
+                      <span>Apply Changes</span>
+                    </>
                   )}
-                </div>
-              </div>
+                </button>
 
-              <button
-                onClick={handleModelSwitch}
-                disabled={saving || selectedModel === configData?.model}
-                className="macos-button-primary w-full flex items-center justify-center gap-2 py-3 disabled:opacity-50"
-              >
-                {saving ? (
-                  <>
-                    <RefreshCw size={16} className="animate-spin" />
-                    <span>Switching Model...</span>
-                  </>
-                ) : (
-                  <>
-                    <Save size={16} />
-                    <span>Apply Changes</span>
-                  </>
+                {saveStatus === 'success' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#32D74B', fontSize: 12 }}>
+                    <span className="status-dot status-dot-green" />
+                    Model switched successfully
+                  </div>
                 )}
-              </button>
+                {saveStatus === 'error' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF453A', fontSize: 12 }}>
+                    <span className="status-dot status-dot-red" />
+                    Failed to switch model
+                  </div>
+                )}
+              </div>
+            </div>
+          </GlassCard>
 
-              {saveStatus === 'success' && (
-                <div className="text-green-400 text-caption flex items-center gap-2">
-                  <div className="status-dot status-dot-green" />
-                  Model switched successfully
+          {/* OpenClaw Configuration Card */}
+          <GlassCard noPad>
+            <div style={{ padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(191,90,242,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Shield size={18} style={{ color: '#BF5AF2' }} />
                 </div>
-              )}
-              {saveStatus === 'error' && (
-                <div className="text-red-400 text-caption flex items-center gap-2">
-                  <div className="status-dot status-dot-red" />
-                  Failed to switch model
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>OpenClaw Configuration</h2>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[
+                  { label: 'Gateway Port', value: configData?.gateway_port || 18789 },
+                  { label: 'Memory Path', value: configData?.memory_path || '/home/ubuntu/clawd/memory', mono: true },
+                  { label: 'Skills Path', value: configData?.skills_path || '/home/ubuntu/clawd/skills', mono: true },
+                  { label: 'AWS Region', value: configData?.bedrock_region || 'us-east-1', mono: true },
+                ].map((item) => (
+                  <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>{item.label}</span>
+                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', fontFamily: item.mono ? 'monospace' : 'inherit' }}>{String(item.value)}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+                  <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>Status</span>
+                  <StatusBadge status="active" label="Connected" />
                 </div>
-              )}
+              </div>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
 
-        {/* OpenClaw Configuration Card */}
-        <GlassCard>
-          <div className="p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <Shield className="text-purple-400" size={24} />
-              <h2 className="text-heading">OpenClaw Configuration</h2>
-            </div>
+          {/* System Information Card */}
+          <GlassCard noPad>
+            <div style={{ padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,149,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Database size={18} style={{ color: '#FF9500' }} />
+                </div>
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>System Information</h2>
+              </div>
 
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Gateway Port</span>
-                <span className="text-primary font-mono">{configData?.gateway_port || 18789}</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Memory Path</span>
-                <span className="text-primary text-caption font-mono">
-                  {configData?.memory_path || '/home/ubuntu/clawd/memory'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Skills Path</span>
-                <span className="text-primary text-caption font-mono">
-                  {configData?.skills_path || '/home/ubuntu/clawd/skills'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">AWS Region</span>
-                <span className="text-primary font-mono">
-                  {configData?.bedrock_region || 'us-east-1'}
-                </span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Status</span>
-                <StatusBadge status="active" label="Connected" />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[
+                  { label: 'Mission Control Version', value: 'v2.0.0' },
+                  { label: 'OpenClaw Version', value: 'v1.5.2' },
+                  { label: 'Node.js Version', value: 'v20.15.0' },
+                  { label: 'Platform', value: 'Linux x64' },
+                ].map((item) => (
+                  <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>{item.label}</span>
+                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.92)' }}>{item.value}</span>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
 
-        {/* System Information Card */}
-        <GlassCard>
-          <div className="p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <Database className="text-orange-400" size={24} />
-              <h2 className="text-heading">System Information</h2>
-            </div>
+          {/* Quick Actions Card */}
+          <GlassCard noPad>
+            <div style={{ padding: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(50,215,75,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Globe size={18} style={{ color: '#32D74B' }} />
+                </div>
+                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Quick Actions</h2>
+              </div>
 
-            <div className="space-y-4">
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Mission Control Version</span>
-                <span className="text-primary">v2.0.0</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">OpenClaw Version</span>
-                <span className="text-primary">v1.5.2</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Node.js Version</span>
-                <span className="text-primary">v20.15.0</span>
-              </div>
-              <div className="flex justify-between items-center py-2">
-                <span className="text-secondary">Platform</span>
-                <span className="text-primary">Linux x64</span>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {['Restart OpenClaw Gateway', 'Clear Memory Cache', 'Export Configuration', 'View Logs'].map((label) => (
+                  <button
+                    key={label}
+                    style={{
+                      width: '100%', padding: '12px 16px', textAlign: 'left', borderRadius: 10,
+                      border: '1px solid rgba(255,255,255,0.06)', background: 'rgba(255,255,255,0.03)',
+                      color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer',
+                      transition: 'all 0.15s',
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.08)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.12)' }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.03)'; e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)' }}
+                  >
+                    {label}
+                  </button>
+                ))}
               </div>
             </div>
-          </div>
-        </GlassCard>
-
-        {/* Quick Actions Card */}
-        <GlassCard>
-          <div className="p-6">
-            <div className="flex items-center gap-3 mb-6">
-              <Globe className="text-green-400" size={24} />
-              <h2 className="text-heading">Quick Actions</h2>
-            </div>
-
-            <div className="space-y-3">
-              <button className="macos-control w-full py-3 text-left px-4 hover:bg-white/10 transition-colors">
-                Restart OpenClaw Gateway
-              </button>
-              <button className="macos-control w-full py-3 text-left px-4 hover:bg-white/10 transition-colors">
-                Clear Memory Cache
-              </button>
-              <button className="macos-control w-full py-3 text-left px-4 hover:bg-white/10 transition-colors">
-                Export Configuration
-              </button>
-              <button className="macos-control w-full py-3 text-left px-4 hover:bg-white/10 transition-colors">
-                View Logs
-              </button>
-            </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       </div>
     </PageTransition>
   )
