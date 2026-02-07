@@ -66,6 +66,7 @@ function getModelAction(m: BedrockModel): { label: string; type: 'agent' | 'imag
 export default function AWS() {
   const { data: awsData, loading: awsLoading } = useApi<AWSData>('/api/aws/services', 60000)
   const { data: modelsData, loading: modelsLoading } = useApi<BedrockModel[]>('/api/aws/bedrock-models', 120000)
+  const { data: costData } = useApi<any>('/api/aws/costs', 60000)
   const [category, setCategory] = useState<ModelCategory>('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedModel, setSelectedModel] = useState<BedrockModel | null>(null)
@@ -236,26 +237,66 @@ export default function AWS() {
             </div>
           </GlassCard>
 
-          {/* Billing */}
+          {/* Billing — REAL from Cost Explorer */}
           <GlassCard delay={0.2} noPad>
             <div style={{ padding: '20px 24px' }}>
               <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16 }}>Billing & Credits</h2>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div style={{ padding: 16, borderRadius: 12, background: 'rgba(50,215,75,0.08)', border: '1px solid rgba(50,215,75,0.2)' }}>
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 6 }}>AWS Activate Credits</p>
-                  <p style={{ fontSize: 28, fontWeight: 300, color: '#32D74B' }}>$25,000</p>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>Bedrock usage = $0 (covered by credits)</p>
+                {/* Credits + Spending */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(50,215,75,0.08)', border: '1px solid rgba(50,215,75,0.2)' }}>
+                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Credits Left</p>
+                    <p style={{ fontSize: 22, fontWeight: 300, color: '#32D74B', fontVariantNumeric: 'tabular-nums' }}>
+                      ${costData ? costData.remaining?.toLocaleString() : '25,000'}
+                    </p>
+                  </div>
+                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,149,0,0.08)', border: '1px solid rgba(255,149,0,0.2)' }}>
+                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>This Month</p>
+                    <p style={{ fontSize: 22, fontWeight: 300, color: '#FF9500', fontVariantNumeric: 'tabular-nums' }}>
+                      ${costData ? costData.total?.toFixed(2) : '0.00'}
+                    </p>
+                  </div>
                 </div>
-                <div style={{ padding: 16, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', marginBottom: 8 }}>Current Month</p>
-                  {[['Bedrock (Opus 4.6)', '$0.00 *'], ['EC2 (t3.large)', '~$60/mo'], ['S3 Storage', '$0.00']].map(([l, v]) => (
-                    <div key={l} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)' }}>{l}</span>
-                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+
+                {/* Service Breakdown */}
+                <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                  <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>By Service</p>
+                  {(costData?.services || []).map((svc: any) => (
+                    <div key={svc.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 12 }}>{svc.name}</span>
+                      <span style={{ fontSize: 12, color: svc.cost > 10 ? '#FF9500' : 'rgba(255,255,255,0.7)', fontWeight: svc.cost > 10 ? 600 : 400, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>${svc.cost.toFixed(2)}</span>
                     </div>
                   ))}
-                  <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginTop: 8 }}>* Covered by Activate credits</p>
+                  {(!costData?.services || costData.services.length === 0) && (
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>No cost data yet</p>
+                  )}
                 </div>
+
+                {/* Daily Spend Mini Chart */}
+                {costData?.daily && costData.daily.length > 1 && (
+                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Daily Spend</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
+                      {costData.daily.map((d: any, i: number) => {
+                        const maxCost = Math.max(...costData.daily.map((x: any) => x.cost), 1)
+                        const height = Math.max((d.cost / maxCost) * 100, 2)
+                        const isToday = i === costData.daily.length - 1
+                        return (
+                          <div key={d.date} title={`${d.date}: $${d.cost}`} style={{
+                            flex: 1, height: `${height}%`, borderRadius: 3,
+                            background: d.cost > 50 ? '#FF453A' : d.cost > 10 ? '#FF9500' : '#007AFF',
+                            opacity: isToday ? 1 : 0.7,
+                            minHeight: 2,
+                          }} />
+                        )
+                      })}
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
+                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{costData.daily[0]?.date?.slice(5)}</span>
+                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{costData.daily[costData.daily.length-1]?.date?.slice(5)}</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </GlassCard>

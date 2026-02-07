@@ -1,209 +1,425 @@
-import { DollarSign, TrendingUp, TrendingDown, Target } from 'lucide-react'
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, BarChart, Bar,
-  CartesianGrid
-} from 'recharts'
+import { useState, useEffect } from 'react'
+import { DollarSign, TrendingUp, TrendingDown, Target, Calendar, Zap, Settings, AlertCircle } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import AnimatedCounter from '../components/AnimatedCounter'
-import { useApi } from '../lib/hooks'
 
-const COLORS = ['#818cf8', '#c084fc', '#34d399', '#fbbf24', '#f87171', '#60a5fa']
+interface AWSSCostData {
+  period: { start: string; end: string }
+  total: number
+  daily: Array<{ date: string; cost: number }>
+  services: Array<{ name: string; cost: number }>
+  credits: number
+  remaining: number
+}
 
-const CustomTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null
-  return (
-    <div style={{ background: 'rgba(30,30,32,0.95)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: '8px 12px' }}>
-      <p style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 4 }}>{label}</p>
-      {payload.map((p: any, i: number) => (
-        <p key={i} style={{ color: 'rgba(255,255,255,0.92)', fontSize: 14, fontWeight: 600 }}>${p.value?.toFixed(2)}</p>
-      ))}
-    </div>
-  )
+interface TokenData {
+  daily: Array<{ date: string; total: number }>
+  summary: any
+  byService: Array<{ name: string; cost: number }>
+  sessions: Array<{ sessionId: string; cost: number; model: string; tokens: number; timestamp: number }>
 }
 
 export default function Costs() {
-  const { data, loading } = useApi<any>('/api/costs', 60000)
+  const [awsCosts, setAwsCosts] = useState<AWSSCostData | null>(null)
+  const [tokenData, setTokenData] = useState<TokenData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  if (loading || !data) {
+  useEffect(() => {
+    Promise.all([
+      fetch('/api/aws/costs').then(r => r.json()),
+      fetch('/api/costs').then(r => r.json())
+    ])
+    .then(([aws, tokens]) => {
+      setAwsCosts(aws)
+      setTokenData(tokens)
+      setLoading(false)
+    })
+    .catch(err => {
+      setError(err.message)
+      setLoading(false)
+    })
+  }, [])
+
+  if (loading) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
-          <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px' }}>
+          <div style={{ 
+            width: '32px', height: '32px', 
+            border: '2px solid #007AFF', 
+            borderTopColor: 'transparent', 
+            borderRadius: '50%', 
+            animation: 'spin 1s linear infinite' 
+          }} />
         </div>
       </PageTransition>
     )
   }
 
-  const { daily, summary, byService } = data
-  const budgetPct = ((summary.thisMonth / summary.budget.monthly) * 100).toFixed(1)
+  if (error || !awsCosts || !tokenData) {
+    return (
+      <PageTransition>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', flexDirection: 'column', gap: '16px' }}>
+          <AlertCircle size={48} style={{ color: '#FF453A' }} />
+          <p style={{ color: 'rgba(255,255,255,0.65)' }}>Failed to load cost data</p>
+        </div>
+      </PageTransition>
+    )
+  }
+
+  // Calculate metrics
+  const dailyAvg = awsCosts.daily.reduce((sum, d) => sum + d.cost, 0) / Math.max(awsCosts.daily.length, 1)
+  const projectedMonthly = dailyAvg * 30
+  const creditsUsed = awsCosts.credits - awsCosts.remaining
+  const burnRate = creditsUsed > 0 ? awsCosts.remaining / (creditsUsed / awsCosts.daily.length) : Infinity
+  
+  // Color bars for daily chart
+  const getBarColor = (cost: number) => {
+    if (cost < 10) return '#32D74B'
+    if (cost < 50) return '#FF9500'
+    return '#FF453A'
+  }
+
+  // Service colors
+  const getServiceColor = (name: string) => {
+    const lowerName = name.toLowerCase()
+    if (lowerName.includes('compute') || lowerName.includes('ec2') || lowerName.includes('lambda')) return '#007AFF'
+    if (lowerName.includes('claude') || lowerName.includes('ai') || lowerName.includes('bedrock')) return '#BF5AF2'
+    if (lowerName.includes('s3') || lowerName.includes('storage')) return '#FF9500'
+    return '#32D74B'
+  }
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 28 }}>
+      <div style={{ maxWidth: '1280px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '28px' }}>
         {/* Header */}
         <div>
-          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <DollarSign size={22} style={{ color: '#32D74B' }} /> Cost Tracker
+          <h1 style={{ 
+            fontSize: '28px', fontWeight: '600', color: 'rgba(255,255,255,0.92)', 
+            display: 'flex', alignItems: 'center', gap: '12px', margin: '0' 
+          }}>
+            <DollarSign size={28} style={{ color: '#32D74B' }} />
+            Cost Tracker
           </h1>
-          <p className="text-body" style={{ marginTop: 4 }}>Monitor spending across all services</p>
+          <p style={{ fontSize: '16px', color: 'rgba(255,255,255,0.65)', marginTop: '4px', margin: '4px 0 0 0' }}>
+            AWS spending & token analytics
+          </p>
         </div>
 
-        {/* Key Metrics */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 20 }}>
-          {[
-            { label: 'Today', value: summary.today, icon: DollarSign, prefix: '$', color: '#32D74B' },
-            { label: 'This Week', value: summary.thisWeek, icon: TrendingUp, prefix: '$', color: '#007AFF' },
-            { label: 'This Month', value: summary.thisMonth, icon: TrendingDown, prefix: '$', color: '#BF5AF2' },
-            { label: 'Budget Used', value: parseFloat(budgetPct), icon: Target, suffix: '%', color: '#FF9500' },
-          ].map((m, i) => (
-            <GlassCard key={m.label} delay={i * 0.05} noPad>
-              <div style={{ padding: 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <div style={{ width: 40, height: 40, borderRadius: 12, background: `${m.color}20`, border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <m.icon size={18} style={{ color: m.color }} />
-                  </div>
-                  <span style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>{m.label}</span>
+        {/* Row 1: Key Metrics */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '20px' }}>
+          <GlassCard delay={0} noPad>
+            <div style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ 
+                  width: '48px', height: '48px', borderRadius: '12px', 
+                  background: awsCosts.total > 100 ? 'rgba(255,149,0,0.15)' : 'rgba(50,215,75,0.15)',
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                  <DollarSign size={20} style={{ color: awsCosts.total > 100 ? '#FF9500' : '#32D74B' }} />
                 </div>
-                <p style={{ fontSize: 24, fontWeight: 300, color: 'rgba(255,255,255,0.92)' }}>
-                  <AnimatedCounter end={m.value} decimals={2} prefix={m.prefix || ''} suffix={m.suffix || ''} />
-                </p>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  This Month
+                </span>
               </div>
-            </GlassCard>
-          ))}
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 24 }}>
-          {/* Spend Chart */}
-          <GlassCard delay={0.15} hover={false} noPad>
-            <div style={{ padding: 24 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>Monthly Spend</h3>
-              <div style={{ height: 256 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={daily}>
-                    <defs>
-                      <linearGradient id="costGradientLG" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="#c084fc" stopOpacity={0.9} />
-                        <stop offset="15%" stopColor="#a78bfa" stopOpacity={0.7} />
-                        <stop offset="35%" stopColor="#e879f9" stopOpacity={0.5} />
-                        <stop offset="60%" stopColor="#f472b6" stopOpacity={0.3} />
-                        <stop offset="85%" stopColor="#fbbf24" stopOpacity={0.15} />
-                        <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
-                      </linearGradient>
-                      <linearGradient id="costStroke" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%" stopColor="#8b5cf6" stopOpacity={1} />
-                        <stop offset="50%" stopColor="#ec4899" stopOpacity={1} />
-                        <stop offset="100%" stopColor="#f59e0b" stopOpacity={1} />
-                      </linearGradient>
-                      <filter id="glow">
-                        <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
-                        <feMerge>
-                          <feMergeNode in="coloredBlur"/>
-                          <feMergeNode in="SourceGraphic"/>
-                        </feMerge>
-                      </filter>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                    <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => v.slice(5)} axisLine={false} tickLine={false} />
-                    <YAxis tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => `$${v}`} axisLine={false} tickLine={false} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Area type="monotone" dataKey="total" stroke="url(#costStroke)" strokeWidth={3} fill="url(#costGradientLG)" filter="url(#glow)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              <p style={{ fontSize: '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
+                <AnimatedCounter end={awsCosts.total} decimals={2} prefix="$" />
+              </p>
             </div>
           </GlassCard>
 
-          {/* Service Breakdown */}
-          <GlassCard delay={0.2} hover={false} noPad>
-            <div style={{ padding: 24 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>By Service</h3>
-              <div style={{ height: 192, marginBottom: 16 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={byService} cx="50%" cy="50%" innerRadius={50} outerRadius={72} dataKey="cost" nameKey="name" strokeWidth={0}>
-                      {byService.map((_: any, i: number) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} opacity={0.8} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
+          <GlassCard delay={0.05} noPad>
+            <div style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ 
+                  width: '48px', height: '48px', borderRadius: '12px', 
+                  background: 'rgba(50,215,75,0.15)',
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                  <Target size={20} style={{ color: '#32D74B' }} />
+                </div>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Credits Left
+                </span>
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                {byService.map((s: any, i: number) => (
-                  <div key={s.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, overflow: 'hidden' }}>
-                      <span style={{ width: 10, height: 10, borderRadius: '50%', background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-                      <span style={{ color: 'rgba(255,255,255,0.65)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
+              <p style={{ fontSize: '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
+                <AnimatedCounter end={awsCosts.remaining} decimals={0} prefix="$" />
+              </p>
+            </div>
+          </GlassCard>
+
+          <GlassCard delay={0.1} noPad>
+            <div style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ 
+                  width: '48px', height: '48px', borderRadius: '12px', 
+                  background: 'rgba(0,122,255,0.15)',
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                  <Calendar size={20} style={{ color: '#007AFF' }} />
+                </div>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Daily Average
+                </span>
+              </div>
+              <p style={{ fontSize: '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
+                <AnimatedCounter end={dailyAvg} decimals={2} prefix="$" />
+              </p>
+            </div>
+          </GlassCard>
+
+          <GlassCard delay={0.15} noPad>
+            <div style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ 
+                  width: '48px', height: '48px', borderRadius: '12px', 
+                  background: 'rgba(255,149,0,0.15)',
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  display: 'flex', alignItems: 'center', justifyContent: 'center' 
+                }}>
+                  <TrendingUp size={20} style={{ color: '#FF9500' }} />
+                </div>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                  Projected Monthly
+                </span>
+              </div>
+              <p style={{ fontSize: '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
+                <AnimatedCounter end={projectedMonthly} decimals={0} prefix="$" />
+              </p>
+            </div>
+          </GlassCard>
+        </div>
+
+        {/* Row 2: Two-column layout */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '24px' }}>
+          {/* Left: Daily Spend Chart */}
+          <GlassCard delay={0.2} noPad>
+            <div style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.65)', marginBottom: '24px', margin: '0 0 24px 0' }}>
+                Daily Spend Chart
+              </h3>
+              <div style={{ height: '240px', display: 'flex', alignItems: 'flex-end', gap: '4px', paddingTop: '20px' }}>
+                {awsCosts.daily.map((day, i) => {
+                  const maxCost = Math.max(...awsCosts.daily.map(d => d.cost), 10)
+                  const height = Math.max((day.cost / maxCost) * 200, 2)
+                  return (
+                    <div key={day.date} style={{ 
+                      flex: '1', 
+                      display: 'flex', 
+                      flexDirection: 'column', 
+                      alignItems: 'center', 
+                      gap: '8px' 
+                    }}>
+                      <div
+                        style={{
+                          width: '100%',
+                          height: `${height}px`,
+                          background: getBarColor(day.cost),
+                          borderRadius: '4px 4px 0 0',
+                          opacity: '0.8',
+                          transition: 'all 0.3s ease'
+                        }}
+                        title={`${day.date}: $${day.cost.toFixed(2)}`}
+                      />
+                      <span style={{ 
+                        fontSize: '10px', 
+                        color: 'rgba(255,255,255,0.45)', 
+                        writingMode: 'vertical-rl',
+                        textOrientation: 'mixed',
+                        transform: 'rotate(180deg)'
+                      }}>
+                        {new Date(day.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
                     </div>
-                    <span style={{ color: 'rgba(255,255,255,0.92)', fontWeight: 600 }}>${s.cost.toFixed(2)}</span>
-                  </div>
-                ))}
+                  )
+                })}
+              </div>
+            </div>
+          </GlassCard>
+
+          {/* Right: Service Breakdown */}
+          <GlassCard delay={0.25} noPad>
+            <div style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.65)', marginBottom: '24px', margin: '0 0 24px 0' }}>
+                Service Breakdown
+              </h3>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {awsCosts.services.slice(0, 8).map((service, i) => {
+                  const percentage = (service.cost / awsCosts.total) * 100
+                  return (
+                    <div key={service.name} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.65)', fontWeight: '500' }}>
+                          {service.name.length > 25 ? service.name.substring(0, 25) + '...' : service.name}
+                        </span>
+                        <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '600', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"' }}>
+                          ${service.cost.toFixed(2)}
+                        </span>
+                      </div>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div
+                          style={{
+                            width: `${percentage}%`,
+                            height: '100%',
+                            background: getServiceColor(service.name),
+                            borderRadius: '3px',
+                            transition: 'width 0.6s ease'
+                          }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </GlassCard>
         </div>
 
-        {/* Budget Progress */}
-        <GlassCard delay={0.25} hover={false} noPad>
-          <div style={{ padding: 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-              <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)' }}>Budget Utilization</h3>
-              <span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.45)' }}>
-                ${summary.thisMonth.toFixed(2)} / ${summary.budget.monthly}
-              </span>
+        {/* Row 3: Token Usage by Session */}
+        <GlassCard delay={0.3} noPad>
+          <div style={{ padding: '24px' }}>
+            <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.65)', marginBottom: '24px', margin: '0 0 24px 0' }}>
+              Token Usage by Session
+            </h3>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+              {(tokenData.sessions || []).slice(0, 6).map((session, i) => (
+                <div key={session.sessionId} style={{ 
+                  padding: '16px', 
+                  background: 'rgba(255,255,255,0.05)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)'
+                }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)', fontFamily: 'monospace' }}>
+                        {session.sessionId.substring(0, 16)}...
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.65)', marginTop: '4px' }}>
+                        {session.model || 'Unknown Model'}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"' }}>
+                        ${session.cost.toFixed(2)}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)' }}>
+                        {session.tokens.toLocaleString()} tokens
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)' }}>
+                    {new Date(session.timestamp * 1000).toLocaleString()}
+                  </div>
+                </div>
+              ))}
             </div>
-            <div style={{ height: 14, borderRadius: 7, background: 'rgba(255,255,255,0.06)', overflow: 'hidden' }}>
-              <div
-                style={{
-                  height: '100%', borderRadius: 7,
-                  width: `${Math.min(parseFloat(budgetPct), 100)}%`,
-                  background: parseFloat(budgetPct) > 75
-                    ? 'linear-gradient(to right, #FF9500, #FF453A)'
-                    : 'linear-gradient(to right, #007AFF, #BF5AF2)',
-                  transition: 'width 0.6s ease',
-                }}
-              />
-            </div>
-            {summary.thisMonth >= summary.budget.warning && (
-              <p style={{ fontSize: 12, color: '#FF9500', marginTop: 10, fontWeight: 500 }}>⚠️ Approaching budget warning threshold</p>
-            )}
           </div>
         </GlassCard>
 
-        {/* Daily Cost Bars */}
-        <GlassCard delay={0.3} hover={false} noPad>
-          <div style={{ padding: 24 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 20 }}>Daily Breakdown</h3>
-            <div style={{ height: 192 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={daily.slice(-14)}>
-                  <defs>
-                    <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8b5cf6" stopOpacity={1} />
-                      <stop offset="30%" stopColor="#a78bfa" stopOpacity={0.9} />
-                      <stop offset="60%" stopColor="#6366f1" stopOpacity={0.7} />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.5} />
-                    </linearGradient>
-                    <filter id="barGlow">
-                      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-                      <feMerge>
-                        <feMergeNode in="coloredBlur"/>
-                        <feMergeNode in="SourceGraphic"/>
-                      </feMerge>
-                    </filter>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
-                  <XAxis dataKey="date" tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => v.slice(8)} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: 'rgba(255,255,255,0.35)', fontSize: 10 }} tickFormatter={(v) => `$${v}`} axisLine={false} tickLine={false} />
-                  <Tooltip content={<CustomTooltip />} />
-                  <Bar dataKey="total" fill="url(#barGradient)" radius={[12, 12, 0, 0]} filter="url(#barGlow)" />
-                </BarChart>
-              </ResponsiveContainer>
+        {/* Row 4: Budget & Projections */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px' }}>
+          {/* Credits Burn Rate */}
+          <GlassCard delay={0.35} noPad>
+            <div style={{ padding: '24px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.65)', marginBottom: '24px', margin: '0 0 24px 0' }}>
+                Credits Burn Rate
+              </h3>
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                  <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.65)' }}>Used</span>
+                  <span style={{ fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"' }}>
+                    ${creditsUsed.toFixed(0)} / ${awsCosts.credits.toLocaleString()}
+                  </span>
+                </div>
+                <div style={{ height: '12px', background: 'rgba(255,255,255,0.1)', borderRadius: '6px', overflow: 'hidden' }}>
+                  <div
+                    style={{
+                      width: `${(creditsUsed / awsCosts.credits) * 100}%`,
+                      height: '100%',
+                      background: creditsUsed / awsCosts.credits > 0.75 ? '#FF453A' : creditsUsed / awsCosts.credits > 0.5 ? '#FF9500' : '#32D74B',
+                      borderRadius: '6px',
+                      transition: 'width 0.6s ease'
+                    }}
+                  />
+                </div>
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>At current rate, credits last:</span>
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.92)', fontWeight: '600' }}>
+                    {burnRate === Infinity ? '∞' : `${Math.round(burnRate)} days`}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>Daily burn rate:</span>
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.92)', fontWeight: '600' }}>
+                    ${dailyAvg.toFixed(2)}/day
+                  </span>
+                </div>
+              </div>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
+
+          {/* Cost Optimization Tips */}
+          <GlassCard delay={0.4} noPad>
+            <div style={{ padding: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '600', color: 'rgba(255,255,255,0.65)', margin: '0' }}>
+                  Cost Optimization Tips
+                </h3>
+                <Zap size={16} style={{ color: '#FF9500' }} />
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div style={{ 
+                  padding: '16px', 
+                  background: 'rgba(50,215,75,0.1)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(50,215,75,0.2)'
+                }}>
+                  <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '500', marginBottom: '4px' }}>
+                    🎯 Heartbeats: Haiku
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>
+                    Saving ~$8/day on routine checks
+                  </div>
+                </div>
+                <div style={{ 
+                  padding: '16px', 
+                  background: 'rgba(191,90,242,0.1)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(191,90,242,0.2)'
+                }}>
+                  <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '500', marginBottom: '4px' }}>
+                    🤖 Sub-agents: Sonnet
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.65)' }}>
+                    Saving ~$15/day vs Opus for tasks
+                  </div>
+                </div>
+                <div style={{ 
+                  padding: '12px 16px', 
+                  background: 'rgba(255,255,255,0.05)', 
+                  borderRadius: '8px',
+                  border: '1px solid rgba(255,255,255,0.1)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer'
+                }}>
+                  <Settings size={14} style={{ color: 'rgba(255,255,255,0.65)' }} />
+                  <span style={{ fontSize: '13px', color: 'rgba(255,255,255,0.65)' }}>
+                    Configure model routing →
+                  </span>
+                </div>
+              </div>
+            </div>
+          </GlassCard>
+        </div>
       </div>
     </PageTransition>
   )
