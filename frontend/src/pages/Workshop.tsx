@@ -100,19 +100,24 @@ export default function Workshop() {
     setChatMessages([])
     setChatLoading(true)
     
+    let loaded = false
+    
     // Load existing chat history if we have a session key
     if (task.childSessionKey) {
       try {
         const res = await fetch(`/api/sessions/${encodeURIComponent(task.childSessionKey)}/history`)
-        const msgs = await res.json()
-        if (Array.isArray(msgs)) {
+        const data = await res.json()
+        // Handle both {messages: [...]} and bare array formats
+        const msgs = Array.isArray(data) ? data : (data.messages || [])
+        if (msgs.length > 0) {
           setChatMessages(msgs.map((m: any) => ({ role: m.role, content: m.content, ts: m.ts })))
+          loaded = true
         }
       } catch {}
     }
     
-    // If task has a result but no session, show result as message
-    if (task.result && !task.childSessionKey) {
+    // Fallback: show stored result as conversation
+    if (!loaded && task.result) {
       setChatMessages([
         { role: 'user', content: `Task: ${task.title}\n${task.description}`, ts: Date.parse(task.created || '') || Date.now() },
         { role: 'assistant', content: task.result, ts: Date.parse(task.completed || '') || Date.now() },
