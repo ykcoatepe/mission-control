@@ -32,6 +32,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const { data, loading } = useApi<any>('/api/status', 30000)
   const { data: activityData } = useApi<any>('/api/activity', 10000)
+  const { data: sessionsData } = useApi<any>('/api/sessions', 15000)
   const [countdown, setCountdown] = useState('')
 
   useEffect(() => {
@@ -59,6 +60,9 @@ export default function Dashboard() {
 
   const { agent, heartbeat, tokenUsage } = data
   const feed = activityData?.feed || []
+  const sessions = sessionsData?.sessions || []
+  const activeSessions = sessions.filter((s: any) => s.isActive).length
+  const totalSessions = sessions.length
 
   return (
     <PageTransition>
@@ -92,9 +96,27 @@ export default function Dashboard() {
             <div style={{ display: 'flex', gap: 16, justifyContent: m ? 'space-around' : 'flex-end', paddingTop: m ? 12 : 0, borderTop: m ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
               <div style={{ textAlign: 'center' }}>
                 <p className="text-label">Sessions</p>
-                <p style={{ fontSize: 22, fontWeight: 300, color: 'rgba(255,255,255,0.92)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
-                  <AnimatedCounter end={agent.activeSessions} />
-                </p>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 2 }}>
+                  <p style={{ fontSize: 22, fontWeight: 300, color: 'rgba(255,255,255,0.92)', fontVariantNumeric: 'tabular-nums' }}>
+                    <AnimatedCounter end={activeSessions} />
+                    <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', marginLeft: 2 }}>/{totalSessions}</span>
+                  </p>
+                  <button
+                    onClick={() => navigate('/conversations')}
+                    style={{
+                      fontSize: 10,
+                      color: '#007AFF',
+                      background: 'none',
+                      border: 'none',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      padding: 0,
+                      marginLeft: 4,
+                    }}
+                  >
+                    Manage →
+                  </button>
+                </div>
               </div>
               <div style={{ width: 1, height: 36, background: 'rgba(255,255,255,0.08)' }} />
               <div style={{ textAlign: 'center' }}>
@@ -111,7 +133,7 @@ export default function Dashboard() {
         {/* Stats Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: m ? 10 : 20 }}>
           {[
-            { label: 'Sessions', value: agent.activeSessions, icon: Activity, color: '#007AFF' },
+            { label: 'Sessions', value: totalSessions, icon: Activity, color: '#007AFF' },
             { label: 'Mem Files', value: agent.memoryFiles, icon: Database, color: '#BF5AF2' },
             { label: 'Chunks', value: agent.memoryChunks, icon: Cpu, color: '#32D74B' },
             { label: 'Channels', value: agent.channels?.length || 0, icon: Radio, color: '#FF9500' },

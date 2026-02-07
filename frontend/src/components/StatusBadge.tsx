@@ -23,6 +23,11 @@ const statusConfig: Record<string, { badge: string; dotClass: string; dotColor?:
     badge: 'macos-badge-orange',
     dotClass: 'status-dot status-dot-orange',
   },
+  disabled: {
+    badge: 'macos-badge',
+    dotClass: 'status-dot',
+    dotColor: '#8E8E93',
+  },
   failed: {
     badge: 'macos-badge-red',
     dotClass: 'status-dot status-dot-red',

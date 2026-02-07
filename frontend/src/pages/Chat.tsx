@@ -38,18 +38,25 @@ function sessionName(s: any): string {
 }
 
 function sessionIcon(s: any) {
-  const dn = s.displayName || s.key || ''
-  if (dn.includes('#')) return Hash
-  if (dn.includes('mission-control')) return MessageSquare
-  if (s.key?.includes('subagent')) return Zap
-  return MessageCircle
+  const type = s.type || 'other'
+  switch (type) {
+    case 'discord': return '💬'
+    case 'sub-agent': return '🤖'
+    case 'web': return '🌐'
+    case 'main': return '👤'
+    default: return '❓'
+  }
 }
 
-function sessionCategory(s: any): string {
-  if (s.key?.includes('subagent')) return 'Sub-Agent'
-  if (s.key?.includes('discord')) return 'Discord'
-  if (s.key?.includes('mission-control') || s.displayName?.includes('mission-control')) return 'Dashboard'
-  return 'Session'
+function sessionTypeLabel(s: any): string {
+  const type = s.type || 'other'
+  switch (type) {
+    case 'discord': return 'Discord Channel'
+    case 'sub-agent': return 'Sub-Agent'
+    case 'web': return 'Web Interface'
+    case 'main': return 'Main Session'
+    default: return 'Other Session'
+  }
 }
 
 // Clean model name

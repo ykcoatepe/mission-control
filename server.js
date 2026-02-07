@@ -418,17 +418,28 @@ app.get('/api/sessions', async (req, res) => {
 
     const result = {
       count: sessionData.count || sessions.length,
-      sessions: sessions.map(s => ({
-        key: s.key,
-        kind: s.kind,
-        channel: s.channel || 'unknown',
-        displayName: s.displayName || s.key.split(':').slice(-1)[0],
-        model: (s.model || '').replace('us.anthropic.', ''),
-        totalTokens: s.totalTokens || 0,
-        contextTokens: s.contextTokens || 0,
-        updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
-        label: s.label || null,
-      })),
+      sessions: sessions.map(s => {
+        const key = s.key || '';
+        const type = key.includes(':subagent:') ? 'sub-agent' 
+          : key.includes(':discord:') ? 'discord'
+          : key.includes(':openai') ? 'web'
+          : key.includes(':main:main') ? 'main'
+          : 'other';
+        
+        return {
+          key: s.key,
+          kind: s.kind,
+          channel: s.channel || 'unknown',
+          displayName: s.displayName || s.key.split(':').slice(-1)[0],
+          model: (s.model || '').replace('us.anthropic.', ''),
+          totalTokens: s.totalTokens || 0,
+          contextTokens: s.contextTokens || 0,
+          updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
+          label: s.label || null,
+          type,
+          isActive: (s.totalTokens || 0) > 0,
+        };
+      }),
     };
     sessionsCache = result;
     sessionsCacheTime = Date.now();
@@ -466,6 +477,7 @@ app.get('/api/cron', (req, res) => {
       payload: j.payload?.kind || '?',
       description: j.payload?.text?.substring(0, 120) || '',
       history: [],
+      enabled: j.enabled !== false, // Add enabled flag for toggle
     }));
 
     const result = { jobs };
@@ -475,6 +487,156 @@ app.get('/api/cron', (req, res) => {
   } catch (e) {
     console.error('[Cron API]', e.message);
     res.json({ jobs: [], error: e.message });
+  }
+});
+
+// POST: Toggle cron job enabled/disabled
+app.post('/api/cron/:id/toggle', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { enabled } = req.body;
+    
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
+      },
+      body: JSON.stringify({ 
+        tool: 'cron', 
+        args: { 
+          action: 'update', 
+          jobId: id, 
+          patch: { enabled: enabled } 
+        } 
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gateway error: ${response.status} ${errorText}`);
+    }
+
+    // Clear cache so next GET refreshes
+    cronCache = null;
+    cronCacheTime = 0;
+    
+    res.json({ ok: true, message: `Job ${enabled ? 'enabled' : 'disabled'}` });
+  } catch (error) {
+    console.error('[Cron toggle]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST: Run cron job immediately
+app.post('/api/cron/:id/run', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
+      },
+      body: JSON.stringify({ 
+        tool: 'cron', 
+        args: { 
+          action: 'run', 
+          jobId: id 
+        } 
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gateway error: ${response.status} ${errorText}`);
+    }
+
+    // Clear cache so next GET refreshes
+    cronCache = null;
+    cronCacheTime = 0;
+    
+    res.json({ ok: true, message: 'Job triggered successfully' });
+  } catch (error) {
+    console.error('[Cron run]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// POST: Create new cron job
+app.post('/api/cron/create', async (req, res) => {
+  try {
+    const { job } = req.body;
+    
+    if (!job || !job.name || !job.schedule) {
+      return res.status(400).json({ error: 'Invalid job format - name and schedule required' });
+    }
+    
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
+      },
+      body: JSON.stringify({ 
+        tool: 'cron', 
+        args: { 
+          action: 'add', 
+          job: job 
+        } 
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gateway error: ${response.status} ${errorText}`);
+    }
+
+    // Clear cache so next GET refreshes
+    cronCache = null;
+    cronCacheTime = 0;
+    
+    res.json({ ok: true, message: 'Job created successfully' });
+  } catch (error) {
+    console.error('[Cron create]', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// DELETE: Remove cron job
+app.delete('/api/cron/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
+      method: 'POST',
+      headers: { 
+        'Content-Type': 'application/json', 
+        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
+      },
+      body: JSON.stringify({ 
+        tool: 'cron', 
+        args: { 
+          action: 'remove', 
+          jobId: id 
+        } 
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Gateway error: ${response.status} ${errorText}`);
+    }
+
+    // Clear cache so next GET refreshes
+    cronCache = null;
+    cronCacheTime = 0;
+    
+    res.json({ ok: true, message: 'Job deleted successfully' });
+  } catch (error) {
+    console.error('[Cron delete]', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
