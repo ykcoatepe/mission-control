@@ -529,37 +529,7 @@ export default function Chat() {
                 style={{ padding: m ? 14 : '16px 20px', cursor: 'pointer', position: 'relative' }}
                 onClick={() => openSession(s)}
               >
-                {/* Close button */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    closeSession(s.key)
-                  }}
-                  disabled={closingSession === s.key}
-                  style={{
-                    position: 'absolute',
-                    bottom: m ? 8 : 12,
-                    right: m ? 8 : 12,
-                    width: 24,
-                    height: 24,
-                    borderRadius: 6,
-                    border: '1px solid rgba(255,255,255,0.1)',
-                    background: 'rgba(255,255,255,0.06)',
-                    color: 'rgba(255,255,255,0.4)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    fontSize: 12,
-                    opacity: closingSession === s.key ? 0.5 : 0.8,
-                    transition: 'opacity 0.2s'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,69,58,0.15)' }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)' }}
-                >
-                  {closingSession === s.key ? '...' : '✕'}
-                </button>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
                   <div style={{ 
                     width: m ? 40 : 44, 
                     height: m ? 40 : 44, 
@@ -621,6 +591,24 @@ export default function Chat() {
                       {modelShort(s.model)}
                     </span>
                   </div>
+                  {/* Close button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); closeSession(s.key); }}
+                    disabled={closingSession === s.key}
+                    style={{
+                      width: 22, height: 22, borderRadius: 6,
+                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'rgba(255,255,255,0.06)',
+                      color: 'rgba(255,255,255,0.4)',
+                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 11, opacity: closingSession === s.key ? 0.5 : 0.7,
+                      flexShrink: 0, marginLeft: 6,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,69,58,0.15)'; e.currentTarget.style.color = '#FF453A'; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
+                  >
+                    {closingSession === s.key ? '·' : '✕'}
+                  </button>
                 </div>
               </motion.div>
             )
