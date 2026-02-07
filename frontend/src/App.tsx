@@ -103,7 +103,7 @@ export default function App() {
             <Routes location={location} key={location.pathname}>
               <Route path="/setup" element={<Setup />} />
               <Route path="/" element={<Dashboard />} />
-              <Route path="/chat" element={<Chat />} />
+              <Route path="/conversations" element={<Chat />} />
               <Route path="/workshop" element={<Workshop />} />
               <Route path="/costs" element={<Costs />} />
               <Route path="/cron" element={<Cron />} />
