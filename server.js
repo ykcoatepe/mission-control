@@ -627,10 +627,17 @@ app.post('/api/scout/dismiss', (req, res) => {
   }
 });
 
-// ========== API: Agents — Real from gateway sessions ==========
+// ========== API: Agents — Real from gateway sessions + custom agents ==========
 app.get('/api/agents', async (req, res) => {
   try {
     const sessions = await fetchSessions(50);
+
+    // Load custom agents from agents-custom.json
+    const customAgentsFile = path.join(__dirname, 'agents-custom.json');
+    let customAgents = [];
+    try {
+      customAgents = JSON.parse(fs.readFileSync(customAgentsFile, 'utf8'));
+    } catch {}
 
     // Zinbot (primary agent) = main session
     const mainSession = sessions.find(s => s.key === 'agent:main:main');
@@ -651,6 +658,26 @@ app.get('/api/agents', async (req, res) => {
       lastActive: mainSession?.updatedAt ? new Date(mainSession.updatedAt).toISOString() : new Date().toISOString(),
       totalTokens: mainSession?.totalTokens || 0,
       sessionKey: 'agent:main:main',
+    });
+
+    // Add custom agents
+    customAgents.forEach(agent => {
+      agents.push({
+        id: agent.id,
+        name: agent.name,
+        role: 'Custom Agent',
+        avatar: '⚙️',
+        status: agent.status || 'active',
+        model: agent.model,
+        description: agent.description || 'Custom agent',
+        lastActive: null,
+        totalTokens: 0,
+        sessionKey: null,
+        isCustom: true,
+        systemPrompt: agent.systemPrompt,
+        skills: agent.skills,
+        created: agent.created
+      });
     });
 
     // Sub-agents from real sessions
@@ -724,6 +751,42 @@ app.get('/api/agents', async (req, res) => {
       conversations: [],
       error: e.message
     });
+  }
+});
+
+// Create custom agent
+app.post('/api/agents/create', (req, res) => {
+  try {
+    const { name, description, model, systemPrompt, skills } = req.body;
+    if (!name || !model) {
+      return res.status(400).json({ error: 'name and model are required' });
+    }
+
+    // Save to agents-custom.json file
+    const agentsFile = path.join(__dirname, 'agents-custom.json');
+    let agents = [];
+    try {
+      agents = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
+    } catch {}
+
+    const agent = {
+      id: `custom-${Date.now()}`,
+      name,
+      description: description || '',
+      model,
+      systemPrompt: systemPrompt || '',
+      skills: skills || [],
+      created: new Date().toISOString(),
+      status: 'active'
+    };
+
+    agents.push(agent);
+    fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2));
+
+    res.json({ ok: true, agent });
+  } catch (error) {
+    console.error('[Create Agent]', error.message);
+    res.status(500).json({ error: error.message });
   }
 });
 
