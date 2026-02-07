@@ -414,6 +414,106 @@ app.get('/api/cron', (req, res) => {
   }
 });
 
+// ========== API: Activity Feed — aggregated activity from all sources ==========
+app.get('/api/activity', async (req, res) => {
+  try {
+    const feed = [];
+    
+    // 1. Completed tasks (with results)
+    try {
+      const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
+      for (const task of (tasks.columns.done || []).slice(0, 15)) {
+        feed.push({
+          id: `task-${task.id}`,
+          type: 'task_completed',
+          icon: 'check',
+          title: task.title,
+          detail: task.result ? task.result.substring(0, 200) : 'Completed',
+          time: task.completed || task.created,
+          priority: task.priority,
+          source: task.source || 'manual',
+          taskId: task.id,
+          actionable: !!task.childSessionKey,
+          actionLabel: task.childSessionKey ? 'Continue Chat' : 'View',
+          actionUrl: '/workshop',
+        });
+      }
+      // In-progress tasks
+      for (const task of (tasks.columns.inProgress || [])) {
+        feed.push({
+          id: `task-prog-${task.id}`,
+          type: 'task_running',
+          icon: 'loader',
+          title: `Working: ${task.title}`,
+          detail: 'Sub-agent executing...',
+          time: task.startedAt || task.created,
+          priority: task.priority,
+          source: task.source || 'manual',
+          taskId: task.id,
+          actionable: true,
+          actionLabel: 'View',
+          actionUrl: '/workshop',
+        });
+      }
+    } catch(e) {}
+    
+    // 2. Scout opportunities (recent, undeployed)
+    try {
+      const scoutFile = path.join(__dirname, 'scout-results.json');
+      if (fs.existsSync(scoutFile)) {
+        const scout = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
+        for (const opp of (scout.opportunities || []).filter(o => o.status !== 'dismissed').slice(0, 10)) {
+          feed.push({
+            id: `scout-${opp.id}`,
+            type: opp.status === 'deployed' ? 'scout_deployed' : 'scout_found',
+            icon: 'search',
+            title: opp.title,
+            detail: opp.summary ? opp.summary.substring(0, 150) : '',
+            time: opp.found,
+            score: opp.score,
+            source: opp.source,
+            category: opp.category,
+            actionable: opp.status !== 'deployed',
+            actionLabel: 'Deploy',
+            actionUrl: '/scout',
+          });
+        }
+      }
+    } catch(e) {}
+    
+    // 3. Cron job last runs
+    try {
+      const { execSync } = require('child_process');
+      const cronOutput = execSync('openclaw cron list --json 2>/dev/null || echo "[]"', { timeout: 5000 }).toString();
+      const crons = JSON.parse(cronOutput);
+      for (const job of (Array.isArray(crons) ? crons : crons.jobs || [])) {
+        if (job.lastRun || job.lastRunAt) {
+          feed.push({
+            id: `cron-${job.id || job.jobId}`,
+            type: 'cron_run',
+            icon: 'clock',
+            title: `Cron: ${job.name || job.id || 'unnamed'}`,
+            detail: job.lastRunStatus === 'ok' ? 'Completed successfully' : `Status: ${job.lastRunStatus || 'unknown'}`,
+            time: job.lastRun || job.lastRunAt,
+            actionable: false,
+          });
+        }
+      }
+    } catch(e) {}
+    
+    // Sort by time (newest first)
+    feed.sort((a, b) => {
+      const ta = a.time ? new Date(a.time).getTime() : 0;
+      const tb = b.time ? new Date(b.time).getTime() : 0;
+      return tb - ta;
+    });
+    
+    res.json({ feed: feed.slice(0, 30), generated: new Date().toISOString() });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ========== API: Tasks (Kanban) — reads from tasks.json ==========
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 

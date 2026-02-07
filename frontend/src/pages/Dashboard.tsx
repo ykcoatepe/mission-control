@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Activity, Cpu, MessageSquare, Database, Radio, Heart,
-  BarChart3, Zap, Mail, Calendar, Code
+  BarChart3, Zap, Mail, Calendar, Code, CheckCircle, Search,
+  Clock, Loader2, Play, ArrowRight, Bell
 } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
@@ -10,14 +12,26 @@ import StatusBadge from '../components/StatusBadge'
 import { useApi, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
 
-const activityIcons: Record<string, any> = {
-  heartbeat: Heart, development: Code, email: Mail,
-  memory: Database, calendar: Calendar, business: BarChart3, chat: MessageSquare,
+const feedIcons: Record<string, any> = {
+  check: CheckCircle,
+  search: Search,
+  clock: Clock,
+  loader: Loader2,
+}
+
+const feedColors: Record<string, string> = {
+  task_completed: '#32D74B',
+  task_running: '#007AFF',
+  scout_found: '#FF9500',
+  scout_deployed: '#BF5AF2',
+  cron_run: '#8E8E93',
 }
 
 export default function Dashboard() {
   const m = useIsMobile()
+  const navigate = useNavigate()
   const { data, loading } = useApi<any>('/api/status', 30000)
+  const { data: activityData } = useApi<any>('/api/activity', 10000)
   const [countdown, setCountdown] = useState('')
 
   useEffect(() => {
@@ -43,7 +57,8 @@ export default function Dashboard() {
     )
   }
 
-  const { agent, heartbeat, recentActivity, tokenUsage } = data
+  const { agent, heartbeat, tokenUsage } = data
+  const feed = activityData?.feed || []
 
   return (
     <PageTransition>
@@ -74,7 +89,6 @@ export default function Dashboard() {
                 </p>
               </div>
             </div>
-            {/* Stats row */}
             <div style={{ display: 'flex', gap: 16, justifyContent: m ? 'space-around' : 'flex-end', paddingTop: m ? 12 : 0, borderTop: m ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
               <div style={{ textAlign: 'center' }}>
                 <p className="text-label">Sessions</p>
@@ -118,9 +132,108 @@ export default function Dashboard() {
           ))}
         </div>
 
-        {/* Below: stack on mobile, side-by-side on desktop */}
+        {/* Main content: Activity Feed + System Info */}
         <div style={{ display: 'flex', flexDirection: m ? 'column' : 'row', gap: m ? 16 : 24 }}>
-          {/* Left Column */}
+          
+          {/* Activity Feed — THE main feature */}
+          <div style={{ flex: m ? undefined : 1.5, minWidth: 0 }}>
+            <GlassCard delay={0.15} hover={false} noPad>
+              <div style={{ padding: m ? 14 : 24, maxHeight: m ? 500 : 640, display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Bell size={14} style={{ color: '#FFD60A' }} /> Activity Feed
+                  </h3>
+                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{feed.length} items</span>
+                </div>
+                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                  {feed.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '40px 20px', color: 'rgba(255,255,255,0.3)' }}>
+                      <Bell size={28} style={{ marginBottom: 8, opacity: 0.3 }} />
+                      <p style={{ fontSize: 12 }}>No activity yet</p>
+                    </div>
+                  ) : feed.map((item: any, i: number) => {
+                    const Icon = feedIcons[item.icon] || Activity
+                    const color = feedColors[item.type] || '#8E8E93'
+                    const isRunning = item.type === 'task_running'
+                    
+                    return (
+                      <div
+                        key={item.id}
+                        style={{
+                          display: 'flex', gap: m ? 10 : 12, padding: m ? '10px 0' : '12px 0',
+                          borderBottom: '1px solid rgba(255,255,255,0.04)',
+                          cursor: item.actionUrl ? 'pointer' : 'default',
+                        }}
+                        onClick={() => item.actionUrl && navigate(item.actionUrl)}
+                      >
+                        {/* Icon */}
+                        <div style={{
+                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+                          background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        }}>
+                          <Icon size={14} style={{ color, ...(isRunning ? { animation: 'spin 1s linear infinite' } : {}) }} />
+                        </div>
+
+                        {/* Content */}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <p style={{
+                            fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.88)',
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}>
+                            {item.title}
+                          </p>
+                          {item.detail && (
+                            <p style={{
+                              fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.4,
+                              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                            }}>
+                              {item.detail}
+                            </p>
+                          )}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
+                            {item.score && (
+                              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: item.score >= 80 ? 'rgba(50,215,75,0.12)' : 'rgba(255,149,0,0.12)', color: item.score >= 80 ? '#32D74B' : '#FF9500' }}>
+                                {item.score}pts
+                              </span>
+                            )}
+                            {item.source && (
+                              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{item.source}</span>
+                            )}
+                            {item.priority && (
+                              <span style={{
+                                width: 6, height: 6, borderRadius: '50%',
+                                background: item.priority === 'high' ? '#FF453A' : item.priority === 'medium' ? '#FF9500' : '#007AFF',
+                              }} />
+                            )}
+                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>
+                              {item.time ? timeAgo(item.time) : ''}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Action button */}
+                        {item.actionable && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); navigate(item.actionUrl || '/workshop'); }}
+                            style={{
+                              alignSelf: 'center', padding: '5px 10px', borderRadius: 7, flexShrink: 0,
+                              border: `1px solid ${color}30`, background: `${color}10`,
+                              color, fontSize: 10, fontWeight: 600, cursor: 'pointer',
+                              display: 'flex', alignItems: 'center', gap: 4,
+                            }}
+                          >
+                            {item.actionLabel || 'View'} <ArrowRight size={10} />
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </GlassCard>
+          </div>
+
+          {/* Right Column - System Info */}
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: m ? 12 : 20, minWidth: 0 }}>
             {/* Channels */}
             <GlassCard delay={0.2} hover={false} noPad>
@@ -181,34 +294,6 @@ export default function Dashboard() {
                     <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 4 }}>Interval</p>
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>{agent.heartbeatInterval}</p>
                   </div>
-                </div>
-              </div>
-            </GlassCard>
-          </div>
-
-          {/* Right Column - Activity Feed */}
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <GlassCard delay={0.2} hover={false} noPad>
-              <div style={{ padding: m ? 14 : 24, maxHeight: m ? 350 : 560, display: 'flex', flexDirection: 'column' }}>
-                <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Zap size={13} style={{ color: '#FFD60A' }} /> Recent Activity
-                </h3>
-                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
-                  {recentActivity.map((a: any, i: number) => {
-                    const Icon = activityIcons[a.type] || Activity
-                    return (
-                      <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                          <Icon size={12} style={{ color: 'rgba(255,255,255,0.5)' }} />
-                        </div>
-                        <div style={{ minWidth: 0, flex: 1 }}>
-                          <p style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>{a.action}</p>
-                          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.detail}</p>
-                        </div>
-                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', flexShrink: 0 }}>{timeAgo(a.time)}</span>
-                      </div>
-                    )
-                  })}
                 </div>
               </div>
             </GlassCard>
