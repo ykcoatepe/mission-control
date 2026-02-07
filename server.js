@@ -354,6 +354,7 @@ setTimeout(() => {
       duration: j.state?.lastDurationMs ? `${j.state.lastDurationMs}ms` : null,
       target: j.sessionTarget || 'main', payload: j.payload?.kind || '?',
       description: j.payload?.text?.substring(0, 120) || '', history: [],
+      enabled: j.enabled !== false,
     })) };
     cronCacheTime = Date.now();
     console.log(`[Startup] Pre-warmed ${cronCache.jobs.length} cron jobs`);
