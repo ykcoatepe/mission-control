@@ -1803,6 +1803,13 @@ app.post('/api/setup', (req, res) => {
     // Write the updated config
     fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
     
+    // Clear old scout results so fresh scan uses new queries
+    const scoutResultsPath = path.join(__dirname, 'scout-results.json');
+    if (fs.existsSync(scoutResultsPath)) {
+      fs.writeFileSync(scoutResultsPath, JSON.stringify({ results: [], lastScan: null, queries: scout?.queries?.length || 0 }, null, 2));
+      console.log('[Setup] Cleared scout results for fresh scan');
+    }
+    
     // Return sanitized config
     const safe = JSON.parse(JSON.stringify(mcConfig));
     if (safe.gateway) safe.gateway = { port: safe.gateway.port };

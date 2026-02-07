@@ -105,6 +105,7 @@ export default function Agents() {
   const selected = agents.find((a: any) => a.id === selectedAgent)
 
   return (
+    <>
     <PageTransition>
       <div style={{ maxWidth: 1280, margin: '0 auto', padding: m ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: m ? 20 : 28 }}>
         {/* Header */}
@@ -244,8 +245,10 @@ export default function Agents() {
           </div>
         </div>
 
-        {/* Create Agent Modal */}
-        <AnimatePresence>
+      </div>
+      </PageTransition>
+      {/* Create Agent Modal — OUTSIDE PageTransition (position:fixed breaks inside transform) */}
+      <AnimatePresence>
           {showCreateModal && (
             <motion.div
               initial={{ opacity: 0 }}
@@ -524,7 +527,6 @@ export default function Agents() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
-    </PageTransition>
+    </>
   )
 }
