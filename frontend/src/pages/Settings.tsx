@@ -302,9 +302,6 @@ export default function Settings() {
             </div>
           </GlassCard>
 
-          {/* Model Routing Card */}
-          <ModelRoutingCard isMobile={isMobile} />
-
           {/* OpenClaw Configuration Card */}
           <GlassCard noPad>
             <div style={{ padding: isMobile ? 16 : 24 }}>
@@ -427,6 +424,20 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
     }
   }
 
+  const MODEL_OPTIONS = [
+    { value: 'us.anthropic.claude-opus-4-6-v1', label: 'Claude Opus 4.6 ($$$)' },
+    { value: 'us.anthropic.claude-sonnet-4-20250514-v1:0', label: 'Claude Sonnet 4 ($$)' },
+    { value: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5 ($)' },
+  ]
+
+  const selectStyle = { 
+    width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
+    background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13,
+    cursor: 'pointer', appearance: 'none' as const,
+    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath fill=\'%23999\' d=\'M6 8L1 3h10z\'/%3E%3C/svg%3E")',
+    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 16px center',
+  }
+
   return (
     <GlassCard noPad>
       <div style={{ padding: isMobile ? 16 : 24 }}>
@@ -440,44 +451,23 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Main Model</label>
-            <input
-              type="text"
-              value={routing.main}
-              onChange={(e) => setRouting({ ...routing, main: e.target.value })}
-              placeholder="us.anthropic.claude-opus-4-6-v1"
-              style={{ 
-                width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
-                background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13 
-              }}
-            />
+            <select value={routing.main} onChange={(e) => setRouting({ ...routing, main: e.target.value })} style={selectStyle}>
+              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
           </div>
           
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Sub-agent Model</label>
-            <input
-              type="text"
-              value={routing.subagent}
-              onChange={(e) => setRouting({ ...routing, subagent: e.target.value })}
-              placeholder="us.anthropic.claude-sonnet-4-20250514-v1:0"
-              style={{ 
-                width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
-                background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13 
-              }}
-            />
+            <select value={routing.subagent} onChange={(e) => setRouting({ ...routing, subagent: e.target.value })} style={selectStyle}>
+              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
           </div>
           
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Heartbeat Model</label>
-            <input
-              type="text"
-              value={routing.heartbeat}
-              onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })}
-              placeholder="us.anthropic.claude-haiku-4-5-20251001-v1:0"
-              style={{ 
-                width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
-                background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13 
-              }}
-            />
+            <select value={routing.heartbeat} onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })} style={selectStyle}>
+              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
           </div>
 
           <button
