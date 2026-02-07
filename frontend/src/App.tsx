@@ -23,30 +23,18 @@ export default function App() {
   const navigate = useNavigate()
   const isMobile = useIsMobile()
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [setupChecked, setSetupChecked] = useState(false)
 
-  // Check if setup is needed on app load
+  // Check if setup is needed on initial app load (non-blocking)
   useEffect(() => {
     if (location.pathname !== '/setup') {
-      checkSetupNeeded()
+      fetch('/api/setup')
+        .then(r => r.json())
+        .then(data => {
+          if (data.needsSetup) navigate('/setup')
+        })
+        .catch(() => {}) // Ignore errors — just show dashboard
     }
-  }, [location.pathname])
-
-  const checkSetupNeeded = async () => {
-    try {
-      const response = await fetch('/api/setup')
-      const data = await response.json()
-      
-      if (data.needsSetup && location.pathname !== '/setup') {
-        navigate('/setup')
-      }
-      
-      setSetupChecked(true)
-    } catch (error) {
-      console.error('Failed to check setup status:', error)
-      setSetupChecked(true)
-    }
-  }
+  }, []) // Run once on mount, not on every route change
 
   // Hide global chat widget on Conversations page (has its own chat)
   const hideChatWidget = isMobile && location.pathname === '/conversations'
@@ -55,22 +43,6 @@ export default function App() {
   const isSetupPage = location.pathname === '/setup'
 
   const closeSidebar = () => setSidebarOpen(false)
-
-  // Show loading while checking setup
-  if (!setupChecked && location.pathname !== '/setup') {
-    return (
-      <div style={{ 
-        display: 'flex', 
-        justifyContent: 'center', 
-        alignItems: 'center', 
-        height: '100vh',
-        background: 'linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)',
-        color: 'rgba(255, 255, 255, 0.7)'
-      }}>
-        Loading...
-      </div>
-    )
-  }
 
   return (
     <div className="macos-desktop" style={{ display: 'flex', height: '100vh', overflow: 'hidden', maxWidth: '100vw' }}>

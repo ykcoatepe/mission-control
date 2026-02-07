@@ -237,121 +237,148 @@ app.post('/api/chat', async (req, res) => {
 });
 
 // ========== API: Agent status + heartbeat ==========
-app.get('/api/status', async (req, res) => {
+// ========== STATUS CACHE (avoids 5s+ load times) ==========
+let statusCache = null;
+let statusCacheTime = 0;
+const STATUS_CACHE_TTL = 30000; // 30 seconds
+
+// Background status updater — refreshes cache without blocking requests
+async function refreshStatusCache() {
   try {
-    // Read heartbeat state
-    let heartbeat = {};
-    try {
-      const raw = fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8');
-      heartbeat = JSON.parse(raw);
-    } catch (e) {
-      heartbeat = { lastHeartbeat: null, lastChecks: {}, note: 'Unable to read heartbeat state' };
-    }
+    // Run all slow operations in parallel
+    const [openclawStatus, notionActivity, sessionData] = await Promise.allSettled([
+      new Promise((resolve) => {
+        try {
+          resolve(execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }));
+        } catch (e) {
+          resolve(e.stdout || '');
+        }
+      }),
+      fetchNotionActivity(8).catch(() => null),
+      fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
+    ]);
 
-    // Run openclaw status
-    let openclawStatus = '';
-    try {
-      openclawStatus = execSync('openclaw status 2>&1', { timeout: 15000, encoding: 'utf8' });
-    } catch (e) {
-      openclawStatus = e.stdout || 'Unable to get openclaw status';
-    }
+    const ocStatus = openclawStatus.status === 'fulfilled' ? openclawStatus.value : '';
+    const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
+    const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
 
-    // Parse some key info from the status output
-    const sessionsMatch = openclawStatus.match(/(\d+) active/);
-    const modelMatch = openclawStatus.match(/default\s+(us\.anthropic\.\S+|anthropic\.\S+|[\w./-]+claude[\w./-]*)/);
-    const memoryMatch = openclawStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
-    const heartbeatInterval = openclawStatus.match(/Heartbeat\s*│\s*(\w+)/);
-    const agentsMatch = openclawStatus.match(/Agents\s*│\s*(\d+)/);
+    // Parse openclaw status
+    const sessionsMatch = ocStatus.match(/(\d+) active/);
+    const modelMatch = ocStatus.match(/default\s+(us\.anthropic\.\S+|anthropic\.\S+|[\w./-]+claude[\w./-]*)/);
+    const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
+    const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
+    const agentsMatch = ocStatus.match(/Agents\s*│\s*(\d+)/);
 
-    // Channel statuses
     const channels = [];
     const channelRegex = /│\s*(Discord|WhatsApp|Telegram)\s*│\s*(ON|OFF)\s*│\s*(OK|OFF|ERROR)\s*│\s*(.+?)\s*│/g;
     let m;
-    while ((m = channelRegex.exec(openclawStatus)) !== null) {
+    while ((m = channelRegex.exec(ocStatus)) !== null) {
       channels.push({ name: m[1], enabled: m[2], state: m[3], detail: m[4].trim() });
     }
 
-    // Fetch real recent activity from Notion (with fallback)
-    let recentActivity = null;
-    try {
-      recentActivity = await fetchNotionActivity(8);
-    } catch (e) {
-      console.error('[Status] Notion fetch failed:', e.message);
-    }
+    // Token usage
+    const sessionList = sessions.sessions || [];
+    const totalTokens = sessionList.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
+    const tokenUsage = {
+      used: totalTokens,
+      limit: 1000000,
+      percentage: parseFloat((totalTokens / 10000).toFixed(1))
+    };
 
-    // Fallback if Notion fails
+    // Activity fallback
+    let recentActivity = activity;
     if (!recentActivity || !recentActivity.length) {
-      // Build from heartbeat state + memory files
-      recentActivity = [];
-      if (heartbeat.lastHeartbeat) {
-        recentActivity.push({
-          time: new Date(heartbeat.lastHeartbeat * 1000).toISOString(),
-          action: 'Heartbeat check',
-          detail: heartbeat.note || 'Routine check',
-          type: 'heartbeat'
-        });
-      }
-      // Try to read today's memory file (or yesterday's)
-      for (const dayOffset of [0, 1]) {
-        const d = new Date();
-        d.setDate(d.getDate() - dayOffset);
-        const dateStr = d.toISOString().split('T')[0];
-        try {
-          const memPath = path.join(MEMORY_PATH, `${dateStr}.md`);
-          if (fs.existsSync(memPath)) {
-            const memContent = fs.readFileSync(memPath, 'utf8');
-            // Extract h2 sections as activity items
-            const sections = memContent.split(/\n## /).slice(1); // split on ## headers
-            sections.slice(0, 6).forEach(section => {
-              const firstLine = section.split('\n')[0].trim();
-              // Check for timestamps like "07:35 UTC"
-              const timeMatch = firstLine.match(/(\d{2}:\d{2})\s*UTC/);
-              const time = timeMatch ? `${dateStr}T${timeMatch[1]}:00Z` : `${dateStr}T12:00:00Z`;
-              // Clean the title
-              const title = firstLine.replace(/\d{2}:\d{2}\s*UTC\s*[-—]\s*/, '').replace(/\*\*/g, '').substring(0, 80);
-              // Get a detail from first bullet point
-              const bullets = section.split('\n').filter(l => /^[-*]\s/.test(l.trim()));
-              const detail = (bullets[0] || '').replace(/^[-*]\s*/, '').replace(/\*\*/g, '').substring(0, 120);
-              // Guess type from keywords
-              let type = 'general';
-              const lower = (title + ' ' + detail).toLowerCase();
-              if (lower.includes('bug') || lower.includes('security') || lower.includes('hack') || lower.includes('paypal')) type = 'security';
-              else if (lower.includes('build') || lower.includes('deploy') || lower.includes('dashboard') || lower.includes('code')) type = 'development';
-              else if (lower.includes('email') || lower.includes('lead') || lower.includes('outreach')) type = 'business';
-              else if (lower.includes('heartbeat') || lower.includes('check')) type = 'heartbeat';
-              else if (lower.includes('meeting') || lower.includes('call')) type = 'meeting';
-
-              if (title) {
-                recentActivity.push({ time, action: title, detail: detail || 'Activity logged', type });
-              }
-            });
-            if (recentActivity.length > 2) break; // Got enough from this day
-          }
-        } catch (e) { /* ignore */ }
-      }
-
-      // If still empty, minimal fallback
-      if (!recentActivity.length) {
-        recentActivity = [
-          { time: new Date().toISOString(), action: 'System running', detail: 'No recent activity data available', type: 'general' }
-        ];
-      }
+      recentActivity = buildActivityFromMemory();
     }
 
-    // Fetch real token usage from sessions
-    let tokenUsage = { used: 0, limit: 1000000, percentage: 0 };
+    // Heartbeat state (fast, filesystem only)
+    let heartbeat = {};
     try {
-      const sessionData = await fetchSessions(50);
-      const sessions = sessionData.sessions || [];
-      const totalTokens = sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
-      tokenUsage = {
-        used: totalTokens,
-        limit: 1000000,
-        percentage: parseFloat((totalTokens / 10000).toFixed(1))
-      };
-    } catch (e) {
-      console.error('[Status] Token usage fetch failed:', e.message);
+      heartbeat = JSON.parse(fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8'));
+    } catch { heartbeat = { lastHeartbeat: null, lastChecks: {} }; }
+
+    statusCache = { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat };
+    statusCacheTime = Date.now();
+  } catch (e) {
+    console.error('[StatusCache] refresh failed:', e.message);
+  }
+}
+
+function buildActivityFromMemory() {
+  const recentActivity = [];
+  for (const dayOffset of [0, 1]) {
+    const d = new Date();
+    d.setDate(d.getDate() - dayOffset);
+    const dateStr = d.toISOString().split('T')[0];
+    try {
+      const memPath = path.join(MEMORY_PATH, `${dateStr}.md`);
+      if (fs.existsSync(memPath)) {
+        const memContent = fs.readFileSync(memPath, 'utf8');
+        const sections = memContent.split(/\n## /).slice(1);
+        sections.slice(0, 6).forEach(section => {
+          const firstLine = section.split('\n')[0].trim();
+          const timeMatch = firstLine.match(/(\d{2}:\d{2})\s*UTC/);
+          const time = timeMatch ? `${dateStr}T${timeMatch[1]}:00Z` : `${dateStr}T12:00:00Z`;
+          const title = firstLine.replace(/\d{2}:\d{2}\s*UTC\s*[-—]\s*/, '').replace(/\*\*/g, '').substring(0, 80);
+          const bullets = section.split('\n').filter(l => /^[-*]\s/.test(l.trim()));
+          const detail = (bullets[0] || '').replace(/^[-*]\s*/, '').replace(/\*\*/g, '').substring(0, 120);
+          let type = 'general';
+          const lower = (title + ' ' + detail).toLowerCase();
+          if (lower.includes('bug') || lower.includes('security')) type = 'security';
+          else if (lower.includes('build') || lower.includes('deploy') || lower.includes('dashboard')) type = 'development';
+          else if (lower.includes('email') || lower.includes('lead')) type = 'business';
+          else if (lower.includes('heartbeat')) type = 'heartbeat';
+          else if (lower.includes('meeting')) type = 'meeting';
+          if (title) recentActivity.push({ time, action: title, detail: detail || 'Activity logged', type });
+        });
+        if (recentActivity.length > 2) break;
+      }
+    } catch { /* ignore */ }
+  }
+  return recentActivity.length ? recentActivity : [{ time: new Date().toISOString(), action: 'System running', detail: 'Dashboard active', type: 'general' }];
+}
+
+// Kick off initial cache build on startup
+refreshStatusCache();
+// Pre-warm cron cache on startup (async to not block listen)
+setTimeout(() => {
+  try {
+    const _cronRaw = execSync('openclaw cron list --json 2>&1', { timeout: 10000, encoding: 'utf8' });
+    const _parsed = JSON.parse(_cronRaw);
+    cronCache = { jobs: (_parsed.jobs || []).map(j => ({
+      id: j.id, name: j.name || j.id.substring(0, 8),
+      schedule: j.schedule?.expr || j.schedule?.kind || '?',
+      status: !j.enabled ? 'disabled' : (j.state?.lastStatus === 'ok' ? 'active' : j.state?.lastStatus || 'idle'),
+      lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : null,
+      nextRun: j.state?.nextRunAtMs ? new Date(j.state.nextRunAtMs).toISOString() : null,
+      duration: j.state?.lastDurationMs ? `${j.state.lastDurationMs}ms` : null,
+      target: j.sessionTarget || 'main', payload: j.payload?.kind || '?',
+      description: j.payload?.text?.substring(0, 120) || '', history: [],
+    })) };
+    cronCacheTime = Date.now();
+    console.log(`[Startup] Pre-warmed ${cronCache.jobs.length} cron jobs`);
+  } catch (e) { console.warn('[Startup] Cron pre-warm failed'); }
+}, 100);
+
+app.get('/api/status', async (req, res) => {
+  try {
+    // If cache is stale, refresh in background but serve cached data immediately
+    if (Date.now() - statusCacheTime > STATUS_CACHE_TTL) {
+      refreshStatusCache(); // don't await — fire and forget
     }
+
+    // If no cache yet (first request), wait for it
+    if (!statusCache) {
+      await refreshStatusCache();
+    }
+
+    const { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat } = statusCache || {};
+
+    // Read heartbeat state (fast, always fresh)
+    let hb = heartbeat || {};
+    try {
+      hb = JSON.parse(fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8'));
+    } catch { /* use cached */ }
 
     res.json({
       agent: {
@@ -365,9 +392,9 @@ app.get('/api/status', async (req, res) => {
         heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : '1h',
         channels
       },
-      heartbeat,
-      recentActivity,
-      tokenUsage
+      heartbeat: hb,
+      recentActivity: recentActivity || [],
+      tokenUsage: tokenUsage || { used: 0, limit: 1000000, percentage: 0 }
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -375,12 +402,21 @@ app.get('/api/status', async (req, res) => {
 });
 
 // ========== API: Live sessions (from OpenClaw gateway) ==========
+let sessionsCache = null;
+let sessionsCacheTime = 0;
+const SESSIONS_CACHE_TTL = 15000;
+
 app.get('/api/sessions', async (req, res) => {
   try {
+    // Return cache if fresh
+    if (sessionsCache && Date.now() - sessionsCacheTime < SESSIONS_CACHE_TTL) {
+      return res.json(sessionsCache);
+    }
+
     const sessionData = await fetchSessions(25);
     const sessions = sessionData.sessions || [];
 
-    res.json({
+    const result = {
       count: sessionData.count || sessions.length,
       sessions: sessions.map(s => ({
         key: s.key,
@@ -393,16 +429,28 @@ app.get('/api/sessions', async (req, res) => {
         updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
         label: s.label || null,
       })),
-    });
+    };
+    sessionsCache = result;
+    sessionsCacheTime = Date.now();
+    res.json(result);
   } catch (e) {
     console.error('[Sessions API]', e.message);
     res.json({ count: 0, sessions: [], error: e.message });
   }
 });
 
-// ========== API: Cron jobs (LIVE from OpenClaw) ==========
+// ========== API: Cron jobs (LIVE from OpenClaw, cached) ==========
+let cronCache = null;
+let cronCacheTime = 0;
+const CRON_CACHE_TTL = 30000;
+
 app.get('/api/cron', (req, res) => {
   try {
+    // Return cache if fresh
+    if (cronCache && Date.now() - cronCacheTime < CRON_CACHE_TTL) {
+      return res.json(cronCache);
+    }
+
     const cronRaw = execSync('openclaw cron list --json 2>&1', { timeout: 10000, encoding: 'utf8' });
     const parsed = JSON.parse(cronRaw);
 
@@ -420,7 +468,10 @@ app.get('/api/cron', (req, res) => {
       history: [],
     }));
 
-    res.json({ jobs });
+    const result = { jobs };
+    cronCache = result;
+    cronCacheTime = Date.now();
+    res.json(result);
   } catch (e) {
     console.error('[Cron API]', e.message);
     res.json({ jobs: [], error: e.message });
