@@ -96,10 +96,10 @@ export default function Agents() {
   const getSessionGroups = () => {
     const sessions = sessionsData?.sessions || []
     const groups = {
-      main: { sessions: [], totalTokens: 0, name: 'Main Agent', icon: '👤' },
-      discord: { sessions: [], totalTokens: 0, name: 'Discord Channels', icon: '💬' },
-      subagents: { sessions: [], totalTokens: 0, name: 'Sub-agents', icon: '🤖' },
-      web: { sessions: [], totalTokens: 0, name: 'Web Interfaces', icon: '🌐' }
+      main: { sessions: [] as any[], totalTokens: 0, name: 'Main Agent', icon: '👤' },
+      discord: { sessions: [] as any[], totalTokens: 0, name: 'Discord Channels', icon: '💬' },
+      subagents: { sessions: [] as any[], totalTokens: 0, name: 'Sub-agents', icon: '🤖' },
+      web: { sessions: [] as any[], totalTokens: 0, name: 'Web Interfaces', icon: '🌐' }
     }
     
     sessions.forEach((s: any) => {

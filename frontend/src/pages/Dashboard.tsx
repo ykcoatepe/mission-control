@@ -242,7 +242,7 @@ export default function Dashboard() {
                 {/* Last Active timestamp */}
                 {sessions.length > 0 && (
                   <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
-                    Last active: {timeAgo(sessions.sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())[0]?.updatedAt || '')}
+                    Last active: {timeAgo(sessions.sort((a: any, b: any) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())[0]?.updatedAt || '')}
                   </p>
                 )}
               </div>

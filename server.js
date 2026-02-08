@@ -2477,8 +2477,10 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Mission Control running at http://localhost:${PORT}`);
+// Bind to localhost by default (prevents exposing the control UI to your LAN)
+const HOST = process.env.MISSION_CONTROL_HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 Mission Control running at http://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}`);
   
   // Recover stuck inProgress tasks on startup
   try {
