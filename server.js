@@ -891,7 +891,7 @@ app.post('/api/tasks/:taskId/execute', async (req, res) => {
     // Spawn sub-agent via gateway
     const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
     const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || '';
+    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
     const gwPort = cfg.gateway?.port || 18789;
     
     // Build smart prompt based on task source/content
@@ -2180,7 +2180,7 @@ app.get('/api/sessions/:sessionKey/history', async (req, res) => {
     const sessionKey = decodeURIComponent(req.params.sessionKey);
     const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
     const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || '';
+    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
     const gwPort = cfg.gateway?.port || 18789;
     
     // First get session info to find transcriptPath
@@ -2249,7 +2249,7 @@ app.post('/api/sessions/:sessionKey/send', async (req, res) => {
     
     const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
     const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || '';
+    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
     const gwPort = cfg.gateway?.port || 18789;
     
     // Use AbortController for timeout

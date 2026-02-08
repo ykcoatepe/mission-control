@@ -16,6 +16,9 @@ A macOS-native-feel dashboard for monitoring and controlling your [OpenClaw](htt
 ### Chat with your Agent
 ![Chat Widget](screenshot-chat.png)
 
+### Skills Manager
+![Skills Manager](screenshot-skills.png)
+
 ## Features
 
 - **📊 Dashboard** — Agent status, quick actions, activity feed, token usage
