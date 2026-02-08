@@ -1,49 +1,87 @@
 # 🖥️ Mission Control — Dashboard for OpenClaw
 
-A macOS-native-feel dashboard for monitoring and controlling your [OpenClaw](https://openclaw.ai) AI agent.
+**Your AI agent deserves a cockpit.**
+
+Mission Control is a sleek, macOS-native-feel web dashboard for [OpenClaw](https://openclaw.ai) — the open-source AI agent framework. Monitor your agent's activity, manage cron jobs, discover opportunities, chat in real-time, and keep costs under control — all from one beautiful interface.
+
+> Built by an OpenClaw power user who got tired of SSHing into servers to check what his agent was doing.
 
 ![Dashboard](screenshot.png)
 
+---
+
+## ✨ Why Mission Control?
+
+OpenClaw agents are powerful — but they run headless. You're stuck checking logs, reading JSONL transcripts, and running CLI commands to know what's happening. Mission Control changes that:
+
+- **See everything at a glance** — sessions, tokens, channels, heartbeat status
+- **Talk to your agent** — streaming chat widget on every page (Intercom-style)
+- **Delegate work** — queue tasks, let sub-agents research, review reports
+- **Stay on budget** — track token usage and costs across all sessions
+- **Find opportunities** — Scout Engine auto-searches for gigs, grants, skills, and news
+- **Manage schedules** — create, toggle, run, and delete cron jobs visually
+- **One-click actions** — check emails, review calendar, run heartbeats
+
+---
+
+## 📸 Screenshots
+
 ### Cron Monitor
+Schedule and manage automated jobs with toggle switches, run buttons, and create presets.
+
 ![Cron Monitor](screenshot-cron.png)
 
 ### Workshop
+Kanban-style task board — queue tasks, execute with sub-agents, review results, and discuss with your agent.
+
 ![Workshop](screenshot-workshop.png)
 
 ### Scout Engine
+Auto-discover freelance gigs, bug bounties, grants, new skills, and industry news via configurable web searches.
+
 ![Scout Engine](screenshot-scout.png)
 
-### Chat with your Agent
+### Chat Widget
+Floating chat bubble on every page — streaming responses, persistent conversation, follow-up capable.
+
 ![Chat Widget](screenshot-chat.png)
 
 ### Skills Manager
+Browse installed and available skills. Enable, disable, or install new capabilities for your agent.
+
 ![Skills Manager](screenshot-skills.png)
 
-## Features
+---
 
-- **📊 Dashboard** — Agent status, quick actions, activity feed, token usage
-- **💬 Conversations** — Browse and manage all agent sessions
-- **🔨 Workshop** — Task queue with sub-agent execution and reporting
-- **💰 Cost Tracker** — Token-based cost estimation with budget alerts
-- **⏰ Cron Jobs** — Create, toggle, run, and manage scheduled tasks
-- **🔍 Scout Engine** — Auto-discover opportunities via web search
-- **🤖 Agent Hub** — Monitor agents with per-session token tracking
-- **⚙️ Settings** — Model routing, heartbeat config, export/import
-- **🧩 Skills** — Enable/disable installed skills
-- **☁️ AWS Dashboard** — (Optional) Real AWS costs, Bedrock models, image generation
+## 🧭 All Pages
 
-## Quick Start
+| Page | What it does |
+|------|-------------|
+| **Dashboard** | Agent status, quick actions (email/calendar/heartbeat), activity feed, channel status, token counter |
+| **Conversations** | Browse all agent sessions with filters, view history, continue conversations |
+| **Workshop** | Kanban task board — Queue → In Progress → Done. Sub-agents do the research, you review |
+| **Cost Tracker** | Token-based cost estimation per model, daily breakdown chart, budget alerts |
+| **Cron Monitor** | Visual cron management — toggle, run now, delete, create with presets |
+| **Scout** | Opportunity scanner with category filters (OpenClaw, Bounties, Freelance, EdTech, Grants) |
+| **Agent Hub** | All active agents and sessions with token badges, type icons, and management tools |
+| **Settings** | Model routing (main/sub-agent/heartbeat), heartbeat config, export/import |
+| **Skills** | Installed vs available skills grid with enable/disable/install actions |
+| **AWS** | *(Optional)* Real AWS costs, Bedrock model browser, image generation + S3 gallery |
+
+---
+
+## 🚀 Quick Start
 
 ### Prerequisites
 - [OpenClaw](https://openclaw.ai) installed and running
 - Node.js 18+
+- A Brave Search API key (for Scout — [free tier available](https://brave.com/search/api/))
 
 ### Install
 
 ```bash
 # Clone into your OpenClaw workspace
-cd ~/your-workspace
-git clone https://github.com/YOUR/mission-control.git
+git clone https://github.com/Jzineldin/mission-control.git
 cd mission-control
 
 # Install dependencies
@@ -52,79 +90,118 @@ cd frontend && npm install && npm run build && cd ..
 
 # Configure
 cp mc-config.default.json mc-config.json
-# Edit mc-config.json with your settings, or let the Setup Wizard guide you
 
 # Start
 node server.js
-# Or use systemd (recommended):
-# sudo cp mission-control.service /etc/systemd/system/
-# sudo systemctl enable --now mission-control
 ```
 
-Visit `http://localhost:3333` — the Setup Wizard will guide you through configuration.
+Visit `http://localhost:3333` — the **Setup Wizard** will auto-detect your OpenClaw config and guide you through the rest.
+
+### Production (systemd)
+
+```bash
+sudo cp mission-control.service /etc/systemd/system/
+# Edit the service file with your paths
+sudo systemctl enable --now mission-control
+```
 
 ### Configuration
 
-Mission Control auto-detects your OpenClaw setup:
-- Gateway token from `~/.openclaw/openclaw.json`
-- Agent name from `IDENTITY.md`
-- Model, channels, and workspace from OpenClaw config
+Mission Control auto-detects your setup:
+- **Gateway token** from `~/.openclaw/openclaw.json`
+- **Agent name** from `IDENTITY.md`
+- **Model, channels, workspace** from OpenClaw config
 
-Customize via `mc-config.json` or the Settings page.
+Fine-tune everything via `mc-config.json` or the Settings page in the UI.
 
-## Architecture
+---
+
+## 🏗️ Architecture
 
 ```
 mission-control/
-├── server.js          # Express API + static serving
-├── mc-config.json     # Your configuration
-├── scout-engine.js    # Brave Search opportunity scanner
-├── tasks.json         # Workshop task queue
+├── server.js            # Express API + static serving + caching layer
+├── mc-config.json       # Your configuration (gitignored)
+├── mc-config.default.json  # Template for new installs
+├── scout-engine.js      # Brave Search opportunity scanner
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/     # React pages (Dashboard, Chat, etc.)
-│   │   ├── components/ # GlassCard, ChatWidget, Sidebar, etc.
-│   │   └── App.tsx    # Router + layout
-│   └── dist/          # Built frontend (served by Express)
-└── documents/         # Uploaded docs
+│   │   ├── pages/       # 10 React pages
+│   │   ├── components/  # GlassCard, ChatWidget, Sidebar, etc.
+│   │   └── lib/         # Hooks, utilities
+│   └── dist/            # Built frontend (served by Express)
+└── mission-control.service  # systemd template
 ```
 
-## Modules
+**Stack:** React 19 + Vite 7 + Framer Motion + Recharts + Express.js
+
+**Design:** macOS HIG-inspired with frosted glass panels, SF Pro typography, and Apple accent colors. Navy blue brushed steel background with blue-tinted glass overlay.
+
+**Performance:** All API endpoints cached with stale-while-revalidate pattern (30-60s TTL). Pre-warmed on startup. Sub-3ms response times on cache hits.
+
+---
+
+## 📦 Modules
 
 Enable/disable in `mc-config.json`:
 
 | Module | Default | Description |
 |--------|---------|-------------|
-| `dashboard` | ✅ | Main overview + quick actions |
-| `conversations` | ✅ | Session browser + chat |
+| `dashboard` | ✅ | Overview + quick actions |
+| `conversations` | ✅ | Session browser + inline chat |
 | `workshop` | ✅ | Task queue + sub-agent execution |
-| `costs` | ✅ | Token tracking + budget alerts |
+| `costs` | ✅ | Token tracking + budgets |
 | `cron` | ✅ | Cron job management |
 | `scout` | ✅ | Opportunity scanner |
 | `agents` | ✅ | Agent monitoring |
 | `settings` | ✅ | Configuration UI |
 | `skills` | ✅ | Skill management |
-| `aws` | ❌ | AWS costs, Bedrock, image gen |
+| `aws` | ❌ | AWS costs + Bedrock + image gen |
 
-## Scout Engine
+---
 
-Configurable web search queries that find opportunities:
-- Freelance gigs, grants, bounties
-- New OpenClaw skills and plugins
-- Industry news and trends
+## 🔮 Roadmap
 
-Configure queries in `mc-config.json` under `scout.queries`.
-Requires a [Brave Search API key](https://brave.com/search/api/).
+**Coming soon:**
+- [ ] Dedicated chat sessions per topic (email, calendar, per-task)
+- [ ] Cron job output viewer (see what each run produced)
+- [ ] Model management page (visual table for all model slots)
+- [ ] Memory Explorer (browse and search agent memory files)
+- [ ] Mobile PWA support
 
-## Tech Stack
+**Future:**
+- [ ] Skills marketplace (browse/install from ClawHub)
+- [ ] Multi-agent orchestration view
+- [ ] Custom dashboard widgets
+- [ ] Free Scout alternatives (GitHub API, RSS, DuckDuckGo)
+- [ ] Multi-user auth
 
-- **Frontend:** React 19, Vite 7, Framer Motion, Recharts, Lucide React
-- **Backend:** Express.js, Node.js 18+
-- **Design:** macOS HIG-inspired, frosted glass panels, SF Pro typography
-- **API:** OpenClaw Gateway REST API
+Have a feature request? [Open an issue!](https://github.com/Jzineldin/mission-control/issues)
 
-## License
+---
 
-[Business Source License 1.1](LICENSE) — Free to use, modify, and self-host.
-Cannot be offered as a hosted service to third parties.
-Converts to MIT on 2030-02-07.
+## 💖 Support
+
+Mission Control is free and open-source under the BSL 1.1 license.
+
+If it's useful to you, consider:
+- ⭐ **Starring** this repo
+- 🐛 **Reporting bugs** or **suggesting features**
+- ☕ **[Buy me a coffee](https://ko-fi.com/kevinelzarka)** to keep development going
+
+---
+
+## 📄 License
+
+[Business Source License 1.1](LICENSE)
+
+- ✅ Free to use, modify, and self-host
+- ✅ Personal and internal commercial use
+- ❌ Cannot be offered as a hosted SaaS to third parties
+- 🔓 Automatically converts to **MIT** on 2030-02-07
+
+**Licensor:** Kevin El-Zarka / Tale Forge AB
+
+---
+
+Built with 🤖 by [Zinbot](https://github.com/Jzineldin) + Kevin — powered by [OpenClaw](https://openclaw.ai)
