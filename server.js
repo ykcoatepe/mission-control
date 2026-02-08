@@ -432,10 +432,10 @@ function buildActivityFromMemory() {
 // Kick off initial cache build on startup (don't block server start)
 setTimeout(() => refreshStatusCache(), 50);
 // Pre-warm cron cache on startup (async to not block listen)
-setTimeout(() => {
+setTimeout(async () => {
   try {
-    const _cronRaw = execSync('openclaw cron list --json 2>&1', { timeout: 10000, encoding: 'utf8' });
-    const _parsed = JSON.parse(_cronRaw);
+    const { stdout } = await openclawExec(['cron', 'list', '--json'], 15000);
+    const _parsed = JSON.parse(stdout || '{}');
     cronCache = { jobs: (_parsed.jobs || []).map(j => ({
       id: j.id, name: j.name || j.id.substring(0, 8),
       schedule: j.schedule?.expr || j.schedule?.kind || '?',
@@ -449,7 +449,7 @@ setTimeout(() => {
     })) };
     cronCacheTime = Date.now();
     console.log(`[Startup] Pre-warmed ${cronCache.jobs.length} cron jobs`);
-  } catch (e) { console.warn('[Startup] Cron pre-warm failed'); }
+  } catch (e) { console.warn('[Startup] Cron pre-warm failed:', e.message); }
 }, 100);
 
 // Pre-warm activity + costs caches on startup
@@ -590,15 +590,15 @@ let cronCache = null;
 let cronCacheTime = 0;
 const CRON_CACHE_TTL = 30000;
 
-app.get('/api/cron', (req, res) => {
+app.get('/api/cron', async (req, res) => {
   try {
     // Return cache if fresh
     if (cronCache && Date.now() - cronCacheTime < CRON_CACHE_TTL) {
       return res.json(cronCache);
     }
 
-    const cronRaw = execSync('openclaw cron list --json 2>&1', { timeout: 10000, encoding: 'utf8' });
-    const parsed = JSON.parse(cronRaw);
+    const { stdout } = await openclawExec(['cron', 'list', '--json'], 15000);
+    const parsed = JSON.parse(stdout || '{}');
 
     const jobs = (parsed.jobs || []).map(j => ({
       id: j.id,
@@ -849,7 +849,7 @@ app.get('/api/activity', async (req, res) => {
     // 3. Cron job last runs
     try {
       const { execSync } = require('child_process');
-      const cronOutput = execSync('openclaw cron list --json 2>/dev/null || echo "[]"', { timeout: 5000 }).toString();
+      const cronOutput = (await openclawExec(['cron', 'list', '--json'], 10000)).stdout || '{}';
       const crons = JSON.parse(cronOutput);
       for (const job of (Array.isArray(crons) ? crons : crons.jobs || [])) {
         if (job.lastRun || job.lastRunAt) {
@@ -1631,94 +1631,48 @@ app.post('/api/model', async (req, res) => {
 // Skills API endpoints
 app.get('/api/skills', async (req, res) => {
   try {
-    const installed = [];
-    const available = [];
+    // Source of truth: OpenClaw skill discovery
+    const cfg = readOpenclawConfigSafe();
+    const entries = cfg?.skills?.entries || {};
 
-    // Read OpenClaw config for installed skills
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    let config = {};
-    if (fs.existsSync(configPath)) {
-      config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-    }
+    const { stdout } = await openclawExec(['skills', 'list', '--json'], 20000);
+    const payload = JSON.parse(stdout || '{}');
+    const skills = payload.skills || [];
 
-    // Get installed skills from config
-    if (config.skills && config.skills.entries) {
-      for (const [name, skillConfig] of Object.entries(config.skills.entries)) {
-        installed.push({
-          name,
-          description: skillConfig.description || 'No description',
-          status: skillConfig.enabled !== false ? 'active' : 'inactive',
-          installed: true,
-          path: skillConfig.path,
-          type: skillConfig.path?.includes('/usr/lib') ? 'system' : 'workspace'
-        });
-      }
-    }
+    const installed = skills.map(s => {
+      const entry = entries[s.name] || null;
+      const enabled = entry?.enabled !== false; // default true
 
-    // Scan workspace skills directory
-    const workspaceSkillsPath = SKILLS_PATH;
-    if (fs.existsSync(workspaceSkillsPath)) {
-      const dirs = fs.readdirSync(workspaceSkillsPath, { withFileTypes: true })
-        .filter(dirent => dirent.isDirectory())
-        .map(dirent => dirent.name);
+      const type = (s.source === 'openclaw-workspace') ? 'workspace' : 'system';
+      const skillPath = type === 'workspace'
+        ? path.join(SKILLS_PATH, s.name)
+        : undefined;
 
-      for (const dir of dirs) {
-        const skillPath = path.join(workspaceSkillsPath, dir);
-        const isInstalled = installed.some(s => s.name === dir);
+      // Map to UI status
+      let status = 'active';
+      if (s.disabled || s.blockedByAllowlist) status = 'inactive';
+      if (!s.eligible) status = 'available';
+      if (!enabled) status = 'inactive';
 
-        if (!isInstalled) {
-          // Check for package.json or skill.json
-          let skillInfo = { name: dir, description: 'Workspace skill' };
-          const packagePath = path.join(skillPath, 'package.json');
-          const skillJsonPath = path.join(skillPath, 'skill.json');
+      return {
+        name: s.name,
+        description: s.description || '',
+        status,
+        installed: true,
+        path: skillPath,
+        type,
+        eligible: !!s.eligible,
+        disabled: !!s.disabled,
+        blockedByAllowlist: !!s.blockedByAllowlist,
+        source: s.source,
+      };
+    });
 
-          if (fs.existsSync(packagePath)) {
-            const pkg = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
-            skillInfo.description = pkg.description || skillInfo.description;
-            skillInfo.version = pkg.version;
-            skillInfo.author = pkg.author;
-          } else if (fs.existsSync(skillJsonPath)) {
-            const skill = JSON.parse(fs.readFileSync(skillJsonPath, 'utf8'));
-            skillInfo.description = skill.description || skillInfo.description;
-            skillInfo.version = skill.version;
-          }
+    // Keep backward-compat shape for the UI. "available" is now used for non-eligible skills.
+    const available = installed.filter(s => s.status === 'available').map(s => ({ ...s, installed: false }));
+    const realInstalled = installed.filter(s => s.status !== 'available');
 
-          available.push({
-            ...skillInfo,
-            status: 'available',
-            installed: false,
-            path: skillPath,
-            type: 'workspace'
-          });
-        }
-      }
-    }
-
-    // Scan system skills directory
-    const systemSkillsPath = '/usr/lib/node_modules/openclaw/skills';
-    if (fs.existsSync(systemSkillsPath)) {
-      const dirs = fs.readdirSync(systemSkillsPath, { withFileTypes: true })
-        .filter(dirent => dirent.isDirectory())
-        .map(dirent => dirent.name);
-
-      for (const dir of dirs) {
-        const skillPath = path.join(systemSkillsPath, dir);
-        const isInstalled = installed.some(s => s.name === dir);
-
-        if (!isInstalled) {
-          available.push({
-            name: dir,
-            description: 'System skill',
-            status: 'available',
-            installed: false,
-            path: skillPath,
-            type: 'system'
-          });
-        }
-      }
-    }
-
-    res.json({ installed, available });
+    res.json({ installed: realInstalled, available });
   } catch (error) {
     console.error('Skills error:', error);
     res.status(500).json({ error: 'Failed to load skills' });
@@ -1728,29 +1682,18 @@ app.get('/api/skills', async (req, res) => {
 app.post('/api/skills/:name/toggle', async (req, res) => {
   try {
     const { name } = req.params;
-
-    // Update OpenClaw config
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const config = fs.existsSync(configPath)
-      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-      : { skills: { entries: {} } };
-
-    if (config.skills?.entries?.[name]) {
-      config.skills.entries[name].enabled = !config.skills.entries[name].enabled;
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-      // Notify gateway about config change
-      await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/reload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${GATEWAY_TOKEN}`
-        }
-      });
-
-      res.json({ success: true });
-    } else {
-      res.status(404).json({ error: 'Skill not found' });
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled must be boolean' });
     }
+
+    // Use OpenClaw config helper so we don't fight schema changes.
+    // Skill names contain dashes -> use bracket notation.
+    const p = `skills.entries["${String(name).replace(/"/g, '\\"')}"]`;
+    await openclawExec(['config', 'set', '--json', `${p}.enabled`, enabled ? 'true' : 'false'], 15000);
+    await reloadGatewayConfig();
+
+    res.json({ ok: true });
   } catch (error) {
     console.error('Skill toggle error:', error);
     res.status(500).json({ error: 'Failed to toggle skill' });
