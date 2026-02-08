@@ -15,10 +15,21 @@ interface AWSSCostData {
 }
 
 interface TokenData {
-  daily: Array<{ date: string; total: number }>
-  summary: any
-  byService: Array<{ name: string; cost: number }>
-  sessions: Array<{ sessionId: string; cost: number; model: string; tokens: number; timestamp: number }>
+  source?: string
+  daily: Array<{ date: string; cost?: number; tokens?: number }>
+  summary: {
+    todayUsd?: number
+    thisWeekUsd?: number
+    thisMonthUsd?: number
+    totalUsd?: number
+    todayTokens?: number
+    thisWeekTokens?: number
+    thisMonthTokens?: number
+    totalTokens?: number
+    note?: string
+    budget?: { monthly: number; warning?: number }
+  }
+  byService: Array<{ name: string; cost?: number; tokens?: number; percentage?: number }>
   budget?: { monthly: number }
 }
 
@@ -155,15 +166,28 @@ export default function Costs() {
   // Check if AWS module is enabled
   const isAwsEnabled = config?.modules?.aws === true
   
-  // Calculate metrics with fallback to token-based estimates
+  // Calculate metrics with fallback
   const hasAwsData = awsCosts && awsCosts.total > 0
-  const totalTokens = sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
+  const hasLedger = !!(tokenData && (tokenData.source === 'token-usage.csv') && tokenData.summary)
+
+  const totalTokens = hasLedger
+    ? (tokenData?.summary?.thisMonthTokens || tokenData?.summary?.totalTokens || 0)
+    : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
+
   const tokenBasedCost = estimateCost(totalTokens, 'sonnet')
-  
-  const currentMonthCost = hasAwsData ? awsCosts.total : tokenBasedCost
-  const dailyAvg = hasAwsData 
-    ? awsCosts.daily.reduce((sum, d) => sum + d.cost, 0) / Math.max(awsCosts.daily.length, 1)
-    : tokenBasedCost / 30
+
+  const currentMonthCost = hasAwsData
+    ? (awsCosts?.total || 0)
+    : hasLedger
+      ? (tokenData?.summary?.thisMonthUsd || 0)
+      : tokenBasedCost
+
+  const dailyAvg = hasAwsData
+    ? (awsCosts?.daily || []).reduce((sum, d) => sum + d.cost, 0) / Math.max((awsCosts?.daily || []).length, 1)
+    : hasLedger
+      ? (tokenData?.summary?.thisMonthUsd || 0) / Math.max((tokenData?.daily || []).length, 1)
+      : tokenBasedCost / 30
+
   const projectedMonthly = dailyAvg * 30
   
   // Credits data - only show if AWS enabled
@@ -304,7 +328,7 @@ export default function Costs() {
                   color: 'rgba(255,255,255,0.45)', 
                   marginTop: '8px' 
                 }}>
-                  Token-based estimate
+                  {hasLedger ? 'Ledger-based (token-usage.csv)' : 'Token-based estimate'}
                 </div>
               )}
             </div>
@@ -558,34 +582,41 @@ export default function Costs() {
                   gap: m ? '2px' : '4px', 
                   paddingTop: '20px' 
                 }}>
-                  {awsCosts.daily.map((day, i) => {
+                  {awsCosts.daily.map((day) => {
                     const maxCost = Math.max(...awsCosts.daily.map(d => d.cost), 10)
                     const height = Math.max((day.cost / maxCost) * (m ? 140 : 200), 2)
                     return (
-                      <div key={day.date} style={{ 
-                        flex: '1', 
-                        display: 'flex', 
-                        flexDirection: 'column', 
-                        alignItems: 'center', 
-                        gap: '8px' 
-                      }}>
+                      <div key={day.date} style={{ flex: '1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                         <div
-                          style={{
-                            width: '100%',
-                            height: `${height}px`,
-                            background: getBarColor(day.cost),
-                            borderRadius: '4px 4px 0 0',
-                            opacity: '0.8',
-                            transition: 'all 0.3s ease'
-                          }}
+                          style={{ width: '100%', height: `${height}px`, background: getBarColor(day.cost), borderRadius: '4px 4px 0 0', opacity: '0.8', transition: 'all 0.3s ease' }}
                           title={`${day.date}: $${day.cost.toFixed(2)}`}
                         />
-                        <span style={{ 
-                          fontSize: m ? '7px' : '10px', 
-                          color: 'rgba(255,255,255,0.45)',
-                          textAlign: 'center',
-                          lineHeight: 1.1,
-                        }}>
+                        <span style={{ fontSize: m ? '7px' : '10px', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: 1.1 }}>
+                          {new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' })}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              ) : hasLedger && tokenData ? (
+                <div style={{ 
+                  height: m ? '180px' : '240px', 
+                  display: 'flex', 
+                  alignItems: 'flex-end', 
+                  gap: m ? '2px' : '4px', 
+                  paddingTop: '20px' 
+                }}>
+                  {tokenData.daily.map((day: any) => {
+                    const cost = day.cost || 0
+                    const maxCost = Math.max(...tokenData.daily.map((d: any) => d.cost || 0), 10)
+                    const height = Math.max((cost / maxCost) * (m ? 140 : 200), 2)
+                    return (
+                      <div key={day.date} style={{ flex: '1', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                        <div
+                          style={{ width: '100%', height: `${height}px`, background: getBarColor(cost), borderRadius: '4px 4px 0 0', opacity: '0.8', transition: 'all 0.3s ease' }}
+                          title={`${day.date}: $${cost.toFixed(2)} • ${(day.tokens || 0).toLocaleString()} tokens`}
+                        />
+                        <span style={{ fontSize: m ? '7px' : '10px', color: 'rgba(255,255,255,0.45)', textAlign: 'center', lineHeight: 1.1 }}>
                           {new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' })}
                         </span>
                       </div>
@@ -593,19 +624,12 @@ export default function Costs() {
                   })}
                 </div>
               ) : (
-                <div style={{ 
-                  height: m ? '180px' : '240px', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center',
-                  flexDirection: 'column',
-                  gap: '12px'
-                }}>
+                <div style={{ height: m ? '180px' : '240px', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.65)' }}>
                     Using token-based cost estimation
                   </div>
                   <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.45)', textAlign: 'center' }}>
-                    Daily AWS cost data not available.<br />
+                    Daily cost data not available.<br />
                     Estimated ${tokenBasedCost.toFixed(2)} this month from {totalTokens.toLocaleString()} tokens.
                   </div>
                 </div>
@@ -665,46 +689,54 @@ export default function Costs() {
                       </div>
                     )
                   })
-                ) : (
-                  // Token-based breakdown by channel/session type
-                  Object.entries({
-                    'OpenClaw Sessions': totalTokens > 0 ? estimateCost(totalTokens, 'sonnet') : 0
-                  }).map(([name, cost], i) => {
-                    if (cost === 0) return null
+                ) : hasLedger && tokenData && tokenData.byService.length > 0 ? (
+                  tokenData.byService.slice(0, m ? 5 : 8).map((svc: any) => {
+                    const pct = svc.percentage || (currentMonthCost > 0 ? Math.round(((svc.cost || 0) / currentMonthCost) * 100) : 0)
+                    const modelColors: Record<string, string> = {
+                      'codex': '#007AFF',
+                      'opus': '#BF5AF2',
+                      'sonnet': '#FF9500',
+                      'gpt': '#32D74B',
+                      'ollama': '#64D2FF',
+                    }
+                    const colorKey = Object.keys(modelColors).find(k => svc.name.toLowerCase().includes(k)) || ''
+                    const barColor = modelColors[colorKey] || '#32D74B'
                     return (
-                      <div key={name} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div key={svc.name} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ 
-                            fontSize: m ? '12px' : '14px', 
-                            color: 'rgba(255,255,255,0.65)', 
-                            fontWeight: '500' 
-                          }}>
-                            {name}
+                          <span style={{ fontSize: m ? '12px' : '14px', color: 'rgba(255,255,255,0.65)', fontWeight: '500' }}>
+                            {svc.name.length > (m ? 22 : 30) ? svc.name.substring(0, m ? 22 : 30) + '…' : svc.name}
                           </span>
-                          <span style={{ 
-                            fontSize: m ? '12px' : '14px', 
-                            color: 'rgba(255,255,255,0.92)', 
-                            fontWeight: '600', 
-                            fontFamily: 'system-ui', 
-                            fontFeatureSettings: '"tnum"' 
-                          }}>
-                            ${cost.toFixed(2)}
+                          <span style={{ fontSize: m ? '12px' : '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '600', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"' }}>
+                            ${(svc.cost || 0).toFixed(2)}
                           </span>
                         </div>
                         <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
-                          <div
-                            style={{
-                              width: '100%',
-                              height: '100%',
-                              background: '#BF5AF2',
-                              borderRadius: '3px',
-                              transition: 'width 0.6s ease'
-                            }}
-                          />
+                          <div style={{ width: `${Math.max(pct, 2)}%`, height: '100%', background: barColor, borderRadius: '3px', transition: 'width 0.6s ease' }} />
+                        </div>
+                        <div style={{ fontSize: '10px', color: 'rgba(255,255,255,0.35)' }}>
+                          {(svc.tokens || 0).toLocaleString()} tokens • {pct}%
                         </div>
                       </div>
                     )
-                  }).filter(Boolean)
+                  })
+                ) : (
+                  // Fallback: single aggregate from sessions
+                  totalTokens > 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span style={{ fontSize: m ? '12px' : '14px', color: 'rgba(255,255,255,0.65)', fontWeight: '500' }}>OpenClaw Sessions</span>
+                        <span style={{ fontSize: m ? '12px' : '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '600', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"' }}>
+                          ${estimateCost(totalTokens, 'sonnet').toFixed(2)}
+                        </span>
+                      </div>
+                      <div style={{ height: '6px', background: 'rgba(255,255,255,0.1)', borderRadius: '3px', overflow: 'hidden' }}>
+                        <div style={{ width: '100%', height: '100%', background: '#BF5AF2', borderRadius: '3px', transition: 'width 0.6s ease' }} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ fontSize: '13px', color: 'rgba(255,255,255,0.45)' }}>No usage data yet</div>
+                  )
                 )}
               </div>
             </div>
@@ -950,13 +982,15 @@ export default function Costs() {
                       fontWeight: '500', 
                       marginBottom: '4px' 
                     }}>
-                      ☁️ AWS Bedrock: $0
+                      {hasLedger ? '📊 Pro Account Token Tracking' : '☁️ AWS Bedrock: $0'}
                     </div>
                     <div style={{ 
                       fontSize: m ? '11px' : '12px', 
                       color: 'rgba(255,255,255,0.65)' 
                     }}>
-                      Using included AWS credits
+                      {hasLedger
+                        ? `Costs calculated from token-usage.csv • Total: $${currentMonthCost.toFixed(2)} this month`
+                        : 'Using included AWS credits'}
                     </div>
                   </div>
                 )}

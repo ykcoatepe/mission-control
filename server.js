@@ -132,6 +132,15 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 
 // ========== HELPER: Fetch sessions from gateway ==========
 async function fetchSessions(limit = 50) {
+  // Prefer OpenClaw CLI (fast, local) over gateway tool invocation (can be slow).
+  try {
+    const { stdout } = await openclawExec(['sessions', '--json', '--limit', String(limit)], 15000);
+    const parsed = JSON.parse(stdout || '{}');
+    if (parsed?.sessions) return parsed;
+  } catch (e) {
+    // fall back to gateway
+  }
+
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
@@ -149,17 +158,9 @@ async function fetchSessions(limit = 50) {
     });
     clearTimeout(timer);
     const data = await gwRes.json();
-    // Gateway returns both result.content[0].text (JSON string) and result.details (parsed object)
-    // Use details for parsed data, fallback to parsing content text
-    if (data?.result?.details) {
-      return data.result.details; // Returns {count, sessions: [...]}
-    }
-    // Fallback: parse from text content
+    if (data?.result?.details) return data.result.details;
     const textResult = data?.result?.content?.[0]?.text;
-    if (textResult) {
-      const parsed = JSON.parse(textResult);
-      return parsed; // Should be {count, sessions: [...]}
-    }
+    if (textResult) return JSON.parse(textResult);
     return { count: 0, sessions: [] };
   } catch (e) {
     console.error('[fetchSessions]', e.message);
@@ -1221,12 +1222,122 @@ Be thorough. Your output will be shown directly to the user as the task result.`
   }
 });
 
-// ========== API: Costs — Real token usage from sessions ==========
+function parseDdMmYyyyToIso(s) {
+  // Accept DD/MM/YYYY
+  const m = (s || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!m) return null;
+  const [_, dd, mm, yyyy] = m;
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function parseTokenUsageCsv(text) {
+  const lines = (text || '').split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const header = lines[0].split(',').map(s => s.trim());
+  const rows = [];
+  for (const line of lines.slice(1)) {
+    // Simple CSV (no quoted commas expected in our ledger)
+    const cols = line.split(',');
+    if (cols.length < header.length) continue;
+    const r = {};
+    header.forEach((h, i) => r[h] = (cols[i] ?? '').trim());
+
+    const dateIso = parseDdMmYyyyToIso(r.date);
+    rows.push({
+      ...r,
+      dateIso,
+      daily_tokens: Number(r.daily_tokens || 0),
+      cumulative_tokens: Number(r.cumulative_tokens || 0),
+      daily_cost_usd: Number(r.daily_cost_usd || 0),
+      cumulative_cost_usd: Number(r.cumulative_cost_usd || 0),
+    });
+  }
+  return rows.filter(r => r.dateIso);
+}
+
+// ========== API: Costs — ledger (token-usage.csv) + session fallback ==========
 app.get('/api/costs', async (req, res) => {
   try {
     if (costsCache && Date.now() - costsCacheTime < COSTS_CACHE_TTL) {
       return res.json(costsCache);
     }
+    // Prefer ledger CSV if present (includes "pro"/non-API accounting if you log it there)
+    const ledgerPath = path.join(MEMORY_PATH, 'token-usage.csv');
+    if (fs.existsSync(ledgerPath)) {
+      const csv = fs.readFileSync(ledgerPath, 'utf8');
+      const rows = parseTokenUsageCsv(csv);
+
+      const all = rows.filter(r => r.session_key === 'all-sessions').sort((a, b) => a.dateIso.localeCompare(b.dateIso));
+      const perModel = rows
+        .filter(r => (r.session_key || '').startsWith('all-sessions:model:'))
+        .map(r => ({ ...r, modelKey: r.model || r.session_key.replace('all-sessions:model:', '') }));
+
+      const now = new Date();
+      const todayIso = now.toISOString().slice(0, 10);
+      const monthPrefix = todayIso.slice(0, 7);
+
+      const last = all.length ? all[all.length - 1] : null;
+      const monthRows = all.filter(r => r.dateIso.startsWith(monthPrefix));
+      const last7 = all.slice(-7);
+      const todayRow = all.find(r => r.dateIso === todayIso) || null;
+
+      const thisMonthUsd = monthRows.reduce((s, r) => s + r.daily_cost_usd, 0);
+      const thisMonthTokens = monthRows.reduce((s, r) => s + r.daily_tokens, 0);
+      const thisWeekUsd = last7.reduce((s, r) => s + r.daily_cost_usd, 0);
+      const thisWeekTokens = last7.reduce((s, r) => s + r.daily_tokens, 0);
+
+      // Daily series: last 30 days from ledger
+      const daily = all.slice(-30).map(r => ({
+        date: r.dateIso,
+        cost: r.daily_cost_usd,
+        tokens: r.daily_tokens,
+      }));
+
+      // Model breakdown (month-to-date)
+      const modelAgg = {};
+      for (const r of perModel) {
+        if (!r.dateIso.startsWith(monthPrefix)) continue;
+        const k = r.modelKey;
+        if (!modelAgg[k]) modelAgg[k] = { name: k, cost: 0, tokens: 0 };
+        modelAgg[k].cost += r.daily_cost_usd;
+        modelAgg[k].tokens += r.daily_tokens;
+      }
+      const byService = Object.values(modelAgg)
+        .filter(x => x.tokens > 0 || x.cost > 0)
+        .sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens))
+        .map(x => ({
+          name: x.name,
+          cost: x.cost,
+          tokens: x.tokens,
+          sessions: 0,
+          percentage: thisMonthUsd > 0 ? Math.round((x.cost / thisMonthUsd) * 100) : 0,
+        }));
+
+      const costsResult = {
+        source: 'token-usage.csv',
+        daily,
+        summary: {
+          todayUsd: todayRow ? todayRow.daily_cost_usd : 0,
+          thisWeekUsd,
+          thisMonthUsd,
+          totalUsd: last ? last.cumulative_cost_usd : 0,
+          todayTokens: todayRow ? todayRow.daily_tokens : 0,
+          thisWeekTokens,
+          thisMonthTokens,
+          totalTokens: last ? last.cumulative_tokens : 0,
+          note: `Source: ${ledgerPath}`,
+          budget: { monthly: mcConfig.budget?.monthly || 0, warning: 0 },
+        },
+        byService,
+        budget: mcConfig.budget || { monthly: 0 },
+      };
+
+      costsCache = costsResult;
+      costsCacheTime = Date.now();
+      return res.json(costsResult);
+    }
+
+    // Fallback: compute from sessions when ledger is missing
     const sessionData = await fetchSessions(50);
     const sessions = sessionData.sessions || [];
 
@@ -1302,8 +1413,8 @@ app.get('/api/costs', async (req, res) => {
         totalTokens,
         totalSessions: sessions.length,
         activeSessions: sessions.filter(s => (s.totalTokens || 0) > 0).length,
-        note: 'All LLM costs are $0 — using AWS Bedrock with included credits',
-        budget: { monthly: 0, warning: 0 }
+        note: 'Fallback: token totals computed from recent sessions (no ledger CSV found)',
+        budget: { monthly: mcConfig.budget?.monthly || 0, warning: 0 }
       },
       byService,
       byType,
