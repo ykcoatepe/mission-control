@@ -15,6 +15,13 @@ interface OpenClawConfig {
   memory_path?: string
   skills_path?: string
   bedrock_region?: string
+  system?: {
+    mission_control_version?: string
+    openclaw_version?: string | null
+    node_version?: string
+    platform?: string
+    arch?: string
+  }
 }
 
 export default function Settings() {
@@ -141,10 +148,10 @@ export default function Settings() {
 
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {[
-                  { label: 'Mission Control Version', value: 'v2.0.0' },
-                  { label: 'OpenClaw Version', value: 'v1.5.2' },
-                  { label: 'Node.js Version', value: 'v20.15.0' },
-                  { label: 'Platform', value: 'Linux x64' },
+                  { label: 'Mission Control Version', value: configData?.system?.mission_control_version ? `v${configData.system.mission_control_version}` : '—' },
+                  { label: 'OpenClaw Version', value: configData?.system?.openclaw_version || '—' },
+                  { label: 'Node.js Version', value: configData?.system?.node_version || '—' },
+                  { label: 'Platform', value: (configData?.system?.platform && configData?.system?.arch) ? `${configData.system.platform} ${configData.system.arch}` : '—' },
                 ].map((item) => (
                   <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                     <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>{item.label}</span>
@@ -167,30 +174,19 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
   const [routing, setRouting] = useState({ main: '', subagent: '', heartbeat: '' })
   const [saving, setSaving] = useState(false)
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
-  
-  // Load current model from /api/status
-  const { data: statusData } = useApi<any>('/api/status')
+
+  const { data: modelsData } = useApi<{ id: string; name: string; tags?: string[] }[]>('/api/models')
+  const { data: routingData } = useApi<any>('/api/settings/model-routing')
 
   useEffect(() => {
-    if (statusData?.agent?.model) {
-      // Extract the full model ID from the current agent model
-      const currentModel = statusData.agent.model
-      // Map display names back to full model IDs (best effort)
-      const modelMapping: Record<string, string> = {
-        'Claude Opus 4': 'us.anthropic.claude-opus-4-6-v1',
-        'Claude Sonnet 4': 'us.anthropic.claude-sonnet-4-20250514-v1:0',
-        'Claude Haiku 4.5': 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
-      }
-      
-      const fullModelId = modelMapping[currentModel] || currentModel
-      setRouting(prev => ({
-        ...prev,
-        main: fullModelId,
-        subagent: prev.subagent || 'us.anthropic.claude-sonnet-4-20250514-v1:0',
-        heartbeat: prev.heartbeat || 'us.anthropic.claude-haiku-4-5-20251001-v1:0'
-      }))
+    if (routingData) {
+      setRouting({
+        main: routingData.main || '',
+        subagent: routingData.subagent || routingData.main || '',
+        heartbeat: routingData.heartbeat || ''
+      })
     }
-  }, [statusData])
+  }, [routingData])
 
   const handleSave = async () => {
     setSaving(true)
@@ -219,9 +215,11 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
   }
 
   const MODEL_OPTIONS = [
-    { value: 'us.anthropic.claude-opus-4-6-v1', label: 'Claude Opus 4.6 ($$$)' },
-    { value: 'us.anthropic.claude-sonnet-4-20250514-v1:0', label: 'Claude Sonnet 4 ($$)' },
-    { value: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', label: 'Claude Haiku 4.5 ($)' },
+    { value: '', label: 'Inherit from Main (no override)' },
+    ...((modelsData || []).map((m: any) => ({
+      value: m.id,
+      label: m.name || m.id
+    })))
   ]
 
   const selectStyle = { 
@@ -246,21 +244,27 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Main Model</label>
             <select value={routing.main} onChange={(e) => setRouting({ ...routing, main: e.target.value })} style={selectStyle}>
-              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
             </select>
           </div>
           
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Sub-agent Model</label>
             <select value={routing.subagent} onChange={(e) => setRouting({ ...routing, subagent: e.target.value })} style={selectStyle}>
-              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
             </select>
           </div>
           
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Heartbeat Model</label>
             <select value={routing.heartbeat} onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })} style={selectStyle}>
-              {MODEL_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              {MODEL_OPTIONS.map(m => (
+                <option key={m.value || 'inherit'} value={m.value}>{m.label}</option>
+              ))}
             </select>
           </div>
 

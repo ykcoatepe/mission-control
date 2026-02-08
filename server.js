@@ -65,6 +65,33 @@ function detectAgentName() {
 }
 const agentName = detectAgentName();
 
+function prettyModelName(modelKey) {
+  if (!modelKey) return '—';
+  // Common friendly names
+  if (modelKey.includes('gpt-5.3-codex')) return 'GPT-5.3 Codex';
+  if (modelKey.includes('gpt-5.2-codex')) return 'GPT-5.2 Codex';
+  // Strip provider prefixes
+  return modelKey
+    .replace(/^openai-codex\//, '')
+    .replace(/^openai\//, '')
+    .replace(/^anthropic\//, '')
+    .replace(/^ollama\//, '')
+    .replace(/_/g, '-');
+}
+
+function getOpenclawDefaultModelKey() {
+  try {
+    const ocCfgPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
+    const ocCfg = JSON.parse(fs.readFileSync(ocCfgPath, 'utf8'));
+    return ocCfg?.agents?.defaults?.model?.primary
+      || ocCfg?.agents?.defaults?.model?.default
+      || ocCfg?.model?.default
+      || '';
+  } catch {
+    return '';
+  }
+}
+
 const app = express();
 const PORT = 3333;
 
@@ -106,17 +133,21 @@ app.use('/public', express.static(path.join(__dirname, 'public')));
 // ========== HELPER: Fetch sessions from gateway ==========
 async function fetchSessions(limit = 50) {
   try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
     const gwRes = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${GATEWAY_TOKEN}`,
       },
+      signal: controller.signal,
       body: JSON.stringify({
         tool: 'sessions_list',
         args: { limit, messageLimit: 1 },
       }),
     });
+    clearTimeout(timer);
     const data = await gwRes.json();
     // Gateway returns both result.content[0].text (JSON string) and result.details (parsed object)
     // Use details for parsed data, fallback to parsing content text
@@ -311,9 +342,20 @@ async function refreshStatusCache() {
     const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
     const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
 
-    // Parse openclaw status
+    // Detect default model from OpenClaw config (more reliable than parsing `openclaw status`)
+    let defaultModelKey = '';
+    try {
+      const ocCfgPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
+      const ocCfg = JSON.parse(fs.readFileSync(ocCfgPath, 'utf8'));
+      defaultModelKey = ocCfg?.agents?.defaults?.model?.primary
+        || ocCfg?.agents?.defaults?.model?.default
+        || ocCfg?.model?.default
+        || '';
+    } catch {}
+
+    // Parse openclaw status (best-effort; command can time out)
     const sessionsMatch = ocStatus.match(/(\d+) active/);
-    const modelMatch = ocStatus.match(/default\s+(us\.anthropic\.\S+|anthropic\.\S+|[\w./-]+claude[\w./-]*)/);
+    const modelMatch = ocStatus.match(/default\s+([^\s(]+)/);
     const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
     const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
     const agentsMatch = ocStatus.match(/Agents\s*│\s*(\d+)/);
@@ -346,7 +388,7 @@ async function refreshStatusCache() {
       heartbeat = JSON.parse(fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8'));
     } catch { heartbeat = { lastHeartbeat: null, lastChecks: {} }; }
 
-    statusCache = { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat };
+    statusCache = { sessionsMatch, modelMatch, defaultModelKey, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat };
     statusCacheTime = Date.now();
   } catch (e) {
     console.error('[StatusCache] refresh failed:', e.message);
@@ -429,12 +471,30 @@ app.get('/api/status', async (req, res) => {
       refreshStatusCache(); // don't await — fire and forget
     }
 
-    // If no cache yet (first request), wait for it
+    // If no cache yet (first request), DO NOT block the request.
+    // Serve a minimal fast response and let the background refresher fill the cache.
     if (!statusCache) {
-      await refreshStatusCache();
+      try { refreshStatusCache(); } catch {}
+      const modelKey = getOpenclawDefaultModelKey();
+      return res.json({
+        agent: {
+          name: mcConfig.name || 'Mission Control',
+          status: 'active',
+          model: prettyModelName(modelKey),
+          activeSessions: 0,
+          totalAgents: 0,
+          memoryFiles: 0,
+          memoryChunks: 0,
+          heartbeatInterval: '—',
+          channels: []
+        },
+        heartbeat: { lastHeartbeat: null, lastChecks: {} },
+        recentActivity: [],
+        tokenUsage: { used: 0, limit: 0, percentage: 0 }
+      });
     }
 
-    const { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat } = statusCache || {};
+    const { sessionsMatch, modelMatch, defaultModelKey, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat } = statusCache || {};
 
     // Read heartbeat state (fast, always fresh)
     let hb = heartbeat || {};
@@ -446,7 +506,7 @@ app.get('/api/status', async (req, res) => {
       agent: {
         name: mcConfig.name || 'Mission Control',
         status: 'active',
-        model: modelMatch ? modelMatch[1].replace('us.anthropic.','').replace(/claude-opus-(\d+)-(\d+).*/, 'Claude Opus $1.$2').replace(/claude-sonnet-(\d+).*/, 'Claude Sonnet $1').replace(/-/g,' ') : 'Claude Opus 4.6',
+        model: prettyModelName(defaultModelKey || (modelMatch ? modelMatch[1] : '')),
         activeSessions: sessionsMatch ? parseInt(sessionsMatch[1]) : 0,
         totalAgents: agentsMatch ? parseInt(agentsMatch[1]) : 1,
         memoryFiles: memoryMatch ? parseInt(memoryMatch[1]) : 46,
@@ -1399,127 +1459,62 @@ app.get('/api/scout/status', (req, res) => {
   });
 });
 
-// ========== API: Agents — Real from gateway sessions + custom agents ==========
+// ========== API: Agents — Real from OpenClaw agents list + live sessions ==========
 app.get('/api/agents', async (req, res) => {
   try {
-    const sessionData = await fetchSessions(50);
-    const sessions = sessionData.sessions || [];
-
-    // Load custom agents from agents-custom.json
-    const customAgentsFile = path.join(__dirname, 'agents-custom.json');
-    let customAgents = [];
+    // 1) Get agent definitions from OpenClaw (fast). Do NOT block on sessions here.
+    // Sessions are already shown separately via /api/sessions in the UI.
+    let openclawAgents = [];
     try {
-      customAgents = JSON.parse(fs.readFileSync(customAgentsFile, 'utf8'));
-    } catch {}
+      const { stdout } = await openclawExec(['agents', 'list', '--json', '--bindings'], 15000);
+      openclawAgents = JSON.parse(stdout || '[]');
+    } catch (e) {
+      console.warn('[Agents API] openclaw agents list failed:', e.message);
+      openclawAgents = [];
+    }
 
-    // Primary agent) = main session
-    const mainSession = sessions.find(s => s.key === 'agent:main:main');
-    const activeSessions = sessions.filter(s => (s.totalTokens || 0) > 0);
-
-    // Build agents list
-    const agents = [];
-
-    // Primary agent
-    agents.push({
-      id: 'zinbot',
-      name: agentName || 'Agent',
-      role: 'Commander',
-      avatar: '🤖',
+    // 3) Build agent list
+    const agents = openclawAgents.map(a => ({
+      id: a.id,
+      name: a.identityName || a.name || a.id,
+      role: a.isDefault ? 'Commander' : 'Agent',
+      avatar: a.identityEmoji || '🤖',
       status: 'active',
-      model: mainSession ? (mainSession.model || '').replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/-/g, ' ') : 'Claude Opus 4.6',
-      description: 'Primary AI agent. Manages all operations, communications, and development tasks.',
-      lastActive: mainSession?.updatedAt ? new Date(mainSession.updatedAt).toISOString() : new Date().toISOString(),
-      totalTokens: mainSession?.totalTokens || 0,
-      sessionKey: 'agent:main:main',
-    });
+      model: prettyModelName(a.model),
+      modelKey: a.model,
+      description: a.isDefault
+        ? 'Primary AI agent. Manages all operations, communications, and development tasks.'
+        : `Agent: ${a.id}`,
+      lastActive: null,
+      totalTokens: 0,
+      sessionKey: `agent:${a.id}:main`,
+      isDefault: !!a.isDefault,
+      workspace: a.workspace,
+    }));
 
-    // Add custom agents
-    customAgents.forEach(agent => {
+    // 4) If openclaw agents list returned nothing, fallback to minimal
+    if (agents.length === 0) {
       agents.push({
-        id: agent.id,
-        name: agent.name,
-        role: 'Custom Agent',
-        avatar: '⚙️',
-        status: agent.status || 'active',
-        model: agent.model,
-        description: agent.description || 'Custom agent',
-        lastActive: null,
+        id: 'main',
+        name: agentName || 'Agent',
+        role: 'Commander',
+        avatar: '🤖',
+        status: 'active',
+        model: prettyModelName(''),
+        description: 'Primary agent (agent list unavailable)',
+        lastActive: new Date().toISOString(),
         totalTokens: 0,
-        sessionKey: null,
-        isCustom: true,
-        systemPrompt: agent.systemPrompt,
-        skills: agent.skills,
-        created: agent.created
-      });
-    });
-
-    // Sub-agents from real sessions
-    const subagentSessions = sessions.filter(s => s.key.includes(':subagent:'));
-    subagentSessions.forEach(s => {
-      agents.push({
-        id: s.sessionId || s.key,
-        name: s.label || `Sub-agent ${s.key.split(':').pop().substring(0, 8)}`,
-        role: 'Sub-Agent',
-        avatar: '⚡',
-        status: (s.totalTokens || 0) > 0 ? 'active' : 'idle',
-        model: (s.model || '').replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/-/g, ' '),
-        description: s.label ? `Task: ${s.label}` : 'Spawned sub-agent',
-        lastActive: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
-        totalTokens: s.totalTokens || 0,
-        sessionKey: s.key,
-      });
-    });
-
-    // Discord channel sessions as "channel agents"
-    const discordSessions = sessions
-      .filter(s => s.key.includes(':discord:channel:') && (s.totalTokens || 0) > 0)
-      .sort((a, b) => (b.totalTokens || 0) - (a.totalTokens || 0));
-
-    discordSessions.forEach(s => {
-      // Extract readable name from displayName
-      const name = (s.displayName || '').replace(/^discord:\d+#/, '') || s.key.split(':').pop();
-      agents.push({
-        id: s.sessionId || s.key,
-        name: `#${name}`,
-        role: 'Channel Session',
-        avatar: '💬',
-        status: 'active',
-        model: (s.model || '').replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/-/g, ' '),
-        description: `Discord channel session`,
-        lastActive: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
-        totalTokens: s.totalTokens || 0,
-        sessionKey: s.key,
-      });
-    });
-
-    // Mission Control chat session (merge multiple into one)
-    const mcSessions = sessions.filter(s => s.key.includes(':openai'));
-    const mcTotalTokens = mcSessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
-    if (mcTotalTokens > 0) {
-      const latestMc = mcSessions.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))[0];
-      agents.push({
-        id: 'mission-control',
-        name: 'Mission Control Chat',
-        role: 'Interface',
-        avatar: '🖥️',
-        status: 'active',
-        model: (latestMc?.model || '').replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/-/g, ' '),
-        description: `Chat sessions from Mission Control dashboard (${mcSessions.length} sessions)`,
-        lastActive: latestMc?.updatedAt ? new Date(latestMc.updatedAt).toISOString() : null,
-        totalTokens: mcTotalTokens,
-        sessionKey: 'openai-users',
+        sessionKey: 'agent:main:main',
+        isDefault: true,
       });
     }
 
-    // No fake conversations — just show real session activity
-    const conversations = [];
-
-    res.json({ agents, conversations });
+    res.json({ agents, conversations: [] });
   } catch (e) {
     console.error('[Agents API]', e.message);
     res.json({
       agents: [
-        { id: 'zinbot', name: agentName || 'Agent', role: 'Commander', avatar: '🤖', status: 'active', model: 'Claude Opus 4.6', description: 'Primary agent (session data unavailable)', lastActive: new Date().toISOString(), totalTokens: 0 }
+        { id: 'main', name: agentName || 'Agent', role: 'Commander', avatar: '🤖', status: 'active', model: prettyModelName(''), description: 'Primary agent (error)', lastActive: new Date().toISOString(), totalTokens: 0 }
       ],
       conversations: [],
       error: e.message
@@ -1573,12 +1568,32 @@ app.get('/api/settings', async (req, res) => {
       : {};
 
     // Sanitize config (remove sensitive data)
+    const defaultModel = configData?.agents?.defaults?.model?.primary
+      || configData?.agents?.defaults?.model?.default
+      || configData?.model?.default
+      || configData?.model
+      || 'openai-codex/gpt-5.3-codex';
+
+    // System info (avoid slow shelling out)
+    let mcVersion = 'unknown';
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
+      mcVersion = pkg.version || mcVersion;
+    } catch {}
+
     const sanitized = {
-      model: configData.model || 'anthropic.claude-3-opus-20240229-v1:0',
+      model: defaultModel,
       gateway_port: GATEWAY_PORT,
       memory_path: MEMORY_PATH,
       skills_path: SKILLS_PATH,
-      bedrock_region: S3_REGION
+      bedrock_region: S3_REGION,
+      system: {
+        mission_control_version: mcVersion,
+        openclaw_version: (configData?.meta?.openclawVersion || null),
+        node_version: process.version,
+        platform: process.platform,
+        arch: process.arch,
+      }
     };
 
     res.json(sanitized);
@@ -1780,6 +1795,11 @@ async function awsExec(args, timeout = 10000) {
   return await execFilePromise('aws', args, { timeout, maxBuffer: 20 * 1024 * 1024 });
 }
 
+async function openclawExec(args, timeout = 10000) {
+  // Avoid shell execution; command is constant.
+  return await execFilePromise('openclaw', args, { timeout, maxBuffer: 20 * 1024 * 1024 });
+}
+
 app.get('/api/aws/services', async (req, res) => {
   try {
     // Real account info
@@ -1852,12 +1872,23 @@ app.get('/api/aws/bedrock-models', async (req, res) => {
 });
 
 app.get('/api/models', async (req, res) => {
-  // List available models from Bedrock
-  res.json([
-    { id: 'us.anthropic.claude-opus-4-6-v1', name: 'Claude Opus 4.6' },
-    { id: 'us.anthropic.claude-sonnet-4-20250514-v1:0', name: 'Claude Sonnet 4' },
-    { id: 'us.anthropic.claude-haiku-4-5-20251001-v1:0', name: 'Claude Haiku 4.5' }
-  ]);
+  // List models from OpenClaw (includes Codex/GPT/etc.)
+  try {
+    const { stdout } = await openclawExec(['models', 'list', '--json'], 12000);
+    const payload = JSON.parse(stdout || '{}');
+    const models = payload.models || [];
+    res.json(models.map(m => ({
+      id: m.key,
+      name: m.name || prettyModelName(m.key),
+      contextWindow: m.contextWindow,
+      input: m.input,
+      local: !!m.local,
+      available: m.available !== false,
+      tags: m.tags || [],
+    })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // Switch agent model via gateway config
@@ -1874,6 +1905,8 @@ app.post('/api/model', async (req, res) => {
     if (!config.agents) config.agents = {};
     if (!config.agents.defaults) config.agents.defaults = {};
     if (!config.agents.defaults.model) config.agents.defaults.model = {};
+    // OpenClaw uses agents.defaults.model.primary (keep default for backward compat if present)
+    config.agents.defaults.model.primary = model;
     config.agents.defaults.model.default = model;
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
@@ -2487,33 +2520,81 @@ app.post('/api/quick/schedule', async (req, res) => {
 
 // ========== SETTINGS API ENDPOINTS ==========
 
+function readOpenclawConfigSafe() {
+  const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
+  if (!fs.existsSync(configPath)) return {};
+  return JSON.parse(fs.readFileSync(configPath, 'utf8'));
+}
+
+async function reloadGatewayConfig() {
+  // Best-effort: tell the gateway to reload config. If it fails, config is still persisted.
+  try {
+    await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/reload`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN}` },
+    });
+  } catch {}
+}
+
+// GET /api/settings/model-routing
+app.get('/api/settings/model-routing', async (req, res) => {
+  try {
+    const cfg = readOpenclawConfigSafe();
+    const main = cfg?.agents?.defaults?.model?.primary || '';
+    const subagent = cfg?.agents?.defaults?.subagents?.model?.primary || main || '';
+    const heartbeat = cfg?.agents?.defaults?.heartbeat?.model || '';
+    res.json({ main, subagent, heartbeat });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // POST /api/settings/model-routing
 app.post('/api/settings/model-routing', async (req, res) => {
-  // Write to OpenClaw config via gateway
-  const { main, subagent, heartbeat } = req.body;
+  const { main, subagent, heartbeat } = req.body || {};
   try {
-    const raw = JSON.stringify({
-      agents: { defaults: { model: { primary: main } } },
-      agents_subagents_model: subagent,
-      heartbeat_model: heartbeat
-    });
-    // For now just save to mc-config.json
-    mcConfig.modelRouting = { main, subagent, heartbeat };
-    fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
+    if (main) {
+      await openclawExec(['config', 'set', 'agents.defaults.model.primary', String(main)], 15000);
+    }
+    if (subagent) {
+      await openclawExec(['config', 'set', 'agents.defaults.subagents.model.primary', String(subagent)], 15000);
+    }
+    if (heartbeat) {
+      await openclawExec(['config', 'set', 'agents.defaults.heartbeat.model', String(heartbeat)], 15000);
+    } else {
+      // If empty, try to remove heartbeat model override so it inherits the main model
+      try {
+        await openclawExec(['config', 'unset', 'agents.defaults.heartbeat.model'], 15000);
+      } catch {}
+    }
+
+    await reloadGatewayConfig();
     res.json({ status: 'saved' });
-  } catch(e) { 
-    res.status(500).json({ error: e.message }); 
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// GET /api/settings/heartbeat
+app.get('/api/settings/heartbeat', async (req, res) => {
+  try {
+    const cfg = readOpenclawConfigSafe();
+    const every = cfg?.agents?.defaults?.heartbeat?.every || '1h';
+    res.json({ interval: every });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
 // POST /api/settings/heartbeat
 app.post('/api/settings/heartbeat', async (req, res) => {
   try {
-    const { interval } = req.body;
-    mcConfig.heartbeat = { interval };
-    fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
+    const { interval } = req.body || {};
+    if (!interval) return res.status(400).json({ error: 'interval required' });
+    await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', String(interval)], 15000);
+    await reloadGatewayConfig();
     res.json({ status: 'saved' });
-  } catch(e) {
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
