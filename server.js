@@ -51,10 +51,51 @@ const MEMORY_PATH = mcConfig.memoryPath || path.join(WORKSPACE_PATH, 'memory');
 const S3_BUCKET = mcConfig.aws?.bucket || '';
 const S3_REGION = mcConfig.aws?.region || 'us-east-1';
 
+// Detect the primary agent name from the OpenClaw workspace (IDENTITY.md) when available.
+function detectAgentName() {
+  try {
+    const identityPath = path.join(WORKSPACE_PATH, 'IDENTITY.md');
+    if (fs.existsSync(identityPath)) {
+      const identity = fs.readFileSync(identityPath, 'utf8');
+      const nameMatch = identity.match(/\*\*Name:\*\*\s*(.+)/);
+      if (nameMatch) return nameMatch[1].trim();
+    }
+  } catch {}
+  return 'OpenClaw Agent';
+}
+const agentName = detectAgentName();
+
 const app = express();
 const PORT = 3333;
 
+app.disable('x-powered-by');
 app.use(express.json());
+
+// Basic localhost hardening:
+// - Reject requests with non-local Host headers (mitigates DNS rebinding / accidental LAN exposure)
+// - For state-changing methods, reject cross-origin requests when Origin is present.
+const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, 'localhost', '127.0.0.1']);
+app.use((req, res, next) => {
+  try {
+    const host = (req.headers.host || '').toString();
+    if (host && !ALLOWED_HOSTS.has(host)) {
+      return res.status(403).json({ error: 'Forbidden host' });
+    }
+
+    const method = (req.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const origin = req.headers.origin ? req.headers.origin.toString() : '';
+      if (origin) {
+        const ok = origin.startsWith(`http://localhost:${PORT}`)
+          || origin.startsWith(`http://127.0.0.1:${PORT}`)
+          || origin.startsWith(`https://localhost:${PORT}`)
+          || origin.startsWith(`https://127.0.0.1:${PORT}`);
+        if (!ok) return res.status(403).json({ error: 'Forbidden origin' });
+      }
+    }
+  } catch {}
+  return next();
+});
 
 // Serve React frontend (static assets)
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
@@ -1722,37 +1763,62 @@ app.post('/api/skills/:name/uninstall', async (req, res) => {
 });
 
 // AWS API endpoints
+// Security: disable all AWS endpoints unless explicitly enabled.
+app.use('/api/aws', (req, res, next) => {
+  if (!(mcConfig.modules?.aws && mcConfig.aws?.enabled)) {
+    return res.status(404).json({ error: 'AWS module disabled' });
+  }
+  return next();
+});
+
+const util = require('util');
+const { execFile } = require('child_process');
+const execFilePromise = util.promisify(execFile);
+
+async function awsExec(args, timeout = 10000) {
+  // Avoid shell execution to prevent command injection.
+  return await execFilePromise('aws', args, { timeout, maxBuffer: 20 * 1024 * 1024 });
+}
+
 app.get('/api/aws/services', async (req, res) => {
   try {
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
-
     // Real account info
-    let account = { id: '239541130189', region: 'us-east-1' };
+    let account = { id: 'unknown', region: S3_REGION };
     try {
-      const { stdout } = await execPromise('aws sts get-caller-identity --output json 2>/dev/null');
+      const { stdout } = await awsExec(['sts', 'get-caller-identity', '--output', 'json'], 5000);
       const sts = JSON.parse(stdout);
       account.id = sts.Account;
-      account.user = sts.Arn.split('/').pop();
+      account.user = (sts.Arn || '').split('/').pop();
     } catch {}
 
     // Real services — check what's actually accessible
     const services = [];
     const checks = [
-      { name: 'Amazon Bedrock', cmd: 'aws bedrock list-foundation-models --query "length(modelSummaries)" --output text 2>/dev/null', desc: 'Foundation models (Opus, Sonnet, Haiku)', parse: (v) => `${v.trim()} models available` },
-      { name: 'Amazon Polly', cmd: 'aws polly describe-voices --query "length(Voices)" --output text 2>/dev/null', desc: 'Text-to-speech (Neural voices)', parse: (v) => `${v.trim()} voices` },
-      { name: 'Amazon Transcribe', cmd: 'aws transcribe list-transcription-jobs --max-results 1 --output json 2>/dev/null', desc: 'Speech-to-text', parse: () => 'Ready' },
-      { name: 'Amazon Translate', cmd: 'aws translate list-languages --query "length(Languages)" --output text 2>/dev/null', desc: 'Translation (75+ languages)', parse: (v) => `${v.trim()} languages` },
-      { name: 'Amazon S3', cmd: S3_BUCKET ? `aws s3api head-bucket --bucket ${S3_BUCKET} 2>/dev/null && echo ok` : 'echo none', desc: `Storage (${S3_BUCKET || 'not configured'})`, parse: () => S3_BUCKET ? 'Bucket active' : 'Not configured' },
+      { name: 'Amazon Bedrock', args: ['bedrock', 'list-foundation-models', '--query', 'length(modelSummaries)', '--output', 'text'], desc: 'Foundation models (Opus, Sonnet, Haiku)', parse: (v) => `${String(v).trim()} models available` },
+      { name: 'Amazon Polly', args: ['polly', 'describe-voices', '--query', 'length(Voices)', '--output', 'text'], desc: 'Text-to-speech (Neural voices)', parse: (v) => `${String(v).trim()} voices` },
+      { name: 'Amazon Transcribe', args: ['transcribe', 'list-transcription-jobs', '--max-results', '1', '--output', 'json'], desc: 'Speech-to-text', parse: () => 'Ready' },
+      { name: 'Amazon Translate', args: ['translate', 'list-languages', '--query', 'length(Languages)', '--output', 'text'], desc: 'Translation', parse: (v) => `${String(v).trim()} languages` },
     ];
 
     for (const svc of checks) {
       try {
-        const { stdout } = await execPromise(svc.cmd, { timeout: 5000 });
+        const { stdout } = await awsExec(svc.args, 5000);
         services.push({ name: svc.name, status: 'active', description: svc.desc, detail: svc.parse(stdout) });
       } catch {
-        services.push({ name: svc.name, status: 'available', description: svc.desc, detail: 'Not tested' });
+        services.push({ name: svc.name, status: 'available', description: svc.desc, detail: 'Not available' });
       }
+    }
+
+    // Optional S3 check
+    if (S3_BUCKET) {
+      try {
+        await awsExec(['s3api', 'head-bucket', '--bucket', S3_BUCKET], 5000);
+        services.push({ name: 'Amazon S3', status: 'active', description: `Storage (${S3_BUCKET})`, detail: 'Bucket active' });
+      } catch {
+        services.push({ name: 'Amazon S3', status: 'available', description: `Storage (${S3_BUCKET})`, detail: 'Bucket not accessible' });
+      }
+    } else {
+      services.push({ name: 'Amazon S3', status: 'available', description: 'Storage (not configured)', detail: 'Not configured' });
     }
 
     res.json({
@@ -1768,9 +1834,8 @@ app.get('/api/aws/services', async (req, res) => {
 
 app.get('/api/aws/bedrock-models', async (req, res) => {
   try {
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
-    const { stdout } = await execPromise('aws bedrock list-foundation-models --query "modelSummaries[?modelLifecycle.status==\'ACTIVE\'].{modelId:modelId,modelName:modelName,provider:providerName,input:inputModalities,output:outputModalities}" --output json 2>/dev/null', { timeout: 10000 });
+    const query = "modelSummaries[?modelLifecycle.status=='ACTIVE'].{modelId:modelId,modelName:modelName,provider:providerName,input:inputModalities,output:outputModalities}";
+    const { stdout } = await awsExec(['bedrock', 'list-foundation-models', '--query', query, '--output', 'json'], 10000);
     const models = JSON.parse(stdout || '[]');
     res.json(models.map(m => ({
       modelId: m.modelId,
@@ -1813,11 +1878,12 @@ app.post('/api/model', async (req, res) => {
 
     fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
-    // Signal gateway to reload config
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
+    // Signal gateway to reload config (avoid shelling out)
     try {
-      await execPromise('kill -USR1 $(pgrep -f openclaw-gateway)', { timeout: 5000 });
+      await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/reload`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN}` }
+      });
     } catch {}
 
     res.json({ ok: true, model, message: `Model switched to ${model}` });
@@ -1835,8 +1901,7 @@ app.post('/api/aws/generate-image', async (req, res) => {
     const { modelId, prompt } = req.body;
     if (!prompt) return res.status(400).json({ error: 'prompt required' });
 
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
+    if (!modelId || typeof modelId !== 'string') return res.status(400).json({ error: 'modelId required' });
     const timestamp = Date.now();
 
     // Build payload based on model provider
@@ -1860,10 +1925,19 @@ app.post('/api/aws/generate-image', async (req, res) => {
     const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64');
     const outFile = `/tmp/mc-image-${timestamp}.json`;
 
-    await execPromise(
-      `aws bedrock-runtime invoke-model --model-id "${modelId}" --content-type "application/json" --accept "application/json" --body "${payloadB64}" ${outFile}`,
-      { timeout: 60000 }
-    );
+    await awsExec([
+      'bedrock-runtime',
+      'invoke-model',
+      '--model-id',
+      modelId,
+      '--content-type',
+      'application/json',
+      '--accept',
+      'application/json',
+      '--body',
+      payloadB64,
+      outFile,
+    ], 60000);
 
     // Parse response and save image
     const result = JSON.parse(fs.readFileSync(outFile, 'utf8'));
@@ -1883,7 +1957,7 @@ app.post('/api/aws/generate-image', async (req, res) => {
     fs.writeFileSync(localPath, Buffer.from(imageB64, 'base64'));
 
     const s3Key = `${S3_PREFIX}/${filename}`;
-    await execPromise(`aws s3 cp "${localPath}" "s3://${S3_BUCKET}/${s3Key}" --content-type image/png`, { timeout: 30000 });
+    await awsExec(['s3', 'cp', localPath, `s3://${S3_BUCKET}/${s3Key}`, '--content-type', 'image/png'], 30000);
 
     // Clean up local temp files
     try { fs.unlinkSync(outFile); } catch {}
@@ -1913,9 +1987,7 @@ app.get('/api/aws/image/:id', (req, res) => {
 // List all generated images from S3
 app.get('/api/aws/gallery', async (req, res) => {
   try {
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
-    const { stdout } = await execPromise(`aws s3api list-objects-v2 --bucket ${S3_BUCKET} --prefix "${S3_PREFIX}/" --output json 2>/dev/null`, { timeout: 10000 });
+    const { stdout } = await awsExec(['s3api', 'list-objects-v2', '--bucket', S3_BUCKET, '--prefix', `${S3_PREFIX}/`, '--output', 'json'], 10000);
     const data = JSON.parse(stdout);
     const images = (data.Contents || [])
       .filter(o => o.Key.endsWith('.png'))
@@ -1954,9 +2026,7 @@ app.get('/api/aws/s3-image/:key(*)', async (req, res) => {
     const key = decodeURIComponent(req.params.key);
     const localCache = `/tmp/s3-cache-${key.replace(/\//g, '_')}`;
     if (!fs.existsSync(localCache)) {
-      const util = require('util');
-      const execPromise = util.promisify(require('child_process').exec);
-      await execPromise(`aws s3 cp "s3://${S3_BUCKET}/${key}" "${localCache}"`, { timeout: 15000 });
+      await awsExec(['s3', 'cp', `s3://${S3_BUCKET}/${key}`, localCache], 15000);
     }
     res.type('png').sendFile(localCache);
   } catch (error) {
@@ -2369,9 +2439,18 @@ app.post('/api/docs/upload', upload.array('files', 20), (req, res) => {
   try {
     const uploaded = [];
     for (const file of (req.files || [])) {
-      const dest = path.join(docsDir, file.originalname);
+      const original = String(file.originalname || 'upload');
+      // Prevent path traversal and weird names
+      let safeName = path.basename(original).replace(/[^a-zA-Z0-9._ -]/g, '_');
+      if (!safeName || safeName === '.' || safeName === '..') safeName = `upload-${Date.now()}`;
+
+      let dest = path.join(docsDir, safeName);
+      if (fs.existsSync(dest)) {
+        dest = path.join(docsDir, `${Date.now()}-${safeName}`);
+      }
+
       fs.renameSync(file.path, dest);
-      uploaded.push(file.originalname);
+      uploaded.push(path.basename(dest));
     }
     res.json({ ok: true, uploaded });
   } catch (err) {
