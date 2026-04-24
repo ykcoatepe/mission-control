@@ -1,0 +1,4706 @@
+{
+  "jobs": [
+    {
+      "id": "2ee8055f-689a-4e4d-9bf2-07b24a6e1c8e",
+      "name": "gbrain-email-refresh-30m",
+      "schedule": "*/30 * * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T14:32:11.496Z",
+      "nextRun": "2026-04-24T15:01:55.890Z",
+      "duration": "44014ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\ncd /Users/yordamkocatepe/clawd && ./scripts/gbr",
+      "history": [
+        {
+          "ts": 1777041175514,
+          "status": "ok",
+          "durationMs": 44014,
+          "runAtMs": 1777041131496,
+          "error": null
+        },
+        {
+          "ts": 1777039370487,
+          "status": "ok",
+          "durationMs": 37927,
+          "runAtMs": 1777039332557,
+          "error": null
+        },
+        {
+          "ts": 1777037554042,
+          "status": "ok",
+          "durationMs": 38108,
+          "runAtMs": 1777037515909,
+          "error": null
+        },
+        {
+          "ts": 1777035771885,
+          "status": "ok",
+          "durationMs": 53744,
+          "runAtMs": 1777035718138,
+          "error": null
+        },
+        {
+          "ts": 1777033955907,
+          "status": "ok",
+          "durationMs": 39993,
+          "runAtMs": 1777033915910,
+          "error": null
+        },
+        {
+          "ts": 1777032206596,
+          "status": "ok",
+          "durationMs": 41794,
+          "runAtMs": 1777032164798,
+          "error": null
+        },
+        {
+          "ts": 1777030356450,
+          "status": "ok",
+          "durationMs": 40538,
+          "runAtMs": 1777030315908,
+          "error": null
+        },
+        {
+          "ts": 1777028558048,
+          "status": "ok",
+          "durationMs": 42134,
+          "runAtMs": 1777028515910,
+          "error": null
+        },
+        {
+          "ts": 1777026759030,
+          "status": "ok",
+          "durationMs": 43122,
+          "runAtMs": 1777026715904,
+          "error": null
+        },
+        {
+          "ts": 1777024957787,
+          "status": "ok",
+          "durationMs": 41875,
+          "runAtMs": 1777024915909,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "0e621aab-8b49-4c36-a5a5-d87fbe7004eb",
+      "name": "Shardi analyzer topic1115",
+      "schedule": "2-59/10 9-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T14:53:51.502Z",
+      "nextRun": "2026-04-24T15:03:51.483Z",
+      "duration": "17560ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First action must be an exec tool call. Execute exactly:\npython3 /Users/yordamkocatepe/clawd/scripts/us_market_open_chec",
+      "history": [
+        {
+          "ts": 1777042449095,
+          "status": "ok",
+          "durationMs": 17560,
+          "runAtMs": 1777042431502,
+          "error": null
+        },
+        {
+          "ts": 1777041845086,
+          "status": "ok",
+          "durationMs": 13564,
+          "runAtMs": 1777041831498,
+          "error": null
+        },
+        {
+          "ts": 1777041245724,
+          "status": "ok",
+          "durationMs": 14226,
+          "runAtMs": 1777041231493,
+          "error": null
+        },
+        {
+          "ts": 1777040648677,
+          "status": "ok",
+          "durationMs": 15984,
+          "runAtMs": 1777040632690,
+          "error": null
+        },
+        {
+          "ts": 1777040047040,
+          "status": "ok",
+          "durationMs": 15532,
+          "runAtMs": 1777040031505,
+          "error": null
+        },
+        {
+          "ts": 1777039449550,
+          "status": "ok",
+          "durationMs": 18052,
+          "runAtMs": 1777039431495,
+          "error": null
+        },
+        {
+          "ts": 1777038848111,
+          "status": "ok",
+          "durationMs": 16524,
+          "runAtMs": 1777038831584,
+          "error": null
+        },
+        {
+          "ts": 1777038249466,
+          "status": "ok",
+          "durationMs": 17964,
+          "runAtMs": 1777038231499,
+          "error": null
+        },
+        {
+          "ts": 1777037659618,
+          "status": "ok",
+          "durationMs": 28118,
+          "runAtMs": 1777037631497,
+          "error": null
+        },
+        {
+          "ts": 1777037045097,
+          "status": "ok",
+          "durationMs": 13598,
+          "runAtMs": 1777037031496,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "d88428a2-1d6f-4483-9dca-ffb9d664fb3d",
+      "name": "trader-alert-dispatcher",
+      "schedule": "*/5 9-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T15:00:00.015Z",
+      "nextRun": "2026-04-24T15:05:00.000Z",
+      "duration": "6748ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/tra",
+      "history": [
+        {
+          "ts": 1777042816298,
+          "status": "ok",
+          "durationMs": 6748,
+          "runAtMs": 1777042800015,
+          "error": null
+        },
+        {
+          "ts": 1777042508772,
+          "status": "ok",
+          "durationMs": 8753,
+          "runAtMs": 1777042500015,
+          "error": null
+        },
+        {
+          "ts": 1777042211222,
+          "status": "ok",
+          "durationMs": 11183,
+          "runAtMs": 1777042200034,
+          "error": null
+        },
+        {
+          "ts": 1777041907312,
+          "status": "ok",
+          "durationMs": 7296,
+          "runAtMs": 1777041900013,
+          "error": null
+        },
+        {
+          "ts": 1777041605467,
+          "status": "ok",
+          "durationMs": 5435,
+          "runAtMs": 1777041600024,
+          "error": null
+        },
+        {
+          "ts": 1777041305687,
+          "status": "ok",
+          "durationMs": 5678,
+          "runAtMs": 1777041300006,
+          "error": null
+        },
+        {
+          "ts": 1777041037316,
+          "status": "ok",
+          "durationMs": 15812,
+          "runAtMs": 1777041000029,
+          "error": null
+        },
+        {
+          "ts": 1777040709617,
+          "status": "ok",
+          "durationMs": 9376,
+          "runAtMs": 1777040700237,
+          "error": null
+        },
+        {
+          "ts": 1777040429274,
+          "status": "ok",
+          "durationMs": 29148,
+          "runAtMs": 1777040400122,
+          "error": null
+        },
+        {
+          "ts": 1777040106726,
+          "status": "ok",
+          "durationMs": 6699,
+          "runAtMs": 1777040100023,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "7258915b-b9ed-4b85-9986-1e379b5a5066",
+      "name": "sessions-json-prune (30m)",
+      "schedule": "7,37 * * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T14:38:43.139Z",
+      "nextRun": "2026-04-24T15:08:43.118Z",
+      "duration": "11924ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "low",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nMitigate sessions.j",
+      "history": [
+        {
+          "ts": 1777041535067,
+          "status": "ok",
+          "durationMs": 11924,
+          "runAtMs": 1777041523139,
+          "error": null
+        },
+        {
+          "ts": 1777039727102,
+          "status": "ok",
+          "durationMs": 3964,
+          "runAtMs": 1777039723135,
+          "error": null
+        },
+        {
+          "ts": 1777037927432,
+          "status": "ok",
+          "durationMs": 4291,
+          "runAtMs": 1777037923138,
+          "error": null
+        },
+        {
+          "ts": 1777036131820,
+          "status": "ok",
+          "durationMs": 8678,
+          "runAtMs": 1777036123138,
+          "error": null
+        },
+        {
+          "ts": 1777034347380,
+          "status": "ok",
+          "durationMs": 24240,
+          "runAtMs": 1777034323137,
+          "error": null
+        },
+        {
+          "ts": 1777032536211,
+          "status": "ok",
+          "durationMs": 13073,
+          "runAtMs": 1777032523131,
+          "error": null
+        },
+        {
+          "ts": 1777030747445,
+          "status": "ok",
+          "durationMs": 24297,
+          "runAtMs": 1777030723144,
+          "error": null
+        },
+        {
+          "ts": 1777028947199,
+          "status": "ok",
+          "durationMs": 24060,
+          "runAtMs": 1777028923136,
+          "error": null
+        },
+        {
+          "ts": 1777027145529,
+          "status": "ok",
+          "durationMs": 22389,
+          "runAtMs": 1777027123136,
+          "error": null
+        },
+        {
+          "ts": 1777025345163,
+          "status": "ok",
+          "durationMs": 22024,
+          "runAtMs": 1777025323136,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "18bd2b3a-928a-4716-bdcf-8004918aa558",
+      "name": "trade-open-orders-fills-watchdog",
+      "schedule": "*/10 9-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T15:03:50.286Z",
+      "nextRun": "2026-04-24T15:10:44.389Z",
+      "duration": "50939ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "low",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/tra",
+      "history": [
+        {
+          "ts": 1777043105335,
+          "status": "ok",
+          "durationMs": 50939,
+          "runAtMs": 1777043030286,
+          "error": null
+        },
+        {
+          "ts": 1777042279025,
+          "status": "ok",
+          "durationMs": 34515,
+          "runAtMs": 1777042244506,
+          "error": null
+        },
+        {
+          "ts": 1777041654272,
+          "status": "ok",
+          "durationMs": 9868,
+          "runAtMs": 1777041644401,
+          "error": null
+        },
+        {
+          "ts": 1777041129353,
+          "status": "error",
+          "durationMs": 8811,
+          "runAtMs": 1777041111252,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1777040455888,
+          "status": "ok",
+          "durationMs": 11491,
+          "runAtMs": 1777040444394,
+          "error": null
+        },
+        {
+          "ts": 1777039850356,
+          "status": "ok",
+          "durationMs": 5940,
+          "runAtMs": 1777039844413,
+          "error": null
+        },
+        {
+          "ts": 1777039330537,
+          "status": "ok",
+          "durationMs": 7716,
+          "runAtMs": 1777039309505,
+          "error": null
+        },
+        {
+          "ts": 1777038650107,
+          "status": "ok",
+          "durationMs": 5698,
+          "runAtMs": 1777038644406,
+          "error": null
+        },
+        {
+          "ts": 1777038108587,
+          "status": "ok",
+          "durationMs": 5620,
+          "runAtMs": 1777038096083,
+          "error": null
+        },
+        {
+          "ts": 1777037511119,
+          "status": "ok",
+          "durationMs": 6737,
+          "runAtMs": 1777037494349,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "d2f72f7c-f119-4a93-824d-b8a16a8179a8",
+      "name": "ShardiB2 market-hour monitor",
+      "schedule": "*/10 9-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T15:01:25.222Z",
+      "nextRun": "2026-04-24T15:10:53.733Z",
+      "duration": "145064ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly:\npython3 /Users/yordamkocatepe/clawd/scripts/us_market_open_chec",
+      "history": [
+        {
+          "ts": 1777043105334,
+          "status": "ok",
+          "durationMs": 145064,
+          "runAtMs": 1777042885222,
+          "error": null
+        },
+        {
+          "ts": 1777042330352,
+          "status": "ok",
+          "durationMs": 17878,
+          "runAtMs": 1777042281043,
+          "error": null
+        },
+        {
+          "ts": 1777041661353,
+          "status": "ok",
+          "durationMs": 5063,
+          "runAtMs": 1777041656286,
+          "error": null
+        },
+        {
+          "ts": 1777041129349,
+          "status": "ok",
+          "durationMs": 19241,
+          "runAtMs": 1777041092011,
+          "error": null
+        },
+        {
+          "ts": 1777040469413,
+          "status": "ok",
+          "durationMs": 11468,
+          "runAtMs": 1777040457942,
+          "error": null
+        },
+        {
+          "ts": 1777039855484,
+          "status": "ok",
+          "durationMs": 1732,
+          "runAtMs": 1777039853749,
+          "error": null
+        },
+        {
+          "ts": 1777039330537,
+          "status": "ok",
+          "durationMs": 17956,
+          "runAtMs": 1777039291549,
+          "error": null
+        },
+        {
+          "ts": 1777038655838,
+          "status": "ok",
+          "durationMs": 2061,
+          "runAtMs": 1777038653773,
+          "error": null
+        },
+        {
+          "ts": 1777038108587,
+          "status": "ok",
+          "durationMs": 13941,
+          "runAtMs": 1777038082142,
+          "error": null
+        },
+        {
+          "ts": 1777037511119,
+          "status": "ok",
+          "durationMs": 14718,
+          "runAtMs": 1777037479631,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "100efa4d-f508-4f5f-8900-0972e92c30c1",
+      "name": "trade-unified-watch-topic1115",
+      "schedule": "*/10 9-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T15:04:41.225Z",
+      "nextRun": "2026-04-24T15:11:12.421Z",
+      "duration": "24105ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "low",
+      "description": "First action must be an exec tool call. Execute exactly:\npython3 /Users/yordamkocatepe/clawd/scripts/us_market_open_chec",
+      "history": [
+        {
+          "ts": 1777043105336,
+          "status": "ok",
+          "durationMs": 24105,
+          "runAtMs": 1777043081225,
+          "error": null
+        },
+        {
+          "ts": 1777042330353,
+          "status": "ok",
+          "durationMs": 31404,
+          "runAtMs": 1777042298921,
+          "error": null
+        },
+        {
+          "ts": 1777041685048,
+          "status": "ok",
+          "durationMs": 12600,
+          "runAtMs": 1777041672445,
+          "error": null
+        },
+        {
+          "ts": 1777041129353,
+          "status": "ok",
+          "durationMs": 9282,
+          "runAtMs": 1777041120063,
+          "error": null
+        },
+        {
+          "ts": 1777040483662,
+          "status": "ok",
+          "durationMs": 11036,
+          "runAtMs": 1777040472623,
+          "error": null
+        },
+        {
+          "ts": 1777039889023,
+          "status": "ok",
+          "durationMs": 16583,
+          "runAtMs": 1777039872437,
+          "error": null
+        },
+        {
+          "ts": 1777039330538,
+          "status": "ok",
+          "durationMs": 13313,
+          "runAtMs": 1777039317221,
+          "error": null
+        },
+        {
+          "ts": 1777038706505,
+          "status": "ok",
+          "durationMs": 34062,
+          "runAtMs": 1777038672439,
+          "error": null
+        },
+        {
+          "ts": 1777038108587,
+          "status": "ok",
+          "durationMs": 6880,
+          "runAtMs": 1777038101703,
+          "error": null
+        },
+        {
+          "ts": 1777037511119,
+          "status": "ok",
+          "durationMs": 10030,
+          "runAtMs": 1777037501086,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "b498cc1c-f7a3-40a7-b6d3-25bd60c55dca",
+      "name": "gbrain-auto-sync-15m",
+      "schedule": "*/15 * * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T15:00:40.498Z",
+      "nextRun": "2026-04-24T15:15:40.494Z",
+      "duration": "42670ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\ncd /Users/yordamkocatepe/clawd && ./scripts/gbr",
+      "history": [
+        {
+          "ts": 1777042883171,
+          "status": "ok",
+          "durationMs": 42670,
+          "runAtMs": 1777042840498,
+          "error": null
+        },
+        {
+          "ts": 1777041979074,
+          "status": "ok",
+          "durationMs": 38561,
+          "runAtMs": 1777041940509,
+          "error": null
+        },
+        {
+          "ts": 1777041089905,
+          "status": "ok",
+          "durationMs": 49359,
+          "runAtMs": 1777041040542,
+          "error": null
+        },
+        {
+          "ts": 1777040184965,
+          "status": "ok",
+          "durationMs": 44441,
+          "runAtMs": 1777040140521,
+          "error": null
+        },
+        {
+          "ts": 1777039289535,
+          "status": "ok",
+          "durationMs": 49026,
+          "runAtMs": 1777039240506,
+          "error": null
+        },
+        {
+          "ts": 1777038373610,
+          "status": "ok",
+          "durationMs": 33067,
+          "runAtMs": 1777038340512,
+          "error": null
+        },
+        {
+          "ts": 1777037477533,
+          "status": "ok",
+          "durationMs": 37018,
+          "runAtMs": 1777037440512,
+          "error": null
+        },
+        {
+          "ts": 1777036573539,
+          "status": "ok",
+          "durationMs": 33021,
+          "runAtMs": 1777036540515,
+          "error": null
+        },
+        {
+          "ts": 1777035681914,
+          "status": "ok",
+          "durationMs": 41377,
+          "runAtMs": 1777035640512,
+          "error": null
+        },
+        {
+          "ts": 1777034812088,
+          "status": "ok",
+          "durationMs": 71572,
+          "runAtMs": 1777034740513,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "7c3f8d67-8385-4161-ac3b-a0af716745ff",
+      "name": "decision-detect-hourly",
+      "schedule": "15 */2 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T13:16:44.204Z",
+      "nextRun": "2026-04-24T15:16:44.184Z",
+      "duration": "8274ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nRun once:\npython3 /",
+      "history": [
+        {
+          "ts": 1777036612481,
+          "status": "ok",
+          "durationMs": 8274,
+          "runAtMs": 1777036604204,
+          "error": null
+        },
+        {
+          "ts": 1777029409977,
+          "status": "ok",
+          "durationMs": 5771,
+          "runAtMs": 1777029404203,
+          "error": null
+        },
+        {
+          "ts": 1777022209931,
+          "status": "ok",
+          "durationMs": 5724,
+          "runAtMs": 1777022204204,
+          "error": null
+        },
+        {
+          "ts": 1777015013414,
+          "status": "ok",
+          "durationMs": 9201,
+          "runAtMs": 1777015004210,
+          "error": null
+        },
+        {
+          "ts": 1777007811472,
+          "status": "ok",
+          "durationMs": 7268,
+          "runAtMs": 1777007804201,
+          "error": null
+        },
+        {
+          "ts": 1777000612566,
+          "status": "ok",
+          "durationMs": 8295,
+          "runAtMs": 1777000604267,
+          "error": null
+        },
+        {
+          "ts": 1776993412249,
+          "status": "ok",
+          "durationMs": 8043,
+          "runAtMs": 1776993404202,
+          "error": null
+        },
+        {
+          "ts": 1776986209989,
+          "status": "ok",
+          "durationMs": 5784,
+          "runAtMs": 1776986204202,
+          "error": null
+        },
+        {
+          "ts": 1776979009936,
+          "status": "ok",
+          "durationMs": 5730,
+          "runAtMs": 1776979004202,
+          "error": null
+        },
+        {
+          "ts": 1776971812552,
+          "status": "ok",
+          "durationMs": 8344,
+          "runAtMs": 1776971804204,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "cdc79cf7-82e3-4081-9e9d-673b3be2178f",
+      "name": "topic1115-trade-day-orchestrator",
+      "schedule": "*/30 8-16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T15:00:06.763Z",
+      "nextRun": "2026-04-24T15:30:00.000Z",
+      "duration": "9531ms",
+      "target": "session:agent:main:telegram:group:-1003684603075:topic:1115",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "low",
+      "description": "First action must be an exec tool call. Execute exactly:\npython3 /Users/yordamkocatepe/clawd/scripts/topic1115_trade_day",
+      "history": [
+        {
+          "ts": 1777042816298,
+          "status": "ok",
+          "durationMs": 9531,
+          "runAtMs": 1777042806763,
+          "error": null
+        },
+        {
+          "ts": 1777041037316,
+          "status": "ok",
+          "durationMs": 21471,
+          "runAtMs": 1777041015841,
+          "error": null
+        },
+        {
+          "ts": 1777039213442,
+          "status": "ok",
+          "durationMs": 10807,
+          "runAtMs": 1777039202632,
+          "error": null
+        },
+        {
+          "ts": 1777037411913,
+          "status": "ok",
+          "durationMs": 9304,
+          "runAtMs": 1777037402604,
+          "error": null
+        },
+        {
+          "ts": 1777035628815,
+          "status": "ok",
+          "durationMs": 7899,
+          "runAtMs": 1777035620912,
+          "error": null
+        },
+        {
+          "ts": 1777033812985,
+          "status": "ok",
+          "durationMs": 12955,
+          "runAtMs": 1777033800026,
+          "error": null
+        },
+        {
+          "ts": 1777032015168,
+          "status": "ok",
+          "durationMs": 15138,
+          "runAtMs": 1777032000027,
+          "error": null
+        },
+        {
+          "ts": 1776976216942,
+          "status": "ok",
+          "durationMs": 14421,
+          "runAtMs": 1776976202517,
+          "error": null
+        },
+        {
+          "ts": 1776974415069,
+          "status": "ok",
+          "durationMs": 12466,
+          "runAtMs": 1776974402599,
+          "error": null
+        },
+        {
+          "ts": 1776972614382,
+          "status": "ok",
+          "durationMs": 11833,
+          "runAtMs": 1776972602546,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "fc21bbb4-45ae-4e6c-9a8a-b31be920debb",
+      "name": "mission-control-health-sweep-6h",
+      "schedule": "27 */6 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T09:31:45.771Z",
+      "nextRun": "2026-04-24T15:31:45.752Z",
+      "duration": "57123ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "qwen/qwen3.6-35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/mission_control_health_sweep.py\n\nReturn exa",
+      "history": [
+        {
+          "ts": 1777023162897,
+          "status": "ok",
+          "durationMs": 57123,
+          "runAtMs": 1777023105771,
+          "error": null
+        },
+        {
+          "ts": 1777001565769,
+          "status": "ok",
+          "durationMs": 54470,
+          "runAtMs": 1777001511295,
+          "error": null
+        },
+        {
+          "ts": 1776979960031,
+          "status": "ok",
+          "durationMs": 54258,
+          "runAtMs": 1776979905770,
+          "error": null
+        },
+        {
+          "ts": 1776958446626,
+          "status": "ok",
+          "durationMs": 77090,
+          "runAtMs": 1776958329997,
+          "error": null
+        },
+        {
+          "ts": 1776936785460,
+          "status": "ok",
+          "durationMs": 79679,
+          "runAtMs": 1776936705773,
+          "error": null
+        },
+        {
+          "ts": 1776915168850,
+          "status": "ok",
+          "durationMs": 63077,
+          "runAtMs": 1776915105769,
+          "error": null
+        },
+        {
+          "ts": 1776893569073,
+          "status": "ok",
+          "durationMs": 63302,
+          "runAtMs": 1776893505767,
+          "error": null
+        },
+        {
+          "ts": 1776872033716,
+          "status": "ok",
+          "durationMs": 71589,
+          "runAtMs": 1776871923077,
+          "error": null
+        },
+        {
+          "ts": 1776850390023,
+          "status": "ok",
+          "durationMs": 84248,
+          "runAtMs": 1776850305771,
+          "error": null
+        },
+        {
+          "ts": 1776828768655,
+          "status": "ok",
+          "durationMs": 62859,
+          "runAtMs": 1776828705770,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ebd9b90f-727d-49f6-91a9-d2ff2baace65",
+      "name": "news-scout-pm",
+      "schedule": "0 19 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T16:34:43.937Z",
+      "nextRun": "2026-04-24T16:01:08.739Z",
+      "duration": "27393ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "low",
+      "description": "Generate the evening News Scout (tech/AI + US market) and send to Telegram General topic.\n\nSteps:\n1) Run:\n   python3 /Us",
+      "history": [
+        {
+          "ts": 1776962111334,
+          "status": "ok",
+          "durationMs": 27393,
+          "runAtMs": 1776962083937,
+          "error": null
+        },
+        {
+          "ts": 1776873774023,
+          "status": "ok",
+          "durationMs": 32986,
+          "runAtMs": 1776873694928,
+          "error": null
+        },
+        {
+          "ts": 1776787396360,
+          "status": "ok",
+          "durationMs": 29618,
+          "runAtMs": 1776787313213,
+          "error": null
+        },
+        {
+          "ts": 1776701158631,
+          "status": "ok",
+          "durationMs": 75413,
+          "runAtMs": 1776700967289,
+          "error": null
+        },
+        {
+          "ts": 1776614947937,
+          "status": "ok",
+          "durationMs": 89033,
+          "runAtMs": 1776614678175,
+          "error": null
+        },
+        {
+          "ts": 1776528255478,
+          "status": "ok",
+          "durationMs": 67008,
+          "runAtMs": 1776528133575,
+          "error": null
+        },
+        {
+          "ts": 1776488422369,
+          "status": "ok",
+          "durationMs": 48157,
+          "runAtMs": 1776487137125,
+          "error": null
+        },
+        {
+          "ts": 1776355531381,
+          "status": "ok",
+          "durationMs": 33685,
+          "runAtMs": 1776355439815,
+          "error": null
+        },
+        {
+          "ts": 1776271361173,
+          "status": "ok",
+          "durationMs": 30743,
+          "runAtMs": 1776271219285,
+          "error": null
+        },
+        {
+          "ts": 1776182757246,
+          "status": "ok",
+          "durationMs": 33388,
+          "runAtMs": 1776182645352,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "bc4721aa-3e1e-4ace-a4b6-772c5b2dd13e",
+      "name": "workflow-intake-sentinel",
+      "schedule": "0 9,21 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T06:00:00.030Z",
+      "nextRun": "2026-04-24T18:00:00.000Z",
+      "duration": "8270ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "qwen/qwen3.6-35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/mission-control/scripts/workflow_intake_sentinel.py",
+      "history": [
+        {
+          "ts": 1777010408303,
+          "status": "ok",
+          "durationMs": 8270,
+          "runAtMs": 1777010400030,
+          "error": null
+        },
+        {
+          "ts": 1776967245637,
+          "status": "ok",
+          "durationMs": 30424,
+          "runAtMs": 1776967215210,
+          "error": null
+        },
+        {
+          "ts": 1776924028169,
+          "status": "ok",
+          "durationMs": 28150,
+          "runAtMs": 1776924000015,
+          "error": null
+        },
+        {
+          "ts": 1776880831401,
+          "status": "ok",
+          "durationMs": 16093,
+          "runAtMs": 1776880815301,
+          "error": null
+        },
+        {
+          "ts": 1776837610495,
+          "status": "ok",
+          "durationMs": 10468,
+          "runAtMs": 1776837600023,
+          "error": null
+        },
+        {
+          "ts": 1776794434875,
+          "status": "ok",
+          "durationMs": 17012,
+          "runAtMs": 1776794417859,
+          "error": null
+        },
+        {
+          "ts": 1776751208415,
+          "status": "ok",
+          "durationMs": 8389,
+          "runAtMs": 1776751200023,
+          "error": null
+        },
+        {
+          "ts": 1776708078310,
+          "status": "ok",
+          "durationMs": 44383,
+          "runAtMs": 1776708033922,
+          "error": null
+        },
+        {
+          "ts": 1776664814732,
+          "status": "ok",
+          "durationMs": 14704,
+          "runAtMs": 1776664800024,
+          "error": null
+        },
+        {
+          "ts": 1776621616302,
+          "status": "ok",
+          "durationMs": 16268,
+          "runAtMs": 1776621600031,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "8bfbe6be-9793-4d95-9202-872cb440d551",
+      "name": "trade-post-trade-debrief-topic1115",
+      "schedule": "45 22 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-23T19:45:22.782Z",
+      "nextRun": "2026-04-24T19:45:22.771Z",
+      "duration": "27439ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cro",
+      "history": [
+        {
+          "ts": 1776973550226,
+          "status": "ok",
+          "durationMs": 27439,
+          "runAtMs": 1776973522782,
+          "error": null
+        },
+        {
+          "ts": 1776887136008,
+          "status": "ok",
+          "durationMs": 13209,
+          "runAtMs": 1776887122796,
+          "error": null
+        },
+        {
+          "ts": 1776800737621,
+          "status": "ok",
+          "durationMs": 14831,
+          "runAtMs": 1776800722787,
+          "error": null
+        },
+        {
+          "ts": 1776714383508,
+          "status": "ok",
+          "durationMs": 60718,
+          "runAtMs": 1776714322787,
+          "error": null
+        },
+        {
+          "ts": 1776488422374,
+          "status": "ok",
+          "durationMs": 95201,
+          "runAtMs": 1776487345937,
+          "error": null
+        },
+        {
+          "ts": 1776368740369,
+          "status": "ok",
+          "durationMs": 17578,
+          "runAtMs": 1776368722788,
+          "error": null
+        },
+        {
+          "ts": 1776282357683,
+          "status": "ok",
+          "durationMs": 34896,
+          "runAtMs": 1776282322784,
+          "error": null
+        },
+        {
+          "ts": 1776195940954,
+          "status": "ok",
+          "durationMs": 14839,
+          "runAtMs": 1776195926112,
+          "error": null
+        },
+        {
+          "ts": 1776161998971,
+          "status": "ok",
+          "durationMs": 18343,
+          "runAtMs": 1776161350184,
+          "error": null
+        },
+        {
+          "ts": 1775904529288,
+          "status": "error",
+          "durationMs": 27,
+          "runAtMs": 1775904528849,
+          "error": "GatewayDrainingError: Gateway is draining for restart; new tasks are not accepted"
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "e1619924-8be1-40a7-bc1e-11ae19f35155",
+      "name": "ShardiB2 EOD report",
+      "schedule": "10 16 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-23T20:12:08.408Z",
+      "nextRun": "2026-04-24T20:12:08.389Z",
+      "duration": "242486ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "End-of-day report for @ShardiB2 (US market day).\n\nSteps:\n1) Run: python3 /Users/yordamkocatepe/clawd/scripts/shardi_dail",
+      "history": [
+        {
+          "ts": 1776975370898,
+          "status": "ok",
+          "durationMs": 242486,
+          "runAtMs": 1776975128408,
+          "error": null
+        },
+        {
+          "ts": 1776888799550,
+          "status": "ok",
+          "durationMs": 71143,
+          "runAtMs": 1776888728403,
+          "error": null
+        },
+        {
+          "ts": 1776802518466,
+          "status": "ok",
+          "durationMs": 190022,
+          "runAtMs": 1776802328418,
+          "error": null
+        },
+        {
+          "ts": 1776716015828,
+          "status": "ok",
+          "durationMs": 87420,
+          "runAtMs": 1776715928405,
+          "error": null
+        },
+        {
+          "ts": 1776488422368,
+          "status": "ok",
+          "durationMs": 199727,
+          "runAtMs": 1776486814810,
+          "error": null
+        },
+        {
+          "ts": 1776370546392,
+          "status": "ok",
+          "durationMs": 217958,
+          "runAtMs": 1776370328430,
+          "error": null
+        },
+        {
+          "ts": 1776284082382,
+          "status": "ok",
+          "durationMs": 153976,
+          "runAtMs": 1776283928402,
+          "error": null
+        },
+        {
+          "ts": 1776197894933,
+          "status": "ok",
+          "durationMs": 183929,
+          "runAtMs": 1776197601613,
+          "error": null
+        },
+        {
+          "ts": 1776161998968,
+          "status": "ok",
+          "durationMs": 94212,
+          "runAtMs": 1776160661181,
+          "error": null
+        },
+        {
+          "ts": 1775904529285,
+          "status": "ok",
+          "durationMs": 48580,
+          "runAtMs": 1775904298586,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "ec39cea3-cae2-4e6e-a847-9fe08563101d",
+      "name": "night-agent-routine",
+      "schedule": "30 23 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T20:31:33.568Z",
+      "nextRun": "2026-04-24T20:31:19.783Z",
+      "duration": "78919ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "low",
+      "description": "You are Night Agent. Run the nightly routine for Yordam.\n\nConstraints:\n- Work only inside /Users/yordamkocatepe/clawd.\n-",
+      "history": [
+        {
+          "ts": 1776976411602,
+          "status": "ok",
+          "durationMs": 78919,
+          "runAtMs": 1776976293568,
+          "error": null
+        },
+        {
+          "ts": 1776889960630,
+          "status": "ok",
+          "durationMs": 36843,
+          "runAtMs": 1776889887825,
+          "error": null
+        },
+        {
+          "ts": 1776803613334,
+          "status": "ok",
+          "durationMs": 56369,
+          "runAtMs": 1776803519170,
+          "error": null
+        },
+        {
+          "ts": 1776717219571,
+          "status": "ok",
+          "durationMs": 86394,
+          "runAtMs": 1776717085521,
+          "error": null
+        },
+        {
+          "ts": 1776630798055,
+          "status": "ok",
+          "durationMs": 94175,
+          "runAtMs": 1776630703868,
+          "error": null
+        },
+        {
+          "ts": 1776613700844,
+          "status": "ok",
+          "durationMs": 114765,
+          "runAtMs": 1776613586076,
+          "error": null
+        },
+        {
+          "ts": 1776488422368,
+          "status": "ok",
+          "durationMs": 104179,
+          "runAtMs": 1776487014537,
+          "error": null
+        },
+        {
+          "ts": 1776371624706,
+          "status": "ok",
+          "durationMs": 96354,
+          "runAtMs": 1776371496255,
+          "error": null
+        },
+        {
+          "ts": 1776285300259,
+          "status": "ok",
+          "durationMs": 72153,
+          "runAtMs": 1776285175788,
+          "error": null
+        },
+        {
+          "ts": 1776199593230,
+          "status": "ok",
+          "durationMs": 44720,
+          "runAtMs": 1776199444715,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "3e20a15e-6eb9-44d9-bad1-fd5a988bff68",
+      "name": "Daily token usage log (yesterday) + monthly rotation",
+      "schedule": "10 0 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T21:12:34.101Z",
+      "nextRun": "2026-04-24T21:12:34.083Z",
+      "duration": "10418ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_daily_token_usage_wrapper.py\n\nStrict c",
+      "history": [
+        {
+          "ts": 1776978764522,
+          "status": "ok",
+          "durationMs": 10418,
+          "runAtMs": 1776978754101,
+          "error": null
+        },
+        {
+          "ts": 1776892360065,
+          "status": "ok",
+          "durationMs": 5967,
+          "runAtMs": 1776892354095,
+          "error": null
+        },
+        {
+          "ts": 1776805968708,
+          "status": "ok",
+          "durationMs": 14602,
+          "runAtMs": 1776805954102,
+          "error": null
+        },
+        {
+          "ts": 1776719565956,
+          "status": "ok",
+          "durationMs": 11852,
+          "runAtMs": 1776719554100,
+          "error": null
+        },
+        {
+          "ts": 1776633213042,
+          "status": "ok",
+          "durationMs": 58941,
+          "runAtMs": 1776633154098,
+          "error": null
+        },
+        {
+          "ts": 1776614947937,
+          "status": "ok",
+          "durationMs": 51505,
+          "runAtMs": 1776614767208,
+          "error": null
+        },
+        {
+          "ts": 1776613463973,
+          "status": "ok",
+          "durationMs": 60300,
+          "runAtMs": 1776613403671,
+          "error": null
+        },
+        {
+          "ts": 1776493687642,
+          "status": "ok",
+          "durationMs": 29678,
+          "runAtMs": 1776493657916,
+          "error": null
+        },
+        {
+          "ts": 1776492965286,
+          "status": "error",
+          "durationMs": 78897,
+          "runAtMs": 1776492886387,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776488422372,
+          "status": "error",
+          "durationMs": 26391,
+          "runAtMs": 1776487185282,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "947b8b23-f9a8-4255-bc29-9d3fd1a22260",
+      "name": "token-efficiency-kpi-daily",
+      "schedule": "20 0 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T21:20:11.074Z",
+      "nextRun": "2026-04-24T21:20:11.057Z",
+      "duration": "63617ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "qwen/qwen3.6-35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_token_efficiency_kpi_daily_wrapper.py\n",
+      "history": [
+        {
+          "ts": 1776979274706,
+          "status": "ok",
+          "durationMs": 63617,
+          "runAtMs": 1776979211074,
+          "error": null
+        },
+        {
+          "ts": 1776892818987,
+          "status": "ok",
+          "durationMs": 7904,
+          "runAtMs": 1776892811073,
+          "error": null
+        },
+        {
+          "ts": 1776806432009,
+          "status": "ok",
+          "durationMs": 20919,
+          "runAtMs": 1776806411075,
+          "error": null
+        },
+        {
+          "ts": 1776720030690,
+          "status": "ok",
+          "durationMs": 19613,
+          "runAtMs": 1776720011073,
+          "error": null
+        },
+        {
+          "ts": 1776633661785,
+          "status": "ok",
+          "durationMs": 50707,
+          "runAtMs": 1776633611070,
+          "error": null
+        },
+        {
+          "ts": 1776614675226,
+          "status": "ok",
+          "durationMs": 72130,
+          "runAtMs": 1776614297940,
+          "error": null
+        },
+        {
+          "ts": 1776488422378,
+          "status": "ok",
+          "durationMs": 19610,
+          "runAtMs": 1776487754073,
+          "error": null
+        },
+        {
+          "ts": 1776374434925,
+          "status": "ok",
+          "durationMs": 23847,
+          "runAtMs": 1776374411069,
+          "error": null
+        },
+        {
+          "ts": 1776288021529,
+          "status": "ok",
+          "durationMs": 10456,
+          "runAtMs": 1776288011070,
+          "error": null
+        },
+        {
+          "ts": 1776201620926,
+          "status": "ok",
+          "durationMs": 9850,
+          "runAtMs": 1776201611073,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "3c8f2975-e414-444a-9dae-69509b636af2",
+      "name": "ops-security-posture-daily",
+      "schedule": "25 2 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T23:27:17.987Z",
+      "nextRun": "2026-04-24T23:27:17.965Z",
+      "duration": "18352ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_ops_security_posture_wrapper.py\n\nStric",
+      "history": [
+        {
+          "ts": 1776986856343,
+          "status": "ok",
+          "durationMs": 18352,
+          "runAtMs": 1776986837987,
+          "error": null
+        },
+        {
+          "ts": 1776900456232,
+          "status": "ok",
+          "durationMs": 18251,
+          "runAtMs": 1776900437978,
+          "error": null
+        },
+        {
+          "ts": 1776814056254,
+          "status": "ok",
+          "durationMs": 18269,
+          "runAtMs": 1776814037982,
+          "error": null
+        },
+        {
+          "ts": 1776727655193,
+          "status": "ok",
+          "durationMs": 17210,
+          "runAtMs": 1776727637980,
+          "error": null
+        },
+        {
+          "ts": 1776641267779,
+          "status": "ok",
+          "durationMs": 29796,
+          "runAtMs": 1776641237980,
+          "error": null
+        },
+        {
+          "ts": 1776614675224,
+          "status": "ok",
+          "durationMs": 38915,
+          "runAtMs": 1776614069769,
+          "error": null
+        },
+        {
+          "ts": 1776493638238,
+          "status": "ok",
+          "durationMs": 22010,
+          "runAtMs": 1776493616226,
+          "error": null
+        },
+        {
+          "ts": 1776493033881,
+          "status": "ok",
+          "durationMs": 68589,
+          "runAtMs": 1776492965291,
+          "error": null
+        },
+        {
+          "ts": 1776488422375,
+          "status": "error",
+          "durationMs": 14244,
+          "runAtMs": 1776487469568,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776382046409,
+          "status": "error",
+          "durationMs": 8427,
+          "runAtMs": 1776382037978,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "44796164-4d31-41f4-9517-87c763ae0321",
+      "name": "ops-prompt-stack-sync-daily",
+      "schedule": "35 2 * * *",
+      "status": "active",
+      "lastRun": "2026-04-23T23:37:39.636Z",
+      "nextRun": "2026-04-24T23:37:39.619Z",
+      "duration": "13976ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_ops_prompt_stack_sync_wrapper.py\n\nStri",
+      "history": [
+        {
+          "ts": 1776987473616,
+          "status": "ok",
+          "durationMs": 13976,
+          "runAtMs": 1776987459636,
+          "error": null
+        },
+        {
+          "ts": 1776901070066,
+          "status": "ok",
+          "durationMs": 10430,
+          "runAtMs": 1776901059633,
+          "error": null
+        },
+        {
+          "ts": 1776814670002,
+          "status": "ok",
+          "durationMs": 10308,
+          "runAtMs": 1776814659690,
+          "error": null
+        },
+        {
+          "ts": 1776728272877,
+          "status": "ok",
+          "durationMs": 13249,
+          "runAtMs": 1776728259625,
+          "error": null
+        },
+        {
+          "ts": 1776641880892,
+          "status": "ok",
+          "durationMs": 21254,
+          "runAtMs": 1776641859634,
+          "error": null
+        },
+        {
+          "ts": 1776614675224,
+          "status": "ok",
+          "durationMs": 38881,
+          "runAtMs": 1776614108684,
+          "error": null
+        },
+        {
+          "ts": 1776493657889,
+          "status": "ok",
+          "durationMs": 19634,
+          "runAtMs": 1776493638246,
+          "error": null
+        },
+        {
+          "ts": 1776488422376,
+          "status": "error",
+          "durationMs": 13738,
+          "runAtMs": 1776487483812,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776382666515,
+          "status": "error",
+          "durationMs": 6873,
+          "runAtMs": 1776382659637,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776296276463,
+          "status": "ok",
+          "durationMs": 16828,
+          "runAtMs": 1776296259631,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "714ccf7e-1609-4417-beba-da275ae5ac4f",
+      "name": "Memory Dreaming Promotion",
+      "schedule": "0 3 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T14:15:45.425Z",
+      "nextRun": "2026-04-25T00:00:00.000Z",
+      "duration": "3ms",
+      "target": "main",
+      "payload": "systemEvent",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "",
+      "description": "__openclaw_memory_core_short_term_promotion_dream__",
+      "history": [
+        {
+          "ts": 1777040145428,
+          "status": "ok",
+          "durationMs": 3,
+          "runAtMs": 1777040145425,
+          "error": null
+        },
+        {
+          "ts": 1776989400055,
+          "status": "error",
+          "durationMs": 600023,
+          "runAtMs": 1776988800027,
+          "error": "cron: job execution timed out"
+        },
+        {
+          "ts": 1776934590505,
+          "status": "ok",
+          "durationMs": 11009,
+          "runAtMs": 1776934579495,
+          "error": null
+        },
+        {
+          "ts": 1776934356467,
+          "status": "error",
+          "durationMs": 8726,
+          "runAtMs": 1776934347694,
+          "error": "Error: Telegram recipient @heartbeat could not be resolved to a numeric chat ID (Call to 'getChat' failed! (400: Bad Request: chat not found))"
+        },
+        {
+          "ts": 1776934261770,
+          "status": "ok",
+          "durationMs": 50359,
+          "runAtMs": 1776934211410,
+          "error": null
+        },
+        {
+          "ts": 1776902416193,
+          "status": "ok",
+          "durationMs": 16171,
+          "runAtMs": 1776902400019,
+          "error": null
+        },
+        {
+          "ts": 1776834727742,
+          "status": "ok",
+          "durationMs": 26884,
+          "runAtMs": 1776834700857,
+          "error": null
+        },
+        {
+          "ts": 1776816600396,
+          "status": "error",
+          "durationMs": 600371,
+          "runAtMs": 1776816000021,
+          "error": "cron: job execution timed out"
+        },
+        {
+          "ts": 1776729647103,
+          "status": "ok",
+          "durationMs": 47082,
+          "runAtMs": 1776729600018,
+          "error": null
+        },
+        {
+          "ts": 1776709790621,
+          "status": "ok",
+          "durationMs": 97202,
+          "runAtMs": 1776709693418,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "47bae92c-83ba-4c65-a135-d91d8e283ab3",
+      "name": "vector-memory nightly sync",
+      "schedule": "0 3 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T00:10:02.725Z",
+      "nextRun": "2026-04-25T00:01:22.876Z",
+      "duration": "34288ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_vector_memory_nightly_sync_wrapper.py\n",
+      "history": [
+        {
+          "ts": 1776989534929,
+          "status": "ok",
+          "durationMs": 34288,
+          "runAtMs": 1776989402725,
+          "error": null
+        },
+        {
+          "ts": 1776962584683,
+          "status": "ok",
+          "durationMs": 22927,
+          "runAtMs": 1776962561755,
+          "error": null
+        },
+        {
+          "ts": 1776902519718,
+          "status": "ok",
+          "durationMs": 31636,
+          "runAtMs": 1776902488078,
+          "error": null
+        },
+        {
+          "ts": 1776816734967,
+          "status": "ok",
+          "durationMs": 32691,
+          "runAtMs": 1776816602481,
+          "error": null
+        },
+        {
+          "ts": 1776729735271,
+          "status": "ok",
+          "durationMs": 40552,
+          "runAtMs": 1776729694716,
+          "error": null
+        },
+        {
+          "ts": 1776678915518,
+          "status": "ok",
+          "durationMs": 51357,
+          "runAtMs": 1776678864160,
+          "error": null
+        },
+        {
+          "ts": 1776678384411,
+          "status": "error",
+          "durationMs": 62885,
+          "runAtMs": 1776678321523,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776670560042,
+          "status": "error",
+          "durationMs": 59279,
+          "runAtMs": 1776670500761,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776644090276,
+          "status": "error",
+          "durationMs": 72908,
+          "runAtMs": 1776643802269,
+          "error": "⚠️ Agent couldn't generate a response. Note: some tool actions may have already been executed — please verify before retrying."
+        },
+        {
+          "ts": 1776614675223,
+          "status": "ok",
+          "durationMs": 62117,
+          "runAtMs": 1776613905674,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "5fc1424e-bc2d-4f1a-81d1-00ab1b008762",
+      "name": "ops-backup-integrity-daily",
+      "schedule": "5 3 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T00:10:49.682Z",
+      "nextRun": "2026-04-25T00:06:21.722Z",
+      "duration": "6993ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Run this command and evaluate JSON: python3 /Users/yordamkocatepe/clawd/scripts/openclaw_local_backup_check.py --json . ",
+      "history": [
+        {
+          "ts": 1776989534929,
+          "status": "ok",
+          "durationMs": 6993,
+          "runAtMs": 1776989449682,
+          "error": null
+        },
+        {
+          "ts": 1776902784748,
+          "status": "ok",
+          "durationMs": 3005,
+          "runAtMs": 1776902781739,
+          "error": null
+        },
+        {
+          "ts": 1776816734968,
+          "status": "ok",
+          "durationMs": 7732,
+          "runAtMs": 1776816647215,
+          "error": null
+        },
+        {
+          "ts": 1776729990072,
+          "status": "ok",
+          "durationMs": 8328,
+          "runAtMs": 1776729981741,
+          "error": null
+        },
+        {
+          "ts": 1776644090277,
+          "status": "ok",
+          "durationMs": 40751,
+          "runAtMs": 1776643934237,
+          "error": null
+        },
+        {
+          "ts": 1776614675225,
+          "status": "ok",
+          "durationMs": 39073,
+          "runAtMs": 1776614147565,
+          "error": null
+        },
+        {
+          "ts": 1776488422376,
+          "status": "ok",
+          "durationMs": 12546,
+          "runAtMs": 1776487497550,
+          "error": null
+        },
+        {
+          "ts": 1776384770375,
+          "status": "ok",
+          "durationMs": 12329,
+          "runAtMs": 1776384665537,
+          "error": null
+        },
+        {
+          "ts": 1776298402136,
+          "status": "ok",
+          "durationMs": 16559,
+          "runAtMs": 1776298288500,
+          "error": null
+        },
+        {
+          "ts": 1776211992125,
+          "status": "ok",
+          "durationMs": 14996,
+          "runAtMs": 1776211851684,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "e4a4abdf-73a5-4c07-846f-9455a67ee9ba",
+      "name": "nightly-package-update-check-and-apply",
+      "schedule": "30 3 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T00:30:00.016Z",
+      "nextRun": "2026-04-25T00:30:00.000Z",
+      "duration": "63198ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "qwen/qwen3.6-35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Run a nightly package maintenance check on this Mac during off-hours.\n\nGoal:\n- Check for available updates in these buck",
+      "history": [
+        {
+          "ts": 1776990663230,
+          "status": "ok",
+          "durationMs": 63198,
+          "runAtMs": 1776990600016,
+          "error": null
+        },
+        {
+          "ts": 1776962561179,
+          "status": "ok",
+          "durationMs": 146905,
+          "runAtMs": 1776962414273,
+          "error": null
+        },
+        {
+          "ts": 1776904338500,
+          "status": "ok",
+          "durationMs": 138232,
+          "runAtMs": 1776904200018,
+          "error": null
+        },
+        {
+          "ts": 1776817941367,
+          "status": "ok",
+          "durationMs": 141328,
+          "runAtMs": 1776817800025,
+          "error": null
+        },
+        {
+          "ts": 1776731551079,
+          "status": "ok",
+          "durationMs": 151053,
+          "runAtMs": 1776731400023,
+          "error": null
+        },
+        {
+          "ts": 1776645151329,
+          "status": "ok",
+          "durationMs": 151304,
+          "runAtMs": 1776645000019,
+          "error": null
+        },
+        {
+          "ts": 1776613819425,
+          "status": "ok",
+          "durationMs": 217638,
+          "runAtMs": 1776613601785,
+          "error": null
+        },
+        {
+          "ts": 1776613403665,
+          "status": "ok",
+          "durationMs": 262398,
+          "runAtMs": 1776613141266,
+          "error": null
+        },
+        {
+          "ts": 1776488422377,
+          "status": "ok",
+          "durationMs": 94446,
+          "runAtMs": 1776487612071,
+          "error": null
+        },
+        {
+          "ts": 1776386144713,
+          "status": "ok",
+          "durationMs": 344691,
+          "runAtMs": 1776385800018,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "b63e27e0-1a21-4d6b-a856-2cab980dcc79",
+      "name": "router-weekly-checkpoint-1week-daily",
+      "schedule": "0 8 */3 * *",
+      "status": "active",
+      "lastRun": "2026-04-22T05:01:45.950Z",
+      "nextRun": "2026-04-25T05:01:45.945Z",
+      "duration": "9014ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "off",
+      "description": "Run weekly router checkpoint for today (daily, one-week window).\n\nSteps:\n1) Compute today date in Europe/Istanbul:\n   DA",
+      "history": [
+        {
+          "ts": 1776834114970,
+          "status": "ok",
+          "durationMs": 9014,
+          "runAtMs": 1776834105950,
+          "error": null
+        },
+        {
+          "ts": 1776614675224,
+          "status": "ok",
+          "durationMs": 53287,
+          "runAtMs": 1776613967791,
+          "error": null
+        },
+        {
+          "ts": 1776315727951,
+          "status": "ok",
+          "durationMs": 16558,
+          "runAtMs": 1776315711390,
+          "error": null
+        },
+        {
+          "ts": 1776056517478,
+          "status": "ok",
+          "durationMs": 11514,
+          "runAtMs": 1776056505961,
+          "error": null
+        },
+        {
+          "ts": 1775913664126,
+          "status": "ok",
+          "durationMs": 18710,
+          "runAtMs": 1775913645415,
+          "error": null
+        },
+        {
+          "ts": 1775904529289,
+          "status": "error",
+          "durationMs": 32,
+          "runAtMs": 1775904528906,
+          "error": "GatewayDrainingError: Gateway is draining for restart; new tasks are not accepted"
+        },
+        {
+          "ts": 1775538130407,
+          "status": "ok",
+          "durationMs": 24452,
+          "runAtMs": 1775538105954,
+          "error": null
+        },
+        {
+          "ts": 1775278921909,
+          "status": "ok",
+          "durationMs": 15952,
+          "runAtMs": 1775278905953,
+          "error": null
+        },
+        {
+          "ts": 1775019719951,
+          "status": "ok",
+          "durationMs": 13995,
+          "runAtMs": 1775019705952,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "700e699a-a468-47c5-a4bd-6448d0bb5645",
+      "name": "gbrain-update-check-daily",
+      "schedule": "15 8 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T05:17:02.839Z",
+      "nextRun": "2026-04-25T05:17:02.821Z",
+      "duration": "9169ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "minimax-portal/MiniMax-M2.7-highspeed",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nRun:\ncd /Users/yord",
+      "history": [
+        {
+          "ts": 1777007832011,
+          "status": "ok",
+          "durationMs": 9169,
+          "runAtMs": 1777007822839,
+          "error": null
+        },
+        {
+          "ts": 1776921430575,
+          "status": "ok",
+          "durationMs": 7739,
+          "runAtMs": 1776921422833,
+          "error": null
+        },
+        {
+          "ts": 1776835030668,
+          "status": "ok",
+          "durationMs": 7817,
+          "runAtMs": 1776835022848,
+          "error": null
+        },
+        {
+          "ts": 1776748632078,
+          "status": "ok",
+          "durationMs": 9237,
+          "runAtMs": 1776748622838,
+          "error": null
+        },
+        {
+          "ts": 1776662319841,
+          "status": "ok",
+          "durationMs": 46376,
+          "runAtMs": 1776662273461,
+          "error": null
+        },
+        {
+          "ts": 1776614675227,
+          "status": "ok",
+          "durationMs": 42554,
+          "runAtMs": 1776614571848,
+          "error": null
+        },
+        {
+          "ts": 1776489432983,
+          "status": "ok",
+          "durationMs": 10150,
+          "runAtMs": 1776489422830,
+          "error": null
+        },
+        {
+          "ts": 1776403033658,
+          "status": "ok",
+          "durationMs": 10816,
+          "runAtMs": 1776403022839,
+          "error": null
+        },
+        {
+          "ts": 1776316637325,
+          "status": "ok",
+          "durationMs": 14494,
+          "runAtMs": 1776316622827,
+          "error": null
+        },
+        {
+          "ts": 1776230238985,
+          "status": "ok",
+          "durationMs": 16143,
+          "runAtMs": 1776230222839,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "2f758428-2a69-4d54-bccb-b8fbabee5a0a",
+      "name": "gbrain-enrichment-3xday",
+      "schedule": "0 9,12,15 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T12:03:28.846Z",
+      "nextRun": "2026-04-25T06:02:56.068Z",
+      "duration": "43102ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\ncd /Users/yordamkocatepe/clawd && ./scripts/gbr",
+      "history": [
+        {
+          "ts": 1777032251951,
+          "status": "ok",
+          "durationMs": 43102,
+          "runAtMs": 1777032208846,
+          "error": null
+        },
+        {
+          "ts": 1777021413157,
+          "status": "ok",
+          "durationMs": 37066,
+          "runAtMs": 1777021376086,
+          "error": null
+        },
+        {
+          "ts": 1777010612916,
+          "status": "ok",
+          "durationMs": 36826,
+          "runAtMs": 1777010576086,
+          "error": null
+        },
+        {
+          "ts": 1776946058221,
+          "status": "ok",
+          "durationMs": 35252,
+          "runAtMs": 1776946022963,
+          "error": null
+        },
+        {
+          "ts": 1776935013019,
+          "status": "ok",
+          "durationMs": 36894,
+          "runAtMs": 1776934976121,
+          "error": null
+        },
+        {
+          "ts": 1776924211910,
+          "status": "ok",
+          "durationMs": 35824,
+          "runAtMs": 1776924176083,
+          "error": null
+        },
+        {
+          "ts": 1776859523751,
+          "status": "ok",
+          "durationMs": 35401,
+          "runAtMs": 1776859488345,
+          "error": null
+        },
+        {
+          "ts": 1776848582029,
+          "status": "ok",
+          "durationMs": 5936,
+          "runAtMs": 1776848576089,
+          "error": null
+        },
+        {
+          "ts": 1776837812022,
+          "status": "ok",
+          "durationMs": 35931,
+          "runAtMs": 1776837776088,
+          "error": null
+        },
+        {
+          "ts": 1776773084853,
+          "status": "ok",
+          "durationMs": 44717,
+          "runAtMs": 1776773040133,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "25ca0646-393a-41f0-89e4-7ba653828de0",
+      "name": "daily-main-files-review",
+      "schedule": "4 9 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T06:06:46.993Z",
+      "nextRun": "2026-04-25T06:06:46.972Z",
+      "duration": "49388ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nDaily review of mai",
+      "history": [
+        {
+          "ts": 1777010856384,
+          "status": "ok",
+          "durationMs": 49388,
+          "runAtMs": 1777010806993,
+          "error": null
+        },
+        {
+          "ts": 1776924447875,
+          "status": "ok",
+          "durationMs": 40886,
+          "runAtMs": 1776924406985,
+          "error": null
+        },
+        {
+          "ts": 1776838049476,
+          "status": "ok",
+          "durationMs": 42482,
+          "runAtMs": 1776838006990,
+          "error": null
+        },
+        {
+          "ts": 1776751655545,
+          "status": "ok",
+          "durationMs": 48552,
+          "runAtMs": 1776751606990,
+          "error": null
+        },
+        {
+          "ts": 1776665255400,
+          "status": "ok",
+          "durationMs": 48402,
+          "runAtMs": 1776665206994,
+          "error": null
+        },
+        {
+          "ts": 1776614675223,
+          "status": "ok",
+          "durationMs": 272882,
+          "runAtMs": 1776613632792,
+          "error": null
+        },
+        {
+          "ts": 1776492451194,
+          "status": "ok",
+          "durationMs": 44209,
+          "runAtMs": 1776492406982,
+          "error": null
+        },
+        {
+          "ts": 1776406125313,
+          "status": "ok",
+          "durationMs": 118316,
+          "runAtMs": 1776406006993,
+          "error": null
+        },
+        {
+          "ts": 1776319672143,
+          "status": "ok",
+          "durationMs": 65153,
+          "runAtMs": 1776319606986,
+          "error": null
+        },
+        {
+          "ts": 1776233827451,
+          "status": "ok",
+          "durationMs": 38128,
+          "runAtMs": 1776233594298,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "10840265-2216-4110-b7f0-26c666fedfec",
+      "name": "topic-state-sync-daily",
+      "schedule": "12 9 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T06:14:27.945Z",
+      "nextRun": "2026-04-25T06:14:27.927Z",
+      "duration": "22380ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nRun Topic State Syn",
+      "history": [
+        {
+          "ts": 1777011290329,
+          "status": "ok",
+          "durationMs": 22380,
+          "runAtMs": 1777011267945,
+          "error": null
+        },
+        {
+          "ts": 1776924885871,
+          "status": "ok",
+          "durationMs": 17927,
+          "runAtMs": 1776924867941,
+          "error": null
+        },
+        {
+          "ts": 1776838494899,
+          "status": "ok",
+          "durationMs": 26854,
+          "runAtMs": 1776838468019,
+          "error": null
+        },
+        {
+          "ts": 1776752118888,
+          "status": "ok",
+          "durationMs": 50940,
+          "runAtMs": 1776752067944,
+          "error": null
+        },
+        {
+          "ts": 1776670574653,
+          "status": "ok",
+          "durationMs": 14606,
+          "runAtMs": 1776670560046,
+          "error": null
+        },
+        {
+          "ts": 1776665707063,
+          "status": "error",
+          "durationMs": 39109,
+          "runAtMs": 1776665667948,
+          "error": "⚠️ ✉️ Message: `1664` failed"
+        },
+        {
+          "ts": 1776614675221,
+          "status": "ok",
+          "durationMs": 136011,
+          "runAtMs": 1776613406765,
+          "error": null
+        },
+        {
+          "ts": 1776492943559,
+          "status": "ok",
+          "durationMs": 75614,
+          "runAtMs": 1776492867938,
+          "error": null
+        },
+        {
+          "ts": 1776406526676,
+          "status": "ok",
+          "durationMs": 58738,
+          "runAtMs": 1776406467934,
+          "error": null
+        },
+        {
+          "ts": 1776320088231,
+          "status": "ok",
+          "durationMs": 20295,
+          "runAtMs": 1776320067932,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "b18cfb82-895b-472a-b988-5e382560cff0",
+      "name": "Council Decision Pipeline Canary (Daily)",
+      "schedule": "15 10 * * *",
+      "status": "active",
+      "lastRun": "2026-04-24T07:17:26.722Z",
+      "nextRun": "2026-04-25T07:17:26.703Z",
+      "duration": "73728ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "Run deterministic Mission Control canary preflight.\n\nABSOLUTE RULE: You MUST NOT send any message unless there is a real",
+      "history": [
+        {
+          "ts": 1777015120453,
+          "status": "ok",
+          "durationMs": 73728,
+          "runAtMs": 1777015046722,
+          "error": null
+        },
+        {
+          "ts": 1776928738684,
+          "status": "ok",
+          "durationMs": 91963,
+          "runAtMs": 1776928646717,
+          "error": null
+        },
+        {
+          "ts": 1776842348910,
+          "status": "ok",
+          "durationMs": 102188,
+          "runAtMs": 1776842246718,
+          "error": null
+        },
+        {
+          "ts": 1776755872518,
+          "status": "ok",
+          "durationMs": 25807,
+          "runAtMs": 1776755846708,
+          "error": null
+        },
+        {
+          "ts": 1776669538821,
+          "status": "ok",
+          "durationMs": 83080,
+          "runAtMs": 1776669455738,
+          "error": null
+        },
+        {
+          "ts": 1776614675224,
+          "status": "ok",
+          "durationMs": 48691,
+          "runAtMs": 1776614021078,
+          "error": null
+        },
+        {
+          "ts": 1776496685701,
+          "status": "ok",
+          "durationMs": 38979,
+          "runAtMs": 1776496646719,
+          "error": null
+        },
+        {
+          "ts": 1776410314298,
+          "status": "ok",
+          "durationMs": 67577,
+          "runAtMs": 1776410246716,
+          "error": null
+        },
+        {
+          "ts": 1776323948730,
+          "status": "ok",
+          "durationMs": 102006,
+          "runAtMs": 1776323846721,
+          "error": null
+        },
+        {
+          "ts": 1776237556837,
+          "status": "ok",
+          "durationMs": 110113,
+          "runAtMs": 1776237446720,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "adadecff-588a-448b-9a28-d31e3318540e",
+      "name": "tmp-memory-dreaming-isolated-test",
+      "schedule": "every",
+      "status": "active",
+      "lastRun": "2026-04-24T08:36:23.740Z",
+      "nextRun": "2026-04-25T08:36:23.740Z",
+      "duration": "7095ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "__openclaw_memory_core_short_term_promotion_dream__\n\nStrict final-output contract:\n- Do not call the message tool.\n- Do ",
+      "history": [
+        {
+          "ts": 1777019790838,
+          "status": "ok",
+          "durationMs": 7095,
+          "runAtMs": 1777019783740,
+          "error": null
+        },
+        {
+          "ts": 1776934170949,
+          "status": "ok",
+          "durationMs": 21918,
+          "runAtMs": 1776934149030,
+          "error": null
+        },
+        {
+          "ts": 1776933387818,
+          "status": "ok",
+          "durationMs": 4089,
+          "runAtMs": 1776933383728,
+          "error": null
+        },
+        {
+          "ts": 1776874093356,
+          "status": "error",
+          "durationMs": 11702,
+          "runAtMs": 1776874081651,
+          "error": "⚠️ ✉️ Message failed"
+        },
+        {
+          "ts": 1776787684943,
+          "status": "ok",
+          "durationMs": 3301,
+          "runAtMs": 1776787681639,
+          "error": null
+        },
+        {
+          "ts": 1776701332947,
+          "status": "ok",
+          "durationMs": 45112,
+          "runAtMs": 1776701281619,
+          "error": null
+        },
+        {
+          "ts": 1776614675227,
+          "status": "ok",
+          "durationMs": 60731,
+          "runAtMs": 1776614614402,
+          "error": null
+        },
+        {
+          "ts": 1776490313803,
+          "status": "ok",
+          "durationMs": 8225,
+          "runAtMs": 1776490305575,
+          "error": null
+        },
+        {
+          "ts": 1776404051710,
+          "status": "ok",
+          "durationMs": 146142,
+          "runAtMs": 1776403905564,
+          "error": null
+        },
+        {
+          "ts": 1776317507672,
+          "status": "ok",
+          "durationMs": 49596,
+          "runAtMs": 1776317458075,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "7a546c99-9f4b-43b8-a4da-f796f4471302",
+      "name": "gbrain-calendar-refresh-weekly",
+      "schedule": "30 10 * * 0",
+      "status": "active",
+      "lastRun": "2026-04-19T16:00:29.698Z",
+      "nextRun": "2026-04-26T07:32:39.146Z",
+      "duration": "49150ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\ncd /Users/yordamkocatepe/clawd && ./scripts/gbr",
+      "history": [
+        {
+          "ts": 1776614675226,
+          "status": "ok",
+          "durationMs": 49150,
+          "runAtMs": 1776614429698,
+          "error": null
+        },
+        {
+          "ts": 1775977372177,
+          "status": "ok",
+          "durationMs": 13008,
+          "runAtMs": 1775977359166,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "c6cb7009-db02-48be-a7af-aa4e3da5397d",
+      "name": "dependency-watcher-weekly",
+      "schedule": "0 11 * * 0",
+      "status": "active",
+      "lastRun": "2026-04-20T07:36:14.658Z",
+      "nextRun": "2026-04-26T08:02:43.720Z",
+      "duration": "55307ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "low",
+      "description": "You are Dependency Watcher. Run weekly and notify only if issues are found.\n\nSteps:\n1) Run:\n   python3 /Users/yordamkoca",
+      "history": [
+        {
+          "ts": 1776670629966,
+          "status": "ok",
+          "durationMs": 55307,
+          "runAtMs": 1776670574658,
+          "error": null
+        },
+        {
+          "ts": 1776614675222,
+          "status": "error",
+          "durationMs": 90016,
+          "runAtMs": 1776613542776,
+          "error": "cron: job execution timed out"
+        },
+        {
+          "ts": 1775977393638,
+          "status": "ok",
+          "durationMs": 19429,
+          "runAtMs": 1775977374206,
+          "error": null
+        },
+        {
+          "ts": 1775372581305,
+          "status": "ok",
+          "durationMs": 17577,
+          "runAtMs": 1775372563727,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "31b6f573-f9c9-4c59-88d7-e2dfd9b86738",
+      "name": "maintenance-every-3-days",
+      "schedule": "every",
+      "status": "active",
+      "lastRun": "2026-04-24T04:28:21.116Z",
+      "nextRun": "2026-04-27T04:28:21.116Z",
+      "duration": "237998ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "Maintenance run (every 3 days). Execute safely in this order: 1) openclaw update status and run openclaw update only if ",
+      "history": [
+        {
+          "ts": 1777005139118,
+          "status": "ok",
+          "durationMs": 237998,
+          "runAtMs": 1777004901116,
+          "error": null
+        },
+        {
+          "ts": 1776745851372,
+          "status": "ok",
+          "durationMs": 150131,
+          "runAtMs": 1776745701102,
+          "error": null
+        },
+        {
+          "ts": 1776487128452,
+          "status": "ok",
+          "durationMs": 224341,
+          "runAtMs": 1776486501083,
+          "error": null
+        },
+        {
+          "ts": 1776163816014,
+          "status": "ok",
+          "durationMs": 86636,
+          "runAtMs": 1776163729374,
+          "error": null
+        },
+        {
+          "ts": 1775913760220,
+          "status": "ok",
+          "durationMs": 96090,
+          "runAtMs": 1775913664130,
+          "error": null
+        },
+        {
+          "ts": 1775904529295,
+          "status": "error",
+          "durationMs": 24,
+          "runAtMs": 1775904529167,
+          "error": "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/homebrew/lib/node_modules/openclaw/dist/store.runtime-BUcpw0Z0.js' imported from /opt/homebrew/lib/node_modules/openclaw/dist/session-override-DFKhjfzi.js"
+        },
+        {
+          "ts": 1775570419823,
+          "status": "ok",
+          "durationMs": 93901,
+          "runAtMs": 1775570325920,
+          "error": null
+        },
+        {
+          "ts": 1775311231768,
+          "status": "ok",
+          "durationMs": 105867,
+          "runAtMs": 1775311125898,
+          "error": null
+        },
+        {
+          "ts": 1775052039059,
+          "status": "ok",
+          "durationMs": 113169,
+          "runAtMs": 1775051925888,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "13ea43c8-3616-4f6b-8e43-0f3c25c11a84",
+      "name": "Weekly self-review (Müdür)",
+      "schedule": "0 9 * * 1",
+      "status": "active",
+      "lastRun": "2026-04-20T06:00:24.512Z",
+      "nextRun": "2026-04-27T06:00:24.491Z",
+      "duration": "44482ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "off",
+      "description": "Haftalık self-review zamanı (Pazartesi 09:00 TR). /Users/yordamkocatepe/clawd/notes/areas/self-review.md şablonunu refer",
+      "history": [
+        {
+          "ts": 1776664868998,
+          "status": "ok",
+          "durationMs": 44482,
+          "runAtMs": 1776664824512,
+          "error": null
+        },
+        {
+          "ts": 1776256156282,
+          "status": "ok",
+          "durationMs": 150792,
+          "runAtMs": 1776256005489,
+          "error": null
+        },
+        {
+          "ts": 1776231594661,
+          "status": "error",
+          "durationMs": 12251,
+          "runAtMs": 1776231582370,
+          "error": "Unsupported channel: exec-event"
+        },
+        {
+          "ts": 1776231446573,
+          "status": "error",
+          "durationMs": 61507,
+          "runAtMs": 1776231385027,
+          "error": "Unsupported channel: exec-event"
+        },
+        {
+          "ts": 1776170379559,
+          "status": "error",
+          "durationMs": 30659,
+          "runAtMs": 1776170348876,
+          "error": "Error: Telegram recipient @heartbeat could not be resolved to a numeric chat ID (Call to 'getChat' failed! (400: Bad Request: chat not found))"
+        },
+        {
+          "ts": 1776060060156,
+          "status": "error",
+          "durationMs": 35622,
+          "runAtMs": 1776060024508,
+          "error": "Error: Telegram recipient @heartbeat could not be resolved to a numeric chat ID (Call to 'getChat' failed! (400: Bad Request: chat not found))"
+        },
+        {
+          "ts": 1775455247466,
+          "status": "ok",
+          "durationMs": 17801,
+          "runAtMs": 1775455229664,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "b14cc2c9-efeb-44fc-82d6-3f073a5326bc",
+      "name": "morning-trade-digest-topic1115",
+      "schedule": "0 9 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T06:00:31.154Z",
+      "nextRun": "2026-04-27T06:00:31.142Z",
+      "duration": "38117ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.6:35b-a3b-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/mor",
+      "history": [
+        {
+          "ts": 1777010469280,
+          "status": "ok",
+          "durationMs": 38117,
+          "runAtMs": 1777010431154,
+          "error": null
+        },
+        {
+          "ts": 1776924059063,
+          "status": "ok",
+          "durationMs": 27904,
+          "runAtMs": 1776924031156,
+          "error": null
+        },
+        {
+          "ts": 1776837665342,
+          "status": "ok",
+          "durationMs": 34181,
+          "runAtMs": 1776837631158,
+          "error": null
+        },
+        {
+          "ts": 1776751271839,
+          "status": "ok",
+          "durationMs": 40677,
+          "runAtMs": 1776751231159,
+          "error": null
+        },
+        {
+          "ts": 1776679008969,
+          "status": "ok",
+          "durationMs": 35656,
+          "runAtMs": 1776678973312,
+          "error": null
+        },
+        {
+          "ts": 1776678967386,
+          "status": "ok",
+          "durationMs": 51862,
+          "runAtMs": 1776678915523,
+          "error": null
+        },
+        {
+          "ts": 1776665026117,
+          "status": "error",
+          "durationMs": 83264,
+          "runAtMs": 1776664871171,
+          "error": "⚠️ ✉️ Message: `1115` failed"
+        },
+        {
+          "ts": 1776405693304,
+          "status": "error",
+          "durationMs": 62064,
+          "runAtMs": 1776405631236,
+          "error": "⚠️ ✉️ Message: `1115` failed"
+        },
+        {
+          "ts": 1776319319115,
+          "status": "ok",
+          "durationMs": 29829,
+          "runAtMs": 1776319242418,
+          "error": null
+        },
+        {
+          "ts": 1776232848872,
+          "status": "ok",
+          "durationMs": 17716,
+          "runAtMs": 1776232831153,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "bbea0449-ec61-464a-82ff-60e5b5e91434",
+      "name": "healthcheck:update-status",
+      "schedule": "40 9 * * 1",
+      "status": "active",
+      "lastRun": "2026-04-20T06:41:04.964Z",
+      "nextRun": "2026-04-27T06:41:04.947Z",
+      "duration": "49539ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "off",
+      "description": "Weekly update-status check.\n\nSteps:\n1) Run: openclaw update status\n2) If output indicates update available, send message",
+      "history": [
+        {
+          "ts": 1776667314506,
+          "status": "ok",
+          "durationMs": 49539,
+          "runAtMs": 1776667264964,
+          "error": null
+        },
+        {
+          "ts": 1776062477782,
+          "status": "ok",
+          "durationMs": 12813,
+          "runAtMs": 1776062464966,
+          "error": null
+        },
+        {
+          "ts": 1775457675877,
+          "status": "ok",
+          "durationMs": 10926,
+          "runAtMs": 1775457664950,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "e3f392e1-e5aa-452e-b24e-f6c33651a4bf",
+      "name": "signa-refresh-topic1115",
+      "schedule": "55 14 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T11:56:09.893Z",
+      "nextRun": "2026-04-27T11:56:09.875Z",
+      "duration": "149949ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "medium",
+      "description": "Refresh the Signa portfolio layer for topic 1115.\n\nGoal:\n- Update /Users/yordamkocatepe/clawd/trader-assistant/reports/s",
+      "history": [
+        {
+          "ts": 1777031919846,
+          "status": "ok",
+          "durationMs": 149949,
+          "runAtMs": 1777031769893,
+          "error": null
+        },
+        {
+          "ts": 1776945779141,
+          "status": "ok",
+          "durationMs": 409255,
+          "runAtMs": 1776945369882,
+          "error": null
+        },
+        {
+          "ts": 1776859285221,
+          "status": "ok",
+          "durationMs": 315325,
+          "runAtMs": 1776858969891,
+          "error": null
+        },
+        {
+          "ts": 1776772729377,
+          "status": "ok",
+          "durationMs": 159478,
+          "runAtMs": 1776772569895,
+          "error": null
+        },
+        {
+          "ts": 1776686387292,
+          "status": "ok",
+          "durationMs": 217391,
+          "runAtMs": 1776686169897,
+          "error": null
+        },
+        {
+          "ts": 1776674661619,
+          "status": "ok",
+          "durationMs": 99906,
+          "runAtMs": 1776674561710,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "338b54c6-fff7-4f98-b9fe-381dd22e9eac",
+      "name": "trade-growth-scout-daily-topic1115",
+      "schedule": "0 15 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T12:01:35.286Z",
+      "nextRun": "2026-04-27T12:01:19.550Z",
+      "duration": "41434ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1777032136723,
+          "status": "ok",
+          "durationMs": 41434,
+          "runAtMs": 1777032095286,
+          "error": null
+        },
+        {
+          "ts": 1776946058219,
+          "status": "ok",
+          "durationMs": 70676,
+          "runAtMs": 1776945840832,
+          "error": null
+        },
+        {
+          "ts": 1776859408610,
+          "status": "ok",
+          "durationMs": 43017,
+          "runAtMs": 1776859287314,
+          "error": null
+        },
+        {
+          "ts": 1776772941040,
+          "status": "ok",
+          "durationMs": 39483,
+          "runAtMs": 1776772901553,
+          "error": null
+        },
+        {
+          "ts": 1776686702717,
+          "status": "ok",
+          "durationMs": 74407,
+          "runAtMs": 1776686582392,
+          "error": null
+        },
+        {
+          "ts": 1776488422373,
+          "status": "ok",
+          "durationMs": 45404,
+          "runAtMs": 1776487300533,
+          "error": null
+        },
+        {
+          "ts": 1776341019996,
+          "status": "ok",
+          "durationMs": 51773,
+          "runAtMs": 1776340918143,
+          "error": null
+        },
+        {
+          "ts": 1776256143631,
+          "status": "ok",
+          "durationMs": 44000,
+          "runAtMs": 1776255745346,
+          "error": null
+        },
+        {
+          "ts": 1776168183405,
+          "status": "ok",
+          "durationMs": 103833,
+          "runAtMs": 1776168079567,
+          "error": null
+        },
+        {
+          "ts": 1776159677373,
+          "status": "ok",
+          "durationMs": 60771,
+          "runAtMs": 1776159485044,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "afeedbf2-69b4-4f8e-9e77-880941b1c0a8",
+      "name": "ABD Macro Analiz - Pre-Market (15:00 TR)",
+      "schedule": "0 15 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T12:02:18.743Z",
+      "nextRun": "2026-04-27T12:02:01.699Z",
+      "duration": "26055ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cro",
+      "history": [
+        {
+          "ts": 1777032206596,
+          "status": "ok",
+          "durationMs": 26055,
+          "runAtMs": 1777032138743,
+          "error": null
+        },
+        {
+          "ts": 1776946058219,
+          "status": "ok",
+          "durationMs": 59612,
+          "runAtMs": 1776945781220,
+          "error": null
+        },
+        {
+          "ts": 1776859523750,
+          "status": "ok",
+          "durationMs": 36695,
+          "runAtMs": 1776859410627,
+          "error": null
+        },
+        {
+          "ts": 1776773037700,
+          "status": "ok",
+          "durationMs": 47755,
+          "runAtMs": 1776772943061,
+          "error": null
+        },
+        {
+          "ts": 1776759249924,
+          "status": "ok",
+          "durationMs": 26409,
+          "runAtMs": 1776759223513,
+          "error": null
+        },
+        {
+          "ts": 1776686702717,
+          "status": "ok",
+          "durationMs": 46717,
+          "runAtMs": 1776686535675,
+          "error": null
+        },
+        {
+          "ts": 1776488422367,
+          "status": "ok",
+          "durationMs": 29803,
+          "runAtMs": 1776486507596,
+          "error": null
+        },
+        {
+          "ts": 1776341089621,
+          "status": "ok",
+          "durationMs": 46085,
+          "runAtMs": 1776341022017,
+          "error": null
+        },
+        {
+          "ts": 1776256143630,
+          "status": "ok",
+          "durationMs": 68045,
+          "runAtMs": 1776255644101,
+          "error": null
+        },
+        {
+          "ts": 1776168246666,
+          "status": "ok",
+          "durationMs": 39171,
+          "runAtMs": 1776168185422,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "decc1643-c3bd-4d19-9e88-51e3549933d6",
+      "name": "trade-freedom-daily-topic1115",
+      "schedule": "10 15 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T12:10:40.370Z",
+      "nextRun": "2026-04-27T12:10:40.345Z",
+      "duration": "22025ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1777032662398,
+          "status": "ok",
+          "durationMs": 22025,
+          "runAtMs": 1777032640370,
+          "error": null
+        },
+        {
+          "ts": 1776946275435,
+          "status": "ok",
+          "durationMs": 35073,
+          "runAtMs": 1776946240358,
+          "error": null
+        },
+        {
+          "ts": 1776859868986,
+          "status": "ok",
+          "durationMs": 28599,
+          "runAtMs": 1776859840384,
+          "error": null
+        },
+        {
+          "ts": 1776773463891,
+          "status": "ok",
+          "durationMs": 23520,
+          "runAtMs": 1776773440367,
+          "error": null
+        },
+        {
+          "ts": 1776687094027,
+          "status": "ok",
+          "durationMs": 53659,
+          "runAtMs": 1776687040364,
+          "error": null
+        },
+        {
+          "ts": 1776488422373,
+          "status": "ok",
+          "durationMs": 26823,
+          "runAtMs": 1776487244699,
+          "error": null
+        },
+        {
+          "ts": 1776341469109,
+          "status": "ok",
+          "durationMs": 28738,
+          "runAtMs": 1776341440366,
+          "error": null
+        },
+        {
+          "ts": 1776256143631,
+          "status": "ok",
+          "durationMs": 23684,
+          "runAtMs": 1776255721662,
+          "error": null
+        },
+        {
+          "ts": 1776168665791,
+          "status": "ok",
+          "durationMs": 25419,
+          "runAtMs": 1776168640369,
+          "error": null
+        },
+        {
+          "ts": 1776159677374,
+          "status": "ok",
+          "durationMs": 21327,
+          "runAtMs": 1776159589460,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "17ea1d6d-2d3c-4f7e-aec6-35d686dc742c",
+      "name": "trade-team-standup-daily-topic1115",
+      "schedule": "20 15 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T12:20:46.492Z",
+      "nextRun": "2026-04-27T12:20:46.477Z",
+      "duration": "26570ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1777033273065,
+          "status": "ok",
+          "durationMs": 26570,
+          "runAtMs": 1777033246492,
+          "error": null
+        },
+        {
+          "ts": 1776946903363,
+          "status": "ok",
+          "durationMs": 56863,
+          "runAtMs": 1776946846496,
+          "error": null
+        },
+        {
+          "ts": 1776860480076,
+          "status": "ok",
+          "durationMs": 33581,
+          "runAtMs": 1776860446492,
+          "error": null
+        },
+        {
+          "ts": 1776774090039,
+          "status": "ok",
+          "durationMs": 43532,
+          "runAtMs": 1776774046500,
+          "error": null
+        },
+        {
+          "ts": 1776687670822,
+          "status": "ok",
+          "durationMs": 24320,
+          "runAtMs": 1776687646498,
+          "error": null
+        },
+        {
+          "ts": 1776488422373,
+          "status": "ok",
+          "durationMs": 29011,
+          "runAtMs": 1776487271522,
+          "error": null
+        },
+        {
+          "ts": 1776342082705,
+          "status": "ok",
+          "durationMs": 36220,
+          "runAtMs": 1776342046481,
+          "error": null
+        },
+        {
+          "ts": 1776256179100,
+          "status": "ok",
+          "durationMs": 32658,
+          "runAtMs": 1776256146438,
+          "error": null
+        },
+        {
+          "ts": 1776169278607,
+          "status": "ok",
+          "durationMs": 32108,
+          "runAtMs": 1776169246496,
+          "error": null
+        },
+        {
+          "ts": 1776159677374,
+          "status": "ok",
+          "durationMs": 32740,
+          "runAtMs": 1776159610787,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "bdd08780-e548-41aa-a524-22372fec0a43",
+      "name": "shardi-bullish-watchlist-daily-topic1115",
+      "schedule": "40 15 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T12:40:00.024Z",
+      "nextRun": "2026-04-27T12:40:00.000Z",
+      "duration": "15939ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "off",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1777034415979,
+          "status": "ok",
+          "durationMs": 15939,
+          "runAtMs": 1777034400024,
+          "error": null
+        },
+        {
+          "ts": 1776948025256,
+          "status": "ok",
+          "durationMs": 25217,
+          "runAtMs": 1776948000024,
+          "error": null
+        },
+        {
+          "ts": 1776861607437,
+          "status": "ok",
+          "durationMs": 7411,
+          "runAtMs": 1776861600023,
+          "error": null
+        },
+        {
+          "ts": 1776834700851,
+          "status": "ok",
+          "durationMs": 8074,
+          "runAtMs": 1776834692776,
+          "error": null
+        },
+        {
+          "ts": 1776775247759,
+          "status": "error",
+          "durationMs": 47715,
+          "runAtMs": 1776775200038,
+          "error": "⚠️ ✉️ Message: `1115` failed"
+        },
+        {
+          "ts": 1776710729815,
+          "status": "ok",
+          "durationMs": 7686,
+          "runAtMs": 1776710722128,
+          "error": null
+        },
+        {
+          "ts": 1776710543728,
+          "status": "error",
+          "durationMs": 60512,
+          "runAtMs": 1776710483213,
+          "error": "⚠️ ✉️ Message: `1115` failed"
+        },
+        {
+          "ts": 1776688865336,
+          "status": "error",
+          "durationMs": 65079,
+          "runAtMs": 1776688800251,
+          "error": "⚠️ ✉️ Message: `1115` failed"
+        },
+        {
+          "ts": 1776488422377,
+          "status": "ok",
+          "durationMs": 29716,
+          "runAtMs": 1776487582355,
+          "error": null
+        },
+        {
+          "ts": 1776343232012,
+          "status": "ok",
+          "durationMs": 31990,
+          "runAtMs": 1776343200018,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "a3f2c80b-1eb4-4a3c-84f2-31d1b9d0a5aa",
+      "name": "trade-daily-plan-open-plus10-topic1115",
+      "schedule": "40 9 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T13:40:27.905Z",
+      "nextRun": "2026-04-27T13:40:27.886Z",
+      "duration": "52209ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/pos",
+      "history": [
+        {
+          "ts": 1777038080123,
+          "status": "ok",
+          "durationMs": 52209,
+          "runAtMs": 1777038027905,
+          "error": null
+        },
+        {
+          "ts": 1776951681295,
+          "status": "ok",
+          "durationMs": 53384,
+          "runAtMs": 1776951627907,
+          "error": null
+        },
+        {
+          "ts": 1776865324059,
+          "status": "ok",
+          "durationMs": 96152,
+          "runAtMs": 1776865227904,
+          "error": null
+        },
+        {
+          "ts": 1776778913007,
+          "status": "ok",
+          "durationMs": 85004,
+          "runAtMs": 1776778827902,
+          "error": null
+        },
+        {
+          "ts": 1776694374993,
+          "status": "ok",
+          "durationMs": 86739,
+          "runAtMs": 1776694288251,
+          "error": null
+        },
+        {
+          "ts": 1776488422378,
+          "status": "ok",
+          "durationMs": 11389,
+          "runAtMs": 1776487725393,
+          "error": null
+        },
+        {
+          "ts": 1776346887646,
+          "status": "ok",
+          "durationMs": 59736,
+          "runAtMs": 1776346827907,
+          "error": null
+        },
+        {
+          "ts": 1776260579403,
+          "status": "ok",
+          "durationMs": 151501,
+          "runAtMs": 1776260427898,
+          "error": null
+        },
+        {
+          "ts": 1776174145334,
+          "status": "ok",
+          "durationMs": 117432,
+          "runAtMs": 1776174027899,
+          "error": null
+        },
+        {
+          "ts": 1776160659094,
+          "status": "ok",
+          "durationMs": 94518,
+          "runAtMs": 1776160564571,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "c2167c0e-4bf4-4e7e-8fc1-66f8ab0dd9f2",
+      "name": "ABD Macro Analiz - Açılış Sonrası (17:00 TR)",
+      "schedule": "0 17 * * 1-5",
+      "status": "active",
+      "lastRun": "2026-04-24T14:02:58.591Z",
+      "nextRun": "2026-04-27T14:02:58.570Z",
+      "duration": "23396ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cro",
+      "history": [
+        {
+          "ts": 1777039402006,
+          "status": "ok",
+          "durationMs": 23396,
+          "runAtMs": 1777039378591,
+          "error": null
+        },
+        {
+          "ts": 1776953047318,
+          "status": "ok",
+          "durationMs": 66017,
+          "runAtMs": 1776952981285,
+          "error": null
+        },
+        {
+          "ts": 1776866612434,
+          "status": "ok",
+          "durationMs": 33839,
+          "runAtMs": 1776866578585,
+          "error": null
+        },
+        {
+          "ts": 1776780252530,
+          "status": "ok",
+          "durationMs": 37011,
+          "runAtMs": 1776780215515,
+          "error": null
+        },
+        {
+          "ts": 1776693964670,
+          "status": "ok",
+          "durationMs": 66629,
+          "runAtMs": 1776693805227,
+          "error": null
+        },
+        {
+          "ts": 1776488422367,
+          "status": "ok",
+          "durationMs": 213102,
+          "runAtMs": 1776486537399,
+          "error": null
+        },
+        {
+          "ts": 1776348433819,
+          "status": "ok",
+          "durationMs": 37053,
+          "runAtMs": 1776348321070,
+          "error": null
+        },
+        {
+          "ts": 1776262498430,
+          "status": "ok",
+          "durationMs": 68696,
+          "runAtMs": 1776262391783,
+          "error": null
+        },
+        {
+          "ts": 1776175500430,
+          "status": "ok",
+          "durationMs": 44692,
+          "runAtMs": 1776175398826,
+          "error": null
+        },
+        {
+          "ts": 1776160659093,
+          "status": "ok",
+          "durationMs": 41050,
+          "runAtMs": 1776159725723,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "cc66d189-ac78-4d6f-b4ab-e82e85fba85e",
+      "name": "trade-setup-library-weekly-topic1115",
+      "schedule": "20 19 * * 1",
+      "status": "active",
+      "lastRun": "2026-04-20T16:20:37.578Z",
+      "nextRun": "2026-04-27T16:20:37.566Z",
+      "duration": "166683ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1776702204265,
+          "status": "ok",
+          "durationMs": 166683,
+          "runAtMs": 1776702037578,
+          "error": null
+        },
+        {
+          "ts": 1776160659094,
+          "status": "ok",
+          "durationMs": 625028,
+          "runAtMs": 1776159833276,
+          "error": null
+        },
+        {
+          "ts": 1775492571646,
+          "status": "ok",
+          "durationMs": 134072,
+          "runAtMs": 1775492437573,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "b31c809c-c2d9-4945-b6b0-85186812dfbf",
+      "name": "trade-growth-scout-weekly-topic1115",
+      "schedule": "40 19 * * 1",
+      "status": "active",
+      "lastRun": "2026-04-20T16:43:32.092Z",
+      "nextRun": "2026-04-27T16:42:48.712Z",
+      "duration": "152806ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1776703580268,
+          "status": "ok",
+          "durationMs": 152806,
+          "runAtMs": 1776703412092,
+          "error": null
+        },
+        {
+          "ts": 1776161998971,
+          "status": "ok",
+          "durationMs": 140756,
+          "runAtMs": 1776161209428,
+          "error": null
+        },
+        {
+          "ts": 1775494025525,
+          "status": "ok",
+          "durationMs": 136806,
+          "runAtMs": 1775493873614,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "6be733a1-c174-44a0-b0b9-836b7f3f01d8",
+      "name": "trade-team-standup-weekly-topic1115",
+      "schedule": "0 20 * * 1",
+      "status": "active",
+      "lastRun": "2026-04-20T17:05:13.775Z",
+      "nextRun": "2026-04-27T17:02:10.247Z",
+      "duration": "170863ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1776704977972,
+          "status": "ok",
+          "durationMs": 170863,
+          "runAtMs": 1776704713775,
+          "error": null
+        },
+        {
+          "ts": 1776161998970,
+          "status": "ok",
+          "durationMs": 156970,
+          "runAtMs": 1776161052458,
+          "error": null
+        },
+        {
+          "ts": 1775495111210,
+          "status": "ok",
+          "durationMs": 139339,
+          "runAtMs": 1775494940760,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "64b6e306-18d4-4964-823f-8bd2231a5493",
+      "name": "trade-playbook-retrofit-monthly-topic1115",
+      "schedule": "0 21 1 * *",
+      "status": "active",
+      "lastRun": "2026-04-01T18:02:53.829Z",
+      "nextRun": "2026-05-01T18:02:53.822Z",
+      "duration": "88844ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First and only action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/sc",
+      "history": [
+        {
+          "ts": 1775066662676,
+          "status": "ok",
+          "durationMs": 88844,
+          "runAtMs": 1775066573829,
+          "error": null
+        }
+      ],
+      "enabled": true
+    },
+    {
+      "id": "0bf6068d-b7b8-483c-9828-a5ca094a2c40",
+      "name": "perf-ab-monitor-15m",
+      "schedule": "*/15 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-03-23T08:54:22.624Z",
+      "nextRun": null,
+      "duration": "46501ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "Run exactly this command once and return only its real stdout/stderr summary. Do not search for files, do not rewrite th",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "0dc40792-e8af-440b-ae3d-4ddebefbee9e",
+      "name": "acp-completion-watcher",
+      "schedule": "every",
+      "status": "disabled",
+      "lastRun": "2026-03-21T04:14:43.103Z",
+      "nextRun": null,
+      "duration": "3582ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "Run: python3 /Users/yordamkocatepe/clawd/scripts/acp_completion_cron.py\n\nParse stdout:\n- If NO_REPLY → reply exactly NO_",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "11ab6273-5722-4572-a9c7-f5e5ebdddb24",
+      "name": "router-bulletproof-daily-watchdog",
+      "schedule": "35 0 * * *",
+      "status": "disabled",
+      "lastRun": "2026-03-29T21:48:32.385Z",
+      "nextRun": null,
+      "duration": "240029ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_router_bulletproof_watchdog_wrapper.py",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "26187cc7-f3cf-485c-a9df-8ca1a2176059",
+      "name": "ops-supervisor-10m",
+      "schedule": "*/10 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-07T16:30:23.295Z",
+      "nextRun": null,
+      "duration": "26153ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/ops",
+      "history": [
+        {
+          "ts": 1775579449450,
+          "status": "ok",
+          "durationMs": 26153,
+          "runAtMs": 1775579423295,
+          "error": null
+        },
+        {
+          "ts": 1775578822707,
+          "status": "ok",
+          "durationMs": 20164,
+          "runAtMs": 1775578802541,
+          "error": null
+        },
+        {
+          "ts": 1775578225022,
+          "status": "ok",
+          "durationMs": 22472,
+          "runAtMs": 1775578202548,
+          "error": null
+        },
+        {
+          "ts": 1775577641384,
+          "status": "ok",
+          "durationMs": 25942,
+          "runAtMs": 1775577615439,
+          "error": null
+        },
+        {
+          "ts": 1775577027829,
+          "status": "ok",
+          "durationMs": 25336,
+          "runAtMs": 1775577002490,
+          "error": null
+        },
+        {
+          "ts": 1775576423757,
+          "status": "ok",
+          "durationMs": 18838,
+          "runAtMs": 1775576404789,
+          "error": null
+        },
+        {
+          "ts": 1775575867221,
+          "status": "ok",
+          "durationMs": 55359,
+          "runAtMs": 1775575811859,
+          "error": null
+        },
+        {
+          "ts": 1775575581347,
+          "status": "ok",
+          "durationMs": 26534,
+          "runAtMs": 1775575520884,
+          "error": null
+        },
+        {
+          "ts": 1775574648044,
+          "status": "ok",
+          "durationMs": 28376,
+          "runAtMs": 1775574619665,
+          "error": null
+        },
+        {
+          "ts": 1775574040225,
+          "status": "ok",
+          "durationMs": 25401,
+          "runAtMs": 1775574014821,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "3f5161d0-b0fb-4bd7-aa80-8d4ba1afcbd3",
+      "name": "governance-handoff-guard-daily",
+      "schedule": "15 9 * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-16T06:17:31.173Z",
+      "nextRun": null,
+      "duration": "17333ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "minimax-portal/MiniMax-M2.7-highspeed",
+      "thinking": "off",
+      "description": "Run once and return compact status JSON. Command: python3 /Users/yordamkocatepe/clawd/mission-control/scripts/governance",
+      "history": [
+        {
+          "ts": 1776320268509,
+          "status": "ok",
+          "durationMs": 17333,
+          "runAtMs": 1776320251173,
+          "error": null
+        },
+        {
+          "ts": 1776233900301,
+          "status": "ok",
+          "durationMs": 15020,
+          "runAtMs": 1776233885278,
+          "error": null
+        },
+        {
+          "ts": 1776161998972,
+          "status": "ok",
+          "durationMs": 15570,
+          "runAtMs": 1776161862621,
+          "error": null
+        },
+        {
+          "ts": 1776061064336,
+          "status": "ok",
+          "durationMs": 13167,
+          "runAtMs": 1776061051166,
+          "error": null
+        },
+        {
+          "ts": 1775974667699,
+          "status": "ok",
+          "durationMs": 16530,
+          "runAtMs": 1775974651166,
+          "error": null
+        },
+        {
+          "ts": 1775904225922,
+          "status": "ok",
+          "durationMs": 15161,
+          "runAtMs": 1775904196451,
+          "error": null
+        },
+        {
+          "ts": 1775629073650,
+          "status": "ok",
+          "durationMs": 22488,
+          "runAtMs": 1775629051159,
+          "error": null
+        },
+        {
+          "ts": 1775542674059,
+          "status": "ok",
+          "durationMs": 22892,
+          "runAtMs": 1775542651165,
+          "error": null
+        },
+        {
+          "ts": 1775456264887,
+          "status": "ok",
+          "durationMs": 13725,
+          "runAtMs": 1775456251160,
+          "error": null
+        },
+        {
+          "ts": 1775369861511,
+          "status": "ok",
+          "durationMs": 10352,
+          "runAtMs": 1775369851158,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "4516d7fb-fcca-4724-971d-5e491e42772f",
+      "name": "Council Governance Monthly Calibration",
+      "schedule": "0 10 1 * *",
+      "status": "disabled",
+      "lastRun": "2026-04-01T07:02:38.252Z",
+      "nextRun": null,
+      "duration": "87684ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "Run:\npython3 /Users/yordamkocatepe/clawd/mission-control/scripts/governance_ops.py calibrate --window-days 90 --apply\nTh",
+      "history": [
+        {
+          "ts": 1775027045937,
+          "status": "ok",
+          "durationMs": 87684,
+          "runAtMs": 1775026958252,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "4910c782-8665-443e-a13b-888984532b99",
+      "name": "git-tmppack-weekly-cleanup",
+      "schedule": "0 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-20T12:28:18.317Z",
+      "nextRun": null,
+      "duration": "20815ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "off",
+      "description": "Run /Users/yordamkocatepe/clawd/scripts/git-tmppack-cleanup.sh and report the output.",
+      "history": [
+        {
+          "ts": 1776688119133,
+          "status": "ok",
+          "durationMs": 20815,
+          "runAtMs": 1776688098317,
+          "error": null
+        },
+        {
+          "ts": 1775322167480,
+          "status": "ok",
+          "durationMs": 16622,
+          "runAtMs": 1775322150856,
+          "error": null
+        },
+        {
+          "ts": 1775318622252,
+          "status": "ok",
+          "durationMs": 71382,
+          "runAtMs": 1775318550865,
+          "error": null
+        },
+        {
+          "ts": 1775314965540,
+          "status": "ok",
+          "durationMs": 14679,
+          "runAtMs": 1775314950859,
+          "error": null
+        },
+        {
+          "ts": 1775311366041,
+          "status": "ok",
+          "durationMs": 15180,
+          "runAtMs": 1775311350859,
+          "error": null
+        },
+        {
+          "ts": 1775307765392,
+          "status": "ok",
+          "durationMs": 14529,
+          "runAtMs": 1775307750861,
+          "error": null
+        },
+        {
+          "ts": 1775304164581,
+          "status": "ok",
+          "durationMs": 13721,
+          "runAtMs": 1775304150859,
+          "error": null
+        },
+        {
+          "ts": 1775300565466,
+          "status": "ok",
+          "durationMs": 14604,
+          "runAtMs": 1775300550860,
+          "error": null
+        },
+        {
+          "ts": 1775296968113,
+          "status": "ok",
+          "durationMs": 17253,
+          "runAtMs": 1775296950857,
+          "error": null
+        },
+        {
+          "ts": 1775293365172,
+          "status": "ok",
+          "durationMs": 14312,
+          "runAtMs": 1775293350858,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "4f66ad6a-648b-4861-95b4-5dbeda5bdd61",
+      "name": "healthcheck:security-audit",
+      "schedule": "35 9 * * 1",
+      "status": "disabled",
+      "lastRun": "2026-03-16T06:37:01.564Z",
+      "nextRun": null,
+      "duration": "58501ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "Weekly healthcheck security audit.\n\nSteps:\n1) Run: openclaw security audit --deep\n2) If output contains \"0 critical · 0 ",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "6cbeefff-4382-4b04-9ea7-c02772bed02b",
+      "name": "ops-supervisor-5m",
+      "schedule": "2-59/5 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-03-21T04:35:35.645Z",
+      "nextRun": null,
+      "duration": "159638ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "low",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/ops",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "79166d49-2c87-4041-8688-7f18e6d0050b",
+      "name": "mission-control-governance-review-matrix",
+      "schedule": "45 9 * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-16T06:46:43.459Z",
+      "nextRun": null,
+      "duration": "241657ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "medium",
+      "description": "Execute exactly and immediately:\npython3 /Users/yordamkocatepe/clawd/scripts/mission_control_governance_review_matrix.py",
+      "history": [
+        {
+          "ts": 1776322245119,
+          "status": "ok",
+          "durationMs": 241657,
+          "runAtMs": 1776322003459,
+          "error": null
+        },
+        {
+          "ts": 1776235921967,
+          "status": "ok",
+          "durationMs": 330135,
+          "runAtMs": 1776235591829,
+          "error": null
+        },
+        {
+          "ts": 1776161998971,
+          "status": "ok",
+          "durationMs": 412500,
+          "runAtMs": 1776161368527,
+          "error": null
+        },
+        {
+          "ts": 1776063013537,
+          "status": "ok",
+          "durationMs": 221703,
+          "runAtMs": 1776062791831,
+          "error": null
+        },
+        {
+          "ts": 1775976619108,
+          "status": "ok",
+          "durationMs": 227280,
+          "runAtMs": 1775976391824,
+          "error": null
+        },
+        {
+          "ts": 1775913645401,
+          "status": "ok",
+          "durationMs": 60002,
+          "runAtMs": 1775913585399,
+          "error": null
+        },
+        {
+          "ts": 1775904225920,
+          "status": "error",
+          "durationMs": 200068,
+          "runAtMs": 1775903856246,
+          "error": "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/homebrew/lib/node_modules/openclaw/dist/delivery-outbound.runtime-CnXJT8CS.js' imported from /opt/homebrew/lib/node_modules/openclaw/dist/server.impl-WjqjRArz.js"
+        },
+        {
+          "ts": 1775631039204,
+          "status": "ok",
+          "durationMs": 247355,
+          "runAtMs": 1775630791822,
+          "error": null
+        },
+        {
+          "ts": 1775544677679,
+          "status": "ok",
+          "durationMs": 285863,
+          "runAtMs": 1775544391814,
+          "error": null
+        },
+        {
+          "ts": 1775458141356,
+          "status": "ok",
+          "durationMs": 149540,
+          "runAtMs": 1775457991815,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "894852a8-2d70-48eb-b822-b42e67958dec",
+      "name": "Council Governance Weekly Review",
+      "schedule": "30 9 * * 1",
+      "status": "disabled",
+      "lastRun": "2026-04-13T06:32:39.249Z",
+      "nextRun": null,
+      "duration": "59215ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "Run:\n1) python3 /Users/yordamkocatepe/clawd/mission-control/scripts/governance_ops.py review --window-days 30 --create-r",
+      "history": [
+        {
+          "ts": 1776062018467,
+          "status": "ok",
+          "durationMs": 59215,
+          "runAtMs": 1776061959249,
+          "error": null
+        },
+        {
+          "ts": 1775457445508,
+          "status": "ok",
+          "durationMs": 41383,
+          "runAtMs": 1775457380739,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "b3f18073-85d2-43cd-a9df-536af39fd55b",
+      "name": "acp-failure-watch-30m",
+      "schedule": "13,43 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-03-23T08:13:21.510Z",
+      "nextRun": null,
+      "duration": "24300ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "First action must be a nodes.run tool call on node \"Mac-Studio-2\". Execute exactly and immediately:\npython3 /Users/yorda",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "b766c9fb-2835-4b8c-848a-25fc0b973b14",
+      "name": "trade-growth-scout-daily-topic1115-fallback",
+      "schedule": "52 14 * * 1-5",
+      "status": "disabled",
+      "lastRun": "2026-03-25T11:52:00.011Z",
+      "nextRun": null,
+      "duration": "209143ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "First action must be an exec tool call. Execute exactly and immediately:\npython3 -c 'import json,datetime,pathlib; from ",
+      "history": [],
+      "enabled": false
+    },
+    {
+      "id": "be029c9c-c3a4-4503-ba0a-de23715c4fd3",
+      "name": "heartbeat-ops-every-6h",
+      "schedule": "0 */6 * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-16T09:06:38.065Z",
+      "nextRun": null,
+      "duration": "19471ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly and immediately the command(s) in this task.\nHEARTBEAT poll for ",
+      "history": [
+        {
+          "ts": 1776330417540,
+          "status": "ok",
+          "durationMs": 19471,
+          "runAtMs": 1776330398065,
+          "error": null
+        },
+        {
+          "ts": 1776308813491,
+          "status": "ok",
+          "durationMs": 15413,
+          "runAtMs": 1776308798074,
+          "error": null
+        },
+        {
+          "ts": 1776287217968,
+          "status": "ok",
+          "durationMs": 19892,
+          "runAtMs": 1776287198073,
+          "error": null
+        },
+        {
+          "ts": 1776265663106,
+          "status": "ok",
+          "durationMs": 13672,
+          "runAtMs": 1776265649425,
+          "error": null
+        },
+        {
+          "ts": 1776244569882,
+          "status": "ok",
+          "durationMs": 14655,
+          "runAtMs": 1776244458225,
+          "error": null
+        },
+        {
+          "ts": 1776222887166,
+          "status": "ok",
+          "durationMs": 13499,
+          "runAtMs": 1776222830481,
+          "error": null
+        },
+        {
+          "ts": 1776201328550,
+          "status": "ok",
+          "durationMs": 25381,
+          "runAtMs": 1776201254323,
+          "error": null
+        },
+        {
+          "ts": 1776179215336,
+          "status": "ok",
+          "durationMs": 17248,
+          "runAtMs": 1776179198085,
+          "error": null
+        },
+        {
+          "ts": 1776159421473,
+          "status": "error",
+          "durationMs": 82115,
+          "runAtMs": 1776159307699,
+          "error": "⚠️ 📝 Edit: `in ~/clawd/memory/heartbeat-state.json` failed"
+        },
+        {
+          "ts": 1776049615603,
+          "status": "ok",
+          "durationMs": 17524,
+          "runAtMs": 1776049598076,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "ca378899-36a3-42ef-86be-af067cf3f096",
+      "name": "Council Global Lightweight Performance Sampler (6h)",
+      "schedule": "0 */6 * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-16T09:01:55.711Z",
+      "nextRun": null,
+      "duration": "32289ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "high",
+      "description": "Run lightweight global council performance sample (all topics + dm routes seen in logs):\n\n1) python3 /Users/yordamkocate",
+      "history": [
+        {
+          "ts": 1776330148024,
+          "status": "ok",
+          "durationMs": 32289,
+          "runAtMs": 1776330115711,
+          "error": null
+        },
+        {
+          "ts": 1776308537369,
+          "status": "ok",
+          "durationMs": 38756,
+          "runAtMs": 1776308498600,
+          "error": null
+        },
+        {
+          "ts": 1776286938997,
+          "status": "ok",
+          "durationMs": 28144,
+          "runAtMs": 1776286910850,
+          "error": null
+        },
+        {
+          "ts": 1776265640922,
+          "status": "ok",
+          "durationMs": 35338,
+          "runAtMs": 1776265582681,
+          "error": null
+        },
+        {
+          "ts": 1776244569882,
+          "status": "ok",
+          "durationMs": 27471,
+          "runAtMs": 1776244430754,
+          "error": null
+        },
+        {
+          "ts": 1776222887166,
+          "status": "ok",
+          "durationMs": 25956,
+          "runAtMs": 1776222804525,
+          "error": null
+        },
+        {
+          "ts": 1776201328549,
+          "status": "ok",
+          "durationMs": 25515,
+          "runAtMs": 1776201228808,
+          "error": null
+        },
+        {
+          "ts": 1776179076570,
+          "status": "ok",
+          "durationMs": 25444,
+          "runAtMs": 1776179003353,
+          "error": null
+        },
+        {
+          "ts": 1776158670052,
+          "status": "error",
+          "durationMs": 37696,
+          "runAtMs": 1776158586067,
+          "error": "Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/opt/homebrew/lib/node_modules/openclaw/dist/delivery-outbound.runtime-B9gFpam_.js' imported from /opt/homebrew/lib/node_modules/openclaw/dist/server.impl-CsRRyd9F.js"
+        },
+        {
+          "ts": 1776049304696,
+          "status": "ok",
+          "durationMs": 30055,
+          "runAtMs": 1776049274630,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "d4b454b4-bb43-4655-85eb-cd396f696d26",
+      "name": "Council Governance Watchdog (2h)",
+      "schedule": "0 */2 * * *",
+      "status": "disabled",
+      "lastRun": "2026-04-16T09:02:30.045Z",
+      "nextRun": null,
+      "duration": "9880ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:35b-a3b-coding-nvfp4",
+      "thinking": "",
+      "description": "Run and return compact JSON only:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_governance_watchdog.py",
+      "history": [
+        {
+          "ts": 1776330203597,
+          "status": "ok",
+          "durationMs": 9880,
+          "runAtMs": 1776330150045,
+          "error": null
+        },
+        {
+          "ts": 1776322975651,
+          "status": "ok",
+          "durationMs": 9673,
+          "runAtMs": 1776322965974,
+          "error": null
+        },
+        {
+          "ts": 1776315785924,
+          "status": "ok",
+          "durationMs": 12902,
+          "runAtMs": 1776315729966,
+          "error": null
+        },
+        {
+          "ts": 1776308596544,
+          "status": "ok",
+          "durationMs": 14450,
+          "runAtMs": 1776308539388,
+          "error": null
+        },
+        {
+          "ts": 1776301374686,
+          "status": "ok",
+          "durationMs": 11619,
+          "runAtMs": 1776301363063,
+          "error": null
+        },
+        {
+          "ts": 1776294171873,
+          "status": "ok",
+          "durationMs": 9569,
+          "runAtMs": 1776294162301,
+          "error": null
+        },
+        {
+          "ts": 1776286992636,
+          "status": "ok",
+          "durationMs": 10584,
+          "runAtMs": 1776286941010,
+          "error": null
+        },
+        {
+          "ts": 1776279909247,
+          "status": "ok",
+          "durationMs": 9043,
+          "runAtMs": 1776279839134,
+          "error": null
+        },
+        {
+          "ts": 1776272788982,
+          "status": "ok",
+          "durationMs": 10817,
+          "runAtMs": 1776272778159,
+          "error": null
+        },
+        {
+          "ts": 1776265663101,
+          "status": "ok",
+          "durationMs": 6487,
+          "runAtMs": 1776265642938,
+          "error": null
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "d8267618-b8e2-4dde-bafd-4941fd4e3a47",
+      "name": "Council Full Audit (Every 4 Days)",
+      "schedule": "every",
+      "status": "disabled",
+      "lastRun": "2026-04-15T10:58:44.156Z",
+      "nextRun": null,
+      "duration": "540442ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "openai-codex/gpt-5.5",
+      "thinking": "high",
+      "description": "Mission Control FULL AUDIT çalıştır:\n\n1) Sistem + yönetişim derin denetim:\n- openclaw gateway status\n- curl -sS http://1",
+      "history": [
+        {
+          "ts": 1776251264683,
+          "status": "ok",
+          "durationMs": 540442,
+          "runAtMs": 1776250724156,
+          "error": null
+        },
+        {
+          "ts": 1775913845952,
+          "status": "ok",
+          "durationMs": 85726,
+          "runAtMs": 1775913760225,
+          "error": null
+        },
+        {
+          "ts": 1775904529289,
+          "status": "error",
+          "durationMs": 30,
+          "runAtMs": 1775904528876,
+          "error": "GatewayDrainingError: Gateway is draining for restart; new tasks are not accepted"
+        },
+        {
+          "ts": 1775465506001,
+          "status": "ok",
+          "durationMs": 766531,
+          "runAtMs": 1775464739469,
+          "error": null
+        },
+        {
+          "ts": 1775457378466,
+          "status": "error",
+          "durationMs": 899987,
+          "runAtMs": 1775456478459,
+          "error": "cron: job execution timed out"
+        },
+        {
+          "ts": 1775118304188,
+          "status": "ok",
+          "durationMs": 501345,
+          "runAtMs": 1775117802839,
+          "error": null
+        },
+        {
+          "ts": 1775111298501,
+          "status": "error",
+          "durationMs": 420040,
+          "runAtMs": 1775110878453,
+          "error": "cron: job execution timed out"
+        }
+      ],
+      "enabled": false
+    },
+    {
+      "id": "f28e7463-c736-49c4-b27d-e000b7426e70",
+      "name": "cron-route-lint-guard",
+      "schedule": "*/30 * * * *",
+      "status": "disabled",
+      "lastRun": "2026-03-21T04:31:11.332Z",
+      "nextRun": null,
+      "duration": "67108ms",
+      "target": "isolated",
+      "payload": "agentTurn",
+      "model": "ollama/qwen3.5:27b",
+      "thinking": "off",
+      "description": "First action must be an exec tool call. Execute exactly:\npython3 /Users/yordamkocatepe/clawd/scripts/cron_route_lint.py ",
+      "history": [],
+      "enabled": false
+    }
+  ],
+  "generatedAt": "2026-04-24T15:06:04.888Z"
+}
