@@ -9,14 +9,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const execPromise = util.promisify(exec);
   let costsCache = null;
   let costsCacheTime = 0;
-  let costsRefresh = null;
+  const costsRefreshes = new Map();
   const costsCacheTtl = 60000;
+  const openclawUsageTimeoutMs = Number(process.env.MC_OPENCLAW_USAGE_TIMEOUT_MS || 15000);
 
   async function openclawUsageSummary(period = 'month') {
     try {
       const script = path.join(projectRoot, 'scripts', 'openclaw-usage-summary.js');
       const { stdout } = await execPromise(`node ${JSON.stringify(script)} ${JSON.stringify(String(period))}`, {
-        timeout: 120000,
+        timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,
       });
@@ -372,8 +373,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   function refreshCostsCache(cacheKey, period) {
-    if (costsRefresh) return costsRefresh;
-    costsRefresh = new Promise((resolve) => {
+    if (costsRefreshes.has(cacheKey)) return costsRefreshes.get(cacheKey);
+    const refresh = new Promise((resolve) => {
       setImmediate(async () => {
         try {
       const [openclawData, hermesData] = await Promise.all([
@@ -419,11 +420,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           console.error('[Costs API background refresh]', error.message);
           resolve(null);
         } finally {
-          costsRefresh = null;
+          costsRefreshes.delete(cacheKey);
         }
       });
     });
-    return costsRefresh;
+    costsRefreshes.set(cacheKey, refresh);
+    return refresh;
   }
 
   router.get('/api/costs', async (req, res) => {

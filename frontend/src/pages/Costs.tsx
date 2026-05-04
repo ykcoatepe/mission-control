@@ -820,27 +820,47 @@ export default function Costs() {
   }
 
   useEffect(() => {
-    Promise.all([
-      fetch('/api/aws/costs').then(r => r.json()).catch(() => null),
-      fetch(`/api/costs?period=${period}`).then(r => r.json()).catch(() => null),
-      fetch('/api/config').then(r => r.json()).catch(() => ({ modules: {} })),
-      fetch('/api/sessions').then(r => r.json()).catch(() => ({ sessions: [] })),
-      fetch('/api/costs/codexbar').then(r => r.json()).catch(() => null),
-    ])
-      .then(([aws, tokens, configData, sessionsData, codexbar]) => {
-        setAwsCosts(aws)
-        setTokenData(tokens)
-        setCodexbarCosts(codexbar && !codexbar.error ? codexbar : null)
-        setConfig(configData)
-        setSessions(sessionsData.sessions || [])
-        setBudget(tokens?.budget?.monthly || 0)
-        setBudgetInput((tokens?.budget?.monthly || 0).toString())
-        setLoading(false)
-      })
-      .catch(err => {
-        setError(err.message)
-        setLoading(false)
-      })
+    let cancelled = false
+    const retryTimers: number[] = []
+
+    const loadCosts = (attempt = 0) => {
+      Promise.all([
+        fetch('/api/aws/costs').then(r => r.json()).catch(() => null),
+        fetch(`/api/costs?period=${period}`).then(r => r.json()).catch(() => null),
+        fetch('/api/config').then(r => r.json()).catch(() => ({ modules: {} })),
+        fetch('/api/sessions').then(r => r.json()).catch(() => ({ sessions: [] })),
+        fetch('/api/costs/codexbar').then(r => r.json()).catch(() => null),
+      ])
+        .then(([aws, tokens, configData, sessionsData, codexbar]) => {
+          if (cancelled) return
+          setAwsCosts(aws)
+          setTokenData(tokens)
+          setCodexbarCosts(codexbar && !codexbar.error ? codexbar : null)
+          setConfig(configData)
+          setSessions(sessionsData.sessions || [])
+          setBudget(tokens?.budget?.monthly || 0)
+          setBudgetInput((tokens?.budget?.monthly || 0).toString())
+          setLoading(false)
+
+          const needsDetailedRetry = tokens?.source === 'sessions.fast_fallback' && !(tokens?.agents?.length) && attempt < 8
+          if (needsDetailedRetry) {
+            const timer = window.setTimeout(() => loadCosts(attempt + 1), 2500)
+            retryTimers.push(timer)
+          }
+        })
+        .catch(err => {
+          if (cancelled) return
+          setError(err.message)
+          setLoading(false)
+        })
+    }
+
+    loadCosts()
+
+    return () => {
+      cancelled = true
+      retryTimers.forEach(timer => window.clearTimeout(timer))
+    }
   }, [period])
 
   const saveBudget = async () => {
