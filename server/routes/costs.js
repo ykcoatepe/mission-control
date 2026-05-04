@@ -7,11 +7,19 @@ const { exec } = require('child_process');
 function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const router = express.Router();
   const execPromise = util.promisify(exec);
-  let costsCache = null;
-  let costsCacheTime = 0;
+  const costsCache = new Map();
   const costsRefreshes = new Map();
   const costsCacheTtl = 60000;
   const openclawUsageTimeoutMs = Number(process.env.MC_OPENCLAW_USAGE_TIMEOUT_MS || 15000);
+
+  function hostUserHome() {
+    const candidates = [
+      process.env.MC_USER_HOME,
+      '/Users/yordamkocatepe',
+      process.env.HOME,
+    ].filter(Boolean);
+    return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
+  }
 
   async function openclawUsageSummary(period = 'month') {
     try {
@@ -19,7 +27,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       const { stdout } = await execPromise(`node ${JSON.stringify(script)} ${JSON.stringify(String(period))}`, {
         timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
-        env: process.env,
+        env: { ...process.env, HOME: hostUserHome() },
       });
       const trimmed = String(stdout || '').trim();
       if (!trimmed) return null;
@@ -232,9 +240,43 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return { ...data, byService, modelKeys, dailyByModel };
   }
 
+  function emptyUsage(period, source) {
+    const r = rangeForPeriod(period);
+    const daily = r.keys.map((date) => ({ date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }));
+    const dailyByModel = r.keys.map((date) => ({ date, totalCost: 0, totalTokens: 0 }));
+    return {
+      source,
+      period,
+      periodRange: { start: r.startKey, end: r.endKey },
+      summary: {
+        periodUsd: 0,
+        previousPeriodUsd: 0,
+        periodTokens: 0,
+        todayUsd: 0,
+        yesterdayUsd: 0,
+        thisWeekUsd: 0,
+        thisMonthUsd: 0,
+        totalUsd: 0,
+        todayTokens: 0,
+        thisWeekTokens: 0,
+        thisMonthTokens: 0,
+        totalTokens: 0,
+        note: `No ${source} usage found for this period`,
+      },
+      daily,
+      dailyByModel,
+      modelKeys: [],
+      byService: [],
+    };
+  }
+
   function mergeUsage(openclawData, hermesData, period) {
-    const openclaw = namespaceUsage(openclawData, 'OpenClaw');
-    const hermes = namespaceUsage(hermesData, 'Hermes');
+    if (!openclawData && !hermesData) return null;
+
+    const openclawSource = openclawData || emptyUsage(period, 'openclaw.usage');
+    const hermesSource = hermesData || emptyUsage(period, 'hermes.state.db');
+    const openclaw = namespaceUsage(openclawSource, 'OpenClaw');
+    const hermes = namespaceUsage(hermesSource, 'Hermes');
     const sources = [openclaw, hermes].filter(Boolean);
     if (!sources.length) return null;
 
@@ -276,8 +318,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
     const sumSummary = (field) => sources.reduce((sum, src) => sum + Number(src.summary?.[field] || 0), 0);
     const agents = [
-      openclaw ? { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: openclawData.source || 'openclaw.usage', summary: openclawData.summary || {}, byService: openclaw.byService || [] } : null,
-      hermes ? { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: hermesData.source || 'hermes.state.db', summary: hermesData.summary || {}, byService: hermes.byService || [] } : null,
+      openclaw ? { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: openclawSource.source || 'openclaw.usage', summary: openclawSource.summary || {}, byService: openclaw.byService || [] } : null,
+      hermes ? { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: hermesSource.source || 'hermes.state.db', summary: hermesSource.summary || {}, byService: hermes.byService || [] } : null,
     ].filter(Boolean);
 
     return {
@@ -406,15 +448,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           agents: combinedUsage.agents || [],
           budget: mcConfig.budget || { monthly: 0 },
         };
-        costsCache = { key: cacheKey, value: costsResult };
-        costsCacheTime = Date.now();
+        costsCache.set(cacheKey, { value: costsResult, time: Date.now() });
             resolve(costsResult);
             return;
       }
 
           const costsResult = await buildSessionsFallbackCost(period);
-      costsCache = { key: cacheKey, value: costsResult };
-      costsCacheTime = Date.now();
+      costsCache.set(cacheKey, { value: costsResult, time: Date.now() });
           resolve(costsResult);
         } catch (error) {
           console.error('[Costs API background refresh]', error.message);
@@ -433,14 +473,14 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       const period = String(req.query.period || 'month');
       const cacheKey = `costs:${period}`;
 
-      if (costsCache && costsCache.key === cacheKey && Date.now() - costsCacheTime < costsCacheTtl) {
-        return res.json(costsCache.value);
+      const cached = costsCache.get(cacheKey);
+      if (cached && Date.now() - cached.time < costsCacheTtl) {
+        return res.json(cached.value);
       }
 
-      refreshCostsCache(cacheKey, period);
-      const costsResult = costsCache && costsCache.key === cacheKey
-        ? costsCache.value
-        : await buildSessionsFallbackCost(period);
+      const costsResult = await refreshCostsCache(cacheKey, period)
+        || (cached ? cached.value : null)
+        || await buildSessionsFallbackCost(period);
       return res.json(costsResult);
     } catch (error) {
       console.error('[Costs API]', error.message);
