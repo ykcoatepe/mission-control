@@ -1,217 +1,174 @@
-# 🖥️ Mission Control — Dashboard for OpenClaw
+# Mission Control - OpenClaw Ops Console
 
-**Your AI agent deserves a cockpit.**
+Mission Control is the local operator console for OpenClaw. It runs at
+`http://127.0.0.1:3333` and gives one fast surface for active sessions, cron
+jobs, cost usage, local models, Digital Office state, governance history, and
+runtime health.
 
-Mission Control is a sleek, macOS-native-feel web dashboard for [OpenClaw](https://openclaw.ai) — the open-source AI agent framework. Monitor your agent's activity, manage cron jobs, discover opportunities, chat in real-time, and keep costs under control — all from one beautiful interface.
-
-> Built by an OpenClaw power user who got tired of SSHing into servers to check what his agent was doing.
+This app is meant to answer the operator question first: what is running, what
+needs attention, what changed recently, and which action is safe to take next.
 
 ![Dashboard](screenshot.png)
 
----
+## Current Version
 
-## ✨ Why Mission Control?
+The current release is an operator-focused overhaul:
 
-OpenClaw agents are powerful — but they run headless. You're stuck checking logs, reading JSONL transcripts, and running CLI commands to know what's happening. Mission Control changes that:
+- **Dashboard / Operator Briefing** - active calls, live session counts, channel
+  heartbeat, evidence feed, quick actions, and "needs attention" signals.
+- **Cost Tracker** - OpenClaw + Hermes usage, budget posture, model/service
+  breakdowns, and fast cached responses with background refresh fallback.
+- **Cron Jobs + Calendar** - recurring job status, failed/overdue jobs, compact
+  model display, manual run/toggle controls, and schedule-oriented scanning.
+- **Governance Archive** - read-only view of council/governance records. Council
+  mutations are disabled by default because the old council flow was not earning
+  its operational weight.
+- **Digital Office / Team Structure / Agent Hub** - office telemetry, desks,
+  active sessions, team registry, runtime ownership, and agent attention cues.
+- **Ollama Monitor** - local model inventory, health, memory posture, and tuning
+  surfaces for local LLM operations.
+- **Memory / Scout / AWS / Settings** - supporting diagnostics and configuration
+  surfaces kept available where useful.
 
-- **See everything at a glance** — sessions, tokens, channels, heartbeat status
-- **Talk to your agent** — streaming chat widget on every page (Intercom-style)
-- **Delegate work** — queue tasks, let sub-agents research, review reports
-- **Stay on budget** — track token usage and costs across all sessions
-- **Find opportunities** — Scout Engine auto-searches for gigs, grants, skills, and news
-- **Manage schedules** — create, toggle, run, and delete cron jobs visually
-- **One-click actions** — check emails, review calendar, run heartbeats
+## Pages
 
----
+| Route | Page | Purpose |
+| --- | --- | --- |
+| `/` | Dashboard | Operator briefing, live health, active sessions, heartbeat, evidence feed |
+| `/conversations` | Conversations | Session browser and transcript review |
+| `/workshop` | Workshop | Task board and execution queue |
+| `/costs` | Cost Tracker | OpenClaw/Hermes usage, budgets, daily/model breakdowns |
+| `/cron` | Cron Jobs | Cron health, toggles, manual runs, model visibility |
+| `/calendar` | Calendar | Schedule-first view of recurring work |
+| `/ollama` | Ollama Monitor | Local model and runtime readiness |
+| `/councils` | Governance Archive | Read-only governance/council history and state |
+| `/team` | Team Structure | Team registry and role/ownership view |
+| `/office` | Digital Office | Desk telemetry, attention queue, office session state |
+| `/memory` | Memory | Memory and documentation inspection |
+| `/scout` | Scout | Opportunity and web-signal scanning |
+| `/agents` | Agent Hub | Active agents, sessions, and runtime inventory |
+| `/settings` | Settings | Mission Control configuration |
+| `/aws` | AWS | Optional AWS cost and Bedrock surfaces |
+| `/skills` | Skills | Route still exists, but it is hidden from sidebar until it has useful data |
 
-## 📸 Screenshots
+## Quick Start
 
-### Cron Monitor
-Schedule and manage automated jobs with toggle switches, run buttons, and create presets.
+### Requirements
 
-![Cron Monitor](screenshot-cron.png)
-
-### Workshop
-Kanban-style task board — queue tasks, execute with sub-agents, review results, and discuss with your agent.
-
-![Workshop](screenshot-workshop.png)
-
-### Scout Engine
-Auto-discover freelance gigs, bug bounties, grants, new skills, and industry news via configurable web searches.
-
-![Scout Engine](screenshot-scout.png)
-
-### Chat Widget
-Floating chat bubble on every page — streaming responses, persistent conversation, follow-up capable.
-
-![Chat Widget](screenshot-chat.png)
-
-### Skills Manager
-Browse installed and available skills. Enable, disable, or install new capabilities for your agent.
-
-![Skills Manager](screenshot-skills.png)
-
----
-
-## 🧭 All Pages
-
-| Page | What it does |
-|------|-------------|
-| **Dashboard** | Agent status, quick actions (email/calendar/heartbeat), activity feed, channel status, token counter |
-| **Conversations** | Browse all agent sessions with filters, view history, continue conversations |
-| **Workshop** | Kanban task board — Queue → In Progress → Done. Sub-agents do the research, you review |
-| **Cost Tracker** | Token-based cost estimation per model, daily breakdown chart, budget alerts |
-| **Cron Monitor** | Visual cron management — toggle, run now, delete, create with presets |
-| **Scout** | Opportunity scanner with category filters (OpenClaw, Bounties, Freelance, EdTech, Grants) |
-| **Agent Hub** | All active agents and sessions with token badges, type icons, and management tools |
-| **Settings** | Model routing (main/sub-agent/heartbeat), heartbeat config, export/import |
-| **Skills** | Installed vs available skills grid with enable/disable/install actions |
-| **AWS** | *(Optional)* Real AWS costs, Bedrock model browser, image generation + S3 gallery |
-
----
-
-## 🚀 Quick Start
-
-### Prerequisites
-- [OpenClaw](https://openclaw.ai) installed and running
 - Node.js 18+
-- A Brave Search API key (for Scout — [free tier available](https://brave.com/search/api/))
+- An OpenClaw workspace on the same machine
+- Optional: Brave Search API key for Scout
+- Optional: local Ollama install for the Ollama Monitor page
 
 ### Install
 
 ```bash
-# Clone into your OpenClaw workspace
-git clone https://github.com/Jzineldin/mission-control.git
+git clone https://github.com/ykcoatepe/mission-control.git
 cd mission-control
 
-# Install dependencies
 npm install
-cd frontend && npm install && npm run build && cd ..
+cd frontend
+npm install
+npm run build
+cd ..
 
-# Configure
 cp mc-config.default.json mc-config.json
-
-# Start
-node server.js
+npm start
 ```
 
-Visit `http://localhost:3333` — the **Setup Wizard** will auto-detect your OpenClaw config and guide you through the rest.
+Open `http://127.0.0.1:3333`.
 
-### Production (systemd)
+The Setup page can auto-detect the local OpenClaw config and write
+`mc-config.json`. Keep `mc-config.json` local; it is intentionally gitignored.
 
-```bash
-sudo cp mission-control.service /etc/systemd/system/
-# Edit the service file with your paths
-sudo systemctl enable --now mission-control
-```
+## Runtime Data
 
-### Configuration
+Mission Control intentionally keeps live operator state out of git:
 
-Mission Control auto-detects your setup:
-- **Gateway token** from `~/.openclaw/openclaw.json`
-- **Agent name** from `IDENTITY.md`
-- **Model, channels, workspace** from OpenClaw config
+- `mc-config.json` - local app configuration
+- `data/` - runtime snapshots and local state
+- `tasks.json` - local workshop/task queue state
+- `logs/` and `*.log` - server/runtime logs
+- `frontend/dist/` - generated frontend build
+- `node_modules/` and `frontend/node_modules/` - installed dependencies
 
-Fine-tune everything via `mc-config.json` or the Settings page in the UI.
+Do not commit live OpenClaw, Hermes, token, or personal runtime data.
 
----
+## Configuration
 
-## 🏗️ Architecture
+Common environment switches:
 
-```
+| Variable | Purpose |
+| --- | --- |
+| `PORT` | Override the default `3333` server port |
+| `MC_USER_HOME` | Explicit host home for OpenClaw usage lookups |
+| `MC_OPENCLAW_USAGE_TIMEOUT_MS` | Timeout for OpenClaw usage summary collection |
+| `MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS=1` | Re-enable council action endpoints |
+
+Council action endpoints return `410 Gone` unless
+`MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS=1` is set. Keep the default archive-only
+mode unless a real OpenClaw operation needs active council mutations again.
+
+## Architecture
+
+```text
 mission-control/
-├── server.js            # Express API + static serving + caching layer
-├── mc-config.json       # Your configuration (gitignored)
-├── mc-config.default.json  # Template for new installs
-├── scout-engine.js      # Brave Search opportunity scanner
+├── server.js                 # Express entrypoint and static serving
+├── server/
+│   ├── routes/               # API route modules
+│   └── services/             # Runtime, session, cron, team, and cache services
+├── scripts/                  # Local helpers and usage summarizers
+├── mc-config.default.json    # Safe config template
 ├── frontend/
 │   ├── src/
-│   │   ├── pages/       # 10 React pages
-│   │   ├── components/  # GlassCard, ChatWidget, Sidebar, etc.
-│   │   └── lib/         # Hooks, utilities
-│   └── dist/            # Built frontend (served by Express)
-└── mission-control.service  # systemd template
+│   │   ├── appRoutes.tsx     # Route and sidebar registry
+│   │   ├── pages/            # Operator pages
+│   │   ├── components/       # Shared UI primitives and layout
+│   │   └── lib/              # Hooks and client helpers
+│   └── dist/                 # Generated build served by Express
+└── mission-control.service   # systemd template
 ```
 
-**Stack:** React 19 + Vite 7 + Framer Motion + Recharts + Express.js
+**Stack:** React 19, Vite 7, TypeScript, Framer Motion, Recharts, lucide-react,
+and Express.
 
-**Design:** macOS HIG-inspired with frosted glass panels, SF Pro typography, and Apple accent colors. Navy blue brushed steel background with blue-tinted glass overlay.
+The backend favors bounded reads, cached snapshots, and explicit fallbacks so the
+UI remains useful when a slow runtime source stalls. User-facing health should
+come from evidence-bearing API responses, not from optimistic labels alone.
 
-**Performance:** All API endpoints cached with stale-while-revalidate pattern (30-60s TTL). Pre-warmed on startup. Sub-3ms response times on cache hits.
+## Validation
 
----
+Useful local checks:
 
-## 📦 Modules
+```bash
+npm run build
+cd frontend && npm run build
+node --check server.js
+node --check server/routes/costs.js
+```
 
-Enable/disable in `mc-config.json`:
+For UI changes, verify the running app at `http://127.0.0.1:3333` and inspect
+the relevant API endpoint directly with `curl`.
 
-| Module | Default | Description |
-|--------|---------|-------------|
-| `dashboard` | ✅ | Overview + quick actions |
-| `conversations` | ✅ | Session browser + inline chat |
-| `workshop` | ✅ | Task queue + sub-agent execution |
-| `costs` | ✅ | Token tracking + budgets |
-| `cron` | ✅ | Cron job management |
-| `scout` | ✅ | Opportunity scanner |
-| `agents` | ✅ | Agent monitoring |
-| `settings` | ✅ | Configuration UI |
-| `skills` | ✅ | Skill management |
-| `aws` | ❌ | AWS costs + Bedrock + image gen |
+## Feature Notes
 
----
+- Dashboard should remain compact and decision-first. Avoid decorative surfaces
+  that make runtime state harder to scan.
+- Cost Tracker should continue to return a usable fallback quickly, then refresh
+  richer OpenClaw/Hermes usage in the background.
+- Governance Archive is intentionally quieter than the old council workflow. If
+  the council becomes operationally useful again, improve and re-enable it behind
+  the existing environment gate.
+- Skills is still available as a direct route but hidden from navigation while
+  it has no meaningful operator workflow.
 
-## 🔮 Roadmap
-
-**Coming soon:**
-- [ ] Dedicated chat sessions per topic (email, calendar, per-task)
-- [ ] Cron job output viewer (see what each run produced)
-- [ ] Model management page (visual table for all model slots)
-- [ ] Memory Explorer (browse and search agent memory files)
-- [ ] Mobile PWA support
-
-**Future:**
-- [ ] Skills marketplace (browse/install from ClawHub)
-- [ ] Multi-agent orchestration view
-- [ ] Custom dashboard widgets
-- [ ] Free Scout alternatives (GitHub API, RSS, DuckDuckGo)
-- [ ] Multi-user auth
-
-Have a feature request? [Open an issue!](https://github.com/Jzineldin/mission-control/issues)
-
----
-
-## 💖 Support
-
-Mission Control is free and open-source under the BSL 1.1 license.
-
-If it's useful to you, consider:
-- ⭐ **Starring** this repo
-- 🐛 **Reporting bugs** or **suggesting features**
-- ☕ **[Buy me a coffee](https://ko-fi.com/kevinelzarka)** to keep development going
-- 📧 **Questions?** kevin.elzarka@gmail.com
-
----
-
-## 🔗 Links
-
-- 🏠 **[Tale Forge](https://tale-forge.app)** — AI storytelling for kids (our main project)
-- 💼 **[LinkedIn](https://www.linkedin.com/in/kevin-el-zarka/)** — Connect with the creator
-- 🐦 **[X / Twitter](https://x.com/KevinElzarka)** — Follow for updates
-- 🐙 **[GitHub](https://github.com/Jzineldin)** — More projects
-
----
-
-## 📄 License
+## License
 
 [Business Source License 1.1](LICENSE)
 
-- ✅ Free to use, modify, and self-host
-- ✅ Personal and internal commercial use
-- ❌ Cannot be offered as a hosted SaaS to third parties
-- 🔓 Automatically converts to **MIT** on 2030-02-07
+- Free to use, modify, and self-host
+- Personal and internal commercial use allowed
+- Cannot be offered as a hosted SaaS to third parties
+- Converts to MIT on 2030-02-07
 
-**Licensor:** Kevin El-Zarka / Tale Forge AB
-
----
-
-Built with 🤖 by [Zinbot](https://github.com/Jzineldin) + Kevin — powered by [OpenClaw](https://openclaw.ai)
+Maintained for local OpenClaw operations.
