@@ -66,6 +66,7 @@ function getModelAction(m: BedrockModel): { label: string; type: 'agent' | 'imag
 
 export default function AWS() {
   const isMobile = useIsMobile()
+  const { data: configData } = useApi<any>('/api/config', 0)
   const { data: awsData, loading: awsLoading } = useApi<AWSData>('/api/aws/services', 60000)
   const { data: modelsData, loading: modelsLoading } = useApi<BedrockModel[]>('/api/aws/bedrock-models', 120000)
   const { data: costData } = useApi<any>('/api/aws/costs', 60000)
@@ -81,12 +82,57 @@ export default function AWS() {
   const { data: galleryData } = useApi<{ images: { id: string; url: string; created: string; size: number }[] }>('/api/aws/gallery', 10000)
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
   const [testResults, setTestResults] = useState<Record<string, string>>({})
+  const awsEnabled = configData?.modules?.aws === true && configData?.aws?.enabled === true
 
   if (awsLoading) {
     return (
       <PageTransition>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
           <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        </div>
+      </PageTransition>
+    )
+  }
+
+  if (!awsEnabled) {
+    return (
+      <PageTransition>
+        <div style={{ maxWidth: 1080, margin: '0 auto', padding: isMobile ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 24 }}>
+          <div>
+            <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Cloud size={22} style={{ color: '#FF9500' }} /> AWS Dashboard
+            </h1>
+            <p className="text-body" style={{ marginTop: 4 }}>
+              AWS module is currently disabled in Mission Control configuration.
+            </p>
+          </div>
+
+          <GlassCard delay={0.05} noPad>
+            <div style={{ padding: isMobile ? 18 : 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,149,0,0.12)', border: '1px solid rgba(255,149,0,0.24)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Cloud size={20} style={{ color: '#FF9500' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Module disabled</div>
+                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>No AWS calls are being made. Enable the module from settings/config before using Bedrock, billing, or gallery tools.</div>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+                {[
+                  { label: 'Module flag', value: String(configData?.modules?.aws ?? false) },
+                  { label: 'AWS enabled', value: String(configData?.aws?.enabled ?? false) },
+                  { label: 'Region', value: configData?.aws?.region || 'us-east-1' },
+                ].map((item) => (
+                  <div key={item.label} style={{ padding: '14px 16px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>{item.label}</div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>{item.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </GlassCard>
         </div>
       </PageTransition>
     )
@@ -490,7 +536,7 @@ export default function AWS() {
                     {action.type === 'agent' && (
                       <div>
                         <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 12 }}>
-                          Switch Zinbot's active model to this. Takes effect on next message.
+                          Switch active model to this. Takes effect on next message.
                         </p>
                         <button
                           onClick={() => handleSetAgentModel(selectedModel.modelId)}

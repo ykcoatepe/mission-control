@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 
 export function useIsMobile(breakpoint = 768) {
-  const [isMobile, setIsMobile] = useState(window.innerWidth <= breakpoint)
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= breakpoint)
   
   useEffect(() => {
+    if (typeof window === 'undefined') return
     const handler = () => setIsMobile(window.innerWidth <= breakpoint)
     window.addEventListener('resize', handler)
     return () => window.removeEventListener('resize', handler)
@@ -13,9 +14,10 @@ export function useIsMobile(breakpoint = 768) {
 }
 
 export function useIsSmall(breakpoint = 480) {
-  const [isSmall, setIsSmall] = useState(window.innerWidth <= breakpoint)
+  const [isSmall, setIsSmall] = useState(() => typeof window !== 'undefined' && window.innerWidth <= breakpoint)
   
   useEffect(() => {
+    if (typeof window === 'undefined') return
     const handler = () => setIsSmall(window.innerWidth <= breakpoint)
     window.addEventListener('resize', handler)
     return () => window.removeEventListener('resize', handler)

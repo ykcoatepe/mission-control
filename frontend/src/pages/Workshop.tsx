@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Plus, Clock, Zap, CheckCircle, Play, X, AlertCircle, Loader2, ArrowLeft, MessageSquare, ExternalLink } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
-import { useApi, timeAgo } from '../lib/hooks'
+import { apiQueryOptions, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
 
 const priorityConfig: Record<string, { color: string; label: string }> = {
@@ -15,6 +16,7 @@ const priorityConfig: Record<string, { color: string; label: string }> = {
 const columnConfig: Record<string, { title: string; color: string; icon: any }> = {
   queue: { title: 'Queue', color: '#8E8E93', icon: Clock },
   inProgress: { title: 'In Progress', color: '#007AFF', icon: Zap },
+  blocked: { title: 'Blocked', color: '#FF453A', icon: AlertCircle },
   done: { title: 'Done', color: '#32D74B', icon: CheckCircle },
 }
 
@@ -32,16 +34,65 @@ interface Task {
   tags: string[]
   source?: string
   childSessionKey?: string
+  executionPath?: 'direct' | 'task-path' | 'automation'
+  routingReason?: string
+  structuredTaskRequired?: boolean
+  deliveryMode?: string
+  managerDecision?: string
+}
+
+const executionPathConfig: Record<string, { label: string; color: string; bg: string; border: string }> = {
+  direct: { label: 'Direct', color: '#64D2FF', bg: 'rgba(100,210,255,0.12)', border: '1px solid rgba(100,210,255,0.25)' },
+  'task-path': { label: 'Task Path', color: '#32D74B', bg: 'rgba(50,215,75,0.12)', border: '1px solid rgba(50,215,75,0.25)' },
+  automation: { label: 'Automation', color: '#BF5AF2', bg: 'rgba(191,90,242,0.12)', border: '1px solid rgba(191,90,242,0.25)' },
+}
+
+function renderPathBadge(path?: string) {
+  const config = executionPathConfig[String(path || 'task-path')] || executionPathConfig['task-path']
+  return (
+    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, color: config.color, background: config.bg, border: config.border, fontWeight: 600 }}>
+      {config.label}
+    </span>
+  )
 }
 
 export default function Workshop() {
   const m = useIsMobile()
-  const { data, loading, refetch } = useApi<any>('/api/tasks', 5000)
+  const queryClient = useQueryClient()
+  const { data, isLoading: loading } = useQuery(apiQueryOptions<any>('/api/tasks', 5000))
+  const donePageSize = m ? 6 : 10
   const [showAddModal, setShowAddModal] = useState(false)
   const [viewTask, setViewTask] = useState<Task | null>(null)
   const [addForm, setAddForm] = useState({ title: '', description: '', priority: 'medium', tags: '' })
   const [executing, setExecuting] = useState<Record<string, boolean>>({})
+  const [doneVisibleCount, setDoneVisibleCount] = useState(donePageSize)
   const [searchParams, setSearchParams] = useSearchParams()
+  const invalidateTasks = () => queryClient.invalidateQueries({ queryKey: ['api', '/api/tasks'] })
+
+  const addTaskMutation = useMutation({
+    mutationFn: async (payload: { title: string; description: string; priority: string; tags: string[] }) => {
+      await fetch('/api/tasks/add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    },
+    onSuccess: invalidateTasks,
+  })
+
+  const executeTaskMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' })
+    },
+    onSettled: invalidateTasks,
+  })
+
+  const deleteTaskMutation = useMutation({
+    mutationFn: async (taskId: string) => {
+      await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' })
+    },
+    onSettled: invalidateTasks,
+  })
 
   // Auto-open task from URL param (?task=xxx)
   useEffect(() => {
@@ -59,6 +110,14 @@ export default function Workshop() {
     }
   }, [data, searchParams])
 
+  useEffect(() => {
+    const totalDone = data?.columns?.done?.length ?? 0
+    setDoneVisibleCount((current) => {
+      if (totalDone === 0) return donePageSize
+      return Math.max(donePageSize, Math.min(current, totalDone))
+    })
+  }, [donePageSize, data?.columns?.done?.length])
+
   if (loading || !data) {
     return (
       <PageTransition>
@@ -74,31 +133,25 @@ export default function Workshop() {
   const handleAddTask = async () => {
     if (!addForm.title.trim()) return
     try {
-      await fetch('/api/tasks/add', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: addForm.title.trim(),
-          description: addForm.description.trim(),
-          priority: addForm.priority,
-          tags: addForm.tags.split(',').map(t => t.trim()).filter(Boolean),
-        })
+      await addTaskMutation.mutateAsync({
+        title: addForm.title.trim(),
+        description: addForm.description.trim(),
+        priority: addForm.priority,
+        tags: addForm.tags.split(',').map(t => t.trim()).filter(Boolean),
       })
       setShowAddModal(false)
       setAddForm({ title: '', description: '', priority: 'medium', tags: '' })
-      refetch()
     } catch {}
   }
 
   const handleExecute = async (taskId: string) => {
     setExecuting(prev => ({ ...prev, [taskId]: true }))
     try {
-      await fetch(`/api/tasks/${taskId}/execute`, { method: 'POST' })
-      refetch()
+      await executeTaskMutation.mutateAsync(taskId)
     } catch {}
   }
 
-  const discussWithZinbot = (task: Task) => {
+  const discussWithMudur = (task: Task) => {
     const reportSnippet = task.result ? task.result.substring(0, 500) : task.description
     const message = `Regarding the task "${task.title}":\n\n${reportSnippet}\n\nWhat should we do with this?`
     window.dispatchEvent(new CustomEvent('open-chat', { detail: { message } }))
@@ -127,6 +180,12 @@ export default function Workshop() {
                 <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
                   {isExecuting ? 'Sub-agent working...' : viewTask.status === 'done' ? `Completed ${viewTask.completed ? timeAgo(viewTask.completed) : ''}` : 'Queued'}
                 </span>
+                {renderPathBadge(viewTask.executionPath)}
+                {viewTask.structuredTaskRequired ? (
+                  <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 999, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.65)' }}>
+                    decision-first
+                  </span>
+                ) : null}
                 {viewTask.tags?.map(tag => (
                   <span key={tag} style={{ fontSize: 10, padding: '1px 7px', borderRadius: 5, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)' }}>{tag}</span>
                 ))}
@@ -139,6 +198,11 @@ export default function Workshop() {
             <div className="macos-panel" style={{ padding: m ? 14 : 20 }}>
               <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>Task Description</p>
               <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', lineHeight: 1.6 }}>{viewTask.description}</p>
+              {viewTask.routingReason ? (
+                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)', marginTop: 10 }}>
+                  Route: {viewTask.routingReason}
+                </p>
+              ) : null}
             </div>
           )}
 
@@ -179,17 +243,17 @@ export default function Workshop() {
 
           {/* Action buttons */}
           <div style={{ display: 'flex', gap: 10, flexDirection: m ? 'column' : 'row' }}>
-            {/* Discuss with Zinbot — the primary action */}
+            {/* Discuss with Müdür — the primary action */}
             {viewTask.result && (
               <button
-                onClick={() => discussWithZinbot(viewTask)}
+                onClick={() => discussWithMudur(viewTask)}
                 style={{
                   flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
                   padding: '12px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
                   background: '#007AFF', color: '#fff', fontSize: 13, fontWeight: 600,
                 }}
               >
-                <MessageSquare size={15} /> Discuss with Zinbot
+                <MessageSquare size={15} /> Discuss with Müdür
               </button>
             )}
 
@@ -228,9 +292,8 @@ export default function Workshop() {
           <button
             onClick={async () => {
               if (!confirm(`Delete "${viewTask.title}"?`)) return
-              await fetch(`/api/tasks/${viewTask.id}`, { method: 'DELETE' })
+              await deleteTaskMutation.mutateAsync(viewTask.id)
               setViewTask(null)
-              refetch()
             }}
             style={{
               display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
@@ -274,8 +337,10 @@ export default function Workshop() {
 
         {/* Kanban Columns */}
         <div style={{ display: 'flex', flexDirection: m ? 'column' : 'row', gap: m ? 20 : 24 }}>
-          {(['queue', 'inProgress', 'done'] as const).map((col) => {
+          {(['queue', 'inProgress', 'blocked', 'done'] as const).map((col) => {
             const tasks: Task[] = columns[col] || []
+            const visibleTasks = col === 'done' ? tasks.slice(0, doneVisibleCount) : tasks
+            const hiddenDoneCount = col === 'done' ? Math.max(0, tasks.length - visibleTasks.length) : 0
             const config = columnConfig[col]
             const Icon = config.icon
             return (
@@ -287,14 +352,103 @@ export default function Workshop() {
                   <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>{tasks.length}</span>
                 </div>
 
+                {col === 'done' && tasks.length > donePageSize && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    marginBottom: 12,
+                    padding: '10px 12px',
+                    borderRadius: 12,
+                    background: 'rgba(50,215,75,0.06)',
+                    border: '1px solid rgba(50,215,75,0.14)',
+                  }}>
+                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+                      Showing latest {visibleTasks.length} of {tasks.length}
+                    </p>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {hiddenDoneCount > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDoneVisibleCount((current) => Math.min(tasks.length, current + donePageSize))
+                          }}
+                          style={{
+                            padding: '5px 10px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(50,215,75,0.18)',
+                            background: 'rgba(50,215,75,0.08)',
+                            color: '#32D74B',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Show {Math.min(donePageSize, hiddenDoneCount)} more
+                        </button>
+                      )}
+                      {hiddenDoneCount > donePageSize && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDoneVisibleCount(tasks.length)
+                          }}
+                          style={{
+                            padding: '5px 10px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            background: 'rgba(255,255,255,0.05)',
+                            color: 'rgba(255,255,255,0.75)',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Show all
+                        </button>
+                      )}
+                      {doneVisibleCount > donePageSize && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setDoneVisibleCount(donePageSize)
+                          }}
+                          style={{
+                            padding: '5px 10px',
+                            borderRadius: 999,
+                            border: '1px solid rgba(255,255,255,0.1)',
+                            background: 'transparent',
+                            color: 'rgba(255,255,255,0.6)',
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Recent only
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 {/* Cards */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 10,
+                  ...(col === 'done' && !m ? {
+                    maxHeight: 'min(72vh, 960px)',
+                    overflowY: 'auto',
+                    paddingRight: 4,
+                  } : {}),
+                }}>
                   {tasks.length === 0 && (
                     <div style={{ padding: '24px 16px', textAlign: 'center', border: '1px dashed rgba(255,255,255,0.08)', borderRadius: 12, color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
                       {col === 'queue' ? 'Add tasks or deploy from Scout' : col === 'inProgress' ? 'Execute a task to start' : 'Completed tasks show here'}
                     </div>
                   )}
-                  {tasks.map((task, i) => (
+                  {visibleTasks.map((task, i) => (
                     <motion.div
                       key={task.id}
                       initial={{ opacity: 0, y: 8 }}
@@ -328,6 +482,7 @@ export default function Workshop() {
                         }}>
                           {task.priority}
                         </span>
+                        {renderPathBadge(task.executionPath)}
                       </div>
 
                       {/* Description */}
@@ -345,11 +500,26 @@ export default function Workshop() {
                         </div>
                       )}
 
+                      {col === 'blocked' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,69,58,0.1)', border: '1px solid rgba(255,69,58,0.2)' }}>
+                          <AlertCircle size={12} style={{ color: '#FF453A' }} />
+                          <span style={{ fontSize: 11, color: '#FF453A', fontWeight: 500 }}>{task.error ? 'Needs attention' : 'Execution blocked'}</span>
+                        </div>
+                      )}
+
                       {/* Result preview for done tasks */}
                       {col === 'done' && task.result && (
                         <div style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(50,215,75,0.08)', border: '1px solid rgba(50,215,75,0.15)', marginBottom: 10 }}>
                           <p style={{ fontSize: 11, color: 'rgba(50,215,75,0.8)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                             ✅ {task.result}
+                          </p>
+                        </div>
+                      )}
+
+                      {col === 'blocked' && (task.error || task.result) && (
+                        <div style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,159,10,0.08)', border: '1px solid rgba(255,159,10,0.18)', marginBottom: 10 }}>
+                          <p style={{ fontSize: 11, color: 'rgba(255,159,10,0.9)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                            {task.error || task.result}
                           </p>
                         </div>
                       )}
@@ -377,6 +547,11 @@ export default function Workshop() {
                               {task.source}
                             </span>
                           )}
+                          {task.structuredTaskRequired ? (
+                            <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+                              decision-first
+                            </span>
+                          ) : null}
                         </div>
 
                         <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
@@ -401,7 +576,7 @@ export default function Workshop() {
                           {/* Discuss for done tasks */}
                           {col === 'done' && task.result && (
                             <button
-                              onClick={(e) => { e.stopPropagation(); discussWithZinbot(task); }}
+                              onClick={(e) => { e.stopPropagation(); discussWithMudur(task); }}
                               style={{
                                 display: 'flex', alignItems: 'center', gap: 4,
                                 padding: '5px 10px', borderRadius: 7,
@@ -410,6 +585,22 @@ export default function Workshop() {
                               }}
                             >
                               <MessageSquare size={11} /> Discuss
+                            </button>
+                          )}
+
+                          {col === 'blocked' && (
+                            <button
+                              onClick={(e) => { e.stopPropagation(); handleExecute(task.id); }}
+                              disabled={executing[task.id]}
+                              style={{
+                                display: 'flex', alignItems: 'center', gap: 4,
+                                padding: '5px 10px', borderRadius: 7,
+                                border: '1px solid rgba(255,69,58,0.3)', background: 'rgba(255,69,58,0.08)',
+                                color: '#FF453A', fontSize: 11, fontWeight: 500, cursor: 'pointer',
+                              }}
+                            >
+                              {executing[task.id] ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={11} />}
+                              Retry
                             </button>
                           )}
 

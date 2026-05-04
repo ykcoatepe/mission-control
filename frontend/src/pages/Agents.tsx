@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Bot, X, MessageSquare, Activity, BarChart3, Plus } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
@@ -92,37 +92,24 @@ export default function Agents() {
     }))
   }
 
-  // Group sessions by agent type and calculate tokens
-  const getSessionGroups = () => {
-    const sessions = sessionsData?.sessions || []
-    const groups = {
-      main: { sessions: [] as any[], totalTokens: 0, name: 'Main Agent', icon: '👤' },
-      discord: { sessions: [] as any[], totalTokens: 0, name: 'Discord Channels', icon: '💬' },
-      subagents: { sessions: [] as any[], totalTokens: 0, name: 'Sub-agents', icon: '🤖' },
-      web: { sessions: [] as any[], totalTokens: 0, name: 'Web Interfaces', icon: '🌐' }
-    }
-    
-    sessions.forEach((s: any) => {
-      const key = s.key || ''
-      const tokens = s.totalTokens || 0
-      
-      if (key.includes(':main:main')) {
-        groups.main.sessions.push(s)
-        groups.main.totalTokens += tokens
-      } else if (key.includes(':discord:channel:')) {
-        groups.discord.sessions.push(s)
-        groups.discord.totalTokens += tokens
-      } else if (key.includes(':subagent:')) {
-        groups.subagents.sessions.push(s)
-        groups.subagents.totalTokens += tokens
-      } else if (key.includes(':openai')) {
-        groups.web.sessions.push(s)
-        groups.web.totalTokens += tokens
-      }
+  const agents = Array.isArray(data?.agents) ? data.agents : []
+  const selected = agents.find((a: any) => a.id === selectedAgent)
+  const liveSessions = Array.isArray(sessionsData?.sessions) ? sessionsData.sessions : []
+  const agentMetrics = useMemo(() => {
+    const sortedAgents = [...agents].sort((a: any, b: any) => {
+      const scoreA = Number(a.sessionCount || 0) * 1_000_000 + Number(a.totalTokens || 0)
+      const scoreB = Number(b.sessionCount || 0) * 1_000_000 + Number(b.totalTokens || 0)
+      return scoreB - scoreA
     })
-    
-    return groups
-  }
+    const activeAgents = sortedAgents.filter((agent: any) => agent.status === 'active' || Number(agent.sessionCount || 0) > 0)
+    const idleAgents = sortedAgents.filter((agent: any) => !activeAgents.includes(agent))
+    return {
+      totalAgents: sortedAgents.length,
+      activeAgents,
+      idleAgents,
+      totalTokens: sortedAgents.reduce((sum: number, agent: any) => sum + Number(agent.totalTokens || 0), 0),
+    }
+  }, [agents])
 
   if (loading || !data) {
     return (
@@ -133,10 +120,6 @@ export default function Agents() {
       </PageTransition>
     )
   }
-
-  const { agents, conversations } = data
-  const sessionGroups = getSessionGroups()
-  const selected = agents.find((a: any) => a.id === selectedAgent)
 
   return (
     <>
@@ -179,27 +162,47 @@ export default function Agents() {
         <div>
           {/* Agent Grid */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            
+
+            <div style={{ display: 'grid', gridTemplateColumns: m ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: m ? 12 : 16 }}>
+              {[
+                { label: 'Registered', value: agentMetrics.totalAgents, accent: '#BF5AF2' },
+                { label: 'Live Agents', value: agentMetrics.activeAgents.length, accent: '#32D74B' },
+                { label: 'Open Sessions', value: liveSessions.length, accent: '#007AFF' },
+                { label: 'Tracked Tokens', value: `${Math.round(agentMetrics.totalTokens / 1000)}k`, accent: '#FF9F0A' },
+              ].map((item, index) => (
+                <GlassCard key={item.label} delay={0.02 + index * 0.03} noPad>
+                  <div style={{ padding: m ? '14px 16px' : '16px 18px' }}>
+                    <p className="text-label" style={{ marginBottom: 8 }}>{item.label}</p>
+                    <p style={{ fontSize: m ? 22 : 26, fontWeight: 300, color: item.accent, fontVariantNumeric: 'tabular-nums' }}>
+                      {item.value}
+                    </p>
+                  </div>
+                </GlassCard>
+              ))}
+            </div>
+
             {/* Real OpenClaw Agents Section */}
             <div>
               <h3 style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Activity size={18} style={{ color: '#007AFF' }} />
-                Active Sessions
+                Live Agents
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: m ? 12 : 16 }}>
-                {Object.entries(sessionGroups).map(([key, group]: [string, any], i) => (
+                {agentMetrics.activeAgents.map((agent: any, i: number) => (
                   <motion.div
-                    key={key}
+                    key={agent.id}
                     initial={{ opacity: 0, y: 12, scale: 0.98 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     transition={{ delay: i * 0.06 }}
                     whileHover={{ y: -2, scale: 1.01 }}
+                    onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
                     className="macos-panel"
                     style={{
                       borderRadius: m ? 12 : 16, 
                       padding: m ? 14 : 20,
-                      opacity: group.sessions.length === 0 ? 0.4 : 1,
-                      cursor: 'default'
+                      cursor: 'pointer',
+                      borderColor: selectedAgent === agent.id ? 'rgba(0,122,255,0.35)' : undefined,
+                      background: selectedAgent === agent.id ? 'rgba(0,122,255,0.08)' : undefined,
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
@@ -215,41 +218,43 @@ export default function Agents() {
                         fontSize: 20, 
                         flexShrink: 0 
                       }}>
-                        {group.icon}
+                        {agent.avatar || '🤖'}
                       </div>
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {group.name}
+                            {agent.name}
                           </h3>
-                          <StatusBadge 
-                            status={group.sessions.some((s: any) => s.isActive) ? 'active' : 'idle'} 
-                            pulse={group.sessions.some((s: any) => s.isActive)} 
+                          <StatusBadge
+                            status={agent.status}
+                            pulse={agent.status === 'active'}
                           />
                         </div>
                         <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>
-                          {group.sessions.length} session{group.sessions.length !== 1 ? 's' : ''}
+                          {agent.role}
                         </p>
                         <p style={{ fontSize: 10, color: '#BF5AF2', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {((group.totalTokens || 0) / 1000).toFixed(0)}k tokens
+                          {agent.model || 'Unknown model'}
                         </p>
                       </div>
                     </div>
                     
                     <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 16, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.5 }}>
-                      {group.sessions.length === 0 ? 'No active sessions' : 
-                       group.sessions.length === 1 ? `Active session: ${group.sessions[0].displayName}` :
-                       `${group.sessions.length} active sessions`}
+                      {agent.description}
                     </p>
                     
                     <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <BarChart3 size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> 
-                        {((group.totalTokens || 0) / 1000).toFixed(0)}k tokens
+                        {((agent.totalTokens || 0) / 1000).toFixed(0)}k tokens
                       </span>
                       <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
                         <MessageSquare size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> 
-                        {group.sessions.length} sessions
+                        {agent.sessionCount || 0} sessions
+                      </span>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Activity size={11} style={{ color: 'rgba(255,255,255,0.4)' }} />
+                        {agent.lastActive ? timeAgo(agent.lastActive) : 'no signal'}
                       </span>
                     </div>
                   </motion.div>
@@ -257,15 +262,15 @@ export default function Agents() {
               </div>
             </div>
 
-            {/* Custom Agents Section */}
-            {agents.length > 0 && (
+            {/* Registry Section */}
+            {agentMetrics.idleAgents.length > 0 && (
               <div>
                 <h3 style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
                   <Bot size={18} style={{ color: '#BF5AF2' }} />
-                  Custom Agents
+                  Agent Registry
                 </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: m ? 12 : 16 }}>
-                  {agents.map((agent: any, i: number) => (
+                  {agentMetrics.idleAgents.map((agent: any, i: number) => (
                     <motion.div
                       key={agent.id}
                       initial={{ opacity: 0, y: 12, scale: 0.98 }}
@@ -281,8 +286,8 @@ export default function Agents() {
                       }}
                     >
                       <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
-                        <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
-                          {agent.avatar}
+                          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
+                          {agent.avatar || '🤖'}
                         </div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -291,7 +296,7 @@ export default function Agents() {
                           </div>
                           <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>{agent.role}</p>
                           <p style={{ fontSize: 10, color: '#BF5AF2', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {agent.model?.replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/claude-sonnet-(\d+).*/, 'Claude Sonnet $1').replace(/claude-haiku-(\d+).*/, 'Claude Haiku $1').replace(/-/g, ' ') || 'Unknown Model'}
+                            {agent.model || 'Unknown Model'}
                           </p>
                         </div>
                       </div>

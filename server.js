@@ -1,18 +1,47 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const http = require('http');
-const { execSync } = require('child_process');
-const multer = require('multer');
+const util = require('util');
+const os = require('os');
+const { execSync, exec, execFile } = require('child_process');
+const { createRuntimeSnapshotStore } = require('./server/services/runtimeSnapshots');
+const { createOpenclawExec } = require('./server/services/openclawClient');
+const { createCronService, parseFirstJson } = require('./server/services/cronData');
+const { createStatusService } = require('./server/services/statusData');
+const { readJsonFileSafe, writeJsonFileAtomic } = require('./server/services/jsonFiles');
+const { createSettingsService } = require('./server/services/settingsData');
+const { buildAgentsRouter } = require('./server/routes/agents');
+const { buildAwsRouter } = require('./server/routes/aws');
+const { buildCalendarRouter } = require('./server/routes/calendar');
+const { buildChatRouter } = require('./server/routes/chat');
+const { buildCostsRouter } = require('./server/routes/costs');
+const { buildCouncilsRouter } = require('./server/routes/councils');
+const { buildCronRouter } = require('./server/routes/cron');
+const { buildDocsRouter } = require('./server/routes/docs');
+const { buildMemoryRouter } = require('./server/routes/memory');
+const { buildModelsRouter } = require('./server/routes/models');
+const { buildOllamaRouter } = require('./server/routes/ollama');
+const { buildOpsRouter } = require('./server/routes/ops');
+const { buildQuickRouter } = require('./server/routes/quick');
+const { buildScoutRouter } = require('./server/routes/scout');
+const { buildSessionsRouter } = require('./server/routes/sessions');
+const { buildSettingsRouter } = require('./server/routes/settings');
+const { buildSkillsRouter } = require('./server/routes/skills');
+const { buildStatusRouter } = require('./server/routes/status');
+const { buildTasksRouter, recoverTasksOnStartup } = require('./server/routes/tasks');
 
-// ========== CONFIG: Load mc-config.json (or create from defaults) ==========
+function resolveEnvPlaceholders(value) {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\$\{([A-Z0-9_]+)\}/gi, (_, name) => process.env[name] || '');
+}
+
 const MC_CONFIG_PATH = path.join(__dirname, 'mc-config.json');
 const MC_DEFAULT_CONFIG_PATH = path.join(__dirname, 'mc-config.default.json');
+
 let mcConfig;
 try {
   mcConfig = JSON.parse(fs.readFileSync(MC_CONFIG_PATH, 'utf8'));
 } catch {
-  // First run — copy default
   if (fs.existsSync(MC_DEFAULT_CONFIG_PATH)) {
     fs.copyFileSync(MC_DEFAULT_CONFIG_PATH, MC_CONFIG_PATH);
     mcConfig = JSON.parse(fs.readFileSync(MC_CONFIG_PATH, 'utf8'));
@@ -27,50 +56,74 @@ try {
       scout: { enabled: false, braveApiKey: '' },
       workspace: '',
       skillsPath: '',
-      memoryPath: ''
+      memoryPath: '',
     };
   }
 }
 
-// Config-derived constants (backward compat)
+const OPENCLAW_CONFIG_PATH = path.join(os.homedir(), '.openclaw/openclaw.json');
 const GATEWAY_PORT = mcConfig.gateway?.port || 18789;
-const GATEWAY_TOKEN = mcConfig.gateway?.token || '';
+
+let detectedGatewayToken = '';
+try {
+  const ocConfig = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8'));
+  detectedGatewayToken = ocConfig.gateway?.auth?.token || ocConfig.gateway?.http?.auth?.token || '';
+} catch {}
+if (!detectedGatewayToken) {
+  detectedGatewayToken = resolveEnvPlaceholders(mcConfig.gateway?.token || '');
+}
+const GATEWAY_TOKEN = detectedGatewayToken;
 const NOTION_DB_ID = mcConfig.notion?.dbId || '';
-const NOTION_TOKEN = mcConfig.notion?.token || '';
-// Auto-detect workspace from OpenClaw config if not set
+const NOTION_TOKEN = resolveEnvPlaceholders(mcConfig.notion?.token || '');
 let detectedWorkspace = mcConfig.workspace || '';
 if (!detectedWorkspace) {
   try {
-    const ocConfig = JSON.parse(fs.readFileSync(path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json'), 'utf8'));
+    const ocConfig = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8'));
     detectedWorkspace = ocConfig.agents?.defaults?.workspace || '';
   } catch {}
 }
-const WORKSPACE_PATH = detectedWorkspace || path.join(process.env.HOME || '/home/ubuntu', 'clawd');
+const WORKSPACE_PATH = detectedWorkspace || path.join(os.homedir(), 'clawd');
 const SKILLS_PATH = mcConfig.skillsPath || path.join(WORKSPACE_PATH, 'skills');
 const MEMORY_PATH = mcConfig.memoryPath || path.join(WORKSPACE_PATH, 'memory');
 const S3_BUCKET = mcConfig.aws?.bucket || '';
-const S3_REGION = mcConfig.aws?.region || 'us-east-1';
-
-// Detect the primary agent name from the OpenClaw workspace (IDENTITY.md) when available.
-function detectAgentName() {
+const S3_REGION = resolveEnvPlaceholders(mcConfig.aws?.region || process.env.AWS_REGION || 'us-east-1');
+const AWS_ACCESS_KEY_ID = resolveEnvPlaceholders(mcConfig.aws?.accessKeyId || process.env.AWS_ACCESS_KEY_ID || '');
+const AWS_SECRET_ACCESS_KEY = resolveEnvPlaceholders(mcConfig.aws?.secretAccessKey || process.env.AWS_SECRET_ACCESS_KEY || '');
+const OPENCLAW_BIN = ['/opt/homebrew/bin/openclaw', '/usr/local/bin/openclaw', 'openclaw'].find((candidate) => {
   try {
-    const identityPath = path.join(WORKSPACE_PATH, 'IDENTITY.md');
-    if (fs.existsSync(identityPath)) {
-      const identity = fs.readFileSync(identityPath, 'utf8');
-      const nameMatch = identity.match(/\*\*Name:\*\*\s*(.+)/);
-      if (nameMatch) return nameMatch[1].trim();
+    return candidate === 'openclaw' || fs.existsSync(candidate);
+  } catch {
+    return candidate === 'openclaw';
+  }
+});
+
+function validateGatewayTokenConfig() {
+  try {
+    const ocConfig = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8'));
+    const authMode = ocConfig?.gateway?.auth?.mode || ocConfig?.gateway?.http?.auth?.mode || '';
+    const authToken = ocConfig?.gateway?.auth?.token || ocConfig?.gateway?.http?.auth?.token || '';
+    const remoteToken = ocConfig?.gateway?.remote?.token || '';
+    const mcToken = mcConfig?.gateway?.token || '';
+
+    if (authMode === 'none') return;
+    if (authToken && remoteToken && authToken !== remoteToken) {
+      throw new Error('Gateway token mismatch: openclaw gateway.auth.token != gateway.remote.token');
     }
-  } catch {}
-  return 'OpenClaw Agent';
+    if (authToken && mcToken && authToken !== mcToken) {
+      throw new Error('Mission Control token drift: mc-config gateway.token does not match openclaw gateway auth token');
+    }
+  } catch (error) {
+    console.error('[startup] gateway token validation failed:', error.message);
+    throw error;
+  }
 }
-const agentName = detectAgentName();
+
+validateGatewayTokenConfig();
 
 function prettyModelName(modelKey) {
   if (!modelKey) return '—';
-  // Common friendly names
   if (modelKey.includes('gpt-5.3-codex')) return 'GPT-5.3 Codex';
   if (modelKey.includes('gpt-5.2-codex')) return 'GPT-5.2 Codex';
-  // Strip provider prefixes
   return modelKey
     .replace(/^openai-codex\//, '')
     .replace(/^openai\//, '')
@@ -81,74 +134,56 @@ function prettyModelName(modelKey) {
 
 function getOpenclawDefaultModelKey() {
   try {
-    const ocCfgPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
-    const ocCfg = JSON.parse(fs.readFileSync(ocCfgPath, 'utf8'));
-    return ocCfg?.agents?.defaults?.model?.primary
-      || ocCfg?.agents?.defaults?.model?.default
-      || ocCfg?.model?.default
+    const ocConfig = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8'));
+    return ocConfig?.agents?.defaults?.model?.primary
+      || ocConfig?.agents?.defaults?.model?.default
+      || ocConfig?.model?.default
       || '';
   } catch {
     return '';
   }
 }
 
-const app = express();
-const PORT = 3333;
+function persistMcConfig() {
+  fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2), 'utf8');
+}
 
-app.disable('x-powered-by');
-app.use(express.json());
-
-// Basic localhost hardening:
-// - Reject requests with non-local Host headers (mitigates DNS rebinding / accidental LAN exposure)
-// - For state-changing methods, reject cross-origin requests when Origin is present.
-const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, 'localhost', '127.0.0.1']);
-app.use((req, res, next) => {
-  try {
-    const host = (req.headers.host || '').toString();
-    if (host && !ALLOWED_HOSTS.has(host)) {
-      return res.status(403).json({ error: 'Forbidden host' });
-    }
-
-    const method = (req.method || 'GET').toUpperCase();
-    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
-      const origin = req.headers.origin ? req.headers.origin.toString() : '';
-      if (origin) {
-        const ok = origin.startsWith(`http://localhost:${PORT}`)
-          || origin.startsWith(`http://127.0.0.1:${PORT}`)
-          || origin.startsWith(`https://localhost:${PORT}`)
-          || origin.startsWith(`https://127.0.0.1:${PORT}`);
-        if (!ok) return res.status(403).json({ error: 'Forbidden origin' });
-      }
-    }
-  } catch {}
-  return next();
+const execPromise = util.promisify(exec);
+const execFilePromise = util.promisify(execFile);
+const openclawExec = createOpenclawExec({
+  execFilePromise,
+  bin: OPENCLAW_BIN,
+  configPath: OPENCLAW_CONFIG_PATH,
 });
 
-// Serve React frontend (static assets)
-app.use(express.static(path.join(__dirname, 'frontend/dist')));
-
-// Serve public files (concepts, etc)
-app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// ========== HELPER: Fetch sessions from gateway ==========
 async function fetchSessions(limit = 50) {
-  // Prefer OpenClaw CLI (fast, local) over gateway tool invocation (can be slow).
+  const normalizeSessionPayload = (payload) => {
+    const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
+    if (!sessions.length) return null;
+    return {
+      ...payload,
+      count: Math.min(Number(payload?.count || sessions.length), limit),
+      sessions: sessions.slice(0, limit),
+    };
+  };
+
   try {
-    const { stdout } = await openclawExec(['sessions', '--json', '--limit', String(limit)], 15000);
-    const parsed = JSON.parse(stdout || '{}');
-    if (parsed?.sessions) return parsed;
-  } catch (e) {
-    // fall back to gateway
+    const { stdout } = await openclawExec(['sessions', '--json'], 15000);
+    const normalized = normalizeSessionPayload(parseFirstJson(stdout, {}));
+    if (normalized) return normalized;
+  } catch (error) {
+    const normalized = normalizeSessionPayload(parseFirstJson(error?.stdout || '', {}));
+    if (normalized) return normalized;
   }
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
-    const gwRes = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
+    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
+        Authorization: `Bearer ${GATEWAY_TOKEN}`,
       },
       signal: controller.signal,
       body: JSON.stringify({
@@ -157,24 +192,28 @@ async function fetchSessions(limit = 50) {
       }),
     });
     clearTimeout(timer);
-    const data = await gwRes.json();
-    if (data?.result?.details) return data.result.details;
+    const data = await response.json();
+    const detailPayload = normalizeSessionPayload(data?.result?.details || {});
+    if (detailPayload) return detailPayload;
     const textResult = data?.result?.content?.[0]?.text;
-    if (textResult) return JSON.parse(textResult);
+    if (textResult) {
+      const normalized = normalizeSessionPayload(JSON.parse(textResult));
+      if (normalized) return normalized;
+    }
     return { count: 0, sessions: [] };
-  } catch (e) {
-    console.error('[fetchSessions]', e.message);
+  } catch (error) {
+    console.error('[fetchSessions]', error.message);
     return { count: 0, sessions: [] };
   }
 }
 
-// ========== HELPER: Fetch Notion activity ==========
 async function fetchNotionActivity(pageSize = 5) {
   try {
-    const res = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
+    if (!NOTION_DB_ID || !NOTION_TOKEN) return null;
+    const response = await fetch(`https://api.notion.com/v1/databases/${NOTION_DB_ID}/query`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${NOTION_TOKEN}`,
+        Authorization: `Bearer ${NOTION_TOKEN}`,
         'Notion-Version': '2022-06-28',
         'Content-Type': 'application/json',
       },
@@ -183,33 +222,25 @@ async function fetchNotionActivity(pageSize = 5) {
         sorts: [{ property: 'Date', direction: 'descending' }],
       }),
     });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data.results || !data.results.length) return null;
+    if (!response.ok) return null;
+    const data = await response.json();
+    if (!Array.isArray(data.results) || data.results.length === 0) return null;
 
-    return data.results.map(page => {
+    return data.results.map((page) => {
       const props = page.properties || {};
-      // Name is a title field
-      const name = (props.Name?.title || []).map(t => t.plain_text).join('') || 'Activity';
-      // Date
+      const name = (props.Name?.title || []).map((token) => token.plain_text).join('') || 'Activity';
       const dateStr = props.Date?.date?.start || page.created_time || new Date().toISOString();
-      // Category
       const category = props.Category?.select?.name || 'general';
-      // Status
       const status = props.Status?.select?.name || props.Status?.status?.name || 'done';
-      // Details
-      const details = (props.Details?.rich_text || []).map(t => t.plain_text).join('') || '';
-
-      // Map category to type
+      const details = (props.Details?.rich_text || []).map((token) => token.plain_text).join('') || '';
       const typeMap = {
-        'Development': 'development',
-        'Business': 'business',
-        'Meeting': 'meeting',
-        'Planning': 'planning',
+        Development: 'development',
+        Business: 'business',
+        Meeting: 'meeting',
+        Planning: 'planning',
         'Bug Fix': 'development',
-        'Personal': 'personal',
+        Personal: 'personal',
       };
-
       return {
         time: dateStr,
         action: name,
@@ -217,2533 +248,397 @@ async function fetchNotionActivity(pageSize = 5) {
         type: typeMap[category] || 'general',
       };
     });
-  } catch (e) {
-    console.error('[Notion API]', e.message);
+  } catch (error) {
+    console.error('[Notion API]', error.message);
     return null;
   }
 }
 
-// ========== HELPER: Parse CSV (handles quoted fields) ==========
-function parseCSV(text) {
-  const lines = text.trim().split('\n');
-  if (lines.length < 2) return [];
-  const headers = parseCSVLine(lines[0]);
-  return lines.slice(1).map(line => {
-    const values = parseCSVLine(line);
-    const obj = {};
-    headers.forEach((h, i) => { obj[h.trim().replace(/^"(.*)"$/, '$1')] = (values[i] || '').trim().replace(/^"(.*)"$/, '$1'); });
-    return obj;
-  });
+function detectSessionType(session) {
+  const key = String(session?.key || '');
+  if (key === 'agent:main:main') return 'main';
+  if (key.includes(':subagent:')) return 'sub-agent';
+  if (key.includes('discord') || key.includes('#')) return 'discord';
+  if (key.includes('web') || key.includes('mission-control')) return 'web';
+  return 'other';
 }
 
-function parseCSVLine(line) {
-  const result = [];
-  let current = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (ch === '"') {
-      inQuotes = !inQuotes;
-    } else if (ch === ',' && !inQuotes) {
-      result.push(current);
-      current = '';
-    } else {
-      current += ch;
+function createSessionsService() {
+  const hiddenSessionsPath = path.join(__dirname, 'hidden-sessions.json');
+  let hiddenSessions = readJsonFileSafe(hiddenSessionsPath, []);
+  let visibleSessionsCache = null;
+  let visibleSessionsCacheTime = 0;
+  let visibleSessionsRefresh = null;
+  const visibleSessionsCacheTtl = 30000;
+
+  const readHiddenSessions = () => {
+    hiddenSessions = Array.isArray(readJsonFileSafe(hiddenSessionsPath, hiddenSessions))
+      ? readJsonFileSafe(hiddenSessionsPath, hiddenSessions)
+      : hiddenSessions;
+    return hiddenSessions;
+  };
+
+  function normalizeVisibleSessionsPayload(payload, limit = 25) {
+      const hidden = new Set(readHiddenSessions().map((item) => String(item)));
+      const sessions = (Array.isArray(payload?.sessions) ? payload.sessions : [])
+        .filter((session) => !hidden.has(String(session?.key || '')))
+        .map((session) => {
+          const updatedAt = session.updatedAt || session.lastActive || session.createdAt || null;
+          const updatedMs = updatedAt ? new Date(updatedAt).getTime() : 0;
+          return {
+            ...session,
+            displayName: session.displayName || session.label || session.key,
+            type: detectSessionType(session),
+            isActive: updatedMs > 0 ? (Date.now() - updatedMs) < (30 * 60 * 1000) : false,
+          };
+        })
+        .sort((left, right) => new Date(right.updatedAt || right.lastActive || 0).getTime() - new Date(left.updatedAt || left.lastActive || 0).getTime())
+        .slice(0, limit);
+      return { count: sessions.length, sessions };
+  }
+
+  function readSessionsFileFallback(limit = 25) {
+    try {
+      const sessionsFile = path.join(os.homedir(), '.openclaw/agents/main/sessions/sessions.json');
+      const raw = readJsonFileSafe(sessionsFile, {});
+      const sessions = Array.isArray(raw)
+        ? raw
+        : Object.entries(raw || {}).map(([key, value]) => ({ key, ...(value && typeof value === 'object' ? value : {}) }));
+      return normalizeVisibleSessionsPayload({ sessions }, limit);
+    } catch {
+      return { count: 0, sessions: [] };
     }
   }
-  result.push(current);
-  return result;
-}
 
-// ========== CHAT PROXY ==========
-// Proxies to OpenClaw Gateway chat completions API (streaming SSE)
-app.post('/api/chat', async (req, res) => {
-  const { messages, stream } = req.body;
-
-  const payload = JSON.stringify({
-    model: 'openclaw',
-    messages: messages || [],
-    stream: !!stream,
-    user: 'mission-control',
-  });
-
-  console.log('[Chat proxy] Sending to gateway, payload length:', Buffer.byteLength(payload));
-
-  try {
-    const gwRes = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/v1/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`,
-      },
-      body: payload,
-      signal: AbortSignal.timeout(120000),
-    });
-
-    if (stream) {
-      // SSE streaming — pipe through
-      res.writeHead(gwRes.status, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      });
-
-      const reader = gwRes.body.getReader();
-      const pump = async () => {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) { res.end(); break; }
-          res.write(value);
-        }
-      };
-      pump().catch(err => {
-        console.error('[Chat proxy] Stream error:', err.message);
-        res.end();
-      });
-
-      req.on('close', () => { reader.cancel(); });
-    } else {
-      // Non-streaming JSON
-      const data = await gwRes.text();
-      console.log('[Chat proxy] Gateway responded:', gwRes.status, data.substring(0, 100));
-      res.status(gwRes.status).send(data);
-    }
-  } catch (err) {
-    console.error('[Chat proxy] Fetch error:', err.message);
-    if (!res.headersSent) {
-      res.status(502).json({ error: `Gateway error: ${err.message}` });
-    }
-  }
-});
-
-// ========== API: Agent status + heartbeat ==========
-// ========== STATUS CACHE (avoids 5s+ load times) ==========
-let statusCache = null;
-let statusCacheTime = 0;
-const STATUS_CACHE_TTL = 60000; // 60 seconds
-
-// Background status updater — refreshes cache without blocking requests
-async function refreshStatusCache() {
-  try {
-    // Run all slow operations in parallel
-    const [openclawStatus, notionActivity, sessionData] = await Promise.allSettled([
-      new Promise((resolve) => {
+  function refreshVisibleSessions(limit = 25) {
+    if (visibleSessionsRefresh) return visibleSessionsRefresh;
+    visibleSessionsRefresh = new Promise((resolve) => {
+      setImmediate(async () => {
         try {
-          resolve(execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }));
-        } catch (e) {
-          resolve(e.stdout || '');
+          const payload = await fetchSessions(Math.max(limit * 4, 100));
+          visibleSessionsCache = normalizeVisibleSessionsPayload(payload, limit);
+          visibleSessionsCacheTime = Date.now();
+        } catch {
+          visibleSessionsCache = readSessionsFileFallback(limit);
+          visibleSessionsCacheTime = Date.now();
+        } finally {
+          visibleSessionsRefresh = null;
+          resolve(visibleSessionsCache);
         }
-      }),
-      fetchNotionActivity(8).catch(() => null),
-      fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
-    ]);
-
-    const ocStatus = openclawStatus.status === 'fulfilled' ? openclawStatus.value : '';
-    const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
-    const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
-
-    // Detect default model from OpenClaw config (more reliable than parsing `openclaw status`)
-    let defaultModelKey = '';
-    try {
-      const ocCfgPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
-      const ocCfg = JSON.parse(fs.readFileSync(ocCfgPath, 'utf8'));
-      defaultModelKey = ocCfg?.agents?.defaults?.model?.primary
-        || ocCfg?.agents?.defaults?.model?.default
-        || ocCfg?.model?.default
-        || '';
-    } catch {}
-
-    // Parse openclaw status (best-effort; command can time out)
-    const sessionsMatch = ocStatus.match(/(\d+) active/);
-    const modelMatch = ocStatus.match(/default\s+([^\s(]+)/);
-    const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
-    const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
-    const agentsMatch = ocStatus.match(/Agents\s*│\s*(\d+)/);
-
-    const channels = [];
-    const channelRegex = /│\s*(Discord|WhatsApp|Telegram)\s*│\s*(ON|OFF)\s*│\s*(OK|OFF|ERROR)\s*│\s*(.+?)\s*│/g;
-    let m;
-    while ((m = channelRegex.exec(ocStatus)) !== null) {
-      channels.push({ name: m[1], enabled: m[2], state: m[3], detail: m[4].trim() });
-    }
-
-    // Token usage
-    const sessionList = sessions.sessions || [];
-    const totalTokens = sessionList.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
-    const tokenUsage = {
-      used: totalTokens,
-      limit: 0,
-      percentage: 0
-    };
-
-    // Activity fallback
-    let recentActivity = activity;
-    if (!recentActivity || !recentActivity.length) {
-      recentActivity = buildActivityFromMemory();
-    }
-
-    // Heartbeat state (fast, filesystem only)
-    let heartbeat = {};
-    try {
-      heartbeat = JSON.parse(fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8'));
-    } catch { heartbeat = { lastHeartbeat: null, lastChecks: {} }; }
-
-    statusCache = { sessionsMatch, modelMatch, defaultModelKey, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat };
-    statusCacheTime = Date.now();
-  } catch (e) {
-    console.error('[StatusCache] refresh failed:', e.message);
-  }
-}
-
-function buildActivityFromMemory() {
-  const recentActivity = [];
-  for (const dayOffset of [0, 1]) {
-    const d = new Date();
-    d.setDate(d.getDate() - dayOffset);
-    const dateStr = d.toISOString().split('T')[0];
-    try {
-      const memPath = path.join(MEMORY_PATH, `${dateStr}.md`);
-      if (fs.existsSync(memPath)) {
-        const memContent = fs.readFileSync(memPath, 'utf8');
-        const sections = memContent.split(/\n## /).slice(1);
-        sections.slice(0, 6).forEach(section => {
-          const firstLine = section.split('\n')[0].trim();
-          const timeMatch = firstLine.match(/(\d{2}:\d{2})\s*UTC/);
-          const time = timeMatch ? `${dateStr}T${timeMatch[1]}:00Z` : `${dateStr}T12:00:00Z`;
-          const title = firstLine.replace(/\d{2}:\d{2}\s*UTC\s*[-—]\s*/, '').replace(/\*\*/g, '').substring(0, 80);
-          const bullets = section.split('\n').filter(l => /^[-*]\s/.test(l.trim()));
-          const detail = (bullets[0] || '').replace(/^[-*]\s*/, '').replace(/\*\*/g, '').substring(0, 120);
-          let type = 'general';
-          const lower = (title + ' ' + detail).toLowerCase();
-          if (lower.includes('bug') || lower.includes('security')) type = 'security';
-          else if (lower.includes('build') || lower.includes('deploy') || lower.includes('dashboard')) type = 'development';
-          else if (lower.includes('email') || lower.includes('lead')) type = 'business';
-          else if (lower.includes('heartbeat')) type = 'heartbeat';
-          else if (lower.includes('meeting')) type = 'meeting';
-          if (title) recentActivity.push({ time, action: title, detail: detail || 'Activity logged', type });
-        });
-        if (recentActivity.length > 2) break;
-      }
-    } catch { /* ignore */ }
-  }
-  return recentActivity.length ? recentActivity : [{ time: new Date().toISOString(), action: 'System running', detail: 'Dashboard active', type: 'general' }];
-}
-
-// Kick off initial cache build on startup (don't block server start)
-setTimeout(() => refreshStatusCache(), 50);
-// Pre-warm cron cache on startup (async to not block listen)
-setTimeout(async () => {
-  try {
-    const { stdout } = await openclawExec(['cron', 'list', '--json'], 15000);
-    const _parsed = JSON.parse(stdout || '{}');
-    cronCache = { jobs: (_parsed.jobs || []).map(j => ({
-      id: j.id, name: j.name || j.id.substring(0, 8),
-      schedule: j.schedule?.expr || j.schedule?.kind || '?',
-      status: !j.enabled ? 'disabled' : (j.state?.lastStatus === 'ok' ? 'active' : j.state?.lastStatus || 'idle'),
-      lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : null,
-      nextRun: j.state?.nextRunAtMs ? new Date(j.state.nextRunAtMs).toISOString() : null,
-      duration: j.state?.lastDurationMs ? `${j.state.lastDurationMs}ms` : null,
-      target: j.sessionTarget || 'main', payload: j.payload?.kind || '?',
-      description: j.payload?.text?.substring(0, 120) || '', history: [],
-      enabled: j.enabled !== false,
-    })) };
-    cronCacheTime = Date.now();
-    console.log(`[Startup] Pre-warmed ${cronCache.jobs.length} cron jobs`);
-  } catch (e) { console.warn('[Startup] Cron pre-warm failed:', e.message); }
-}, 100);
-
-// Pre-warm activity + costs caches on startup
-setTimeout(async () => {
-  try {
-    const r = await fetch(`http://127.0.0.1:3333/api/activity`);
-    if (r.ok) console.log('[Startup] Pre-warmed activity cache');
-  } catch {}
-  try {
-    const r = await fetch(`http://127.0.0.1:3333/api/costs`);
-    if (r.ok) console.log('[Startup] Pre-warmed costs cache');
-  } catch {}
-}, 3000);
-
-app.get('/api/status', async (req, res) => {
-  try {
-    // If cache is stale, refresh in background but serve cached data immediately
-    if (Date.now() - statusCacheTime > STATUS_CACHE_TTL) {
-      refreshStatusCache(); // don't await — fire and forget
-    }
-
-    // If no cache yet (first request), DO NOT block the request.
-    // Serve a minimal fast response and let the background refresher fill the cache.
-    if (!statusCache) {
-      try { refreshStatusCache(); } catch {}
-      const modelKey = getOpenclawDefaultModelKey();
-      return res.json({
-        agent: {
-          name: mcConfig.name || 'Mission Control',
-          status: 'active',
-          model: prettyModelName(modelKey),
-          activeSessions: 0,
-          totalAgents: 0,
-          memoryFiles: 0,
-          memoryChunks: 0,
-          heartbeatInterval: '—',
-          channels: []
-        },
-        heartbeat: { lastHeartbeat: null, lastChecks: {} },
-        recentActivity: [],
-        tokenUsage: { used: 0, limit: 0, percentage: 0 }
       });
-    }
-
-    const { sessionsMatch, modelMatch, defaultModelKey, memoryMatch, heartbeatInterval, agentsMatch, channels, tokenUsage, recentActivity, heartbeat } = statusCache || {};
-
-    // Read heartbeat state (fast, always fresh)
-    let hb = heartbeat || {};
-    try {
-      hb = JSON.parse(fs.readFileSync(path.join(MEMORY_PATH, 'heartbeat-state.json'), 'utf8'));
-    } catch { /* use cached */ }
-
-    res.json({
-      agent: {
-        name: mcConfig.name || 'Mission Control',
-        status: 'active',
-        model: prettyModelName(defaultModelKey || (modelMatch ? modelMatch[1] : '')),
-        activeSessions: sessionsMatch ? parseInt(sessionsMatch[1]) : 0,
-        totalAgents: agentsMatch ? parseInt(agentsMatch[1]) : 1,
-        memoryFiles: memoryMatch ? parseInt(memoryMatch[1]) : 46,
-        memoryChunks: memoryMatch ? parseInt(memoryMatch[2]) : 225,
-        heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : '1h',
-        channels
-      },
-      heartbeat: hb,
-      recentActivity: recentActivity || [],
-      tokenUsage: tokenUsage || { used: 0, limit: 1000000, percentage: 0 }
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    return visibleSessionsRefresh;
   }
-});
 
-// ========== API: Live sessions (from OpenClaw gateway) ==========
-let sessionsCache = null;
-let sessionsCacheTime = 0;
-const SESSIONS_CACHE_TTL = 60000;
-
-// Activity cache
-let activityCache = null;
-let activityCacheTime = 0;
-const ACTIVITY_CACHE_TTL = 30000;
-
-// Costs cache
-let costsCache = null;
-let costsCacheTime = 0;
-const COSTS_CACHE_TTL = 60000;
-
-app.get('/api/sessions', async (req, res) => {
-  try {
-    // Return cache if fresh
-    if (sessionsCache && Date.now() - sessionsCacheTime < SESSIONS_CACHE_TTL) {
-      return res.json(sessionsCache);
-    }
-
-    const sessionData = await fetchSessions(25);
-    const sessions = sessionData.sessions || [];
-
-    const result = {
-      count: sessionData.count || sessions.length,
-      sessions: sessions.map(s => {
-        const key = s.key || '';
-        const type = key.includes(':subagent:') ? 'sub-agent' 
-          : key.includes(':discord:') ? 'discord'
-          : key.includes(':openai') ? 'web'
-          : key.includes(':main:main') ? 'main'
-          : 'other';
-        
-        return {
-          key: s.key,
-          kind: s.kind,
-          channel: s.channel || 'unknown',
-          displayName: s.displayName || s.key.split(':').slice(-1)[0],
-          model: (s.model || '').replace('us.anthropic.', ''),
-          totalTokens: s.totalTokens || 0,
-          contextTokens: s.contextTokens || 0,
-          updatedAt: s.updatedAt ? new Date(s.updatedAt).toISOString() : null,
-          label: s.label || null,
-          type,
-          isActive: (s.totalTokens || 0) > 0,
-        };
-      }),
-    };
-    // Filter out hidden/closed sessions
-    result.sessions = result.sessions.filter(s => !hiddenSessions.includes(s.key));
-    result.count = result.sessions.length;
-    sessionsCache = result;
-    sessionsCacheTime = Date.now();
-    res.json(result);
-  } catch (e) {
-    console.error('[Sessions API]', e.message);
-    res.json({ count: 0, sessions: [], error: e.message });
-  }
-});
-
-// ========== API: Cron jobs (LIVE from OpenClaw, cached) ==========
-let cronCache = null;
-let cronCacheTime = 0;
-const CRON_CACHE_TTL = 30000;
-
-app.get('/api/cron', async (req, res) => {
-  try {
-    // Return cache if fresh
-    if (cronCache && Date.now() - cronCacheTime < CRON_CACHE_TTL) {
-      return res.json(cronCache);
-    }
-
-    const { stdout } = await openclawExec(['cron', 'list', '--json'], 15000);
-    const parsed = JSON.parse(stdout || '{}');
-
-    const jobs = (parsed.jobs || []).map(j => ({
-      id: j.id,
-      name: j.name || j.id.substring(0, 8),
-      schedule: j.schedule?.expr || j.schedule?.kind || '?',
-      status: !j.enabled ? 'disabled' : (j.state?.lastStatus === 'ok' ? 'active' : j.state?.lastStatus || 'idle'),
-      lastRun: j.state?.lastRunAtMs ? new Date(j.state.lastRunAtMs).toISOString() : null,
-      nextRun: j.state?.nextRunAtMs ? new Date(j.state.nextRunAtMs).toISOString() : null,
-      duration: j.state?.lastDurationMs ? `${j.state.lastDurationMs}ms` : null,
-      target: j.sessionTarget || 'main',
-      payload: j.payload?.kind || '?',
-      description: j.payload?.text?.substring(0, 120) || '',
-      history: [],
-      enabled: j.enabled !== false, // Add enabled flag for toggle
-    }));
-
-    const result = { jobs };
-    cronCache = result;
-    cronCacheTime = Date.now();
-    res.json(result);
-  } catch (e) {
-    console.error('[Cron API]', e.message);
-    res.json({ jobs: [], error: e.message });
-  }
-});
-
-// POST: Toggle cron job enabled/disabled
-app.post('/api/cron/:id/toggle', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { enabled } = req.body;
-    
-    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
-      },
-      body: JSON.stringify({ 
-        tool: 'cron', 
-        args: { 
-          action: 'update', 
-          jobId: id, 
-          patch: { enabled: enabled } 
-        } 
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gateway error: ${response.status} ${errorText}`);
-    }
-
-    // Clear cache so next GET refreshes
-    cronCache = null;
-    cronCacheTime = 0;
-    
-    res.json({ ok: true, message: `Job ${enabled ? 'enabled' : 'disabled'}` });
-  } catch (error) {
-    console.error('[Cron toggle]', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// POST: Run cron job immediately
-app.post('/api/cron/:id/run', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
-      },
-      body: JSON.stringify({ 
-        tool: 'cron', 
-        args: { 
-          action: 'run', 
-          jobId: id 
-        } 
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gateway error: ${response.status} ${errorText}`);
-    }
-
-    // Clear cache so next GET refreshes
-    cronCache = null;
-    cronCacheTime = 0;
-    
-    res.json({ ok: true, message: 'Job triggered successfully' });
-  } catch (error) {
-    console.error('[Cron run]', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// POST: Create new cron job
-app.post('/api/cron/create', async (req, res) => {
-  try {
-    const { job } = req.body;
-    
-    if (!job || !job.name || !job.schedule) {
-      return res.status(400).json({ error: 'Invalid job format - name and schedule required' });
-    }
-    
-    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
-      },
-      body: JSON.stringify({ 
-        tool: 'cron', 
-        args: { 
-          action: 'add', 
-          job: job 
-        } 
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gateway error: ${response.status} ${errorText}`);
-    }
-
-    // Clear cache so next GET refreshes
-    cronCache = null;
-    cronCacheTime = 0;
-    
-    res.json({ ok: true, message: 'Job created successfully' });
-  } catch (error) {
-    console.error('[Cron create]', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// DELETE: Remove cron job
-app.delete('/api/cron/:id', async (req, res) => {
-  try {
-    const { id } = req.params;
-    
-    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
-      method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json', 
-        'Authorization': `Bearer ${GATEWAY_TOKEN}` 
-      },
-      body: JSON.stringify({ 
-        tool: 'cron', 
-        args: { 
-          action: 'remove', 
-          jobId: id 
-        } 
-      })
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Gateway error: ${response.status} ${errorText}`);
-    }
-
-    // Clear cache so next GET refreshes
-    cronCache = null;
-    cronCacheTime = 0;
-    
-    res.json({ ok: true, message: 'Job deleted successfully' });
-  } catch (error) {
-    console.error('[Cron delete]', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ========== API: Activity Feed — aggregated activity from all sources ==========
-app.get('/api/activity', async (req, res) => {
-  try {
-    // Serve from cache if fresh
-    if (activityCache && Date.now() - activityCacheTime < ACTIVITY_CACHE_TTL) {
-      return res.json(activityCache);
-    }
-    const feed = [];
-    
-    // 1. Completed tasks (with results)
-    try {
-      const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-      for (const task of (tasks.columns.done || []).slice(0, 15)) {
-        feed.push({
-          id: `task-${task.id}`,
-          type: 'task_completed',
-          icon: 'check',
-          title: task.title,
-          detail: task.result ? task.result.substring(0, 200) : 'Completed',
-          time: task.completed || task.created,
-          priority: task.priority,
-          source: task.source || 'manual',
-          taskId: task.id,
-          actionable: !!task.childSessionKey,
-          actionLabel: task.childSessionKey ? 'Continue Chat' : 'View',
-          actionUrl: `/workshop?task=${task.id}`,
-        });
+  return {
+    fetchSessionsRaw: fetchSessions,
+    async listVisibleSessions(limit = 25) {
+      if (visibleSessionsCache && Date.now() - visibleSessionsCacheTime < visibleSessionsCacheTtl) {
+        return visibleSessionsCache;
       }
-      // In-progress tasks
-      for (const task of (tasks.columns.inProgress || [])) {
-        feed.push({
-          id: `task-prog-${task.id}`,
-          type: 'task_running',
-          icon: 'loader',
-          title: `Working: ${task.title}`,
-          detail: 'Sub-agent executing...',
-          time: task.startedAt || task.created,
-          priority: task.priority,
-          source: task.source || 'manual',
-          taskId: task.id,
-          actionable: true,
-          actionLabel: 'View',
-          actionUrl: `/workshop?task=${task.id}`,
-        });
-      }
-    } catch(e) {}
-    
-    // 2. Scout opportunities (recent, undeployed)
-    try {
-      const scoutFile = path.join(__dirname, 'scout-results.json');
-      if (fs.existsSync(scoutFile)) {
-        const scout = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
-        for (const opp of (scout.opportunities || []).filter(o => o.status !== 'dismissed').slice(0, 10)) {
-          feed.push({
-            id: `scout-${opp.id}`,
-            type: opp.status === 'deployed' ? 'scout_deployed' : 'scout_found',
-            icon: 'search',
-            title: opp.title,
-            detail: opp.summary ? opp.summary.substring(0, 150) : '',
-            time: opp.found,
-            score: opp.score,
-            source: opp.source,
-            category: opp.category,
-            actionable: opp.status !== 'deployed',
-            actionLabel: 'Deploy',
-            actionUrl: '/scout',
-          });
-        }
-      }
-    } catch(e) {}
-    
-    // 3. Cron job last runs
-    try {
-      const { execSync } = require('child_process');
-      const cronOutput = (await openclawExec(['cron', 'list', '--json'], 10000)).stdout || '{}';
-      const crons = JSON.parse(cronOutput);
-      for (const job of (Array.isArray(crons) ? crons : crons.jobs || [])) {
-        if (job.lastRun || job.lastRunAt) {
-          feed.push({
-            id: `cron-${job.id || job.jobId}`,
-            type: 'cron_run',
-            icon: 'clock',
-            title: `Cron: ${job.name || job.id || 'unnamed'}`,
-            detail: job.lastRunStatus === 'ok' ? 'Completed successfully' : `Status: ${job.lastRunStatus || 'unknown'}`,
-            time: job.lastRun || job.lastRunAt,
-            actionable: false,
-          });
-        }
-      }
-    } catch(e) {}
-    
-    // Sort by time (newest first)
-    feed.sort((a, b) => {
-      const ta = a.time ? new Date(a.time).getTime() : 0;
-      const tb = b.time ? new Date(b.time).getTime() : 0;
-      return tb - ta;
-    });
-    
-    const result = { feed: feed.slice(0, 30), generated: new Date().toISOString() };
-    activityCache = result;
-    activityCacheTime = Date.now();
-    res.json(result);
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
 
-// ========== API: Tasks (Kanban) — reads from tasks.json ==========
-const TASKS_FILE = path.join(__dirname, 'tasks.json');
+      refreshVisibleSessions(limit);
+      return visibleSessionsCache || readSessionsFileFallback(limit);
+    },
+    async getSessionHistory(sessionKey) {
+      const decoded = decodeURIComponent(sessionKey);
+      const payload = await fetchSessions(200);
+      const session = (payload.sessions || []).find((entry) => entry.key === decoded);
+      if (!session?.transcriptPath) return { messages: [], info: 'No transcript found' };
 
-app.get('/api/tasks', (req, res) => {
-  try {
-    const raw = fs.readFileSync(TASKS_FILE, 'utf8');
-    const data = JSON.parse(raw);
-    res.json(data);
-  } catch (e) {
-    console.error('[Tasks API] Failed to read tasks.json:', e.message);
-    // Fallback: empty board
-    res.json({
-      columns: { queue: [], inProgress: [], blocked: [], done: [] }
-    });
-  }
-});
+      const transcriptFile = path.join(os.homedir(), '.openclaw/agents/main/sessions', session.transcriptPath);
+      if (!fs.existsSync(transcriptFile)) return { messages: [], info: 'Transcript file missing' };
 
-// POST: Update tasks
-app.post('/api/tasks', (req, res) => {
-  try {
-    const data = req.body;
-    if (!data || !data.columns) {
-      return res.status(400).json({ error: 'Invalid format. Expected { columns: { queue, inProgress, done, ... } }' });
-    }
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(data, null, 2), 'utf8');
-    res.json({ ok: true, message: 'Tasks updated' });
-  } catch (e) {
-    console.error('[Tasks POST]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST: Add a single task to queue
-app.post('/api/tasks/add', (req, res) => {
-  try {
-    const { title, description, priority, tags } = req.body;
-    if (!title) return res.status(400).json({ error: 'title required' });
-    
-    const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-    const task = {
-      id: `task-${Date.now()}`,
-      title,
-      description: description || '',
-      priority: priority || 'medium',
-      created: new Date().toISOString(),
-      tags: tags || [],
-      source: 'manual',
-    };
-    tasks.columns.queue.unshift(task);
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-    res.json({ ok: true, task });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// DELETE: Remove a task from any column
-app.delete('/api/tasks/:taskId', (req, res) => {
-  try {
-    const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-    const { taskId } = req.params;
-    let found = false;
-    for (const col of Object.keys(tasks.columns)) {
-      const idx = tasks.columns[col].findIndex(t => t.id === taskId);
-      if (idx !== -1) {
-        tasks.columns[col].splice(idx, 1);
-        found = true;
-        break;
-      }
-    }
-    if (!found) return res.status(404).json({ error: 'Task not found' });
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-    // Clear activity cache
-    activityCache = null; activityCacheTime = 0;
-    res.json({ ok: true, deleted: taskId });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST: Execute a task — spawns sub-agent
-app.post('/api/tasks/:taskId/execute', async (req, res) => {
-  try {
-    const { taskId } = req.params;
-    const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-    
-    // Find task in any column
-    let task = null;
-    let fromCol = null;
-    for (const [col, items] of Object.entries(tasks.columns)) {
-      const idx = items.findIndex(t => t.id === taskId);
-      if (idx >= 0) {
-        task = items[idx];
-        fromCol = col;
-        items.splice(idx, 1);
-        break;
-      }
-    }
-    
-    if (!task) return res.status(404).json({ error: 'Task not found' });
-    
-    // Move to inProgress
-    task.startedAt = new Date().toISOString();
-    task.status = 'executing';
-    tasks.columns.inProgress.unshift(task);
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-    
-    // Spawn sub-agent via gateway
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
-    const gwPort = cfg.gateway?.port || 18789;
-    
-    // Build smart prompt based on task source/content
-    const title = task.title || '';
-    const desc = task.description || '';
-    const fullText = `${title} ${desc}`.toLowerCase();
-    
-    let taskPrompt;
-    
-    if (task.source === 'scout' && (fullText.includes('skill') || fullText.includes('plugin'))) {
-      // Scout found a new skill/plugin → research & recommend
-      taskPrompt = `RESEARCH TASK: A new OpenClaw skill/plugin was found by the Scout engine.
-
-Title: ${task.title}
-Details: ${task.description}
-
-Your job:
-1. Visit the URL mentioned and read about this skill
-2. Summarize what it does, who made it, and key features
-3. Check if it's compatible with our setup (OpenClaw on AWS EC2, Ubuntu)
-4. Give a clear recommendation: INSTALL (with instructions) or SKIP (with reason)
-5. Rate usefulness 1-10 for our use case
-
-Be thorough but concise. This report will be shown to the user.`;
-    } else if (task.source === 'scout' && (fullText.includes('bounty') || fullText.includes('hackerone') || fullText.includes('bugcrowd'))) {
-      // Bug bounty opportunity
-      taskPrompt = `BUG BOUNTY RESEARCH: The Scout engine found a potential bounty opportunity.
-
-Title: ${task.title}
-Details: ${task.description}
-
-Your job:
-1. Research this program/target — what's the scope, payout range, platform
-2. Check if it's a new program or new scope addition
-3. Identify the most promising attack surfaces
-4. Estimate difficulty and potential payout
-5. Give a GO/SKIP recommendation with reasoning
-
-Be specific and actionable.`;
-    } else if (task.source === 'scout' && (fullText.includes('freelance') || fullText.includes('job') || fullText.includes('hiring') || fullText.includes('looking for'))) {
-      // Freelance/job opportunity
-      taskPrompt = `JOB/FREELANCE RESEARCH: The Scout engine found a potential opportunity.
-
-Title: ${task.title}
-Details: ${task.description}
-
-Your job:
-1. Research this opportunity — who's hiring, what they need, compensation
-2. Check if it matches our skills (React, Next.js, Supabase, AI/ML, Python)
-3. Draft a brief pitch/response if it's a good fit
-4. Give an APPLY/SKIP recommendation
-
-Be practical — focus on fit and potential earnings.`;
-    } else if (task.source === 'scout' && (fullText.includes('grant') || fullText.includes('funding') || fullText.includes('competition'))) {
-      // Grant/funding
-      taskPrompt = `FUNDING RESEARCH: The Scout engine found a potential grant/funding opportunity.
-
-Title: ${task.title}
-Details: ${task.description}
-
-Your job:
-1. Research eligibility, deadlines, and requirements
-2. Check if Tale Forge / Kevin El-Zarka qualifies
-3. Summarize the application process
-4. Give an APPLY/SKIP recommendation with deadline
-
-Be specific about requirements and timeline.`;
-    } else {
-      // Generic task — give it a thorough prompt
-      taskPrompt = `TASK EXECUTION:
-
-Title: ${task.title}
-Description: ${task.description}
-
-Your job:
-1. Analyze what needs to be done
-2. Do the work — research, write, code, whatever is needed
-3. If the task requires external actions (sending emails, deploying code), describe exactly what should be done but don't do it without explicit permission
-4. Provide a clear, detailed summary of results and any next steps
-
-Be thorough. Your output will be shown directly to the user as the task result.`;
-    }
-    
-    // Fire and forget — sub-agent runs in background
-    const spawnRes = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-      body: JSON.stringify({
-        tool: 'sessions_spawn',
-        args: {
-          task: taskPrompt,
-          model: 'sonnet',
-          runTimeoutSeconds: 300,
-          label: `workshop-${taskId}`
-        }
-      })
-    });
-    
-    const spawnData = await spawnRes.json();
-    const childKey = spawnData?.result?.details?.childSessionKey || spawnData?.result?.content?.[0]?.text?.match(/"childSessionKey":\s*"([^"]+)"/)?.[1] || '';
-    
-    if (!childKey) {
-      console.error('[Task Execute] No child session key:', JSON.stringify(spawnData));
-    }
-    
-    // Save child session key for polling
-    task.childSessionKey = childKey;
-    fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-    
-    // Poll for completion in background
-    if (childKey) {
-      const pollInterval = setInterval(async () => {
+      const lines = fs.readFileSync(transcriptFile, 'utf8').split('\n').filter(Boolean);
+      const messages = [];
+      for (const line of lines) {
         try {
-          const listRes = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-            body: JSON.stringify({ tool: 'sessions_list', args: { limit: 100, messageLimit: 1 } })
-          });
-          const listData = await listRes.json();
-          const listParsed = JSON.parse(listData?.result?.content?.[0]?.text || '{}');
-          const sessions = listParsed.sessions || listParsed || [];
-          const child = sessions.find(s => s.key === childKey);
-          
-          // Check if session is done (not found = ended, or aborted, or idle)
-          const isEnded = !child || child.abortedLastRun || (child.idle && child.idle > 60);
-          if (!isEnded) return; // Still running, wait for next poll
-          
-          clearInterval(pollInterval);
-            
-          // Get last message from the child session
-          let resultText = '';
-          try {
-            const histRes = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-              body: JSON.stringify({ tool: 'sessions_history', args: { sessionKey: childKey, limit: 5 } })
-            });
-            const histData = await histRes.json();
-            const histText = histData?.result?.content?.[0]?.text || '';
-            // Parse messages and get last assistant message
-            try {
-              const msgs = JSON.parse(histText);
-              const assistantMsgs = (Array.isArray(msgs) ? msgs : []).filter(m => m.role === 'assistant');
-              if (assistantMsgs.length > 0) {
-                const last = assistantMsgs[assistantMsgs.length - 1];
-                resultText = typeof last.content === 'string' ? last.content : last.content?.[0]?.text || '';
-              }
-            } catch(e) {
-              // Maybe it's raw text
-              resultText = histText.substring(0, 2000);
-            }
-          } catch(e) {
-            console.error('[Task Poll] History fetch failed:', e.message);
+          const entry = JSON.parse(line);
+          if (entry.type !== 'message' || !entry.message) continue;
+          const role = entry.message.role;
+          if (!role || role === 'toolResult' || role === 'toolUse') continue;
+          let text = '';
+          if (typeof entry.message.content === 'string') {
+            text = entry.message.content;
+          } else if (Array.isArray(entry.message.content)) {
+            text = entry.message.content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text || '').join('\n');
           }
-          
-          // If sessions_history didn't work, try reading transcript file directly
-          if (!resultText) {
-            try {
-              const uuid = childKey.split(':').pop();
-              const sessionsJson = JSON.parse(fs.readFileSync(path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json'), 'utf8'));
-              const sessionInfo = sessionsJson[childKey];
-              const sessionId = sessionInfo?.sessionId || uuid;
-              const transcriptPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
-              if (fs.existsSync(transcriptPath)) {
-                const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-                // Find last assistant message
-                for (let i = lines.length - 1; i >= 0; i--) {
-                  try {
-                    const evt = JSON.parse(lines[i]);
-                    if (evt.type === 'message' && evt.message?.role === 'assistant') {
-                      const content = evt.message.content;
-                      resultText = Array.isArray(content) 
-                        ? content.filter(c => c.type === 'text').map(c => c.text).join('\n')
-                        : typeof content === 'string' ? content : '';
-                      if (resultText) break;
-                    }
-                  } catch(e) {}
-                }
+          if (text.trim()) {
+            messages.push({ role, content: text.substring(0, 3000), ts: entry.timestamp });
+          }
+        } catch {}
+      }
+      return { messages: messages.slice(-50), total: messages.length, sessionKey: decoded };
+    },
+    async sendSessionMessage(sessionKey, message) {
+      const decoded = decodeURIComponent(sessionKey);
+      const cfg = fs.existsSync(OPENCLAW_CONFIG_PATH) ? JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8')) : {};
+      const gatewayToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || GATEWAY_TOKEN || '';
+      const gatewayPort = cfg.gateway?.port || GATEWAY_PORT;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 90000);
+
+      try {
+        const response = await fetch(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${gatewayToken}` },
+          signal: controller.signal,
+          body: JSON.stringify({
+            tool: 'sessions_send',
+            args: { sessionKey: decoded, message, timeoutSeconds: 90 },
+          }),
+        });
+        clearTimeout(timeout);
+        const data = await response.json();
+        let resultText = data?.result?.content?.[0]?.text || '';
+        try {
+          const parsed = JSON.parse(resultText);
+          if (parsed.reply) resultText = parsed.reply;
+        } catch {}
+        return { ok: !!resultText, result: resultText };
+      } catch {
+        clearTimeout(timeout);
+        let resultText = '';
+        try {
+          const sessionsFile = path.join(os.homedir(), '.openclaw/agents/main/sessions/sessions.json');
+          const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
+          const sessionInfo = sessions[decoded] || {};
+          const sessionId = sessionInfo.sessionId || '';
+          if (sessionId) {
+            const transcriptPath = path.join(os.homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
+            if (fs.existsSync(transcriptPath)) {
+              const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
+              for (let index = lines.length - 1; index >= 0; index -= 1) {
+                try {
+                  const entry = JSON.parse(lines[index]);
+                  if (entry.type === 'message' && entry.message?.role === 'assistant') {
+                    const content = entry.message.content;
+                    resultText = Array.isArray(content)
+                      ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('\n')
+                      : typeof content === 'string' ? content : '';
+                    if (resultText) break;
+                  }
+                } catch {}
               }
-            } catch(e) {
-              console.error('[Task Poll] Transcript read failed:', e.message);
             }
           }
-          
-          // Move task to done
-          const tasksNow = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-          const idx = tasksNow.columns.inProgress.findIndex(t => t.id === taskId);
-          if (idx >= 0) {
-            const doneTask = tasksNow.columns.inProgress.splice(idx, 1)[0];
-            doneTask.status = 'done';
-            doneTask.completed = new Date().toISOString();
-            doneTask.result = resultText.substring(0, 3000) || 'Task completed (no output captured)';
-            // Keep childSessionKey for continued chat
-            tasksNow.columns.done.unshift(doneTask);
-            fs.writeFileSync(TASKS_FILE, JSON.stringify(tasksNow, null, 2));
-            console.log(`[Task Execute] ✅ ${taskId} done, result: ${resultText.substring(0, 80)}...`);
-          }
-        } catch(e) {
-          console.error('[Task Poll] Error:', e.message);
-        }
-      }, 10000); // Poll every 10 seconds
-      
-      // Safety: stop polling after 6 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        // Check if task is still in progress
-        try {
-          const tasksNow = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-          const idx = tasksNow.columns.inProgress.findIndex(t => t.id === taskId);
-          if (idx >= 0) {
-            const timedOut = tasksNow.columns.inProgress.splice(idx, 1)[0];
-            timedOut.status = 'done';
-            timedOut.completed = new Date().toISOString();
-            timedOut.result = 'Task timed out after 6 minutes. Check sub-agent session for results.';
-            // Keep childSessionKey for continued chat
-            tasksNow.columns.done.unshift(timedOut);
-            fs.writeFileSync(TASKS_FILE, JSON.stringify(tasksNow, null, 2));
-          }
-        } catch(e) {}
-      }, 360000);
-    }
-    
-    res.json({ ok: true, message: 'Task execution started', taskId, childKey });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-function parseDdMmYyyyToIso(s) {
-  // Accept DD/MM/YYYY
-  const m = (s || '').trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (!m) return null;
-  const [_, dd, mm, yyyy] = m;
-  return `${yyyy}-${mm}-${dd}`;
+        } catch {}
+        return resultText
+          ? { ok: true, result: resultText }
+          : { ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
+      }
+    },
+    hideSession(sessionKey) {
+      const decoded = decodeURIComponent(sessionKey);
+      const next = new Set(readHiddenSessions().map((item) => String(item)));
+      next.add(decoded);
+      hiddenSessions = Array.from(next);
+      writeJsonFileAtomic(hiddenSessionsPath, hiddenSessions);
+      return { status: 'hidden', message: `Session "${decoded}" hidden from view` };
+    },
+  };
 }
 
-function parseTokenUsageCsv(text) {
-  const lines = (text || '').split(/\r?\n/).filter(Boolean);
-  if (lines.length < 2) return [];
-  const header = lines[0].split(',').map(s => s.trim());
-  const rows = [];
-  for (const line of lines.slice(1)) {
-    // Simple CSV (no quoted commas expected in our ledger)
-    const cols = line.split(',');
-    if (cols.length < header.length) continue;
-    const r = {};
-    header.forEach((h, i) => r[h] = (cols[i] ?? '').trim());
+const app = express();
+const PORT = 3333;
+const HOST = process.env.MISSION_CONTROL_HOST || '127.0.0.1';
 
-    const dateIso = parseDdMmYyyyToIso(r.date);
-    rows.push({
-      ...r,
-      dateIso,
-      daily_tokens: Number(r.daily_tokens || 0),
-      cumulative_tokens: Number(r.cumulative_tokens || 0),
-      daily_cost_usd: Number(r.daily_cost_usd || 0),
-      cumulative_cost_usd: Number(r.cumulative_cost_usd || 0),
-    });
-  }
-  return rows.filter(r => r.dateIso);
-}
+app.disable('x-powered-by');
+app.use(express.json());
 
-// ========== API: Costs — ledger (token-usage.csv) + session fallback ==========
-app.get('/api/costs', async (req, res) => {
+const ALLOWED_HOSTS = new Set([`localhost:${PORT}`, `127.0.0.1:${PORT}`, 'localhost', '127.0.0.1']);
+app.use((req, res, next) => {
   try {
-    if (costsCache && Date.now() - costsCacheTime < COSTS_CACHE_TTL) {
-      return res.json(costsCache);
+    const host = String(req.headers.host || '');
+    if (host && !ALLOWED_HOSTS.has(host)) {
+      return res.status(403).json({ error: 'Forbidden host' });
     }
-    // Prefer ledger CSV if present (includes "pro"/non-API accounting if you log it there)
-    const ledgerPath = path.join(MEMORY_PATH, 'token-usage.csv');
-    if (fs.existsSync(ledgerPath)) {
-      const csv = fs.readFileSync(ledgerPath, 'utf8');
-      const rows = parseTokenUsageCsv(csv);
 
-      const all = rows.filter(r => r.session_key === 'all-sessions').sort((a, b) => a.dateIso.localeCompare(b.dateIso));
-      const perModel = rows
-        .filter(r => (r.session_key || '').startsWith('all-sessions:model:'))
-        .map(r => ({ ...r, modelKey: r.model || r.session_key.replace('all-sessions:model:', '') }));
-
-      const now = new Date();
-      const todayIso = now.toISOString().slice(0, 10);
-      const monthPrefix = todayIso.slice(0, 7);
-
-      const last = all.length ? all[all.length - 1] : null;
-      const monthRows = all.filter(r => r.dateIso.startsWith(monthPrefix));
-      const last7 = all.slice(-7);
-      const todayRow = all.find(r => r.dateIso === todayIso) || null;
-
-      const thisMonthUsd = monthRows.reduce((s, r) => s + r.daily_cost_usd, 0);
-      const thisMonthTokens = monthRows.reduce((s, r) => s + r.daily_tokens, 0);
-      const thisWeekUsd = last7.reduce((s, r) => s + r.daily_cost_usd, 0);
-      const thisWeekTokens = last7.reduce((s, r) => s + r.daily_tokens, 0);
-
-      // Daily series: last 30 days from ledger
-      const daily = all.slice(-30).map(r => ({
-        date: r.dateIso,
-        cost: r.daily_cost_usd,
-        tokens: r.daily_tokens,
-      }));
-
-      // Model breakdown (month-to-date)
-      const modelAgg = {};
-      for (const r of perModel) {
-        if (!r.dateIso.startsWith(monthPrefix)) continue;
-        const k = r.modelKey;
-        if (!modelAgg[k]) modelAgg[k] = { name: k, cost: 0, tokens: 0 };
-        modelAgg[k].cost += r.daily_cost_usd;
-        modelAgg[k].tokens += r.daily_tokens;
+    const method = String(req.method || 'GET').toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      const origin = req.headers.origin ? String(req.headers.origin) : '';
+      if (origin) {
+        const allowed = origin.startsWith(`http://localhost:${PORT}`)
+          || origin.startsWith(`http://127.0.0.1:${PORT}`)
+          || origin.startsWith(`https://localhost:${PORT}`)
+          || origin.startsWith(`https://127.0.0.1:${PORT}`);
+        if (!allowed) return res.status(403).json({ error: 'Forbidden origin' });
       }
-      const byService = Object.values(modelAgg)
-        .filter(x => x.tokens > 0 || x.cost > 0)
-        .sort((a, b) => (b.cost - a.cost) || (b.tokens - a.tokens))
-        .map(x => ({
-          name: x.name,
-          cost: x.cost,
-          tokens: x.tokens,
-          sessions: 0,
-          percentage: thisMonthUsd > 0 ? Math.round((x.cost / thisMonthUsd) * 100) : 0,
-        }));
-
-      const costsResult = {
-        source: 'token-usage.csv',
-        daily,
-        summary: {
-          todayUsd: todayRow ? todayRow.daily_cost_usd : 0,
-          thisWeekUsd,
-          thisMonthUsd,
-          totalUsd: last ? last.cumulative_cost_usd : 0,
-          todayTokens: todayRow ? todayRow.daily_tokens : 0,
-          thisWeekTokens,
-          thisMonthTokens,
-          totalTokens: last ? last.cumulative_tokens : 0,
-          note: `Source: ${ledgerPath}`,
-          budget: { monthly: mcConfig.budget?.monthly || 0, warning: 0 },
-        },
-        byService,
-        budget: mcConfig.budget || { monthly: 0 },
-      };
-
-      costsCache = costsResult;
-      costsCacheTime = Date.now();
-      return res.json(costsResult);
     }
-
-    // Fallback: compute from sessions when ledger is missing
-    const sessionData = await fetchSessions(50);
-    const sessions = sessionData.sessions || [];
-
-    // Compute totals
-    const totalTokens = sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0);
-
-    // Breakdown by channel
-    const byChannel = {};
-    sessions.forEach(s => {
-      const ch = s.channel || 'unknown';
-      if (!byChannel[ch]) byChannel[ch] = { tokens: 0, sessions: 0 };
-      byChannel[ch].tokens += (s.totalTokens || 0);
-      byChannel[ch].sessions += 1;
-    });
-
-    // Breakdown by session type
-    const byType = { main: 0, subagent: 0, discord: 0, openai: 0, other: 0 };
-    sessions.forEach(s => {
-      const key = s.key || '';
-      const tokens = s.totalTokens || 0;
-      if (key.includes(':subagent:')) byType.subagent += tokens;
-      else if (key.includes(':main:main')) byType.main += tokens;
-      else if (key.includes(':discord:')) byType.discord += tokens;
-      else if (key.includes(':openai')) byType.openai += tokens;
-      else byType.other += tokens;
-    });
-
-    // Build byService from real data (Bedrock = $0, but show token volume)
-    const byService = Object.entries(byChannel)
-      .filter(([_, v]) => v.tokens > 0)
-      .map(([name, v]) => ({
-        name: name.charAt(0).toUpperCase() + name.slice(1),
-        cost: 0,
-        tokens: v.tokens,
-        sessions: v.sessions,
-        percentage: totalTokens > 0 ? Math.round((v.tokens / totalTokens) * 100) : 0,
-      }))
-      .sort((a, b) => b.tokens - a.tokens);
-
-    // Daily token estimates — group sessions by last updated date
-    const dailyMap = {};
-    sessions.forEach(s => {
-      if (s.updatedAt) {
-        const day = new Date(s.updatedAt).toISOString().split('T')[0];
-        if (!dailyMap[day]) dailyMap[day] = 0;
-        dailyMap[day] += (s.totalTokens || 0);
-      }
-    });
-
-    // Fill in last 7 days
-    const daily = [];
-    const today = new Date();
-    for (let i = 6; i >= 0; i--) {
-      const d = new Date(today);
-      d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
-      daily.push({
-        date: dateStr,
-        total: 0,
-        tokens: dailyMap[dateStr] || 0,
-        breakdown: {
-          'Claude Opus 4 (Bedrock)': 0,
-        }
-      });
-    }
-
-        const costsResult = {
-      daily,
-      summary: {
-        today: 0,
-        thisWeek: 0,
-        thisMonth: 0,
-        totalTokens,
-        totalSessions: sessions.length,
-        activeSessions: sessions.filter(s => (s.totalTokens || 0) > 0).length,
-        note: 'Fallback: token totals computed from recent sessions (no ledger CSV found)',
-        budget: { monthly: mcConfig.budget?.monthly || 0, warning: 0 }
-      },
-      byService,
-      byType,
-      byChannel,
-      budget: mcConfig.budget || { monthly: 0 }
-    };
-    costsCache = costsResult;
-    costsCacheTime = Date.now();
-    res.json(costsResult);
-  } catch (e) {
-    console.error('[Costs API]', e.message);
-    res.json({
-      daily: [],
-      summary: { today: 0, thisWeek: 0, thisMonth: 0, totalTokens: 0, budget: { monthly: 0, warning: 0 } },
-      byService: [],
-      byType: {},
-      byChannel: {},
-      budget: mcConfig.budget || { monthly: 0 },
-      error: e.message,
-    });
-  }
-});
-
-// ========== API: Budget Setting ==========
-app.post('/api/settings/budget', (req, res) => {
-  try {
-    mcConfig.budget = { monthly: req.body.monthly || 0 };
-    fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
-    res.json({ status: 'saved', budget: mcConfig.budget });
-  } catch (e) {
-    console.error('[Budget API]', e.message);
-    res.status(500).json({ status: 'error', error: e.message });
-  }
-});
-
-// ========== API: Scout — Real SmålandWebb lead data ==========
-app.get('/api/scout', (req, res) => {
-  try {
-    // Read scout results from scout-engine.js output
-    let scoutData = { opportunities: [], lastScan: null };
-    try {
-      scoutData = JSON.parse(fs.readFileSync(path.join(__dirname, 'scout-results.json'), 'utf8'));
-    } catch (e) {
-      console.log('[Scout] No scout-results.json yet — run: node scout-engine.js');
-    }
-
-    // Filter out junk (score < 15)
-    const opportunities = (scoutData.opportunities || []).filter(o => o.score >= 15);
-
-    res.json({
-      opportunities,
-      lastScan: scoutData.lastScan || null,
-      queryCount: scoutData.queryCount || 0,
-      stats: {
-        total: opportunities.length,
-        new: opportunities.filter(o => o.status === 'new').length,
-        deployed: opportunities.filter(o => o.status === 'deployed').length,
-        dismissed: opportunities.filter(o => o.status === 'dismissed').length,
-        avgScore: opportunities.length ? Math.round(opportunities.reduce((a, o) => a + o.score, 0) / opportunities.length) : 0,
-      },
-    });
-  } catch (e) {
-    console.error('[Scout API]', e.message);
-    res.json({ opportunities: [], stats: {}, error: e.message });
-  }
-});
-
-// Scout: Deploy opportunity → adds to Workshop tasks
-app.post('/api/scout/deploy', (req, res) => {
-  try {
-    const { opportunityId } = req.body;
-    if (!opportunityId) return res.status(400).json({ error: 'Missing opportunityId' });
-
-    // Update scout results status
-    const scoutFile = path.join(__dirname, 'scout-results.json');
-    const scoutData = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
-    const opp = scoutData.opportunities.find(o => o.id === opportunityId);
-    if (!opp) return res.status(404).json({ error: 'Opportunity not found' });
-    
-    opp.status = 'deployed';
-    fs.writeFileSync(scoutFile, JSON.stringify(scoutData, null, 2));
-
-    // Add to tasks.json queue
-    const tasksFile = path.join(__dirname, 'tasks.json');
-    const tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
-    tasks.columns.queue.unshift({
-      id: `scout-${Date.now()}`,
-      title: opp.title.substring(0, 80),
-      description: `${opp.summary}\n\nSource: ${opp.source} | Score: ${opp.score}\nURL: ${opp.url}`,
-      priority: opp.score >= 80 ? 'high' : opp.score >= 50 ? 'medium' : 'low',
-      created: new Date().toISOString(),
-      tags: opp.tags || [opp.category],
-      source: 'scout',
-    });
-    fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2));
-
-    res.json({ ok: true, task: tasks.columns.queue[0] });
-  } catch (e) {
-    console.error('[Scout deploy]', e.message);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Scout: Dismiss opportunity
-app.post('/api/scout/dismiss', (req, res) => {
-  try {
-    const { opportunityId } = req.body;
-    const scoutFile = path.join(__dirname, 'scout-results.json');
-    const scoutData = JSON.parse(fs.readFileSync(scoutFile, 'utf8'));
-    const opp = scoutData.opportunities.find(o => o.id === opportunityId);
-    if (opp) {
-      opp.status = 'dismissed';
-      fs.writeFileSync(scoutFile, JSON.stringify(scoutData, null, 2));
-    }
-    res.json({ ok: true });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Scout: Start scan
-let scoutScanRunning = false;
-app.post('/api/scout/scan', (req, res) => {
-  try {
-    if (scoutScanRunning) {
-      return res.json({ status: 'already_scanning', message: 'Scout scan is already running' });
-    }
-
-    scoutScanRunning = true;
-    const { execFile } = require('child_process');
-    
-    execFile('node', [path.join(__dirname, 'scout-engine.js')], { timeout: 300000 }, (error, stdout, stderr) => {
-      scoutScanRunning = false;
-      if (error) {
-        console.error('[Scout scan]', error.message);
-      } else {
-        console.log('[Scout scan] Completed successfully');
-      }
-    });
-
-    res.json({ status: 'scanning', message: 'Scout scan started in background' });
-  } catch (e) {
-    scoutScanRunning = false;
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Scout: Check scan status
-app.get('/api/scout/status', (req, res) => {
-  res.json({ 
-    scanning: scoutScanRunning,
-    status: scoutScanRunning ? 'scanning' : 'idle'
-  });
-});
-
-// ========== API: Agents — Real from OpenClaw agents list + live sessions ==========
-app.get('/api/agents', async (req, res) => {
-  try {
-    // 1) Get agent definitions from OpenClaw (fast). Do NOT block on sessions here.
-    // Sessions are already shown separately via /api/sessions in the UI.
-    let openclawAgents = [];
-    try {
-      const { stdout } = await openclawExec(['agents', 'list', '--json', '--bindings'], 15000);
-      openclawAgents = JSON.parse(stdout || '[]');
-    } catch (e) {
-      console.warn('[Agents API] openclaw agents list failed:', e.message);
-      openclawAgents = [];
-    }
-
-    // 3) Build agent list
-    const agents = openclawAgents.map(a => ({
-      id: a.id,
-      name: a.identityName || a.name || a.id,
-      role: a.isDefault ? 'Commander' : 'Agent',
-      avatar: a.identityEmoji || '🤖',
-      status: 'active',
-      model: prettyModelName(a.model),
-      modelKey: a.model,
-      description: a.isDefault
-        ? 'Primary AI agent. Manages all operations, communications, and development tasks.'
-        : `Agent: ${a.id}`,
-      lastActive: null,
-      totalTokens: 0,
-      sessionKey: `agent:${a.id}:main`,
-      isDefault: !!a.isDefault,
-      workspace: a.workspace,
-    }));
-
-    // 4) If openclaw agents list returned nothing, fallback to minimal
-    if (agents.length === 0) {
-      agents.push({
-        id: 'main',
-        name: agentName || 'Agent',
-        role: 'Commander',
-        avatar: '🤖',
-        status: 'active',
-        model: prettyModelName(''),
-        description: 'Primary agent (agent list unavailable)',
-        lastActive: new Date().toISOString(),
-        totalTokens: 0,
-        sessionKey: 'agent:main:main',
-        isDefault: true,
-      });
-    }
-
-    res.json({ agents, conversations: [] });
-  } catch (e) {
-    console.error('[Agents API]', e.message);
-    res.json({
-      agents: [
-        { id: 'main', name: agentName || 'Agent', role: 'Commander', avatar: '🤖', status: 'active', model: prettyModelName(''), description: 'Primary agent (error)', lastActive: new Date().toISOString(), totalTokens: 0 }
-      ],
-      conversations: [],
-      error: e.message
-    });
-  }
-});
-
-// Create custom agent
-app.post('/api/agents/create', (req, res) => {
-  try {
-    const { name, description, model, systemPrompt, skills } = req.body;
-    if (!name || !model) {
-      return res.status(400).json({ error: 'name and model are required' });
-    }
-
-    // Save to agents-custom.json file
-    const agentsFile = path.join(__dirname, 'agents-custom.json');
-    let agents = [];
-    try {
-      agents = JSON.parse(fs.readFileSync(agentsFile, 'utf8'));
-    } catch {}
-
-    const agent = {
-      id: `custom-${Date.now()}`,
-      name,
-      description: description || '',
-      model,
-      systemPrompt: systemPrompt || '',
-      skills: skills || [],
-      created: new Date().toISOString(),
-      status: 'active'
-    };
-
-    agents.push(agent);
-    fs.writeFileSync(agentsFile, JSON.stringify(agents, null, 2));
-
-    res.json({ ok: true, agent });
-  } catch (error) {
-    console.error('[Create Agent]', error.message);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Settings API endpoints
-app.get('/api/settings', async (req, res) => {
-  try {
-    // Read OpenClaw config
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const configData = fs.existsSync(configPath)
-      ? JSON.parse(fs.readFileSync(configPath, 'utf8'))
-      : {};
-
-    // Sanitize config (remove sensitive data)
-    const defaultModel = configData?.agents?.defaults?.model?.primary
-      || configData?.agents?.defaults?.model?.default
-      || configData?.model?.default
-      || configData?.model
-      || 'openai-codex/gpt-5.3-codex';
-
-    // System info (avoid slow shelling out)
-    let mcVersion = 'unknown';
-    try {
-      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
-      mcVersion = pkg.version || mcVersion;
-    } catch {}
-
-    const sanitized = {
-      model: defaultModel,
-      gateway_port: GATEWAY_PORT,
-      memory_path: MEMORY_PATH,
-      skills_path: SKILLS_PATH,
-      bedrock_region: S3_REGION,
-      system: {
-        mission_control_version: mcVersion,
-        openclaw_version: (configData?.meta?.openclawVersion || null),
-        node_version: process.version,
-        platform: process.platform,
-        arch: process.arch,
-      }
-    };
-
-    res.json(sanitized);
-  } catch (error) {
-    console.error('Settings error:', error);
-    res.status(500).json({ error: 'Failed to load settings' });
-  }
-});
-
-app.post('/api/model', async (req, res) => {
-  try {
-    const { model } = req.body;
-
-    // Call OpenClaw gateway to update model
-    const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/model`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GATEWAY_TOKEN}`
-      },
-      body: JSON.stringify({ model })
-    });
-
-    if (response.ok) {
-      res.json({ success: true });
-    } else {
-      res.status(500).json({ error: 'Failed to switch model' });
-    }
-  } catch (error) {
-    console.error('Model switch error:', error);
-    res.status(500).json({ error: 'Failed to switch model' });
-  }
-});
-
-// Skills API endpoints
-app.get('/api/skills', async (req, res) => {
-  try {
-    // Source of truth: OpenClaw skill discovery
-    const cfg = readOpenclawConfigSafe();
-    const entries = cfg?.skills?.entries || {};
-
-    const { stdout } = await openclawExec(['skills', 'list', '--json'], 20000);
-    const payload = JSON.parse(stdout || '{}');
-    const skills = payload.skills || [];
-
-    const installed = skills.map(s => {
-      const entry = entries[s.name] || null;
-      const enabled = entry?.enabled !== false; // default true
-
-      const type = (s.source === 'openclaw-workspace') ? 'workspace' : 'system';
-      const skillPath = type === 'workspace'
-        ? path.join(SKILLS_PATH, s.name)
-        : undefined;
-
-      // Map to UI status
-      let status = 'active';
-      if (s.disabled || s.blockedByAllowlist) status = 'inactive';
-      if (!s.eligible) status = 'available';
-      if (!enabled) status = 'inactive';
-
-      return {
-        name: s.name,
-        description: s.description || '',
-        status,
-        installed: true,
-        path: skillPath,
-        type,
-        eligible: !!s.eligible,
-        disabled: !!s.disabled,
-        blockedByAllowlist: !!s.blockedByAllowlist,
-        source: s.source,
-      };
-    });
-
-    // Keep backward-compat shape for the UI. "available" is now used for non-eligible skills.
-    const available = installed.filter(s => s.status === 'available').map(s => ({ ...s, installed: false }));
-    const realInstalled = installed.filter(s => s.status !== 'available');
-
-    res.json({ installed: realInstalled, available });
-  } catch (error) {
-    console.error('Skills error:', error);
-    res.status(500).json({ error: 'Failed to load skills' });
-  }
-});
-
-app.post('/api/skills/:name/toggle', async (req, res) => {
-  try {
-    const { name } = req.params;
-    const { enabled } = req.body || {};
-    if (typeof enabled !== 'boolean') {
-      return res.status(400).json({ error: 'enabled must be boolean' });
-    }
-
-    // Use OpenClaw config helper so we don't fight schema changes.
-    // Skill names contain dashes -> use bracket notation.
-    const p = `skills.entries["${String(name).replace(/"/g, '\\"')}"]`;
-    await openclawExec(['config', 'set', '--json', `${p}.enabled`, enabled ? 'true' : 'false'], 15000);
-    await reloadGatewayConfig();
-
-    res.json({ ok: true });
-  } catch (error) {
-    console.error('Skill toggle error:', error);
-    res.status(500).json({ error: 'Failed to toggle skill' });
-  }
-});
-
-app.post('/api/skills/:name/install', async (req, res) => {
-  // Simplified install - just add to config
-  try {
-    const { name } = req.params;
-    res.json({ success: true, message: 'Skill installation not implemented' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to install skill' });
-  }
-});
-
-app.post('/api/skills/:name/uninstall', async (req, res) => {
-  // Simplified uninstall - just remove from config
-  try {
-    const { name } = req.params;
-    res.json({ success: true, message: 'Skill uninstall not implemented' });
-  } catch (error) {
-    res.status(500).json({ error: 'Failed to uninstall skill' });
-  }
-});
-
-// AWS API endpoints
-// Security: disable all AWS endpoints unless explicitly enabled.
-app.use('/api/aws', (req, res, next) => {
-  if (!(mcConfig.modules?.aws && mcConfig.aws?.enabled)) {
-    return res.status(404).json({ error: 'AWS module disabled' });
-  }
+  } catch {}
   return next();
 });
 
-const util = require('util');
-const { execFile } = require('child_process');
-const execFilePromise = util.promisify(execFile);
+app.use(express.static(path.join(__dirname, 'frontend/dist')));
+app.use('/public', express.static(path.join(__dirname, 'public')));
 
-async function awsExec(args, timeout = 10000) {
-  // Avoid shell execution to prevent command injection.
-  return await execFilePromise('aws', args, { timeout, maxBuffer: 20 * 1024 * 1024 });
+function healthPayload() {
+  return {
+    ok: true,
+    status: 'ok',
+    service: 'mission-control',
+    generatedAt: new Date().toISOString(),
+  };
 }
 
-async function openclawExec(args, timeout = 10000) {
-  // Avoid shell execution; command is constant.
-  return await execFilePromise('openclaw', args, { timeout, maxBuffer: 20 * 1024 * 1024 });
-}
+app.get('/api/health', (req, res) => res.json(healthPayload()));
+app.get('/healthz', (req, res) => res.json(healthPayload()));
 
-app.get('/api/aws/services', async (req, res) => {
+const settingsService = createSettingsService({
+  mcConfig,
+  missionControlConfigPath: MC_CONFIG_PATH,
+  missionControlDefaultConfigPath: MC_DEFAULT_CONFIG_PATH,
+  missionControlPackagePath: path.join(__dirname, 'package.json'),
+  missionControlRoot: __dirname,
+  gatewayPort: GATEWAY_PORT,
+  gatewayToken: GATEWAY_TOKEN,
+  memoryPath: MEMORY_PATH,
+  skillsPath: SKILLS_PATH,
+  bedrockRegion: S3_REGION,
+  openclawExec,
+});
+
+const STATUS_CACHE_TTL = 60000;
+const RUNTIME_SNAPSHOT_TTL = {
+  status: STATUS_CACHE_TTL,
+  cron: 60000,
+  councilsSummary: 15000,
+  governanceScorecard: 15000,
+};
+const { readRuntimeSnapshot, writeRuntimeSnapshot } = createRuntimeSnapshotStore({
+  baseDir: path.join(__dirname, 'data/runtime'),
+});
+
+const statusService = createStatusService({
+  mcConfig,
+  memoryPath: MEMORY_PATH,
+  prettyModelName,
+  getOpenclawDefaultModelKey,
+  fetchNotionActivity,
+  fetchSessions,
+  readRuntimeSnapshot,
+  writeRuntimeSnapshot,
+  runtimeSnapshotTtl: RUNTIME_SNAPSHOT_TTL,
+  execSync,
+  fs,
+  path,
+});
+
+const CRON_CACHE_TTL = 30000;
+const cronService = createCronService({
+  openclawExec: (...args) => openclawExec(...args),
+  gatewayPort: GATEWAY_PORT,
+  gatewayToken: GATEWAY_TOKEN,
+  getOpenclawDefaultModelKey,
+  calendarFile: path.join(__dirname, 'data', 'calendar-entries.json'),
+});
+
+const sessionsService = createSessionsService();
+const TASKS_FILE = path.join(__dirname, 'tasks.json');
+const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
+const OPS_EVENTS_PATH = path.join(__dirname, 'data/ops-events.json');
+const AGENT_REGISTRY_PATH = path.join(__dirname, 'data/agent-registry.json');
+
+app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN }));
+app.use(buildStatusRouter({ statusService }));
+app.use(buildCronRouter({
+  readRuntimeSnapshot,
+  writeRuntimeSnapshot,
+  runtimeSnapshotTtl: RUNTIME_SNAPSHOT_TTL,
+  cronService,
+  openclawExec: (...args) => openclawExec(...args),
+}));
+app.use(buildCalendarRouter({ calendarService: cronService, cronCacheTtl: CRON_CACHE_TTL }));
+app.use(buildTasksRouter({
+  projectRoot: __dirname,
+  cronService,
+  openclawExec,
+  openclawBin: OPENCLAW_BIN,
+  workspacePath: WORKSPACE_PATH,
+  gatewayToken: GATEWAY_TOKEN,
+}));
+app.use(buildScoutRouter({ projectRoot: __dirname }));
+app.use(buildAgentsRouter({
+  openclawExec,
+  fetchSessions,
+  readJsonFileSafe,
+  writeJsonFileAtomic,
+  TASKS_FILE,
+  mcConfig,
+  workspacePath: WORKSPACE_PATH,
+  persistMcConfig,
+  missionControlConfigPath: MC_CONFIG_PATH,
+}));
+app.use(buildSkillsRouter({ openclawExec, parseFirstJson, settingsService }));
+app.use(buildAwsRouter({
+  execSync,
+  exec: execPromise,
+  AWS_ACCESS_KEY_ID,
+  AWS_SECRET_ACCESS_KEY,
+  AWS_REGION: S3_REGION,
+  mcConfig,
+  s3Bucket: S3_BUCKET,
+}));
+app.use(buildModelsRouter({ openclawExec, parseFirstJson, prettyModelName, settingsService }));
+app.use(buildCostsRouter({ mcConfig, projectRoot: __dirname, sessionsService }));
+app.use(buildSessionsRouter({ sessionsService }));
+app.use(buildSettingsRouter({ settingsService, projectRoot: __dirname }));
+app.use(buildDocsRouter({ projectRoot: __dirname }));
+app.use(buildMemoryRouter({ memoryPath: MEMORY_PATH, workspacePath: WORKSPACE_PATH }));
+app.use(buildQuickRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN }));
+app.use(buildOllamaRouter({
+  exec: execPromise,
+  openclawExec,
+  mcConfig,
+  missionControlConfigPath: MC_CONFIG_PATH,
+}));
+app.use(buildCouncilsRouter({
+  readRuntimeSnapshot,
+  writeRuntimeSnapshot,
+  runtimeSnapshotTtl: RUNTIME_SNAPSHOT_TTL,
+  decisionLogPath: DECISION_LOG_PATH,
+  opsEventsPath: OPS_EVENTS_PATH,
+  agentRegistryPath: AGENT_REGISTRY_PATH,
+  readJsonFileSafe,
+  writeJsonFileAtomic,
+}));
+app.use(buildOpsRouter({
+  readJsonFileSafe,
+  writeJsonFileAtomic,
+  opsEventsPath: OPS_EVENTS_PATH,
+  gatewayPort: GATEWAY_PORT,
+}));
+
+setTimeout(() => statusService.refreshStatusCache(), 50);
+setTimeout(async () => {
   try {
-    // Real account info
-    let account = { id: 'unknown', region: S3_REGION };
-    try {
-      const { stdout } = await awsExec(['sts', 'get-caller-identity', '--output', 'json'], 5000);
-      const sts = JSON.parse(stdout);
-      account.id = sts.Account;
-      account.user = (sts.Arn || '').split('/').pop();
-    } catch {}
-
-    // Real services — check what's actually accessible
-    const services = [];
-    const checks = [
-      { name: 'Amazon Bedrock', args: ['bedrock', 'list-foundation-models', '--query', 'length(modelSummaries)', '--output', 'text'], desc: 'Foundation models (Opus, Sonnet, Haiku)', parse: (v) => `${String(v).trim()} models available` },
-      { name: 'Amazon Polly', args: ['polly', 'describe-voices', '--query', 'length(Voices)', '--output', 'text'], desc: 'Text-to-speech (Neural voices)', parse: (v) => `${String(v).trim()} voices` },
-      { name: 'Amazon Transcribe', args: ['transcribe', 'list-transcription-jobs', '--max-results', '1', '--output', 'json'], desc: 'Speech-to-text', parse: () => 'Ready' },
-      { name: 'Amazon Translate', args: ['translate', 'list-languages', '--query', 'length(Languages)', '--output', 'text'], desc: 'Translation', parse: (v) => `${String(v).trim()} languages` },
-    ];
-
-    for (const svc of checks) {
-      try {
-        const { stdout } = await awsExec(svc.args, 5000);
-        services.push({ name: svc.name, status: 'active', description: svc.desc, detail: svc.parse(stdout) });
-      } catch {
-        services.push({ name: svc.name, status: 'available', description: svc.desc, detail: 'Not available' });
-      }
-    }
-
-    // Optional S3 check
-    if (S3_BUCKET) {
-      try {
-        await awsExec(['s3api', 'head-bucket', '--bucket', S3_BUCKET], 5000);
-        services.push({ name: 'Amazon S3', status: 'active', description: `Storage (${S3_BUCKET})`, detail: 'Bucket active' });
-      } catch {
-        services.push({ name: 'Amazon S3', status: 'available', description: `Storage (${S3_BUCKET})`, detail: 'Bucket not accessible' });
-      }
-    } else {
-      services.push({ name: 'Amazon S3', status: 'available', description: 'Storage (not configured)', detail: 'Not configured' });
-    }
-
-    res.json({
-      account,
-      services,
-      credits: { total: 25000, note: 'AWS Activate credits' },
-    });
-  } catch (error) {
-    console.error('AWS services error:', error);
-    res.status(500).json({ error: 'Failed to load AWS services' });
-  }
-});
-
-app.get('/api/aws/bedrock-models', async (req, res) => {
-  try {
-    const query = "modelSummaries[?modelLifecycle.status=='ACTIVE'].{modelId:modelId,modelName:modelName,provider:providerName,input:inputModalities,output:outputModalities}";
-    const { stdout } = await awsExec(['bedrock', 'list-foundation-models', '--query', query, '--output', 'json'], 10000);
-    const models = JSON.parse(stdout || '[]');
-    res.json(models.map(m => ({
-      modelId: m.modelId,
-      modelName: m.modelName,
-      provider: m.provider,
-      status: 'ACTIVE',
-      inputModalities: m.input,
-      outputModalities: m.output,
-    })));
-  } catch (error) {
-    console.error('Bedrock models error:', error);
-    res.status(500).json({ error: 'Failed to load Bedrock models' });
-  }
-});
-
-app.get('/api/models', async (req, res) => {
-  // List models from OpenClaw (includes Codex/GPT/etc.)
-  try {
-    const { stdout } = await openclawExec(['models', 'list', '--json'], 12000);
-    const payload = JSON.parse(stdout || '{}');
-    const models = payload.models || [];
-    res.json(models.map(m => ({
-      id: m.key,
-      name: m.name || prettyModelName(m.key),
-      contextWindow: m.contextWindow,
-      input: m.input,
-      local: !!m.local,
-      available: m.available !== false,
-      tags: m.tags || [],
-    })));
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// Switch agent model via gateway config
-app.post('/api/model', async (req, res) => {
-  try {
-    const { model } = req.body;
-    if (!model) return res.status(400).json({ error: 'model required' });
-
-    // Read current config, update model, write back
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
-
-    // Set the default model
-    if (!config.agents) config.agents = {};
-    if (!config.agents.defaults) config.agents.defaults = {};
-    if (!config.agents.defaults.model) config.agents.defaults.model = {};
-    // OpenClaw uses agents.defaults.model.primary (keep default for backward compat if present)
-    config.agents.defaults.model.primary = model;
-    config.agents.defaults.model.default = model;
-
-    fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-    // Signal gateway to reload config (avoid shelling out)
-    try {
-      await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/reload`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN}` }
-      });
-    } catch {}
-
-    res.json({ ok: true, model, message: `Model switched to ${model}` });
-  } catch (error) {
-    console.error('Model switch error:', error);
-    res.status(500).json({ error: 'Failed to switch model' });
-  }
-});
-
-// Generate image via Bedrock → save to S3
-const S3_PREFIX = 'images/mc-generated';
-
-app.post('/api/aws/generate-image', async (req, res) => {
-  try {
-    const { modelId, prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'prompt required' });
-
-    if (!modelId || typeof modelId !== 'string') return res.status(400).json({ error: 'modelId required' });
-    const timestamp = Date.now();
-
-    // Build payload based on model provider
-    let payload;
-    if (modelId.startsWith('amazon.nova-canvas') || modelId.startsWith('amazon.titan-image')) {
-      payload = {
-        taskType: 'TEXT_IMAGE',
-        textToImageParams: { text: prompt },
-        imageGenerationConfig: { numberOfImages: 1, height: 1024, width: 1024 }
-      };
-    } else if (modelId.startsWith('stability.')) {
-      payload = {
-        prompt: prompt,
-        mode: 'text-to-image',
-        output_format: 'png'
-      };
-    } else {
-      return res.status(400).json({ error: `Unsupported image model: ${modelId}` });
-    }
-
-    const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64');
-    const outFile = `/tmp/mc-image-${timestamp}.json`;
-
-    await awsExec([
-      'bedrock-runtime',
-      'invoke-model',
-      '--model-id',
-      modelId,
-      '--content-type',
-      'application/json',
-      '--accept',
-      'application/json',
-      '--body',
-      payloadB64,
-      outFile,
-    ], 60000);
-
-    // Parse response and save image
-    const result = JSON.parse(fs.readFileSync(outFile, 'utf8'));
-    let imageB64;
-    if (result.images && result.images[0]) {
-      imageB64 = result.images[0];
-    } else if (result.image) {
-      imageB64 = result.image;
-    } else {
-      return res.status(500).json({ error: 'No image in response', keys: Object.keys(result) });
-    }
-
-    // Save locally first, then upload to S3
-    const slug = prompt.replace(/[^a-zA-Z0-9]+/g, '-').substring(0, 40).toLowerCase();
-    const filename = `${timestamp}-${slug}.png`;
-    const localPath = `/tmp/mc-image-${timestamp}.png`;
-    fs.writeFileSync(localPath, Buffer.from(imageB64, 'base64'));
-
-    const s3Key = `${S3_PREFIX}/${filename}`;
-    await awsExec(['s3', 'cp', localPath, `s3://${S3_BUCKET}/${s3Key}`, '--content-type', 'image/png'], 30000);
-
-    // Clean up local temp files
-    try { fs.unlinkSync(outFile); } catch {}
-
-    res.json({
-      ok: true,
-      message: `Image generated and saved to S3!`,
-      imageUrl: `/api/aws/image/${timestamp}`,
-      s3: `s3://${S3_BUCKET}/${s3Key}`,
-    });
-  } catch (error) {
-    console.error('Image gen error:', error);
-    res.status(500).json({ error: error.message || 'Image generation failed' });
-  }
-});
-
-// Serve generated images (local cache)
-app.get('/api/aws/image/:id', (req, res) => {
-  const imgPath = `/tmp/mc-image-${req.params.id}.png`;
-  if (fs.existsSync(imgPath)) {
-    res.type('png').sendFile(imgPath);
-  } else {
-    res.status(404).json({ error: 'Image not found locally — check S3' });
-  }
-});
-
-// List all generated images from S3
-app.get('/api/aws/gallery', async (req, res) => {
-  try {
-    const { stdout } = await awsExec(['s3api', 'list-objects-v2', '--bucket', S3_BUCKET, '--prefix', `${S3_PREFIX}/`, '--output', 'json'], 10000);
-    const data = JSON.parse(stdout);
-    const images = (data.Contents || [])
-      .filter(o => o.Key.endsWith('.png'))
-      .map(o => {
-        const filename = o.Key.split('/').pop();
-        const id = filename.split('-')[0];
-        return {
-          id,
-          url: `/api/aws/s3-image/${encodeURIComponent(o.Key)}`,
-          created: o.LastModified,
-          size: o.Size,
-          s3Key: o.Key,
-        };
-      })
-      .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
-    res.json({ images });
-  } catch (error) {
-    // Fallback to local /tmp
-    try {
-      const files = fs.readdirSync('/tmp')
-        .filter(f => f.startsWith('mc-image-') && f.endsWith('.png'))
-        .map(f => {
-          const id = f.replace('mc-image-', '').replace('.png', '');
-          const stat = fs.statSync(`/tmp/${f}`);
-          return { id, url: `/api/aws/image/${id}`, created: stat.mtime.toISOString(), size: stat.size };
-        })
-        .sort((a, b) => new Date(b.created).getTime() - new Date(a.created).getTime());
-      res.json({ images: files });
-    } catch { res.json({ images: [] }); }
-  }
-});
-
-// Proxy S3 images
-app.get('/api/aws/s3-image/:key(*)', async (req, res) => {
-  try {
-    const key = decodeURIComponent(req.params.key);
-    const localCache = `/tmp/s3-cache-${key.replace(/\//g, '_')}`;
-    if (!fs.existsSync(localCache)) {
-      await awsExec(['s3', 'cp', `s3://${S3_BUCKET}/${key}`, localCache], 15000);
-    }
-    res.type('png').sendFile(localCache);
-  } catch (error) {
-    res.status(404).json({ error: 'Image not found' });
-  }
-});
-
-// ========== API: Config (public, secrets stripped) ==========
-app.get('/api/config', (req, res) => {
-  // Deep clone to avoid mutating mcConfig
-  const safe = JSON.parse(JSON.stringify(mcConfig));
-  if (safe.gateway) safe.gateway = { port: safe.gateway.port };
-  if (safe.notion) delete safe.notion.token;
-  if (safe.scout) delete safe.scout.braveApiKey;
-  res.json(safe);
-});
-
-// ========== API: Setup (first-time configuration) ==========
-// GET: Return current setup status
-app.get('/api/setup', async (req, res) => {
-  try {
-    // Check if gateway is running
-    let gatewayRunning = false;
-    let gatewayVersion = '';
-    try {
-      const response = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/status`, { 
-        method: 'GET',
-        timeout: 3000 
-      });
-      if (response.ok) {
-        gatewayRunning = true;
-        const status = await response.json();
-        gatewayVersion = status.version || '';
-      }
-    } catch {
-      gatewayRunning = false;
-    }
-
-    // Check if setup is needed (config doesn't exist OR equals default)
-    let needsSetup = !fs.existsSync(MC_CONFIG_PATH);
-    if (!needsSetup && fs.existsSync(MC_DEFAULT_CONFIG_PATH)) {
-      const currentConfig = fs.readFileSync(MC_CONFIG_PATH, 'utf8');
-      const defaultConfig = fs.readFileSync(MC_DEFAULT_CONFIG_PATH, 'utf8');
-      needsSetup = currentConfig === defaultConfig;
-    }
-
-    // Detect OpenClaw config
-    let detectedConfig = {
-      model: '',
-      channels: [],
-      agentName: '',
-      workspacePath: ''
-    };
-
-    try {
-      const openclawConfigPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
-      if (fs.existsSync(openclawConfigPath)) {
-        const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
-        detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || '';
-        detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || '';
-        
-        // Extract gateway auth token
-        detectedConfig.gatewayToken = openclawConfig.gateway?.auth?.token || openclawConfig.gateway?.http?.auth?.token || '';
-        
-        // Extract enabled channels
-        if (openclawConfig.channels) {
-          detectedConfig.channels = Object.keys(openclawConfig.channels).filter(channel => 
-            openclawConfig.channels[channel]?.enabled !== false
-          );
-        }
-        
-        // Try to detect agent name from IDENTITY.md or SOUL.md
-        const ws = detectedConfig.workspacePath || process.env.HOME;
-        try {
-          const identity = fs.readFileSync(path.join(ws, 'IDENTITY.md'), 'utf8');
-          const nameMatch = identity.match(/\*\*Name:\*\*\s*(.+)/);
-          if (nameMatch) detectedConfig.agentName = nameMatch[1].trim();
-          else detectedConfig.agentName = 'OpenClaw Agent';
-        } catch {
-          detectedConfig.agentName = 'OpenClaw Agent';
-        }
-      }
-    } catch (e) {
-      console.warn('Could not read OpenClaw config:', e.message);
-    }
-
-    res.json({
-      needsSetup,
-      gatewayRunning,
-      gatewayPort: GATEWAY_PORT,
-      gatewayVersion,
-      detectedConfig
-    });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST: Update setup configuration
-app.post('/api/setup', (req, res) => {
-  try {
-    const { dashboardName, gateway, modules, scout } = req.body;
-    
-    // Update dashboard name
-    if (dashboardName) {
-      mcConfig.name = dashboardName;
-      mcConfig.subtitle = dashboardName;
-    }
-    
-    // Update gateway config
-    if (gateway && typeof gateway === 'object') {
-      if (gateway.port) mcConfig.gateway.port = gateway.port;
-      if (gateway.token) mcConfig.gateway.token = gateway.token;
-    }
-    
-    // Update modules
-    if (modules && typeof modules === 'object') {
-      mcConfig.modules = { ...mcConfig.modules, ...modules };
-    }
-    
-    // Update scout config
-    if (scout && typeof scout === 'object') {
-      mcConfig.scout = { ...mcConfig.scout, ...scout };
-    }
-
-    // Write the updated config
-    fs.writeFileSync(MC_CONFIG_PATH, JSON.stringify(mcConfig, null, 2));
-    
-    // Clear old scout results so fresh scan uses new queries
-    const scoutResultsPath = path.join(__dirname, 'scout-results.json');
-    if (fs.existsSync(scoutResultsPath)) {
-      fs.writeFileSync(scoutResultsPath, JSON.stringify({ results: [], lastScan: null, queries: scout?.queries?.length || 0 }, null, 2));
-      console.log('[Setup] Cleared scout results for fresh scan');
-    }
-    
-    // Auto-trigger first scout scan in background (if scout enabled and queries exist)
-    if (scout?.enabled && scout?.queries?.length) {
-      setTimeout(() => {
-        try {
-          const { execFile } = require('child_process');
-          execFile('node', [path.join(__dirname, 'scout-engine.js')], { timeout: 60000 }, (err) => {
-            if (err) console.error('[Setup] Scout scan failed:', err.message);
-            else console.log('[Setup] First scout scan completed');
-          });
-        } catch (e) { console.warn('[Setup] Could not trigger scout scan'); }
-      }, 1000);
-    }
-    
-    // Return sanitized config
-    const safe = JSON.parse(JSON.stringify(mcConfig));
-    if (safe.gateway) safe.gateway = { port: safe.gateway.port };
-    if (safe.notion) delete safe.notion.token;
-    if (safe.scout) delete safe.scout.braveApiKey;
-    
-    res.json({ success: true, config: safe });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// AWS Cost Explorer — real spending data
-app.get('/api/aws/costs', async (req, res) => {
-  try {
-    const util = require('util');
-    const execPromise = util.promisify(require('child_process').exec);
-
-    // Get current month daily breakdown by service
-    const startDate = new Date();
-    startDate.setDate(1);
-    const start = startDate.toISOString().split('T')[0];
-    const end = new Date().toISOString().split('T')[0];
-
-    const { stdout } = await execPromise(
-      `aws ce get-cost-and-usage --time-period Start=${start},End=${end} --granularity DAILY --metrics BlendedCost --group-by Type=DIMENSION,Key=SERVICE --output json 2>/dev/null`,
-      { timeout: 15000 }
-    );
-    const data = JSON.parse(stdout);
-
-    // Parse into daily totals + service breakdown
-    const services = {};
-    const daily = [];
-    let total = 0;
-
-    for (const r of (data.ResultsByTime || [])) {
-      const day = r.TimePeriod.Start;
-      let dayTotal = 0;
-      for (const g of (r.Groups || [])) {
-        const svc = g.Keys[0];
-        const amt = parseFloat(g.Metrics.BlendedCost.Amount);
-        if (amt > 0.001) {
-          services[svc] = (services[svc] || 0) + amt;
-          dayTotal += amt;
-        }
-      }
-      daily.push({ date: day, cost: Math.round(dayTotal * 100) / 100 });
-      total += dayTotal;
-    }
-
-    // Sort services by cost
-    const serviceList = Object.entries(services)
-      .map(([name, cost]) => ({ name, cost: Math.round(cost * 100) / 100 }))
-      .sort((a, b) => b.cost - a.cost);
-
-    res.json({
-      period: { start, end },
-      total: Math.round(total * 100) / 100,
-      daily,
-      services: serviceList,
-      credits: 25000,
-      remaining: Math.round((25000 - total) * 100) / 100,
-    });
-  } catch (error) {
-    console.error('AWS costs error:', error);
-    res.status(500).json({ error: 'Failed to load cost data' });
-  }
-});
-
-// === Session History ===
-app.get('/api/sessions/:sessionKey/history', async (req, res) => {
-  try {
-    const sessionKey = decodeURIComponent(req.params.sessionKey);
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
-    const gwPort = cfg.gateway?.port || 18789;
-    
-    // First get session info to find transcriptPath
-    const listRes = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-      body: JSON.stringify({ tool: 'sessions_list', input: { limit: 100, messageLimit: 0 } })
-    });
-    
-    if (!listRes.ok) return res.json({ messages: [] });
-    
-    const listData = await listRes.json();
-    const listText = listData?.result?.content?.[0]?.text || '{}';
-    const parsed = JSON.parse(listText);
-    const session = (parsed.sessions || []).find((s) => s.key === sessionKey);
-    
-    if (!session?.transcriptPath) return res.json({ messages: [], info: 'No transcript found' });
-    
-    // Read JSONL transcript
-    const transcriptDir = path.join(require('os').homedir(), '.openclaw/agents/main/sessions');
-    const transcriptFile = path.join(transcriptDir, session.transcriptPath);
-    
-    if (!fs.existsSync(transcriptFile)) return res.json({ messages: [], info: 'Transcript file missing' });
-    
-    const lines = fs.readFileSync(transcriptFile, 'utf8').split('\n').filter(Boolean);
-    const messages = [];
-    
-    for (const line of lines) {
-      try {
-        const entry = JSON.parse(line);
-        if (entry.type !== 'message' || !entry.message) continue;
-        const msg = entry.message;
-        const role = msg.role;
-        if (!role || role === 'toolResult' || role === 'toolUse') continue;
-        
-        // Extract text from content array or string
-        let text = '';
-        if (typeof msg.content === 'string') {
-          text = msg.content;
-        } else if (Array.isArray(msg.content)) {
-          text = msg.content
-            .filter(c => c.type === 'text')
-            .map(c => c.text || '')
-            .join('\n');
-        }
-        
-        if (text.trim()) {
-          messages.push({ role, content: text.substring(0, 3000), ts: entry.timestamp });
-        }
-      } catch {}
-    }
-    
-    // Return last 50 messages
-    res.json({ messages: messages.slice(-50), total: messages.length, sessionKey });
-  } catch (err) {
-    res.json({ messages: [], error: err.message });
-  }
-});
-
-// Send message to a session
-app.post('/api/sessions/:sessionKey/send', async (req, res) => {
-  try {
-    const sessionKey = decodeURIComponent(req.params.sessionKey);
-    const { message } = req.body;
-    if (!message) return res.status(400).json({ error: 'message required' });
-    
-    const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-    const cfg = fs.existsSync(configPath) ? JSON.parse(fs.readFileSync(configPath, 'utf8')) : {};
-    const gwToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || '';
-    const gwPort = cfg.gateway?.port || 18789;
-    
-    // Use AbortController for timeout
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90000); // 90s max
-    
-    try {
-      const response = await fetch(`http://127.0.0.1:${gwPort}/tools/invoke`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${gwToken}` },
-        signal: controller.signal,
-        body: JSON.stringify({
-          tool: 'sessions_send',
-          args: { sessionKey, message, timeoutSeconds: 90 }
-        })
-      });
-      
-      clearTimeout(timeout);
-      const data = await response.json();
-      let resultText = data?.result?.content?.[0]?.text || '';
-      
-      // sessions_send returns JSON with {reply: "..."} — extract the reply
-      try {
-        const parsed = JSON.parse(resultText);
-        if (parsed.reply) resultText = parsed.reply;
-      } catch(e) {
-        // Not JSON, use as-is
-      }
-      
-      res.json({ ok: !!resultText, result: resultText });
-    } catch (fetchErr) {
-      clearTimeout(timeout);
-      
-      // If timed out, try reading last message from transcript
-      let resultText = '';
-      try {
-        const sessionsFile = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
-        const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-        const sessionInfo = sessions[sessionKey] || {};
-        const sessionId = sessionInfo.sessionId || '';
-        if (sessionId) {
-          const transcriptPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
-          if (fs.existsSync(transcriptPath)) {
-            const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-            for (let i = lines.length - 1; i >= 0; i--) {
-              try {
-                const evt = JSON.parse(lines[i]);
-                if (evt.type === 'message' && evt.message?.role === 'assistant') {
-                  const content = evt.message.content;
-                  resultText = Array.isArray(content) 
-                    ? content.filter(c => c.type === 'text').map(c => c.text).join('\n')
-                    : typeof content === 'string' ? content : '';
-                  if (resultText) break;
-                }
-              } catch(e) {}
-            }
-          }
-        }
-      } catch(e) {}
-      
-      if (resultText) {
-        res.json({ ok: true, result: resultText });
-      } else {
-        res.json({ ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' });
-      }
-    }
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Close session endpoint (placeholder)
-// Track hidden/closed sessions
-const HIDDEN_SESSIONS_PATH = path.join(__dirname, 'hidden-sessions.json');
-let hiddenSessions = [];
-try { hiddenSessions = JSON.parse(fs.readFileSync(HIDDEN_SESSIONS_PATH, 'utf8')); } catch {}
-
-app.delete('/api/sessions/:key/close', async (req, res) => {
-  const key = decodeURIComponent(req.params.key);
-  if (!hiddenSessions.includes(key)) {
-    hiddenSessions.push(key);
-    fs.writeFileSync(HIDDEN_SESSIONS_PATH, JSON.stringify(hiddenSessions, null, 2));
-  }
-  // Clear sessions cache so next fetch excludes this session
-  sessionsCache = null;
-  sessionsCacheTime = 0;
-  res.json({ status: 'hidden', message: `Session "${key}" hidden from view` });
-});
-
-// === Document Management ===
-const docsDir = path.join(__dirname, 'documents');
-if (!fs.existsSync(docsDir)) fs.mkdirSync(docsDir, { recursive: true });
-
-const upload = multer({ dest: path.join(docsDir, '.tmp'), limits: { fileSize: 10 * 1024 * 1024 } });
-
-app.get('/api/docs', (req, res) => {
-  try {
-    const files = fs.readdirSync(docsDir).filter(f => !f.startsWith('.'));
-    const documents = files.map(f => {
-      const stat = fs.statSync(path.join(docsDir, f));
-      const ext = path.extname(f).replace('.', '');
-      const sizeBytes = stat.size;
-      const size = sizeBytes > 1024 * 1024 ? `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB` 
-        : sizeBytes > 1024 ? `${(sizeBytes / 1024).toFixed(1)} KB` 
-        : `${sizeBytes} B`;
-      // Rough chunk estimate: ~500 chars per chunk
-      const chunks = Math.max(1, Math.round(sizeBytes / 500));
-      return { id: f, name: f, type: ext, size, sizeBytes, chunks, modified: stat.mtime.toISOString() };
-    });
-    res.json({ documents, total: documents.length });
-  } catch (err) {
-    res.json({ documents: [], total: 0 });
-  }
-});
-
-app.post('/api/docs/upload', upload.array('files', 20), (req, res) => {
-  try {
-    const uploaded = [];
-    for (const file of (req.files || [])) {
-      const original = String(file.originalname || 'upload');
-      // Prevent path traversal and weird names
-      let safeName = path.basename(original).replace(/[^a-zA-Z0-9._ -]/g, '_');
-      if (!safeName || safeName === '.' || safeName === '..') safeName = `upload-${Date.now()}`;
-
-      let dest = path.join(docsDir, safeName);
-      if (fs.existsSync(dest)) {
-        dest = path.join(docsDir, `${Date.now()}-${safeName}`);
-      }
-
-      fs.renameSync(file.path, dest);
-      uploaded.push(path.basename(dest));
-    }
-    res.json({ ok: true, uploaded });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// ========== NEW DASHBOARD QUICK ACTIONS ==========
-
-// POST /api/heartbeat/run — trigger heartbeat via cron tool
-app.post('/api/heartbeat/run', async (req, res) => {
-  try {
-    const r = await fetch(`http://127.0.0.1:${GATEWAY_PORT}/tools/invoke`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${GATEWAY_TOKEN}` },
-      body: JSON.stringify({ tool: 'cron', args: { action: 'wake', text: 'Manual heartbeat check from Mission Control', mode: 'now' } })
-    });
-    const data = await r.json();
-    res.json({ status: 'triggered', result: data });
-  } catch(e) { 
-    res.json({ status: 'error', error: e.message }); 
-  }
-});
-
-// POST /api/quick/emails — disabled to prevent loop (email checks via heartbeat/cron only)
-app.post('/api/quick/emails', async (req, res) => {
-  res.json({ status: 'ok', reply: 'Email checks run via scheduled heartbeats. No manual ping needed.' });
-});
-
-// POST /api/quick/schedule — disabled to prevent loop
-app.post('/api/quick/schedule', async (req, res) => {
-  res.json({ status: 'ok', reply: 'Calendar checks run via scheduled heartbeats.' });
-});
-
-// ========== SETTINGS API ENDPOINTS ==========
-
-function readOpenclawConfigSafe() {
-  const configPath = path.join(require('os').homedir(), '.openclaw/openclaw.json');
-  if (!fs.existsSync(configPath)) return {};
-  return JSON.parse(fs.readFileSync(configPath, 'utf8'));
-}
-
-async function reloadGatewayConfig() {
-  // Best-effort: tell the gateway to reload config. If it fails, config is still persisted.
-  try {
-    await fetch(`http://127.0.0.1:${GATEWAY_PORT}/config/reload`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${GATEWAY_TOKEN}` },
-    });
+    const response = await fetch(`http://127.0.0.1:${PORT}/api/activity`);
+    if (response.ok) console.log('[Startup] Pre-warmed activity cache');
   } catch {}
-}
-
-// GET /api/settings/model-routing
-app.get('/api/settings/model-routing', async (req, res) => {
   try {
-    const cfg = readOpenclawConfigSafe();
-    const main = cfg?.agents?.defaults?.model?.primary || '';
-    const subagent = cfg?.agents?.defaults?.subagents?.model?.primary || main || '';
-    const heartbeat = cfg?.agents?.defaults?.heartbeat?.model || '';
-    res.json({ main, subagent, heartbeat });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+    const response = await fetch(`http://127.0.0.1:${PORT}/api/costs`);
+    if (response.ok) console.log('[Startup] Pre-warmed costs cache');
+  } catch {}
+}, 3000);
 
-// POST /api/settings/model-routing
-app.post('/api/settings/model-routing', async (req, res) => {
-  const { main, subagent, heartbeat } = req.body || {};
-  try {
-    if (main) {
-      await openclawExec(['config', 'set', 'agents.defaults.model.primary', String(main)], 15000);
-    }
-    if (subagent) {
-      await openclawExec(['config', 'set', 'agents.defaults.subagents.model.primary', String(subagent)], 15000);
-    }
-    if (heartbeat) {
-      await openclawExec(['config', 'set', 'agents.defaults.heartbeat.model', String(heartbeat)], 15000);
-    } else {
-      // If empty, try to remove heartbeat model override so it inherits the main model
-      try {
-        await openclawExec(['config', 'unset', 'agents.defaults.heartbeat.model'], 15000);
-      } catch {}
-    }
-
-    await reloadGatewayConfig();
-    res.json({ status: 'saved' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/settings/heartbeat
-app.get('/api/settings/heartbeat', async (req, res) => {
-  try {
-    const cfg = readOpenclawConfigSafe();
-    const every = cfg?.agents?.defaults?.heartbeat?.every || '1h';
-    res.json({ interval: every });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// POST /api/settings/heartbeat
-app.post('/api/settings/heartbeat', async (req, res) => {
-  try {
-    const { interval } = req.body || {};
-    if (!interval) return res.status(400).json({ error: 'interval required' });
-    await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', String(interval)], 15000);
-    await reloadGatewayConfig();
-    res.json({ status: 'saved' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// GET /api/settings/export
-app.get('/api/settings/export', (req, res) => {
-  res.setHeader('Content-Disposition', 'attachment; filename=mc-config.json');
-  res.setHeader('Content-Type', 'application/json');
-  res.sendFile(MC_CONFIG_PATH);
-});
-
-// POST /api/settings/import
-app.post('/api/settings/import', upload.single('config'), (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No config file uploaded' });
-    }
-    
-    // Validate JSON
-    const configContent = fs.readFileSync(req.file.path, 'utf8');
-    const newConfig = JSON.parse(configContent); // Will throw if invalid JSON
-    
-    // Backup current config
-    fs.copyFileSync(MC_CONFIG_PATH, `${MC_CONFIG_PATH}.backup.${Date.now()}`);
-    
-    // Write new config
-    fs.writeFileSync(MC_CONFIG_PATH, configContent);
-    
-    // Clean up temp file
-    fs.unlinkSync(req.file.path);
-    
-    res.json({ status: 'imported', message: 'Configuration imported successfully. Restart required.' });
-  } catch(e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// SPA catch-all: serve index.html for all non-API routes
-app.get('*', (req, res) => {
+// SPA catch-all: serve index.html for all non-API routes.
+// Express 5 uses path-to-regexp v8 and no longer accepts bare `*`.
+app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });
 
-// Bind to localhost by default (prevents exposing the control UI to your LAN)
-const HOST = process.env.MISSION_CONTROL_HOST || '127.0.0.1';
-app.listen(PORT, HOST, () => {
+app.listen(PORT, HOST, async () => {
   console.log(`🚀 Mission Control running at http://${HOST === '127.0.0.1' ? 'localhost' : HOST}:${PORT}`);
-  
-  // Recover stuck inProgress tasks on startup
   try {
-    const tasks = JSON.parse(fs.readFileSync(TASKS_FILE, 'utf8'));
-    const sessionsFile = path.join(require('os').homedir(), '.openclaw/agents/main/sessions/sessions.json');
-    const sessions = fs.existsSync(sessionsFile) ? JSON.parse(fs.readFileSync(sessionsFile, 'utf8')) : {};
-    
-    let recovered = 0;
-    for (const task of [...tasks.columns.inProgress]) {
-      const childKey = task.childSessionKey || '';
-      const sessionInfo = sessions[childKey] || {};
-      const sessionId = sessionInfo.sessionId || '';
-      
-      if (!sessionId) continue;
-      
-      const transcriptPath = path.join(require('os').homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
-      if (!fs.existsSync(transcriptPath)) continue;
-      
-      const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-      let resultText = '';
-      for (let i = lines.length - 1; i >= 0; i--) {
-        try {
-          const evt = JSON.parse(lines[i]);
-          if (evt.type === 'message' && evt.message?.role === 'assistant') {
-            const content = evt.message.content;
-            resultText = Array.isArray(content)
-              ? content.filter(c => c.type === 'text').map(c => c.text).join('\n')
-              : typeof content === 'string' ? content : '';
-            if (resultText) break;
-          }
-        } catch(e) {}
-      }
-      
-      if (resultText) {
-        const idx = tasks.columns.inProgress.indexOf(task);
-        if (idx >= 0) tasks.columns.inProgress.splice(idx, 1);
-        task.status = 'done';
-        task.completed = new Date().toISOString();
-        task.result = resultText.substring(0, 3000);
-        tasks.columns.done.unshift(task);
-        recovered++;
-      }
-    }
-    
-    if (recovered > 0) {
-      fs.writeFileSync(TASKS_FILE, JSON.stringify(tasks, null, 2));
-      console.log(`🔄 Recovered ${recovered} stuck inProgress tasks on startup`);
-    }
-  } catch(e) {
-    console.error('[Startup recovery]', e.message);
+    await recoverTasksOnStartup({
+      projectRoot: __dirname,
+      cronService,
+      openclawExec,
+      openclawBin: OPENCLAW_BIN,
+      workspacePath: WORKSPACE_PATH,
+      gatewayToken: GATEWAY_TOKEN,
+    });
+  } catch (error) {
+    console.error('[Startup recovery]', error.message);
   }
 });

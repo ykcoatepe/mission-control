@@ -1,39 +1,13 @@
 import { NavLink } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-import {
-  LayoutDashboard,
-  Hammer,
-  DollarSign,
-  Clock,
-  Radar,
-  FileText,
-  Bot,
-  Activity,
-  MessageCircle,
-  Settings,
-  Puzzle,
-  Cloud
-} from 'lucide-react'
+import { Activity, Bot } from 'lucide-react'
+import { sidebarRoutes } from '../appRoutes'
 
 interface McConfig {
   name?: string
   subtitle?: string
   modules?: Record<string, boolean>
 }
-
-const allNavItems = [
-  { to: '/', icon: LayoutDashboard, label: 'Dashboard', module: 'dashboard' },
-  { to: '/conversations', icon: MessageCircle, label: 'Conversations', module: 'chat' },
-  { to: '/workshop', icon: Hammer, label: 'Workshop', module: 'workshop' },
-  { to: '/costs', icon: DollarSign, label: 'Cost Tracker', module: 'costs' },
-  { to: '/cron', icon: Clock, label: 'Cron Monitor', module: 'cron' },
-  { to: '/scout', icon: Radar, label: 'Scout', module: 'scout' },
-  // Doc Digest removed — may return as Memory Explorer
-  { to: '/agents', icon: Bot, label: 'Agent Hub', module: 'agents' },
-  { to: '/settings', icon: Settings, label: 'Settings', module: 'settings' },
-  { to: '/skills', icon: Puzzle, label: 'Skills', module: 'skills' },
-  { to: '/aws', icon: Cloud, label: 'AWS', module: 'aws' },
-]
 
 interface SidebarProps {
   isOpen?: boolean
@@ -52,8 +26,8 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   // Filter nav items based on enabled modules
   const navItems = config?.modules
-    ? allNavItems.filter(item => config.modules![item.module] !== false)
-    : allNavItems
+    ? sidebarRoutes.filter(item => config.modules![item.module] !== false)
+    : sidebarRoutes
 
   const displayName = config?.name || 'Mission Control'
   const subtitle = config?.subtitle || 'Mission Control'
@@ -71,7 +45,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
           <div>
             <h1 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>{subtitle}</h1>
-            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontWeight: 500 }}>System Monitor</p>
+            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontWeight: 500 }}>Ops Console</p>
           </div>
         </div>
       </div>
@@ -83,19 +57,21 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       <nav style={{ flex: 1, padding: '12px 12px 0', position: 'relative', zIndex: 2 }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) =>
-                `macos-list-item ${isActive ? 'active' : ''}`
-              }
-              style={{ display: 'flex', alignItems: 'center', gap: 12 }}
-              onClick={onClose} // Close sidebar on mobile when nav item is clicked
-            >
-              <item.icon size={16} strokeWidth={2} />
-              <span>{item.label}</span>
-            </NavLink>
+            item.icon ? (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                end={item.path === '/'}
+                className={({ isActive }) =>
+                  `macos-list-item ${isActive ? 'active' : ''}`
+                }
+                style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+                onClick={onClose} // Close sidebar on mobile when nav item is clicked
+              >
+                <item.icon size={16} strokeWidth={2} />
+                <span>{item.label}</span>
+              </NavLink>
+            ) : null
           ))}
         </div>
       </nav>

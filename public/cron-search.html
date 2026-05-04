@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cron Jobs — Search</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; padding: 20px 24px; }
+.topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
+.topbar a { color: #388bfd; text-decoration: none; font-size: 14px; }
+.topbar a:hover { text-decoration: underline; }
+h1 { font-size: 18px; font-weight: 600; color: #f0f6fc; }
+.wrap { max-width: 1100px; margin: 0 auto; }
+input[type=text] { width: 100%; padding: 9px 14px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; color: #e6edf3; font-size: 14px; outline: none; margin-bottom: 16px; }
+input[type=text]:focus { border-color: #388bfd; }
+.meta { font-size: 12px; color: #8b949e; margin-bottom: 12px; }
+.job { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 14px 18px; margin-bottom: 8px; }
+.job-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px; }
+.job-name { font-weight: 600; font-size: 14px; }
+.job-sched { font-size: 12px; background: #21262d; color: #8b949e; padding: 2px 8px; border-radius: 12px; font-family: monospace; }
+.job-id { font-size: 11px; color: #484f58; font-family: monospace; margin-top: 5px; word-break: break-all; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 5px; }
+.dot.on { background: #3fb950; }
+.dot.off { background: #484f58; }
+.empty { text-align: center; padding: 40px; color: #8b949e; }
+.hidden { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <h1>&#9200; Cron Jobs</h1>
+    <a href="/">&larr; Mission Control</a>
+  </div>
+  <input type="text" id="q" placeholder="Search by name or schedule..." autofocus>
+  <div class="meta" id="meta"></div>
+  <div id="jobs"></div>
+</div>
+<script>
+const API = '/api/cron';
+
+function fmt(s) {
+  if (!s) return '';
+  if (s.kind === 'cron') return s.expr || '';
+  if (s.kind === 'every') {
+    const ms = s.everyMs || 0;
+    if (ms < 60000) return ms + 'ms';
+    if (ms < 3600000) return (ms/60000).toFixed(1) + 'm';
+    return (ms/3600000).toFixed(1) + 'h';
+  }
+  if (s.kind === 'at') return s.at || '';
+  return '';
+}
+
+function render(list) {
+  const q = document.getElementById('q').value.toLowerCase();
+  const filtered = list.filter(j => {
+    const n = (j.name || '').toLowerCase();
+    const s = fmt(j.schedule || {}).toLowerCase();
+    return !q || n.includes(q) || s.includes(q);
+  });
+  document.getElementById('meta').textContent = q
+    ? `${filtered.length} of ${list.length} jobs match "${q}"`
+    : `${list.length} cron jobs`;
+  document.getElementById('jobs').innerHTML = filtered.length === 0
+    ? '<div class="empty">No jobs found</div>'
+    : filtered.map(j => `<div class="job">
+      <div class="job-header">
+        <span class="job-name"><span class="dot ${j.enabled===false?'off':'on'}"></span>${j.name||'Unnamed'}</span>
+        <span class="job-sched">${fmt(j.schedule)}</span>
+      </div>
+      ${j.id ? `<div class="job-id">${j.id}</div>` : ''}
+    </div>`).join('');
+}
+
+fetch(API).then(r => r.json()).then(d => {
+  const jobs = d.jobs || d || [];
+  render(jobs);
+  document.getElementById('q').addEventListener('input', () => render(jobs));
+}).catch(() => {
+  document.getElementById('jobs').innerHTML = '<div class="empty">Failed to load — is OpenClaw running?</div>';
+});
+</script>
+</body>
+</html>

@@ -1,33 +1,40 @@
-import { useState, useEffect } from 'react'
+import { queryOptions, useQuery } from '@tanstack/react-query'
+
+export async function fetchJson<T>(url: string): Promise<T> {
+  const requestUrl =
+    typeof window === 'undefined' ? url : new URL(url, window.location.origin).toString()
+  const res = await fetch(requestUrl)
+  const contentType = (res.headers.get('content-type') || '').toLowerCase()
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!contentType.includes('application/json')) {
+    const preview = (await res.text()).slice(0, 90).replace(/\s+/g, ' ')
+    throw new Error(`API returned non-JSON payload (${contentType || 'unknown'}): ${preview}`)
+  }
+  return res.json()
+}
+
+export function apiQueryOptions<T>(url: string, interval?: number) {
+  return queryOptions<T, Error>({
+    queryKey: ['api', url],
+    queryFn: () => fetchJson<T>(url),
+    refetchInterval: interval && interval > 0 ? interval : false,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: false,
+  })
+}
 
 export function useApi<T>(url: string, interval?: number) {
-  const [data, setData] = useState<T | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const query = useQuery(apiQueryOptions<T>(url, interval))
+  const error = query.error ? String(query.error.message || 'Unknown error') : null
 
-  const fetchData = async () => {
-    try {
-      const res = await fetch(url)
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const json = await res.json()
-      setData(json)
-      setError(null)
-    } catch (err: any) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
+  return {
+    data: query.data ?? null,
+    loading: query.isLoading,
+    error: error?.includes('expected pattern')
+      ? 'Invalid API URL/pattern. Endpoint format bozuk veya eski olabilir.'
+      : error,
+    refetch: () => query.refetch(),
   }
-
-  useEffect(() => {
-    fetchData()
-    if (interval) {
-      const timer = setInterval(fetchData, interval)
-      return () => clearInterval(timer)
-    }
-  }, [url, interval])
-
-  return { data, loading, error, refetch: fetchData }
 }
 
 export function timeAgo(dateStr: string): string {

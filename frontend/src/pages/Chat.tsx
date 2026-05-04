@@ -1,78 +1,76 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  MessageCircle, Send, Bot, User, Loader2, Trash2, Sparkles,
-  ArrowLeft, Hash, MessageSquare, Zap, Clock, Search
+  ArrowLeft,
+  Bot,
+  Clock,
+  Hash,
+  Loader2,
+  MessageCircle,
+  Search,
+  Send,
+  Sparkles,
+  Trash2,
+  User,
+  Zap,
 } from 'lucide-react'
-import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
+import PageTransition from '../components/PageTransition'
 import StatusBadge from '../components/StatusBadge'
-import { useApi, timeAgo } from '../lib/hooks'
+import { useChat } from '../hooks/useChat'
+import { apiQueryOptions, fetchJson, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
+import { markdownToHtml, sanitizeHtml } from '../utils/sanitize'
+import styles from './Chat.module.css'
 
-interface Message {
-  id: string
-  role: 'user' | 'assistant'
-  content: string
-  timestamp: Date
-  streaming?: boolean
-}
+function sessionName(session: any): string {
+  const key = session.key || ''
+  const displayName = session.displayName || key
 
-const uuid = () => 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16))
-
-// Pretty name from session key
-function sessionName(s: any): string {
-  const key = s.key || ''
-  const dn = s.displayName || key
-  
-  // If key contains a channel name after #, show that
-  if (dn.includes('#')) {
-    const channel = dn.split('#').pop()?.split(':')[0] || dn
+  if (displayName.includes('#')) {
+    const channel = displayName.split('#').pop()?.split(':')[0] || displayName
     return `#${channel}`
   }
-  
-  // If it's the main session, show "Main Session"
-  if (key === 'agent:main:main' || dn.includes('main-main')) {
-    return 'Main Session'
-  }
-  
-  // If it's a sub-agent, show the label or "Sub-Agent"
-  if (key.includes(':subagent:')) {
-    return s.label || 'Sub-Agent'
-  }
-  
-  // Other specific cases
-  if (s.label) return s.label
-  if (dn.includes('mission-control')) return 'Mission Control Chat'
-  
-  // Otherwise show the last part of the key, trimmed
-  const lastPart = key.split(':').pop()?.substring(0, 12) || dn.substring(0, 30)
-  return lastPart
+
+  if (key === 'agent:main:main' || displayName.includes('main-main')) return 'Main Session'
+  if (key.includes(':subagent:')) return session.label || 'Sub-Agent'
+  if (session.label) return session.label
+  if (displayName.includes('mission-control')) return 'Mission Control Chat'
+
+  return key.split(':').pop()?.substring(0, 12) || displayName.substring(0, 30)
 }
 
-function sessionIcon(s: any) {
-  const type = s.type || 'other'
-  switch (type) {
-    case 'discord': return '💬'
-    case 'sub-agent': return '🤖'
-    case 'web': return '🌐'
-    case 'main': return '👤'
-    default: return '❓'
+function sessionIcon(session: any) {
+  switch (session.type || 'other') {
+    case 'discord':
+      return '💬'
+    case 'sub-agent':
+      return '🤖'
+    case 'web':
+      return '🌐'
+    case 'main':
+      return '👤'
+    default:
+      return '❓'
   }
 }
 
-function sessionTypeLabel(s: any): string {
-  const type = s.type || 'other'
-  switch (type) {
-    case 'discord': return 'Discord Channel'
-    case 'sub-agent': return 'Sub-Agent'
-    case 'web': return 'Web Interface'
-    case 'main': return 'Main Session'
-    default: return 'Other Session'
+function sessionTypeLabel(session: any): string {
+  switch (session.type || 'other') {
+    case 'discord':
+      return 'Discord Channel'
+    case 'sub-agent':
+      return 'Sub-Agent'
+    case 'web':
+      return 'Web Interface'
+    case 'main':
+      return 'Main Session'
+    default:
+      return 'Other Session'
   }
 }
 
-// Clean model name
 function modelShort(model: string): string {
   return model
     ?.replace('claude-', '')
@@ -85,253 +83,246 @@ function modelShort(model: string): string {
 
 export default function Chat() {
   const m = useIsMobile()
-  const { data: sessionsData } = useApi<any>('/api/sessions', 15000)
+  const queryClient = useQueryClient()
   const [activeSession, setActiveSession] = useState<string | null>(null)
   const [activeSessionName, setActiveSessionName] = useState('')
-  const [historyMessages, setHistoryMessages] = useState<any[]>([])
-  const [historyLoading, setHistoryLoading] = useState(false)
-  const [messages, setMessages] = useState<Message[]>([])
-  const [input, setInput] = useState('')
-  const [isStreaming, setIsStreaming] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const abortRef = useRef<AbortController | null>(null)
   const [filter, setFilter] = useState<'active' | 'all'>('active')
   const [searchQuery, setSearchQuery] = useState('')
-
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [])
-
-  useEffect(() => { scrollToBottom() }, [messages, scrollToBottom, historyMessages])
-
-  const sessions = (sessionsData?.sessions || sessionsData || [])
-    .filter((s: any) => {
-      if (filter === 'active') return s.isActive
-      return true // 'all'
-    })
-    .filter((s: any) => {
-      if (!searchQuery) return true
-      const searchTerm = searchQuery.toLowerCase()
-      const name = sessionName(s).toLowerCase()
-      const key = (s.key || '').toLowerCase()
-      return name.includes(searchTerm) || key.includes(searchTerm)
-    })
-    .sort((a: any, b: any) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())
-
-  const sendMessage = async () => {
-    const text = input.trim()
-    if (!text || isStreaming) return
-
-    const userMsg: Message = { id: uuid(), role: 'user', content: text, timestamp: new Date() }
-    const assistantId = uuid()
-    const assistantMsg: Message = { id: assistantId, role: 'assistant', content: '', timestamp: new Date(), streaming: true }
-
-    setMessages(prev => [...prev, userMsg, assistantMsg])
-    setInput('')
-    setIsStreaming(true)
-
-    const history = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
-
-    try {
-      abortRef.current = new AbortController()
-      const res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: history, stream: true }),
-        signal: abortRef.current.signal
-      })
-
-      if (!res.ok) throw new Error(await res.text() || `HTTP ${res.status}`)
-
-      const reader = res.body?.getReader()
-      const decoder = new TextDecoder()
-      let accumulated = ''
-
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          for (const line of chunk.split('\n')) {
-            if (line.startsWith('data: ')) {
-              const data = line.slice(6)
-              if (data === '[DONE]') continue
-              try {
-                const delta = JSON.parse(data).choices?.[0]?.delta?.content
-                if (delta) {
-                  accumulated += delta
-                  setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: accumulated } : m))
-                }
-              } catch {}
-            }
-          }
-        }
-      }
-      setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, streaming: false } : m))
-    } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: `⚠️ ${err.message}`, streaming: false } : m))
-      }
-    } finally {
-      setIsStreaming(false)
-      abortRef.current = null
-    }
-  }
-
-  const clearChat = () => {
-    abortRef.current?.abort()
-    setMessages([])
-    setIsStreaming(false)
-  }
-
   const [sessionInput, setSessionInput] = useState('')
-  const [sessionSending, setSessionSending] = useState(false)
-  const [closingSession, setClosingSession] = useState<string | null>(null)
+  const historyEndRef = useRef<HTMLDivElement>(null)
 
-  const closeSession = async (sessionKey: string) => {
-    if (!confirm('Close this session?')) return
-    setClosingSession(sessionKey)
-    try {
-      await fetch(`/api/sessions/${encodeURIComponent(sessionKey)}/close`, {
-        method: 'DELETE'
-      })
-      // Refresh sessions data
-      window.location.reload()
-    } catch (err) {
-      console.error('Failed to close session:', err)
-    } finally {
-      setClosingSession(null)
-    }
-  }
+  const { data: sessionsData } = useQuery(apiQueryOptions<any>('/api/sessions', 15000))
+  const {
+    abortStream,
+    clearChat,
+    input,
+    inputRef,
+    isStreaming,
+    messages,
+    messagesEndRef,
+    sendMessage,
+    setInput,
+  } = useChat()
 
-  const sendToSession = async () => {
-    const text = sessionInput.trim()
-    if (!text || sessionSending || !activeSession || activeSession === 'main-chat') return
-    
-    setSessionSending(true)
-    // Optimistically add to UI
-    setHistoryMessages(prev => [...prev, { role: 'user', content: text, ts: Date.now() }])
-    setSessionInput('')
-    
-    try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(activeSession)}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text })
+  useEffect(() => abortStream, [abortStream])
+
+  const historyKey = useMemo(
+    () => ['session-history', activeSession] as const,
+    [activeSession],
+  )
+
+  const historyQuery = useQuery({
+    queryKey: historyKey,
+    queryFn: () =>
+      fetchJson<{ messages: any[] }>(
+        `/api/sessions/${encodeURIComponent(activeSession || '')}/history`,
+      ),
+    enabled: Boolean(activeSession && activeSession !== 'main-chat'),
+    refetchOnWindowFocus: false,
+  })
+
+  const historyMessages = historyQuery.data?.messages || []
+
+  useEffect(() => {
+    historyEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [historyMessages])
+
+  const closeSessionMutation = useMutation({
+    mutationFn: async (sessionKey: string) => {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionKey)}/close`, {
+        method: 'DELETE',
       })
-      const data = await res.json()
-      if (data.result) {
-        setHistoryMessages(prev => [...prev, { role: 'assistant', content: data.result, ts: Date.now() }])
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      return sessionKey
+    },
+    onSuccess: async (sessionKey) => {
+      await queryClient.invalidateQueries({ queryKey: ['api', '/api/sessions'] })
+      if (activeSession === sessionKey) {
+        setActiveSession(null)
+        setActiveSessionName('')
       }
-    } catch (err: any) {
-      setHistoryMessages(prev => [...prev, { role: 'assistant', content: `⚠️ ${err.message}`, ts: Date.now() }])
-    } finally {
-      setSessionSending(false)
-    }
-  }
+    },
+  })
 
   const openMainChat = () => {
     setActiveSession('main-chat')
-    setActiveSessionName('Zinbot')
-    setMessages([])
-    setHistoryMessages([])
+    setActiveSessionName('Müdür')
+    clearChat()
   }
 
-  const openSession = async (s: any) => {
-    const name = sessionName(s)
-    setActiveSession(s.key)
-    setActiveSessionName(name)
-    setHistoryLoading(true)
-    setHistoryMessages([])
-    setMessages([])
+  const openSession = (session: any) => {
+    setActiveSession(session.key)
+    setActiveSessionName(sessionName(session))
+  }
+
+  const sendToSession = useCallback(async () => {
+    const text = sessionInput.trim()
+    if (!text || !activeSession || activeSession === 'main-chat') return
+
+    const optimisticEntry = { role: 'user', content: text, ts: Date.now() }
+    queryClient.setQueryData<{ messages: any[] }>(historyKey, (previous) => ({
+      messages: [...(previous?.messages || []), optimisticEntry],
+    }))
+    setSessionInput('')
+
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(s.key)}/history`)
-      const data = await res.json()
-      setHistoryMessages(data.messages || [])
-    } catch {
-      setHistoryMessages([])
-    } finally {
-      setHistoryLoading(false)
+      const response = await fetch(`/api/sessions/${encodeURIComponent(activeSession)}/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text }),
+      })
+      const data = await response.json()
+      if (data.result) {
+        queryClient.setQueryData<{ messages: any[] }>(historyKey, (previous) => ({
+          messages: [
+            ...(previous?.messages || []),
+            { role: 'assistant', content: data.result, ts: Date.now() },
+          ],
+        }))
+      }
+    } catch (error: any) {
+      queryClient.setQueryData<{ messages: any[] }>(historyKey, (previous) => ({
+        messages: [
+          ...(previous?.messages || []),
+          { role: 'assistant', content: `⚠️ ${error.message}`, ts: Date.now() },
+        ],
+      }))
     }
-  }
+  }, [activeSession, historyKey, queryClient, sessionInput])
 
-  const renderContent = (text: string) => {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/`([^`]+)`/g, '<code style="background:rgba(255,255,255,0.08);padding:2px 6px;border-radius:4px;font-size:12px;">$1</code>')
-      .replace(/\n/g, '<br/>')
-  }
+  const allSessions = sessionsData?.sessions || []
+  const sessions = allSessions
+    .filter((session: any) => (filter === 'active' ? session.isActive : true))
+    .filter((session: any) => {
+      if (!searchQuery) return true
+      const searchTerm = searchQuery.toLowerCase()
+      return (
+        sessionName(session).toLowerCase().includes(searchTerm) ||
+        String(session.key || '').toLowerCase().includes(searchTerm)
+      )
+    })
+    .sort(
+      (a: any, b: any) =>
+        new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime(),
+    )
 
-  // Session history view (read-only)
+  const filters = [
+    { id: 'active', label: 'Active', count: allSessions.filter((s: any) => s.isActive).length },
+    { id: 'all', label: 'All', count: allSessions.length },
+  ]
+
   if (activeSession && activeSession !== 'main-chat') {
     return (
       <PageTransition>
-        <div style={{ maxWidth: m ? '100%' : 900, margin: '0 auto', display: 'flex', flexDirection: 'column', height: m ? 'calc(100vh - 100px)' : 'calc(100vh - 96px)' }}>
-          {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: m ? 12 : 16 }}>
-            <button
-              onClick={() => setActiveSession(null)}
-              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, cursor: 'pointer', display: 'flex', color: 'rgba(255,255,255,0.7)' }}
-            >
+        <div className={`${styles.surface} ${m ? styles.surfaceMobile : ''}`}>
+          <div className={`${styles.topBar} ${m ? styles.topBarMobile : ''}`}>
+            <button onClick={() => setActiveSession(null)} className={styles.backButton}>
               <ArrowLeft size={18} />
             </button>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{activeSessionName}</h2>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>Session history · send a message to continue</p>
+              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {activeSessionName}
+              </h2>
+              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                Session history · send a message to continue
+              </p>
             </div>
           </div>
 
-          {/* Messages */}
-          <div className="macos-panel" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 0 }}>
-            <div style={{ flex: 1, overflowY: 'auto', padding: m ? '14px' : '20px 24px' }}>
-              {historyLoading ? (
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                  <div style={{ width: 24, height: 24, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+          <div className={`macos-panel ${styles.panel}`}>
+            <div className={`${styles.messagesArea} ${m ? styles.messagesAreaMobile : ''}`}>
+              {historyQuery.isLoading ? (
+                <div className={styles.loadingWrap}>
+                  <div className={styles.spinner} />
                 </div>
               ) : historyMessages.length === 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, opacity: 0.4 }}>
+                <div className={styles.emptyState}>
                   <Clock size={32} />
                   <p style={{ fontSize: 13 }}>No messages found for this session</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                  {historyMessages.map((msg: any, i: number) => (
-                    <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                      <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: msg.role === 'assistant' ? 'rgba(0,122,255,0.15)' : msg.role === 'system' ? 'rgba(255,149,0,0.15)' : 'rgba(255,255,255,0.08)' }}>
-                        {msg.role === 'assistant' ? <Bot size={15} style={{ color: '#007AFF' }} />
-                          : msg.role === 'system' ? <Zap size={15} style={{ color: '#FF9500' }} />
-                          : <User size={15} style={{ color: 'rgba(255,255,255,0.6)' }} />}
+                <div className={styles.messageList}>
+                  {historyMessages.map((msg: any, index: number) => (
+                    <div key={`${msg.ts || index}-${index}`} className={styles.messageRow}>
+                      <div
+                        className={`${styles.avatar} ${
+                          msg.role === 'assistant'
+                            ? styles.avatarAssistant
+                            : msg.role === 'system'
+                              ? styles.avatarSystem
+                              : styles.avatarUser
+                        }`}
+                      >
+                        {msg.role === 'assistant' ? (
+                          <Bot size={15} />
+                        ) : msg.role === 'system' ? (
+                          <Zap size={15} />
+                        ) : (
+                          <User size={15} />
+                        )}
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ fontSize: 10, fontWeight: 600, color: msg.role === 'assistant' ? '#007AFF' : msg.role === 'system' ? '#FF9500' : 'rgba(255,255,255,0.65)', textTransform: 'capitalize', marginBottom: 4, display: 'block' }}>{msg.role}</span>
-                        <div style={{ fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.78)', wordBreak: 'break-word', whiteSpace: 'pre-wrap' }}>
-                          {typeof msg.content === 'string' ? msg.content.substring(0, 2000) : JSON.stringify(msg.content).substring(0, 2000)}
-                          {(msg.content?.length || 0) > 2000 && <span style={{ color: 'rgba(255,255,255,0.3)' }}>... (truncated)</span>}
+                      <div className={styles.messageBody}>
+                        <span
+                          className={`${styles.historyRole} ${
+                            msg.role === 'assistant'
+                              ? styles.historyRoleAssistant
+                              : msg.role === 'system'
+                                ? styles.historyRoleSystem
+                                : styles.historyRoleUser
+                          }`}
+                        >
+                          {msg.role}
+                        </span>
+                        <div className={styles.historyContent}>
+                          {typeof msg.content === 'string'
+                            ? msg.content.substring(0, 2000)
+                            : JSON.stringify(msg.content).substring(0, 2000)}
+                          {(msg.content?.length || 0) > 2000 && (
+                            <span className={styles.truncatedSuffix}>... (truncated)</span>
+                          )}
                         </div>
                       </div>
                     </div>
                   ))}
+                  <div ref={historyEndRef} />
                 </div>
               )}
-              <div ref={messagesEndRef} />
             </div>
 
-            {/* Send message to continue conversation */}
-            <div style={{ padding: m ? '10px 14px 14px' : '12px 20px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', zIndex: 10 }}>
-              <form onSubmit={(e) => { e.preventDefault(); sendToSession(); }} style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+            <div className={`${styles.inputArea} ${m ? styles.inputAreaMobile : ''}`}>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void sendToSession()
+                }}
+                className={styles.composer}
+              >
                 <textarea
                   value={sessionInput}
-                  onChange={(e) => setSessionInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendToSession(); } }}
+                  onChange={(event) => setSessionInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void sendToSession()
+                    }
+                  }}
                   placeholder="Continue this conversation..."
-                  disabled={sessionSending}
                   rows={1}
-                  style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 12px', color: 'rgba(255,255,255,0.9)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', maxHeight: 80, lineHeight: 1.4 }}
-                  onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 80) + 'px' }}
+                  className={`${styles.textarea} ${styles.sessionTextarea}`}
+                  onInput={(event) => {
+                    const target = event.currentTarget
+                    target.style.height = 'auto'
+                    target.style.height = `${Math.min(target.scrollHeight, 80)}px`
+                  }}
                 />
-                <button type="submit" disabled={!sessionInput.trim() || sessionSending} style={{ width: 36, height: 36, borderRadius: 10, border: 'none', background: sessionInput.trim() && !sessionSending ? '#007AFF' : 'rgba(255,255,255,0.06)', color: sessionInput.trim() && !sessionSending ? '#fff' : 'rgba(255,255,255,0.25)', cursor: sessionInput.trim() && !sessionSending ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  {sessionSending ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={16} />}
+                <button
+                  type="submit"
+                  disabled={!sessionInput.trim()}
+                  className={`${styles.sendButton} ${
+                    sessionInput.trim() ? styles.sendButtonActive : ''
+                  }`}
+                >
+                  <Send size={16} />
                 </button>
               </form>
             </div>
@@ -341,54 +332,69 @@ export default function Chat() {
     )
   }
 
-  // Active chat view (main chat)
   if (activeSession === 'main-chat') {
     return (
       <PageTransition>
-        <div style={{ maxWidth: m ? '100%' : 900, margin: '0 auto', display: 'flex', flexDirection: 'column', height: m ? 'calc(100vh - 100px)' : 'calc(100vh - 96px)' }}>
-          {/* Chat header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: m ? 12 : 16 }}>
-            <button
-              onClick={() => setActiveSession(null)}
-              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, cursor: 'pointer', display: 'flex', color: 'rgba(255,255,255,0.7)' }}
-            >
+        <div className={`${styles.surface} ${m ? styles.surfaceMobile : ''}`}>
+          <div className={`${styles.topBar} ${m ? styles.topBarMobile : ''}`}>
+            <button onClick={() => setActiveSession(null)} className={styles.backButton}>
               <ArrowLeft size={18} />
             </button>
-            <Sparkles size={18} style={{ color: '#007AFF' }} />
-            <div style={{ flex: 1 }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Chat with Zinbot</h2>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>Full memory & tools</p>
+            <Sparkles size={18} className={styles.accentIcon} />
+            <div className={styles.topBarContent}>
+              <h2 className={styles.topBarTitle}>Chat with Müdür</h2>
+              <p className={styles.topBarSubtitle}>Full memory & tools</p>
             </div>
             {messages.length > 0 && (
-              <button onClick={clearChat} className="macos-button" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 10px', fontSize: 11 }}>
+              <button
+                onClick={clearChat}
+                className={`macos-button ${styles.clearButton}`}
+              >
                 <Trash2 size={12} /> Clear
               </button>
             )}
           </div>
 
-          {/* Messages */}
-          <div className="macos-panel" style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 0 }}>
-            <div style={{ flex: 1, overflowY: 'auto', padding: m ? '14px' : '20px 24px 12px' }}>
+          <div className={`macos-panel ${styles.panel}`}>
+            <div className={`${styles.messagesArea} ${m ? styles.messagesAreaMobile : ''}`}>
               {messages.length === 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 12, opacity: 0.4 }}>
+                <div className={styles.emptyState}>
                   <Bot size={40} />
-                  <p style={{ fontSize: 14, fontWeight: 500 }}>Hey! Ask me anything 🤖</p>
-                  <p style={{ fontSize: 12 }}>Same brain as Discord — full memory, all tools.</p>
+                  <p className={styles.emptyTitle}>Hey! Ask me anything 🤖</p>
+                  <p className={styles.emptySubtitle}>Same brain as Discord — full memory, all tools.</p>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div className={styles.messageList}>
                   <AnimatePresence>
                     {messages.map((msg) => (
-                      <motion.div key={msg.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}>
-                        <div style={{ width: 30, height: 30, borderRadius: 8, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: msg.role === 'assistant' ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.08)' }}>
-                          {msg.role === 'assistant' ? <Bot size={15} style={{ color: '#007AFF' }} /> : <User size={15} style={{ color: 'rgba(255,255,255,0.6)' }} />}
+                      <motion.div
+                        key={msg.id}
+                        initial={{ opacity: 0, y: 6 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className={styles.messageRow}
+                      >
+                        <div
+                          className={`${styles.avatar} ${
+                            msg.role === 'assistant' ? styles.avatarAssistant : styles.avatarUser
+                          }`}
+                        >
+                          {msg.role === 'assistant' ? <Bot size={15} /> : <User size={15} />}
                         </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                            <span style={{ fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>{msg.role === 'assistant' ? 'Zinbot' : 'You'}</span>
-                            {msg.streaming && <Loader2 size={10} style={{ color: '#007AFF', animation: 'spin 1s linear infinite' }} />}
+                        <div className={styles.messageBody}>
+                          <div className={styles.messageMeta}>
+                            <span className={styles.messageAuthor}>
+                              {msg.role === 'assistant' ? 'Müdür' : 'You'}
+                            </span>
+                            {msg.streaming && (
+                              <Loader2 size={10} style={{ color: '#007AFF', animation: 'spin 1s linear infinite' }} />
+                            )}
                           </div>
-                          <div style={{ fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.82)', wordBreak: 'break-word' }} dangerouslySetInnerHTML={{ __html: renderContent(msg.content || '...') }} />
+                          <div
+                            className={styles.messageContent}
+                            dangerouslySetInnerHTML={{
+                              __html: sanitizeHtml(markdownToHtml(msg.content || '...')),
+                            }}
+                          />
                         </div>
                       </motion.div>
                     ))}
@@ -397,23 +403,48 @@ export default function Chat() {
                 </div>
               )}
             </div>
-            {/* Input */}
-            <div style={{ padding: m ? '10px 14px 14px' : '12px 24px 16px', borderTop: '1px solid rgba(255,255,255,0.06)', zIndex: 10 }}>
-              <form onSubmit={(e) => { e.preventDefault(); sendMessage(); }} style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+
+            <div className={`${styles.inputArea} ${m ? styles.inputAreaMobile : ''}`}>
+              <form
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void sendMessage()
+                }}
+                className={styles.composer}
+              >
                 <textarea
                   ref={inputRef}
                   value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-                  placeholder="Message Zinbot..."
+                  onChange={(event) => setInput(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      void sendMessage()
+                    }
+                  }}
+                  placeholder="Message Müdür..."
                   disabled={isStreaming}
                   rows={1}
                   autoFocus
-                  style={{ flex: 1, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, padding: '10px 12px', color: 'rgba(255,255,255,0.9)', fontSize: 13, resize: 'none', outline: 'none', fontFamily: 'inherit', maxHeight: 100, lineHeight: 1.5 }}
-                  onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 100) + 'px' }}
+                  className={`${styles.textarea} ${styles.chatTextarea}`}
+                  onInput={(event) => {
+                    const target = event.currentTarget
+                    target.style.height = 'auto'
+                    target.style.height = `${Math.min(target.scrollHeight, 100)}px`
+                  }}
                 />
-                <button type="submit" disabled={!input.trim() || isStreaming} style={{ width: 36, height: 36, borderRadius: 10, border: 'none', background: input.trim() && !isStreaming ? '#007AFF' : 'rgba(255,255,255,0.06)', color: input.trim() && !isStreaming ? '#fff' : 'rgba(255,255,255,0.25)', cursor: input.trim() && !isStreaming ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  {isStreaming ? <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <Send size={16} />}
+                <button
+                  type="submit"
+                  disabled={!input.trim() || isStreaming}
+                  className={`${styles.sendButton} ${
+                    input.trim() && !isStreaming ? styles.sendButtonActive : ''
+                  }`}
+                >
+                  {isStreaming ? (
+                    <Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Send size={16} />
+                  )}
                 </button>
               </form>
             </div>
@@ -423,196 +454,115 @@ export default function Chat() {
     )
   }
 
-  // Sessions list view (default)
-  const allSessions = (sessionsData?.sessions || sessionsData || []);
-  const filters = [
-    { id: 'active', label: 'Active', count: allSessions.filter((s: any) => s.isActive).length },
-    { id: 'all', label: 'All', count: allSessions.length },
-  ];
-
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 14 : 24 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+      <div className={`${styles.page} ${m ? styles.pageMobile : ''}`}>
+        <div className={styles.headerRow}>
           <div>
-            <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <MessageCircle size={m ? 18 : 22} style={{ color: '#007AFF' }} /> Conversations
+            <h1 className={`text-title ${styles.pageTitle}`}>
+              <MessageCircle size={m ? 18 : 22} className={styles.accentIcon} /> Conversations
             </h1>
-            <p className="text-body" style={{ marginTop: 4 }}>All agent sessions & chat history</p>
+            <p className={`text-body ${styles.pageSubtitle}`}>All agent sessions & chat history</p>
           </div>
           <button
             onClick={openMainChat}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: m ? '10px 16px' : '10px 20px',
-              borderRadius: 10, border: 'none', cursor: 'pointer',
-              background: '#007AFF', color: '#fff',
-              fontSize: 13, fontWeight: 600,
-              width: m ? '100%' : undefined,
-              justifyContent: m ? 'center' : undefined,
-            }}
+            className={`${styles.newChatButton} ${m ? styles.newChatButtonMobile : ''}`}
           >
             <Sparkles size={15} /> New Chat
           </button>
         </div>
 
-        {/* Filter tabs */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {/* Search input */}
-          <div style={{ position: 'relative' }}>
+        <div className={styles.filterWrap}>
+          <div className={styles.searchWrap}>
             <input
               type="text"
               placeholder="Search sessions..."
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              style={{
-                width: '100%',
-                background: 'rgba(255,255,255,0.06)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                padding: '10px 16px 10px 40px',
-                borderRadius: 10,
-                color: 'rgba(255,255,255,0.9)',
-                fontSize: 13,
-                outline: 'none',
-                fontFamily: 'inherit'
-              }}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              className={styles.searchInput}
             />
-            <Search size={16} style={{ 
-              position: 'absolute', 
-              left: 14, 
-              top: '50%', 
-              transform: 'translateY(-50%)', 
-              color: 'rgba(255,255,255,0.3)' 
-            }} />
+            <Search size={16} className={styles.searchIcon} />
           </div>
-          
-          {/* Filter buttons */}
-          <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4 }}>
-            {filters.map(f => (
+
+          <div className={styles.filterButtons}>
+            {filters.map((entry) => (
               <button
-                key={f.id}
-                onClick={() => setFilter(f.id as any)}
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: m ? '7px 12px' : '8px 14px',
-                  borderRadius: 8, flexShrink: 0,
-                  border: filter === f.id ? '1px solid rgba(0,122,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
-                  background: filter === f.id ? 'rgba(0,122,255,0.12)' : 'rgba(255,255,255,0.04)',
-                  color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.5)',
-                  fontSize: 12, fontWeight: 500, cursor: 'pointer',
-                  WebkitTapHighlightColor: 'transparent',
-                }}
+                key={entry.id}
+                onClick={() => setFilter(entry.id as 'active' | 'all')}
+                className={`${styles.filterButton} ${m ? styles.filterButtonMobile : ''} ${
+                  filter === entry.id ? styles.filterButtonActive : ''
+                }`}
               >
-                {f.label}
-                <span style={{ fontSize: 10, padding: '1px 5px', borderRadius: 5, background: filter === f.id ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)', color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.35)' }}>
-                  {f.count}
+                {entry.label}
+                <span
+                  className={`${styles.filterBadge} ${
+                    filter === entry.id ? styles.filterBadgeActive : ''
+                  }`}
+                >
+                  {entry.count}
                 </span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Session list */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 8 : 10 }}>
-          {sessions.map((s: any, i: number) => {
-            const name = sessionName(s)
-            const typeLabel = sessionTypeLabel(s)
-            const icon = sessionIcon(s)
-            return (
-              <motion.div
-                key={s.key}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.03 * i }}
-                className="macos-panel"
-                style={{ padding: m ? 14 : '16px 20px', cursor: 'pointer', position: 'relative' }}
-                onClick={() => openSession(s)}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
-                  <div style={{ 
-                    width: m ? 40 : 44, 
-                    height: m ? 40 : 44, 
-                    borderRadius: 12, 
-                    background: 'rgba(255,255,255,0.06)', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    flexShrink: 0,
-                    fontSize: m ? 18 : 20,
-                  }}>
-                    {icon}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <h3 style={{ 
-                        fontSize: 13, 
-                        fontWeight: 600, 
-                        color: 'rgba(255,255,255,0.92)', 
-                        overflow: 'hidden', 
-                        textOverflow: 'ellipsis', 
-                        whiteSpace: 'nowrap', 
-                        flex: 1 
-                      }}>
-                        {name}
-                      </h3>
-                      {s.isActive && <StatusBadge status="active" />}
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-                        {typeLabel}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>·</span>
-                      <span style={{ 
-                        fontSize: 10, 
-                        padding: '2px 6px', 
-                        borderRadius: 4, 
-                        background: 'rgba(255,255,255,0.08)', 
-                        color: 'rgba(255,255,255,0.6)',
-                        fontVariantNumeric: 'tabular-nums'
-                      }}>
-                        {((s.totalTokens || 0) / 1000).toFixed(0)}k tokens
-                      </span>
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, justifyContent: 'flex-end' }}>
-                      <Clock size={10} style={{ color: 'rgba(255,255,255,0.3)' }} />
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>
-                        {s.updatedAt ? timeAgo(s.updatedAt) : '—'}
-                      </span>
-                    </div>
-                    <span style={{ 
-                      fontSize: 10, 
-                      color: 'rgba(255,255,255,0.3)', 
-                      marginTop: 2, 
-                      display: 'block' 
-                    }}>
-                      {modelShort(s.model)}
-                    </span>
-                  </div>
-                  {/* Close button */}
-                  <button
-                    onClick={(e) => { e.stopPropagation(); closeSession(s.key); }}
-                    disabled={closingSession === s.key}
-                    style={{
-                      width: 22, height: 22, borderRadius: 6,
-                      border: '1px solid rgba(255,255,255,0.1)',
-                      background: 'rgba(255,255,255,0.06)',
-                      color: 'rgba(255,255,255,0.4)',
-                      cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 11, opacity: closingSession === s.key ? 0.5 : 0.7,
-                      flexShrink: 0, marginLeft: 6,
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(255,69,58,0.15)'; e.currentTarget.style.color = '#FF453A'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = 'rgba(255,255,255,0.4)'; }}
-                  >
-                    {closingSession === s.key ? '·' : '✕'}
-                  </button>
+        <div className={`${styles.sessionList} ${m ? styles.sessionListMobile : ''}`}>
+          {sessions.map((session: any, index: number) => (
+            <motion.div
+              key={session.key}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.03 * index }}
+              className={`macos-panel ${styles.sessionCard} ${m ? styles.sessionCardMobile : ''}`}
+              onClick={() => openSession(session)}
+            >
+              <div className={`${styles.sessionIcon} ${m ? styles.sessionIconMobile : ''}`}>
+                {sessionIcon(session)}
+              </div>
+              <div className={styles.sessionBody}>
+                <div className={styles.sessionTitleRow}>
+                  <h3 className={styles.sessionTitle}>{sessionName(session)}</h3>
+                  {session.isActive && <StatusBadge status="active" />}
                 </div>
-              </motion.div>
-            )
-          })}
+                <div className={styles.sessionMeta}>
+                  <span className={styles.sessionType}>{sessionTypeLabel(session)}</span>
+                  <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.25)' }}>·</span>
+                  <span className={styles.tokenPill}>
+                    {((session.totalTokens || 0) / 1000).toFixed(0)}k tokens
+                  </span>
+                </div>
+              </div>
+              <div className={styles.sessionAside}>
+                <div className={styles.sessionTime}>
+                  <Clock size={10} style={{ color: 'rgba(255,255,255,0.3)' }} />
+                  <span>{session.updatedAt ? timeAgo(session.updatedAt) : '—'}</span>
+                </div>
+                <span className={styles.sessionModel}>{modelShort(session.model)}</span>
+              </div>
+              <button
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (!confirm('Close this session?')) return
+                  closeSessionMutation.mutate(session.key)
+                }}
+                disabled={closeSessionMutation.isPending}
+                className={styles.closeButton}
+              >
+                {closeSessionMutation.isPending ? '·' : '✕'}
+              </button>
+            </motion.div>
+          ))}
+
+          {sessions.length === 0 && (
+            <GlassCard noPad>
+              <div style={{ padding: '18px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Hash size={16} style={{ color: 'rgba(255,255,255,0.4)' }} />
+                <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)' }}>
+                  No sessions match the current filters.
+                </span>
+              </div>
+            </GlassCard>
+          )}
         </div>
       </div>
     </PageTransition>

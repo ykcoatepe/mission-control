@@ -1,18 +1,44 @@
-import { useState, useEffect } from 'react'
+import { type CSSProperties, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Activity, Cpu, MessageSquare, Database, Radio, Heart,
-  BarChart3, Zap, Mail, Calendar, Code, CheckCircle, Search,
-  Clock, Loader2, Play, ArrowRight, Bell
+  Activity,
+  ArrowRight,
+  BarChart3,
+  Bell,
+  Calendar,
+  CheckCircle,
+  Clock,
+  Cpu,
+  Database,
+  Gauge,
+  Heart,
+  Loader2,
+  Mail,
+  MessageSquare,
+  Radio,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  TerminalSquare,
+  Workflow,
+  Zap,
+  type LucideIcon,
 } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import AnimatedCounter from '../components/AnimatedCounter'
 import StatusBadge from '../components/StatusBadge'
-import { useApi, timeAgo } from '../lib/hooks'
+import styles from './Dashboard.module.css'
+import { timeAgo, useApi } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
+import {
+  healthStateBadgeStatus,
+  healthStateColor,
+  normalizeHealthState,
+  type HealthState,
+} from '../lib/status'
 
-const feedIcons: Record<string, any> = {
+const feedIcons: Record<string, LucideIcon> = {
   check: CheckCircle,
   search: Search,
   clock: Clock,
@@ -20,164 +46,249 @@ const feedIcons: Record<string, any> = {
 }
 
 const feedColors: Record<string, string> = {
-  task_completed: '#32D74B',
-  task_running: '#007AFF',
-  scout_found: '#FF9500',
-  scout_deployed: '#BF5AF2',
-  cron_run: '#8E8E93',
+  task_completed: '#30D158',
+  task_running: '#0A84FF',
+  scout_found: '#FF9F0A',
+  scout_deployed: '#64D2FF',
+  cron_run: '#A1A1AA',
 }
 
+type GovernanceScorecard = {
+  overall?: string
+  mode?: string
+  recommendation?: string
+  metrics?: {
+    delegationAutorunInfraFailureAttemptsLive24h?: number
+    delegatedBlocked?: number
+  }
+  review?: {
+    governanceEventsLive24h?: number
+    workflowSurfaceLive24h?: number
+    workflowHeartbeatEventsLive24h?: number
+    workflowSurfaceSilenceHours?: number | null
+    workflowSurfaceGap4dWarn?: boolean
+    workflowSignalGapWarn?: boolean
+    workflowSurfaceLastSeenAt?: string | null
+    workflowSurfaceLastSource?: string | null
+  }
+}
+
+type Channel = {
+  name: string
+  detail?: string
+  state?: string
+}
+
+type AgentStatus = {
+  name?: string
+  model?: string
+  heartbeatInterval?: string
+  activeSessions?: number
+  totalAgents?: number
+  memoryFiles?: number
+  memoryChunks?: number
+  channels?: Channel[]
+}
+
+type HeartbeatStatus = {
+  lastHeartbeat?: number
+  lastHeartbeatAt?: number
+  lastChecks?: unknown
+}
+
+type StatusPayload = {
+  agent?: AgentStatus
+  heartbeat?: HeartbeatStatus
+  tokenUsage?: {
+    used?: number
+  }
+}
+
+type ActivityItem = {
+  id: string
+  title: string
+  detail?: string
+  icon?: string
+  type?: string
+  score?: number
+  source?: string
+  time?: string
+  actionUrl?: string
+  actionable?: boolean
+  actionLabel?: string
+}
+
+type ActivityPayload = {
+  feed?: ActivityItem[]
+}
+
+type SessionItem = {
+  isActive?: boolean
+  updatedAt?: string
+}
+
+type SessionsPayload = {
+  count?: number
+  sessions?: SessionItem[]
+}
+
+type QuickAction = {
+  endpoint: string
+  title: string
+  detail: string
+  icon: LucideIcon
+  tone: string
+}
+
+const quickActions: QuickAction[] = [
+  {
+    endpoint: '/heartbeat/run',
+    title: 'Run Heartbeat',
+    detail: 'Mail, calendar, urgent drift',
+    icon: Heart,
+    tone: '#30D158',
+  },
+  {
+    endpoint: '/quick/emails',
+    title: 'Check Mail',
+    detail: 'Unread and important',
+    icon: Mail,
+    tone: '#64D2FF',
+  },
+  {
+    endpoint: '/quick/schedule',
+    title: 'Today Plan',
+    detail: 'Calendar today and tomorrow',
+    icon: Calendar,
+    tone: '#FF9F0A',
+  },
+]
+
 function QuickActionsBar() {
-  const m = useIsMobile()
   const [loading, setLoading] = useState<string | null>(null)
   const [result, setResult] = useState<string | null>(null)
 
-  const handleQuickAction = async (endpoint: string, label: string) => {
+  const handleQuickAction = async (action: QuickAction) => {
     if (loading) return
-    
-    // All quick actions: open chat widget with auto-send
-    if (endpoint === '/quick/emails') {
-      window.dispatchEvent(new CustomEvent('open-chat', { detail: { message: 'Check my unread emails and summarize anything important.', autoSend: true } }))
-      return
-    }
-    if (endpoint === '/quick/schedule') {
-      window.dispatchEvent(new CustomEvent('open-chat', { detail: { message: "What's on my calendar today and tomorrow?", autoSend: true } }))
-      return
-    }
-    if (endpoint === '/heartbeat/run') {
-      window.dispatchEvent(new CustomEvent('open-chat', { detail: { message: 'Run a quick heartbeat check: emails, calendar, anything urgent I should know about?', autoSend: true } }))
-      return
-    }
-    
-    setLoading(endpoint)
+
+    setLoading(action.endpoint)
     setResult(null)
-    
+
     try {
-      const res = await fetch(`/api${endpoint}`, { 
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }
+      const res = await fetch(`/api${action.endpoint}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       })
       const data = await res.json()
-      
-      if (data.status === 'triggered') {
-        setResult('✅ Heartbeat triggered')
-      } else if (data.status === 'error') {
-        setResult(`❌ ${data.error}`)
-      } else {
-        setResult('✅ Action completed')
-      }
-      
-      // Clear result after 5 seconds
+      setResult(data.status === 'error' ? `Failed: ${data.error}` : data.reply || 'Action completed')
       setTimeout(() => setResult(null), 10000)
-    } catch (e: any) {
-      setResult(`❌ ${e.message}`)
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Unknown error'
+      setResult(`Failed: ${message}`)
       setTimeout(() => setResult(null), 10000)
     } finally {
       setLoading(null)
     }
   }
 
-  const actions = [
-    { endpoint: '/heartbeat/run', label: '▶ Run Heartbeat', icon: Heart },
-    { endpoint: '/quick/emails', label: '📧 Check Emails', icon: Mail },
-    { endpoint: '/quick/schedule', label: '📅 Today\'s Schedule', icon: Calendar },
-  ]
-
   return (
-    <GlassCard delay={0.08} noPad>
-      <div style={{ padding: m ? 14 : 20 }}>
-        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 12 }}>
-          Quick Actions
-        </h3>
-        
-        <div style={{ 
-          display: 'flex', 
-          flexDirection: m ? 'column' : 'row', 
-          gap: m ? 10 : 12 
-        }}>
-          {actions.map(action => (
-            <button
-              key={action.endpoint}
-              onClick={() => handleQuickAction(action.endpoint, action.label)}
-              disabled={loading === action.endpoint}
-              style={{
-                flex: m ? undefined : 1,
-                padding: '10px 16px',
-                borderRadius: 8,
-                border: '1px solid rgba(0,122,255,0.3)',
-                background: loading === action.endpoint 
-                  ? 'rgba(0,122,255,0.2)' 
-                  : 'rgba(0,122,255,0.1)',
-                color: 'rgba(255,255,255,0.9)',
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: loading === action.endpoint ? 'not-allowed' : 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 8,
-                transition: 'all 0.15s',
-                opacity: loading === action.endpoint ? 0.7 : 1,
-              }}
-              onMouseEnter={(e) => {
-                if (loading !== action.endpoint) {
-                  e.currentTarget.style.background = 'rgba(0,122,255,0.2)'
-                  e.currentTarget.style.borderColor = 'rgba(0,122,255,0.5)'
-                }
-              }}
-              onMouseLeave={(e) => {
-                if (loading !== action.endpoint) {
-                  e.currentTarget.style.background = 'rgba(0,122,255,0.1)'
-                  e.currentTarget.style.borderColor = 'rgba(0,122,255,0.3)'
-                }
-              }}
-            >
-              {loading === action.endpoint ? (
-                <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-              ) : (
-                <action.icon size={14} />
-              )}
-              {action.label}
-            </button>
-          ))}
-        </div>
-        
-        {result && (
-          <div style={{ 
-            marginTop: 12, 
-            padding: '8px 12px', 
-            borderRadius: 6, 
-            background: result.startsWith('❌') 
-              ? 'rgba(255,69,58,0.1)' 
-              : 'rgba(50,215,75,0.1)',
-            border: `1px solid ${result.startsWith('❌') 
-              ? 'rgba(255,69,58,0.3)' 
-              : 'rgba(50,215,75,0.3)'}`,
-            fontSize: 11,
-            color: result.startsWith('❌') 
-              ? '#FF453A' 
-              : '#32D74B',
-          }}>
-            {result}
-          </div>
-        )}
-      </div>
-    </GlassCard>
+    <div className={styles.actionDock}>
+      {quickActions.map((action) => {
+        const Icon = action.icon
+        const active = loading === action.endpoint
+        return (
+          <button
+            key={action.endpoint}
+            onClick={() => handleQuickAction(action)}
+            disabled={active}
+            className={styles.actionTile}
+            style={{ '--action-color': action.tone } as CSSProperties}
+          >
+            <span className={styles.actionIcon}>
+              {active ? <Loader2 size={16} className={styles.spinIcon} /> : <Icon size={16} />}
+            </span>
+            <span className={styles.actionCopy}>
+              <strong>{action.title}</strong>
+              <span>{action.detail}</span>
+            </span>
+          </button>
+        )
+      })}
+      {result && <div className={styles.actionResult}>{result}</div>}
+    </div>
   )
+}
+
+function buildOperationalHealth(statusData: StatusPayload | undefined, scorecard: GovernanceScorecard | undefined, activeSessions: number, totalSessions: number) {
+  const channelErrors = Array.isArray(statusData?.agent?.channels)
+    ? statusData.agent.channels.filter((channel) => String(channel?.state || '').toUpperCase() === 'ERROR').length
+    : 0
+  const lastHeartbeat = Number(statusData?.heartbeat?.lastHeartbeat || 0)
+  const heartbeatAgeHours = lastHeartbeat > 0 ? (Date.now() - (lastHeartbeat * 1000)) / (60 * 60 * 1000) : null
+  const heartbeatStale = heartbeatAgeHours == null ? true : heartbeatAgeHours > 2
+  const workflowLive24h = Number(scorecard?.review?.workflowSurfaceLive24h || 0)
+  const governanceLive24h = Number(scorecard?.review?.governanceEventsLive24h || 0)
+  const syntheticLive24h = Number(scorecard?.review?.workflowHeartbeatEventsLive24h || 0)
+  const infraFailures24h = Number(scorecard?.metrics?.delegationAutorunInfraFailureAttemptsLive24h || 0)
+  const delegatedBlocked = Number(scorecard?.metrics?.delegatedBlocked || 0)
+  const silenceHours = scorecard?.review?.workflowSurfaceSilenceHours == null
+    ? null
+    : Number(scorecard.review.workflowSurfaceSilenceHours)
+  const workflowGapWarn = Boolean(scorecard?.review?.workflowSurfaceGap4dWarn || scorecard?.review?.workflowSignalGapWarn)
+
+  let state: HealthState = 'green'
+  if (!statusData?.agent) state = 'gray'
+  else if (channelErrors > 0 || infraFailures24h > 0 || delegatedBlocked > 0) state = 'red'
+  else if (activeSessions === 0 && totalSessions === 0 && workflowLive24h === 0 && governanceLive24h === 0 && syntheticLive24h === 0) state = 'gray'
+  else if (heartbeatStale || normalizeHealthState(scorecard?.overall, 'green') === 'yellow' || workflowGapWarn || workflowLive24h === 0) state = 'yellow'
+
+  const reasons: string[] = []
+  if (state === 'red' && channelErrors > 0) reasons.push(`${channelErrors} live channel error`)
+  if (state === 'red' && infraFailures24h > 0) reasons.push(`${infraFailures24h} governance infra failure in 24h`)
+  if (state === 'red' && delegatedBlocked > 0) reasons.push(`${delegatedBlocked} delegated decision blocked`)
+  if (state !== 'red' && heartbeatStale) reasons.push(`heartbeat stale${heartbeatAgeHours != null ? ` · ${Math.floor(heartbeatAgeHours)}h old` : ''}`)
+  if (state !== 'red' && workflowLive24h === 0) reasons.push('no real workflow event in 24h')
+  if (state !== 'red' && workflowGapWarn) reasons.push('workflow gap warning active')
+  if (reasons.length === 0 && workflowLive24h > 0) reasons.push(`${workflowLive24h} real workflow events in 24h`)
+  if (reasons.length === 0 && governanceLive24h > 0) reasons.push(`${governanceLive24h} governance events in 24h`)
+  if (reasons.length === 0) reasons.push('waiting for a fresh live signal')
+
+  return {
+    state,
+    label: state === 'green' ? 'Clear' : state === 'yellow' ? 'Watch' : state === 'red' ? 'Act now' : 'No signal',
+    channelErrors,
+    infraFailures24h,
+    delegatedBlocked,
+    workflowLive24h,
+    governanceLive24h,
+    syntheticLive24h,
+    silenceHours,
+    lastWorkflowSeenAt: scorecard?.review?.workflowSurfaceLastSeenAt || null,
+    lastWorkflowSource: scorecard?.review?.workflowSurfaceLastSource || null,
+    reasons: reasons.slice(0, 3),
+  }
+}
+
+function formatNumber(value: number | undefined) {
+  return Number(value || 0).toLocaleString()
 }
 
 export default function Dashboard() {
   const m = useIsMobile()
   const navigate = useNavigate()
-  const { data, loading } = useApi<any>('/api/status', 30000)
-  const { data: activityData } = useApi<any>('/api/activity', 10000)
-  const { data: sessionsData } = useApi<any>('/api/sessions', 15000)
+  const { data, loading } = useApi<StatusPayload>('/api/status', 30000)
+  const { data: activityData } = useApi<ActivityPayload>('/api/activity', 10000)
+  const { data: sessionsData } = useApi<SessionsPayload>('/api/sessions', 15000)
+  const { data: governanceScorecard } = useApi<GovernanceScorecard>('/api/councils/governance/scorecard', 12000)
   const [countdown, setCountdown] = useState('')
 
   useEffect(() => {
-    if (!data?.heartbeat?.lastChecks) return
+    const heartbeatStatus = data?.heartbeat
+    if (!heartbeatStatus?.lastChecks || !(heartbeatStatus.lastHeartbeat || heartbeatStatus.lastHeartbeatAt)) {
+      return
+    }
     const interval = setInterval(() => {
-      const last = data.heartbeat.lastHeartbeat || Date.now() / 1000
+      const last = heartbeatStatus.lastHeartbeat || heartbeatStatus.lastHeartbeatAt || 0
       const next = last + 3600
       const remaining = next - Date.now() / 1000
       if (remaining <= 0) {
@@ -194,214 +305,258 @@ export default function Dashboard() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50vh' }}>
-          <div style={{ width: 24, height: 24, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
   }
 
-  const { agent, heartbeat, tokenUsage } = data
+  const agent = data.agent || {}
+  const heartbeat = data.heartbeat || {}
+  const tokenUsage = data.tokenUsage || {}
   const feed = activityData?.feed || []
   const sessions = sessionsData?.sessions || []
-  const activeSessions = sessions.filter((s: any) => s.isActive).length
-  const totalSessions = sessions.length
+  const visibleActiveSessions = sessions.filter((s) => s.isActive).length
+  const activeSessions = sessions.length > 0 ? visibleActiveSessions : Number(agent.activeSessions || 0)
+  const totalSessions = sessions.length > 0 ? sessions.length : Number(sessionsData?.count || agent.activeSessions || 0)
+  const operationalHealth = buildOperationalHealth(data, governanceScorecard || undefined, activeSessions, totalSessions)
+  const latestSession = [...sessions].sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())[0]
+  const channels = agent.channels || []
+  const channelCount = channels.length
+  const okChannelCount = channels.filter((ch) => ch.state === 'OK').length
+  const displayName = agent.name === 'Mission Control' ? 'OpenClaw Agent' : agent.name
+  const primaryReasons = operationalHealth.reasons.length ? operationalHealth.reasons : ['No live reason available']
 
-  // Use detected agent name from OpenClaw if showing default "Mission Control"
-  const displayName = agent.name === 'Mission Control' 
-    ? 'Agent' // Default to detected name or fallback
-    : agent.name
+  const commandCards = [
+    {
+      label: 'Active sessions',
+      value: activeSessions,
+      suffix: `/${totalSessions}`,
+      icon: Activity,
+      color: '#0A84FF',
+      route: '/conversations',
+    },
+    {
+      label: 'Channels OK',
+      value: okChannelCount,
+      suffix: `/${channelCount}`,
+      icon: Radio,
+      color: '#30D158',
+      route: '/settings',
+    },
+    {
+      label: 'Memory chunks',
+      value: agent.memoryChunks || 0,
+      suffix: '',
+      icon: Database,
+      color: '#BF5AF2',
+      route: '/memory',
+    },
+    {
+      label: 'Token usage',
+      value: Math.round(Number(tokenUsage?.used || 0) / 1000),
+      suffix: 'k',
+      icon: BarChart3,
+      color: '#FF9F0A',
+      route: '/costs',
+    },
+  ]
+
+  const evidenceRows = [
+    {
+      label: 'Workflow',
+      value: operationalHealth.workflowLive24h,
+      detail: operationalHealth.lastWorkflowSeenAt
+        ? `Last ${timeAgo(operationalHealth.lastWorkflowSeenAt)}`
+        : 'No timestamp',
+      icon: Workflow,
+      color: '#30D158',
+    },
+    {
+      label: 'Governance',
+      value: operationalHealth.governanceLive24h,
+      detail: 'auto-ops in 24h',
+      icon: ShieldCheck,
+      color: '#64D2FF',
+    },
+    {
+      label: 'Synthetic',
+      value: operationalHealth.syntheticLive24h,
+      detail: 'heartbeat-only checks',
+      icon: Gauge,
+      color: '#A1A1AA',
+    },
+    {
+      label: 'Failures',
+      value: operationalHealth.infraFailures24h + operationalHealth.channelErrors + operationalHealth.delegatedBlocked,
+      detail: 'live blockers',
+      icon: Bell,
+      color: operationalHealth.state === 'red' ? '#FF453A' : '#A1A1AA',
+    },
+  ]
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 16 : 28 }}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <h1 className="text-title">Dashboard</h1>
-            <p className="text-body" style={{ marginTop: 4 }}>Your agent at a glance — status, activity & channels</p>
-          </div>
-          <StatusBadge status="active" pulse label="Live" />
-        </div>
-
-        {/* Hero Status Card */}
-        <GlassCard delay={0.05} noPad>
-          <div style={{ padding: m ? 16 : 24 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: m ? 12 : 0 }}>
-              <div style={{ width: 40, height: 40, borderRadius: 10, background: 'rgba(0,122,255,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <Activity size={20} style={{ color: '#007AFF' }} />
-              </div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <h2 style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>{displayName}</h2>
-                  <StatusBadge status="active" pulse />
-                </div>
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {m ? agent.heartbeatInterval : `${agent.model} · ${agent.heartbeatInterval} · ${agent.totalAgents} agents`}
-                </p>
-                {/* Last Active timestamp */}
-                {sessions.length > 0 && (
-                  <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>
-                    Last active: {timeAgo(sessions.sort((a: any, b: any) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime())[0]?.updatedAt || '')}
-                  </p>
-                )}
-              </div>
+      <div className={`${styles.page} ${m ? styles.pageMobile : ''}`}>
+        <section className={`${styles.commandHero} ${m ? styles.commandHeroMobile : ''}`}>
+          <div className={styles.heroMain}>
+            <div className={styles.kickerRow}>
+              <span className={styles.livePill}>
+                <span className={styles.liveDot} />
+                Live Mission Control
+              </span>
+              <span className={styles.modelPill}>{agent.model || 'No model reported'}</span>
             </div>
-            <div style={{ display: 'flex', gap: 16, justifyContent: m ? 'space-around' : 'flex-end', paddingTop: m ? 12 : 0, borderTop: m ? '1px solid rgba(255,255,255,0.06)' : 'none' }}>
-              <div style={{ textAlign: 'center' }}>
-                <p className="text-label">Sessions</p>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: 2 }}>
-                  <p style={{ fontSize: 22, fontWeight: 300, color: 'rgba(255,255,255,0.92)', fontVariantNumeric: 'tabular-nums' }}>
-                    <AnimatedCounter end={activeSessions} />
-                    <span style={{ fontSize: 14, color: 'rgba(255,255,255,0.45)', marginLeft: 2 }}>/{totalSessions}</span>
-                  </p>
-                  <button
-                    onClick={() => navigate('/conversations')}
-                    style={{
-                      fontSize: 10,
-                      color: '#007AFF',
-                      background: 'none',
-                      border: 'none',
-                      cursor: 'pointer',
-                      textDecoration: 'underline',
-                      padding: 0,
-                      marginLeft: 4,
-                    }}
-                  >
-                    Manage →
+
+            <div className={styles.heroTitleBlock}>
+              <h1>Operator Briefing</h1>
+              <p>
+                {displayName} is in <strong style={{ color: healthStateColor(operationalHealth.state) }}>{operationalHealth.label}</strong> state.
+                {latestSession ? ` Last session moved ${timeAgo(latestSession.updatedAt || '')}.` : ' No recent session movement is visible.'}
+              </p>
+            </div>
+
+            <QuickActionsBar />
+          </div>
+
+          <div
+            className={styles.truthPanel}
+            style={{ '--health-color': healthStateColor(operationalHealth.state) } as CSSProperties}
+          >
+            <div className={styles.truthHeader}>
+              <div>
+                <p>Current call</p>
+                <h2>{operationalHealth.label}</h2>
+              </div>
+              <StatusBadge
+                status={healthStateBadgeStatus(operationalHealth.state)}
+                label={operationalHealth.label}
+                pulse={operationalHealth.state === 'green'}
+              />
+            </div>
+            <div className={styles.reasonStack}>
+              {primaryReasons.map((reason) => (
+                <div key={reason} className={styles.reasonItem}>
+                  <Zap size={13} />
+                  <span>{reason}</span>
+                </div>
+              ))}
+            </div>
+            <div className={styles.truthActions}>
+              <button onClick={() => navigate('/councils')}>
+                Governance Archive <ArrowRight size={13} />
+              </button>
+              <button onClick={() => navigate('/cron')}>
+                Cron <ArrowRight size={13} />
+              </button>
+            </div>
+          </div>
+        </section>
+
+        <section className={`${styles.commandGrid} ${m ? styles.commandGridMobile : ''}`}>
+          {commandCards.map((stat, index) => (
+            <button
+              key={stat.label}
+              onClick={() => navigate(stat.route)}
+              className={styles.commandCard}
+              style={{ '--metric-color': stat.color } as CSSProperties}
+            >
+              <div className={styles.commandCardTop}>
+                <span className={styles.metricIcon}>
+                  <stat.icon size={15} />
+                </span>
+                <span className={styles.metricLabel}>{stat.label}</span>
+              </div>
+              <p className={styles.metricValue}>
+                <AnimatedCounter end={stat.value} />
+                <span>{stat.suffix}</span>
+              </p>
+              <span className={styles.metricAction}>
+                Inspect <ArrowRight size={12} />
+              </span>
+              <span className={styles.metricIndex}>{String(index + 1).padStart(2, '0')}</span>
+            </button>
+          ))}
+        </section>
+
+        <section className={`${styles.mainColumns} ${m ? styles.mainColumnsMobile : ''}`}>
+          <div className={styles.leftStack}>
+            <GlassCard delay={0.1} hover={false} noPad>
+              <div className={`${styles.evidencePanel} ${m ? styles.panelMobile : ''}`}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <p className={styles.sectionEyebrow}>Evidence</p>
+                    <h3 className={styles.sectionTitle}>Signals that explain the call</h3>
+                  </div>
+                  <button className={styles.ghostButton} onClick={() => navigate('/office')}>
+                    Digital Office
                   </button>
                 </div>
-              </div>
-              <div style={{ width: 1, height: 36, background: 'rgba(255,255,255,0.08)' }} />
-              <div style={{ textAlign: 'center' }}>
-                <p className="text-label">Memory</p>
-                <p style={{ fontSize: 22, fontWeight: 300, color: 'rgba(255,255,255,0.92)', marginTop: 2, fontVariantNumeric: 'tabular-nums' }}>
-                  <AnimatedCounter end={agent.memoryChunks} />
-                  <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginLeft: 4 }}>chunks</span>
-                </p>
-              </div>
-            </div>
-          </div>
-        </GlassCard>
 
-        {/* Quick Actions Bar */}
-        <QuickActionsBar />
-
-        {/* Stats Grid */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: m ? 10 : 20 }}>
-          {[
-            { label: 'Sessions', value: totalSessions, icon: Activity, color: '#007AFF' },
-            { label: 'Mem Files', value: agent.memoryFiles, icon: Database, color: '#BF5AF2' },
-            { label: 'Chunks', value: agent.memoryChunks, icon: Cpu, color: '#32D74B' },
-            { label: 'Channels', value: agent.channels?.length || 0, icon: Radio, color: '#FF9500' },
-          ].map((stat, i) => (
-            <GlassCard key={stat.label} delay={0.1 + i * 0.05} noPad>
-              <div style={{ padding: m ? '12px 14px' : 20 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: `${stat.color}20`, flexShrink: 0 }}>
-                    <stat.icon size={14} style={{ color: stat.color }} />
-                  </div>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</span>
+                <div className={`${styles.evidenceGrid} ${m ? styles.evidenceGridMobile : ''}`}>
+                  {evidenceRows.map((row) => (
+                    <div key={row.label} className={styles.evidenceRow} style={{ '--row-color': row.color } as CSSProperties}>
+                      <div className={styles.evidenceIcon}>
+                        <row.icon size={15} />
+                      </div>
+                      <div>
+                        <p>{row.label}</p>
+                        <strong>{formatNumber(row.value)}</strong>
+                        <span>{row.detail}</span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <p style={{ fontSize: m ? 22 : 28, fontWeight: 300, color: 'rgba(255,255,255,0.92)', fontVariantNumeric: 'tabular-nums' }}>
-                  <AnimatedCounter end={stat.value} />
-                </p>
               </div>
             </GlassCard>
-          ))}
-        </div>
 
-        {/* Main content: Activity Feed + System Info */}
-        <div style={{ display: 'flex', flexDirection: m ? 'column' : 'row', gap: m ? 16 : 24 }}>
-          
-          {/* Activity Feed — THE main feature */}
-          <div style={{ flex: m ? undefined : 1.5, minWidth: 0 }}>
-            <GlassCard delay={0.15} hover={false} noPad>
-              <div style={{ padding: m ? 14 : 24, maxHeight: m ? 500 : 640, display: 'flex', flexDirection: 'column' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <Bell size={14} style={{ color: '#FFD60A' }} /> Activity Feed
-                  </h3>
-                  <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>{feed.length} items</span>
+            <GlassCard delay={0.14} hover={false} noPad>
+              <div className={`${styles.activityPanel} ${m ? styles.panelMobile : ''}`}>
+                <div className={styles.sectionHeader}>
+                  <div>
+                    <p className={styles.sectionEyebrow}>Activity</p>
+                    <h3 className={styles.sectionTitle}>Latest operator events</h3>
+                  </div>
+                  <span className={styles.countBadge}>{feed.length} items</span>
                 </div>
-                <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden' }}>
+                <div className={styles.scrollColumn}>
                   {feed.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '40px 20px', color: 'rgba(255,255,255,0.3)' }}>
-                      <Bell size={28} style={{ marginBottom: 8, opacity: 0.3 }} />
-                      <p style={{ fontSize: 12 }}>No activity yet</p>
+                    <div className={styles.emptyFeed}>
+                      <Bell size={28} className={styles.emptyFeedIcon} />
+                      <p>No activity yet</p>
                     </div>
-                  ) : feed.map((item: any, i: number) => {
-                    const Icon = feedIcons[item.icon] || Activity
-                    const color = feedColors[item.type] || '#8E8E93'
+                  ) : feed.map((item) => {
+                    const Icon = item.icon ? feedIcons[item.icon] || Activity : Activity
+                    const color = item.type ? feedColors[item.type] || '#A1A1AA' : '#A1A1AA'
                     const isRunning = item.type === 'task_running'
-                    
+
                     return (
                       <div
                         key={item.id}
-                        style={{
-                          display: 'flex', gap: m ? 10 : 12, padding: m ? '10px 0' : '12px 0',
-                          borderBottom: '1px solid rgba(255,255,255,0.04)',
-                          cursor: item.actionUrl ? 'pointer' : 'default',
-                        }}
+                        className={`${styles.feedItem} ${item.actionUrl ? styles.feedItemClickable : ''}`}
                         onClick={() => item.actionUrl && navigate(item.actionUrl)}
                       >
-                        {/* Icon */}
-                        <div style={{
-                          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
-                          background: `${color}15`, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        }}>
+                        <div className={styles.feedIconWrap} style={{ background: `${color}18` }}>
                           <Icon size={14} style={{ color, ...(isRunning ? { animation: 'spin 1s linear infinite' } : {}) }} />
                         </div>
 
-                        {/* Content */}
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{
-                            fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.88)',
-                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>
-                            {item.title}
-                          </p>
-                          {item.detail && (
-                            <p style={{
-                              fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 3, lineHeight: 1.4,
-                              display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
-                            }}>
-                              {item.detail}
-                            </p>
-                          )}
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 5 }}>
-                            {item.score && (
-                              <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 4, background: item.score >= 80 ? 'rgba(50,215,75,0.12)' : 'rgba(255,149,0,0.12)', color: item.score >= 80 ? '#32D74B' : '#FF9500' }}>
-                                {item.score}pts
-                              </span>
-                            )}
-                            {item.source && (
-                              <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{item.source}</span>
-                            )}
-                            {item.priority && (
-                              <span style={{
-                                width: 6, height: 6, borderRadius: '50%',
-                                background: item.priority === 'high' ? '#FF453A' : item.priority === 'medium' ? '#FF9500' : '#007AFF',
-                              }} />
-                            )}
-                            <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)', marginLeft: 'auto' }}>
-                              {item.time ? timeAgo(item.time) : ''}
-                            </span>
+                        <div className={styles.feedContent}>
+                          <p className={styles.feedTitle}>{item.title}</p>
+                          {item.detail && <p className={styles.feedDetail}>{item.detail}</p>}
+                          <div className={styles.feedMetaRow}>
+                            {item.score && <span className={styles.feedScore}>{item.score} pts</span>}
+                            {item.source && <span className={styles.feedSource}>{item.source}</span>}
+                            <span className={styles.feedTime}>{item.time ? timeAgo(item.time) : ''}</span>
                           </div>
                         </div>
 
-                        {/* Action button */}
                         {item.actionable && (
                           <button
-                            onClick={(e) => { e.stopPropagation(); navigate(item.actionUrl || '/workshop'); }}
-                            style={{
-                              alignSelf: 'center', padding: '5px 10px', borderRadius: 7, flexShrink: 0,
-                              border: `1px solid ${color}30`, background: `${color}10`,
-                              color, fontSize: 10, fontWeight: 600, cursor: 'pointer',
-                              display: 'flex', alignItems: 'center', gap: 4,
-                            }}
+                            onClick={(e) => { e.stopPropagation(); navigate(item.actionUrl || '/workshop') }}
+                            className={styles.feedActionButton}
                           >
-                            {item.actionLabel || 'View'} <ArrowRight size={10} />
+                            {item.actionUrl?.startsWith('/workshop') ? 'Open Task' : item.actionLabel || 'View'} <ArrowRight size={10} />
                           </button>
                         )}
                       </div>
@@ -412,66 +567,90 @@ export default function Dashboard() {
             </GlassCard>
           </div>
 
-          {/* Right Column - System Info */}
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: m ? 12 : 20, minWidth: 0 }}>
-            {/* Channels */}
-            <GlassCard delay={0.2} hover={false} noPad>
-              <div style={{ padding: m ? 14 : 24 }}>
-                <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Radio size={13} style={{ color: '#BF5AF2' }} /> Channels
-                </h3>
-                {agent.channels?.length > 0 ? agent.channels.map((ch: any) => (
-                  <div key={ch.name} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                      <MessageSquare size={14} style={{ color: 'rgba(255,255,255,0.5)', flexShrink: 0 }} />
-                      <div style={{ minWidth: 0 }}>
-                        <p style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>{ch.name}</p>
-                        {!m && <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.detail}</p>}
+          <aside className={styles.rightStack}>
+            <GlassCard delay={0.18} hover={false} noPad>
+              <div className={`${styles.panelBody} ${m ? styles.panelMobile : ''}`}>
+                <div className={styles.sectionHeaderTight}>
+                  <h3 className={styles.compactTitle}>
+                    <Radio size={14} /> Channels
+                  </h3>
+                  <span className={styles.countBadge}>{okChannelCount}/{channelCount} OK</span>
+                </div>
+                {channels.length > 0 ? channels.map((ch) => (
+                  <div key={ch.name} className={styles.channelRow}>
+                    <div className={styles.channelInfo}>
+                      <MessageSquare size={14} className={styles.channelIcon} />
+                      <div className={styles.channelText}>
+                        <p className={styles.channelName}>{ch.name}</p>
+                        {!m && <p className={styles.channelDetail}>{ch.detail}</p>}
                       </div>
                     </div>
                     <StatusBadge status={ch.state === 'OK' ? 'active' : ch.state === 'OFF' ? 'off' : 'error'} />
                   </div>
-                )) : <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>No channels</p>}
+                )) : <p className={styles.emptyText}>No channels</p>}
               </div>
             </GlassCard>
 
-            {/* Token Usage */}
-            <GlassCard delay={0.25} hover={false} noPad>
-              <div style={{ padding: m ? 14 : 24 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <BarChart3 size={13} style={{ color: '#007AFF' }} /> Tokens Used
+            <GlassCard delay={0.22} hover={false} noPad>
+              <div className={`${styles.panelBody} ${m ? styles.panelMobile : ''}`}>
+                <div className={styles.sectionHeaderTight}>
+                  <h3 className={styles.compactTitle}>
+                    <Heart size={14} /> Heartbeat
                   </h3>
-                  <span style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.92)', fontVariantNumeric: 'tabular-nums' }}>{(tokenUsage.used / 1000).toFixed(0)}k</span>
+                  <StatusBadge
+                    status={!(heartbeat.lastHeartbeat || heartbeat.lastHeartbeatAt) ? 'off' : countdown === 'Overdue' ? 'error' : 'active'}
+                    label={!(heartbeat.lastHeartbeat || heartbeat.lastHeartbeatAt) ? 'No timestamp' : countdown === 'Overdue' ? 'Overdue' : 'Scheduled'}
+                  />
                 </div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>This session period · No usage limit</div>
+                <div className={styles.heartbeatGrid}>
+                  <div>
+                    <p>Last</p>
+                    <strong>
+                      {heartbeat.lastHeartbeat || heartbeat.lastHeartbeatAt
+                        ? timeAgo(new Date((heartbeat.lastHeartbeat || heartbeat.lastHeartbeatAt || 0) * 1000).toISOString())
+                        : '—'}
+                    </strong>
+                  </div>
+                  <div>
+                    <p>Next</p>
+                    <strong className={countdown === 'Overdue' ? styles.overdue : ''}>{countdown || '—'}</strong>
+                  </div>
+                  <div>
+                    <p>Interval</p>
+                    <strong>{agent.heartbeatInterval}</strong>
+                  </div>
+                </div>
               </div>
             </GlassCard>
 
-            {/* Heartbeat */}
-            <GlassCard delay={0.3} hover={false} noPad>
-              <div style={{ padding: m ? 14 : 24 }}>
-                <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Heart size={13} style={{ color: '#FF453A' }} /> Heartbeat
-                </h3>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, textAlign: 'center' }}>
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 4 }}>Last</p>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>{heartbeat.lastHeartbeat ? timeAgo(new Date(heartbeat.lastHeartbeat * 1000).toISOString()) : '—'}</p>
+            <GlassCard delay={0.26} hover={false} noPad>
+              <div className={`${styles.panelBody} ${m ? styles.panelMobile : ''}`}>
+                <div className={styles.systemList}>
+                  <div className={styles.systemRow}>
+                    <Cpu size={14} />
+                    <span>Agent fleet</span>
+                    <strong>{agent.totalAgents}</strong>
                   </div>
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 4 }}>Next</p>
-                    <p style={{ fontSize: 12, color: countdown === 'Overdue' ? '#FF453A' : '#007AFF', fontFamily: 'monospace' }}>{countdown || '—'}</p>
+                  <div className={styles.systemRow}>
+                    <Database size={14} />
+                    <span>Memory files</span>
+                    <strong>{agent.memoryFiles}</strong>
                   </div>
-                  <div>
-                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 4 }}>Interval</p>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)' }}>{agent.heartbeatInterval}</p>
+                  <div className={styles.systemRow}>
+                    <TerminalSquare size={14} />
+                    <span>Model</span>
+                    <strong title={agent.model}>{agent.model || '—'}</strong>
+                  </div>
+                  <div className={styles.systemRow}>
+                    <Sparkles size={14} />
+                    <span>Usage</span>
+                    <strong>{Math.round(Number(tokenUsage?.used || 0) / 1000)}k</strong>
                   </div>
                 </div>
               </div>
             </GlassCard>
-          </div>
-        </div>
+          </aside>
+        </section>
       </div>
     </PageTransition>
   )

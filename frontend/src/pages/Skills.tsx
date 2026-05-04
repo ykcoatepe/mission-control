@@ -20,7 +20,7 @@ interface Skill {
 
 export default function Skills() {
   const isMobile = useIsMobile()
-  const { data: skillsData, loading, refetch } = useApi<{ installed: Skill[], available: Skill[] }>('/api/skills')
+  const { data: skillsData, loading, error, refetch } = useApi<{ installed: Skill[], available: Skill[] }>('/api/skills')
   const [filter, setFilter] = useState<'all' | 'installed' | 'available'>('all')
   const [toggling, setToggling] = useState<string | null>(null)
 
@@ -138,6 +138,28 @@ export default function Skills() {
             <GlassCard noPad>
               <div style={{ padding: isMobile ? 16 : 24, textAlign: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 13 }}>
                 Loading skills...
+              </div>
+            </GlassCard>
+          ) : error ? (
+            <GlassCard noPad>
+              <div style={{ padding: isMobile ? 16 : 24, color: 'rgba(255,255,255,0.75)', fontSize: 13 }}>
+                Skills API error: {error}
+                <br />
+                <button
+                  onClick={() => refetch()}
+                  style={{
+                    marginTop: 12,
+                    background: '#007AFF',
+                    border: 'none',
+                    borderRadius: 8,
+                    color: '#fff',
+                    fontSize: 11,
+                    padding: '8px 12px',
+                    cursor: 'pointer'
+                  }}
+                >
+                  Retry
+                </button>
               </div>
             </GlassCard>
           ) : filteredSkills.length === 0 ? (

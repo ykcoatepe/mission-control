@@ -7,9 +7,10 @@ interface Props {
   prefix?: string
   suffix?: string
   className?: string
+  formatter?: (value: number) => string
 }
 
-export default function AnimatedCounter({ end, duration = 1.5, decimals = 0, prefix = '', suffix = '', className = '' }: Props) {
+export default function AnimatedCounter({ end, duration = 1.5, decimals = 0, prefix = '', suffix = '', className = '', formatter }: Props) {
   const [count, setCount] = useState(0)
   const ref = useRef<number>(0)
   const startTime = useRef<number>(0)
@@ -33,7 +34,7 @@ export default function AnimatedCounter({ end, duration = 1.5, decimals = 0, pre
 
   return (
     <span className={className}>
-      {prefix}{count.toFixed(decimals)}{suffix}
+      {formatter ? formatter(count) : `${prefix}${count.toFixed(decimals)}${suffix}`}
     </span>
   )
 }
