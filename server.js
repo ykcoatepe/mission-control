@@ -113,6 +113,10 @@ function validateGatewayTokenConfig() {
       throw new Error('Mission Control token drift: mc-config gateway.token does not match openclaw gateway auth token');
     }
   } catch (error) {
+    if (error?.code === 'ENOENT') {
+      console.warn('[startup] OpenClaw config not found; skipping gateway token validation until setup completes');
+      return;
+    }
     console.error('[startup] gateway token validation failed:', error.message);
     throw error;
   }
