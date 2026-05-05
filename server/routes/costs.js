@@ -542,7 +542,22 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
             return;
           }
 
-          resolve(costsCache.get(cacheKey)?.value || null);
+          const previousEntry = costsCache.get(cacheKey);
+          if (previousEntry) {
+            const preserved = attachCostsMeta(previousEntry.value, {
+              refreshing: false,
+              stale: true,
+              refreshStartedAt: startedAt,
+              openclawStatus: 'unavailable',
+              hermesStatus: 'unavailable',
+              preservedPreviousUsage: true,
+            });
+            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
+            resolve(preserved);
+            return;
+          }
+
+          resolve(null);
         } catch (error) {
           console.error('[Costs API background refresh]', error.message);
           resolve(null);
@@ -569,7 +584,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period);
         return res.json(attachCostsMeta(cached.value, {
           refreshing: refreshing || !isFresh,
-          stale: !isFresh,
+          stale: Boolean(cached.value?.meta?.stale) || !isFresh,
           ageMs,
         }));
       }
