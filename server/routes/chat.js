@@ -35,7 +35,7 @@ function isGatewayChatMiss(status, text) {
   return status === 404 || body === 'Not Found' || body.startsWith('<!doctype html>');
 }
 
-async function runMainAgent({ openclawBin, message }) {
+async function runMainAgent({ openclawBin, message, signal }) {
   const bin = openclawBin || 'openclaw';
   const { stdout } = await execFilePromise(
     bin,
@@ -44,6 +44,7 @@ async function runMainAgent({ openclawBin, message }) {
       timeout: 190000,
       maxBuffer: 8 * 1024 * 1024,
       env: process.env,
+      signal,
     },
   );
   const parsed = JSON.parse(stdout);
@@ -55,7 +56,14 @@ async function runMainAgent({ openclawBin, message }) {
 function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
   const router = express.Router();
 
-  async function streamMainAgentFallback(res, message) {
+  async function streamMainAgentFallback(req, res, message) {
+    const controller = new AbortController();
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+      controller.abort();
+    });
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -65,18 +73,23 @@ function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
     res.write(sseComment('connected'));
 
     const keepAlive = setInterval(() => {
+      if (closed || res.destroyed) return;
       res.write(sseComment('waiting-for-mudur'));
     }, 10000);
 
     try {
-      const fallback = await runMainAgent({ openclawBin, message });
+      const fallback = await runMainAgent({ openclawBin, message, signal: controller.signal });
+      if (closed || res.destroyed) return;
       res.write(sseChunk(fallback));
     } catch (fallbackError) {
+      if (closed || fallbackError.name === 'AbortError') return;
       res.write(sseChunk(`Müdür could not answer right now: ${fallbackError.message}`));
     } finally {
       clearInterval(keepAlive);
-      res.write(sseDone());
-      res.end();
+      if (!closed && !res.destroyed) {
+        res.write(sseDone());
+        res.end();
+      }
     }
   }
 
@@ -122,7 +135,7 @@ function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
         if (!gwRes.ok) {
           const text = await gwRes.text();
           if (isGatewayChatMiss(gwRes.status, text)) {
-            return streamMainAgentFallback(res, message);
+            return streamMainAgentFallback(req, res, message);
           }
           res.writeHead(gwRes.status, {
             'Content-Type': 'text/event-stream',
@@ -166,7 +179,7 @@ function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
     } catch (error) {
       console.error('[Chat proxy] Fetch error:', error.message);
       if (stream) {
-        return streamMainAgentFallback(res, message);
+        return streamMainAgentFallback(req, res, message);
       }
       if (!res.headersSent) return res.status(502).json({ error: `Gateway error: ${error.message}` });
     }
