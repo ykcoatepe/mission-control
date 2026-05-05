@@ -59,7 +59,7 @@ function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
   async function streamMainAgentFallback(req, res, message) {
     const controller = new AbortController();
     let closed = false;
-    req.on('close', () => {
+    res.on('close', () => {
       closed = true;
       controller.abort();
     });
