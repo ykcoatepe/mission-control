@@ -467,6 +467,56 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
+  function cachedOpenClawUsage(previous, period) {
+    const openclawAgent = previous?.agents?.find((agent) => agent.key === 'openclaw');
+    if (!openclawAgent) return null;
+
+    const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith('OpenClaw / '));
+    const modelKeys = prefixedModelKeys.map((key) => key.replace(/^OpenClaw \/ /, ''));
+    const dailyByModel = (previous.dailyByModel || []).map((row) => {
+      const out = { date: row.date, totalCost: 0, totalTokens: 0 };
+      prefixedModelKeys.forEach((prefixedKey, index) => {
+        const key = modelKeys[index];
+        const cost = Number(row[prefixedKey] || 0);
+        const tokens = Number(row[`${prefixedKey}_tokens`] || 0);
+        out[key] = cost;
+        out[`${key}_tokens`] = tokens;
+        out[`${key}_costSource`] = row[`${prefixedKey}_costSource`] || 'cached';
+        out.totalCost += cost;
+        out.totalTokens += tokens;
+      });
+      return out;
+    });
+    const daily = dailyByModel.map((row) => ({
+      date: row.date,
+      cost: row.totalCost,
+      totalCost: row.totalCost,
+      tokens: row.totalTokens,
+      totalTokens: row.totalTokens,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    }));
+    const byService = (previous.byService || [])
+      .filter((item) => item.agent === 'OpenClaw' || String(item.name || '').startsWith('OpenClaw / '))
+      .map((item) => ({ ...item, name: String(item.name || '').replace(/^OpenClaw \/ /, '') }));
+
+    return {
+      source: `${openclawAgent.source || 'openclaw.usage'}.cached`,
+      period,
+      periodRange: {
+        start: previous.period?.start || daily[0]?.date || null,
+        end: previous.period?.end || daily[daily.length - 1]?.date || null,
+      },
+      summary: openclawAgent.summary || {},
+      daily,
+      dailyByModel,
+      modelKeys,
+      byService,
+    };
+  }
+
   function detailedCostsResult(period, combinedUsage, meta = {}) {
     const rangeRows = combinedUsage.daily || [];
     return attachCostsMeta({
@@ -505,12 +555,14 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
             const previous = costsCache.get(cacheKey)?.value;
             const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => agent.key === 'openclaw' && Number(agent.summary?.periodTokens || 0) > 0);
             if (!openclawData && hasPreviousOpenClaw) {
-              const preserved = attachCostsMeta(previous, {
+              const cachedOpenClawData = cachedOpenClawUsage(previous, period);
+              const usageWithCachedOpenClaw = mergeUsage(cachedOpenClawData, hermesData, period);
+              const preserved = detailedCostsResult(period, usageWithCachedOpenClaw, {
                 refreshing: false,
                 stale: true,
                 refreshStartedAt: startedAt,
                 openclawStatus: 'unavailable',
-                hermesStatus: hermesData ? 'ready' : 'unavailable',
+                hermesStatus: 'ready',
                 preservedPreviousOpenClaw: true,
               });
               setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
