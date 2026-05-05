@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Clock, Play, Pause, AlertTriangle, CheckCircle, XCircle, Plus, Trash2, RotateCcw, Cpu } from 'lucide-react'
+import { Clock, Play, Pause, AlertTriangle, XCircle, Plus, Trash2, RotateCcw, Cpu } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -8,18 +8,15 @@ import StatusBadge from '../components/StatusBadge'
 import { useApi, timeAgo, formatDate } from '../lib/hooks'
 import { normalizeCronStatus } from '../lib/status'
 
-const statusIcons: Record<string, any> = {
-  success: CheckCircle,
-  failed: XCircle,
-  ok: CheckCircle,
-  error: XCircle,
+interface CronHistoryEntry {
+  status?: string
 }
 
 // Success rate calculator from job history
-function calcSuccessRate(history: any[]): { rate: string; pct: number; total: number; ok: number; failed: number } | null {
+function calcSuccessRate(history: CronHistoryEntry[]): { rate: string; pct: number; total: number; ok: number; failed: number } | null {
   if (!history || history.length === 0) return null
   const total = history.length
-  const ok = history.filter((h: any) => h.status === 'done' || h.status === 'success' || h.status === 'ok').length
+  const ok = history.filter((h) => h.status === 'done' || h.status === 'success' || h.status === 'ok').length
   const failed = total - ok
   const pct = Math.round((ok / total) * 100)
   return { rate: `${pct}%`, pct, total, ok, failed }
@@ -67,7 +64,31 @@ interface CronJob {
   model?: string
   thinking?: string
   description: string
-  history: any[]
+  history: CronHistoryEntry[]
+}
+
+interface CronApiResponse {
+  jobs?: CronJob[]
+}
+
+interface CronModelResponse {
+  id?: string
+  name?: string
+}
+
+interface CreateCronJobPayload {
+  name: string
+  schedule: {
+    kind: 'cron'
+    expr: string
+  }
+  sessionTarget: string
+  payload: {
+    kind: string
+    message: string
+    model?: string
+  }
+  enabled: boolean
 }
 
 const FALLBACK_MODEL_OPTIONS = [
@@ -80,6 +101,20 @@ const CRON_MODEL_ALIASES: Record<string, string> = {
 
 const CLOUD_AGENT_MODEL = 'openai-codex/gpt-5.5'
 const DISALLOWED_CLOUD_MODEL_RE = /^(anthropic\/|claude-cli\/|openrouter\/|qwen\/|minimax|minimax-portal\/|openai\/gpt-5\.4|openai-codex\/gpt-5\.[234])/i
+const CRON_TABLE_COLUMNS = 'minmax(0, 2.15fr) minmax(0, 1.15fr) minmax(116px, 1.25fr) minmax(92px, 1.18fr) minmax(0, 1.1fr) minmax(0, 1.1fr) minmax(0, 1.9fr) minmax(66px, 0.78fr) minmax(72px, 0.82fr)'
+const CRON_TABLE_GAP = 14
+
+const cronTableGridStyle = {
+  display: 'grid',
+  gridTemplateColumns: CRON_TABLE_COLUMNS,
+  columnGap: CRON_TABLE_GAP,
+  alignItems: 'center',
+} as const
+
+const cronTableCellStyle = {
+  minWidth: 0,
+  overflow: 'hidden',
+} as const
 
 function isDisallowedCloudModel(id: string) {
   const key = String(id || '').trim()
@@ -99,7 +134,7 @@ function formatCronModelLabel(id: string, name?: string) {
   return localSuffixNeeded ? `${base} (local)` : base
 }
 
-function buildCronModelOptions(models: any[] = [], jobs: CronJob[] = []) {
+function buildCronModelOptions(models: CronModelResponse[] = [], jobs: CronJob[] = []) {
   const byId = new Map<string, { value: string; label: string }>()
   const registryIds = new Set<string>()
   const add = (value: string, label?: string, fromCurrentJobOnly = false) => {
@@ -170,7 +205,7 @@ function buildCronOverlapMarkers(jobs: CronJob[]) {
     scheduleBuckets.set(key, bucket)
   }
 
-  for (const [key, bucket] of nextRunBuckets.entries()) {
+  for (const bucket of nextRunBuckets.values()) {
     if (bucket.length < 2) continue
     const label = formatOverlapMinute(bucket[0]?.nextRun) || 'same minute'
     const detail = `${bucket.length} jobs share the next execution window`
@@ -204,7 +239,7 @@ function buildCronOverlapMarkers(jobs: CronJob[]) {
 interface CreateJobModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (job: any) => void
+  onSubmit: (job: CreateCronJobPayload) => void
   modelOptions: { value: string; label: string }[]
 }
 
@@ -231,7 +266,7 @@ function CreateJobModal({ isOpen, onClose, onSubmit, modelOptions }: CreateJobMo
       return
     }
 
-    const job = {
+    const job: CreateCronJobPayload = {
       name: formData.name,
       schedule: {
         kind: 'cron',
@@ -665,13 +700,13 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (enab
 
 export default function Cron() {
   const m = useIsMobile()
-  const { data, loading, error, refetch } = useApi<any>('/api/cron', 30000)
-  const { data: modelsData } = useApi<any[]>('/api/models', 60000)
+  const { data, loading, error, refetch } = useApi<CronApiResponse>('/api/cron', 30000)
+  const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [jobSearch, setJobSearch] = useState('')
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'failed' | 'overlap'>('all')
-  const jobs: CronJob[] = data?.jobs || []
+  const jobs = useMemo<CronJob[]>(() => data?.jobs || [], [data?.jobs])
   const modelOptions = useMemo(
     () => buildCronModelOptions(Array.isArray(modelsData) ? modelsData : [], jobs),
     [modelsData, jobs]
@@ -731,7 +766,7 @@ export default function Cron() {
         headers: { 'Content-Type': 'application/json' }
       })
       if (response.ok) {
-        const jobName = jobs.find((j: any) => j.id === jobId)?.name || jobId
+        const jobName = jobs.find((j) => j.id === jobId)?.name || jobId
         setToast(`✅ "${jobName}" triggered!`)
         setTimeout(() => setToast(null), 4000)
         setTimeout(refetch, 1500)
@@ -767,7 +802,7 @@ export default function Cron() {
     setActionLoading(null)
   }
 
-  const handleCreateJob = async (job: any) => {
+  const handleCreateJob = async (job: CreateCronJobPayload) => {
     try {
       const response = await fetch('/api/cron/create', {
         method: 'POST',
@@ -796,7 +831,7 @@ export default function Cron() {
       })
 
       if (response.ok) {
-        const jobName = jobs.find((j: any) => j.id === jobId)?.name || jobId
+        const jobName = jobs.find((j) => j.id === jobId)?.name || jobId
         setToast(`✅ "${jobName}" model set to ${model || 'default'}`)
         setTimeout(() => setToast(null), 3000)
         refetch()
@@ -811,19 +846,6 @@ export default function Cron() {
     }
 
     setActionLoading(null)
-  }
-
-  const handleModelBlur = async (jobId: string) => {
-    const job = jobs.find((j: any) => j.id === jobId)
-    if (!job || job.payload !== 'agentTurn') return
-
-    const current = job.model || ''
-    const custom = prompt('Set custom model for this cron job:', current || '')
-    if (custom === null) return
-    const next = custom.trim()
-
-    if (next === current) return
-    await handleModelChange(jobId, next)
   }
 
   if (loading && !data) {
@@ -1130,7 +1152,7 @@ export default function Cron() {
                         </div>
                         <ToggleSwitch 
                           enabled={job.enabled} 
-                          onChange={(enabled) => handleToggle(job.id, job.enabled)} 
+                          onChange={() => handleToggle(job.id, job.enabled)} 
                         />
                       </div>
                       
@@ -1169,13 +1191,14 @@ export default function Cron() {
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <Cpu size={12} color='#8e8e93' />
                           {job.payload === 'agentTurn' ? (
-                            <button
-                              type="button"
-                              onClick={() => handleModelBlur(job.id)}
+                            <select
+                              value={normalizeCronModelValue(job.model) || ''}
+                              onChange={(e) => handleModelChange(job.id, e.target.value)}
                               disabled={actionLoading === `model-${job.id}`}
                               title={`Change model: ${displayCronModel(job.model)}`}
                               style={{
                                 width: '100%',
+                                minWidth: 0,
                                 background: 'rgba(255,255,255,0.05)',
                                 color: 'rgba(255,255,255,0.85)',
                                 border: '1px solid rgba(255,255,255,0.1)',
@@ -1183,15 +1206,18 @@ export default function Cron() {
                                 padding: '4px 6px',
                                 fontSize: 12,
                                 margin: 0,
-                                cursor: 'pointer',
-                                textAlign: 'left',
+                                cursor: actionLoading === `model-${job.id}` ? 'not-allowed' : 'pointer',
                                 overflow: 'hidden',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
                               }}
                             >
-                              {displayCronModel(job.model)}
-                            </button>
+                              {modelOptions.map((option) => (
+                                <option key={option.value || 'default'} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
                           ) : (
                             <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)' }}>{job.model || 'session default'}</span>
                           )}
@@ -1255,9 +1281,11 @@ export default function Cron() {
           ) : (
             /* DESKTOP: Table */
             <GlassCard delay={0.2} hover={false} noPad>
-              <div style={{ padding: '14px 24px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'grid', gridTemplateColumns: '3.5fr 2fr 1.2fr 1.8fr 2fr 2fr 1.5fr 1.2fr 1.6fr', gap: 16, alignItems: 'center' }}>
+              <div style={{ overflowX: 'auto', scrollbarWidth: 'thin' }}>
+                <div style={{ minWidth: 1120 }}>
+              <div style={{ ...cronTableGridStyle, padding: '14px 24px', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                 {['Name', 'Schedule', 'Status', 'Success Rate', 'Last Run', 'Next Run', 'Model', 'Duration', 'Actions'].map((h) => (
-                  <span key={h} style={{ color: 'rgba(255,255,255,0.45)', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.15em' }}>{h}</span>
+                  <span key={h} style={{ ...cronTableCellStyle, color: 'rgba(255,255,255,0.45)', fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.12em', whiteSpace: 'nowrap' }}>{h}</span>
                 ))}
               </div>
               {filteredJobs.map((job: CronJob, i: number) => {
@@ -1272,15 +1300,12 @@ export default function Cron() {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: 0.25 + i * 0.04 }}
                     style={{
+                      ...cronTableGridStyle,
                       padding: '14px 24px',
-                      display: 'grid',
-                      gridTemplateColumns: '3.5fr 2fr 1.2fr 1.8fr 2fr 2fr 1.5fr 1.2fr 1.6fr',
-                      gap: 16,
-                      alignItems: 'center',
                       borderBottom: '1px solid rgba(255,255,255,0.04)',
-                      borderLeft: isFailed ? '3px solid #FF453A' : '3px solid transparent',
+                      boxShadow: isFailed ? 'inset 3px 0 0 #FF453A' : 'inset 3px 0 0 transparent',
                       background: isFailed ? 'rgba(255,69,58,0.06)' : 'transparent',
-                      transition: 'background 0.15s, border-left 0.15s',
+                      transition: 'background 0.15s, box-shadow 0.15s',
                     }}
                     onMouseEnter={(e) => {
                       if (!isFailed) e.currentTarget.style.background = 'rgba(255,255,255,0.02)'
@@ -1290,14 +1315,14 @@ export default function Cron() {
                     }}
                   >
                     {/* Name */}
-                    <div style={{ overflow: 'hidden' }}>
+                    <div style={cronTableCellStyle}>
                       <p style={{ fontSize: 13, fontWeight: 600, color: isFailed ? '#FF6B6B' : 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', margin: 0 }}>{job.name}</p>
                       <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'monospace', margin: '2px 0 0' }}>{job.id}</p>
                     </div>
                     {/* Schedule */}
-                    <div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        <code style={{ fontSize: 12, color: '#BF5AF2', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', padding: '4px 8px', borderRadius: 6, fontFamily: 'monospace' }}>{job.schedule}</code>
+                    <div style={cronTableCellStyle}>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 6 }}>
+                        <code style={{ maxWidth: '100%', fontSize: 12, color: '#BF5AF2', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', padding: '4px 8px', borderRadius: 6, fontFamily: 'monospace', lineHeight: 1.35, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>{job.schedule}</code>
                         {overlapMarker ? (
                           <span title={overlapMarker.detail} style={{ display: 'inline-flex', width: 'fit-content', alignItems: 'center', gap: 6, padding: '3px 8px', borderRadius: 999, background: 'rgba(191,90,242,0.14)', border: '1px solid rgba(191,90,242,0.24)', color: '#D8B4FE', fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
                             <Clock size={10} />
@@ -1307,15 +1332,15 @@ export default function Cron() {
                       </div>
                     </div>
                     {/* Status */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <div style={{ ...cronTableCellStyle, display: 'flex', alignItems: 'center', gap: 8 }}>
                       <ToggleSwitch
                         enabled={job.enabled}
-                        onChange={(enabled) => handleToggle(job.id, job.enabled)}
+                        onChange={() => handleToggle(job.id, job.enabled)}
                       />
                       <StatusBadge status={normStatus} label={job.enabled ? job.status : 'disabled'} />
                     </div>
                     {/* Success Rate */}
-                    <div>
+                    <div style={cronTableCellStyle}>
                       {sr ? (
                         <SuccessBar rate={sr} />
                       ) : (
@@ -1323,7 +1348,7 @@ export default function Cron() {
                       )}
                     </div>
                     {/* Last Run */}
-                    <div>
+                    <div style={cronTableCellStyle}>
                       {job.lastRun ? (
                         <>
                           <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', margin: 0 }}>{timeAgo(job.lastRun)}</p>
@@ -1332,7 +1357,7 @@ export default function Cron() {
                       ) : <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>—</span>}
                     </div>
                     {/* Next Run */}
-                    <div>
+                    <div style={cronTableCellStyle}>
                       {job.nextRun ? (
                         <>
                           <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.65)', margin: 0 }}>{timeAgo(job.nextRun)}</p>
@@ -1341,39 +1366,43 @@ export default function Cron() {
                       ) : <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>—</span>}
                     </div>
                     {/* Model */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div style={{ ...cronTableCellStyle, display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Cpu size={12} color='#8e8e93' />
                       {job.payload === 'agentTurn' ? (
-                        <button
-                          type="button"
-                          onClick={() => handleModelBlur(job.id)}
+                        <select
+                          value={normalizeCronModelValue(job.model) || ''}
+                          onChange={(e) => handleModelChange(job.id, e.target.value)}
                           disabled={actionLoading === `model-${job.id}`}
                           title={`Change model: ${displayCronModel(job.model)}`}
                           style={{
                             width: '100%',
+                            minWidth: 0,
                             background: 'rgba(255,255,255,0.05)',
                             color: 'rgba(255,255,255,0.85)',
                             border: '1px solid rgba(255,255,255,0.1)',
                             borderRadius: 6,
                             padding: '4px 6px',
                             fontSize: 11,
-                            cursor: 'pointer',
-                            textAlign: 'left',
+                            cursor: actionLoading === `model-${job.id}` ? 'not-allowed' : 'pointer',
                             overflow: 'hidden',
                             textOverflow: 'ellipsis',
                             whiteSpace: 'nowrap',
                           }}
                         >
-                          {displayCronModel(job.model)}
-                        </button>
+                          {modelOptions.map((option) => (
+                            <option key={option.value || 'default'} value={option.value}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </select>
                       ) : (
                         <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>{job.model || 'default'}</span>
                       )}
                     </div>
                     {/* Duration */}
-                    <div><span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.65)' }}>{job.duration || '—'}</span></div>
+                    <div style={cronTableCellStyle}><span style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.65)', fontVariantNumeric: 'tabular-nums' }}>{job.duration || '—'}</span></div>
                     {/* Actions */}
-                    <div style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ ...cronTableCellStyle, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                       <button
                         onClick={() => handleRun(job.id)}
                         disabled={actionLoading === `run-${job.id}`}
@@ -1442,6 +1471,8 @@ export default function Cron() {
                   </motion.div>
                 )
               })}
+                </div>
+              </div>
             </GlassCard>
           )}
         </div>

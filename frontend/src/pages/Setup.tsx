@@ -28,6 +28,7 @@ interface SetupStatus {
     channels: string[]
     agentName: string
     workspacePath: string
+    gatewayTokenConfigured?: boolean
   }
 }
 
@@ -85,11 +86,7 @@ export default function Setup() {
 
   const [customQueries, setCustomQueries] = useState<string[]>([''])
 
-  useEffect(() => {
-    fetchSetupStatus()
-  }, [])
-
-  const fetchSetupStatus = async () => {
+  async function fetchSetupStatus() {
     try {
       const response = await fetch('/api/setup')
       const data = await response.json()
@@ -99,10 +96,6 @@ export default function Setup() {
       if (data.detectedConfig?.agentName) {
         setSetupData(prev => ({ ...prev, dashboardName: data.detectedConfig.agentName + ' Control' }))
       }
-      // Pre-fill gateway token if detected
-      if (data.detectedConfig?.gatewayToken) {
-        setSetupData(prev => ({ ...prev, gateway: { ...prev.gateway, token: data.detectedConfig.gatewayToken } }))
-      }
     } catch (error) {
       console.error('Failed to fetch setup status:', error)
     } finally {
@@ -110,12 +103,19 @@ export default function Setup() {
     }
   }
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void fetchSetupStatus()
+    }, 0)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   const handleSaveSetup = async () => {
     try {
       setLoading(true)
       
       // Combine template queries with custom queries
-      let allQueries = [...setupData.scout.queries]
+      const allQueries = [...setupData.scout.queries]
       customQueries.forEach(q => {
         if (q.trim()) {
           allQueries.push({ q: q.trim(), category: 'custom', source: 'web', weight: 0.8 })
@@ -328,6 +328,7 @@ export default function Setup() {
                   {status.detectedConfig.model && <div>Model: {status.detectedConfig.model.replace('amazon-bedrock/', '')}</div>}
                   {status.detectedConfig.channels.length > 0 && <div>Channels: {status.detectedConfig.channels.join(', ')}</div>}
                   {status.detectedConfig.workspacePath && <div>Workspace: {status.detectedConfig.workspacePath}</div>}
+                  {status.detectedConfig.gatewayTokenConfigured && <div>Gateway token: configured locally</div>}
                 </div>
               </div>
             )}

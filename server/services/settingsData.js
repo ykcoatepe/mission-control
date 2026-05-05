@@ -169,7 +169,7 @@ function createSettingsService({
       channels: [],
       agentName: '',
       workspacePath: '',
-      gatewayToken: '',
+      gatewayTokenConfigured: false,
     };
 
     try {
@@ -177,7 +177,7 @@ function createSettingsService({
         const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
         detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || '';
         detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || '';
-        detectedConfig.gatewayToken = openclawConfig.gateway?.auth?.token || openclawConfig.gateway?.http?.auth?.token || '';
+        detectedConfig.gatewayTokenConfigured = !!(openclawConfig.gateway?.auth?.token || openclawConfig.gateway?.http?.auth?.token);
 
         if (openclawConfig.channels) {
           detectedConfig.channels = Object.keys(openclawConfig.channels).filter((channel) => openclawConfig.channels[channel]?.enabled !== false);

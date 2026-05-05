@@ -46,24 +46,26 @@ export interface AppRouteDefinition {
   component: RouteComponent
   icon?: LucideIcon
   nav?: boolean
+  section?: 'operate' | 'intelligence' | 'system' | 'audit'
+  description?: string
 }
 
 export const appRoutes: AppRouteDefinition[] = [
   { path: '/setup', label: 'Setup', module: 'settings', component: Setup, nav: false },
-  { path: '/', label: 'Dashboard', module: 'dashboard', component: Dashboard, icon: LayoutDashboard },
-  { path: '/conversations', label: 'Conversations', module: 'chat', component: Chat, icon: MessageCircle },
-  { path: '/workshop', label: 'Workshop', module: 'workshop', component: Workshop, icon: Hammer },
-  { path: '/costs', label: 'Cost Tracker', module: 'costs', component: Costs, icon: DollarSign },
-  { path: '/cron', label: 'Cron Jobs', module: 'cron', component: Cron, icon: Clock },
-  { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays },
-  { path: '/ollama', label: 'Ollama Monitor', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain },
-  { path: '/councils', label: 'Governance Archive', module: 'councils', component: Councils, icon: Landmark },
-  { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2 },
-  { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2 },
-  { path: '/memory', label: 'Memory', module: 'docs', component: Memory, icon: Brain },
-  { path: '/scout', label: 'Scout', module: 'scout', component: Scout, icon: Radar },
-  { path: '/agents', label: 'Agent Hub', module: 'agents', component: Agents, icon: Bot },
-  { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings },
+  { path: '/', label: 'Operator Briefing', module: 'dashboard', component: Dashboard, icon: LayoutDashboard, section: 'operate', description: 'Current call' },
+  { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2, section: 'operate', description: 'Live desks' },
+  { path: '/cron', label: 'Cron Jobs', module: 'cron', component: Cron, icon: Clock, section: 'operate', description: 'Automations' },
+  { path: '/conversations', label: 'Conversations', module: 'chat', component: Chat, icon: MessageCircle, section: 'operate', description: 'Sessions' },
+  { path: '/workshop', label: 'Workshop', module: 'workshop', component: Workshop, icon: Hammer, section: 'operate', description: 'Tasks' },
+  { path: '/costs', label: 'Cost Tracker', module: 'costs', component: Costs, icon: DollarSign, section: 'intelligence', description: 'Spend and model mix' },
+  { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, section: 'intelligence', description: 'Schedule' },
+  { path: '/memory', label: 'Memory', module: 'docs', component: Memory, icon: Brain, section: 'intelligence', description: 'Knowledge state' },
+  { path: '/scout', label: 'Scout', module: 'scout', component: Scout, icon: Radar, section: 'intelligence', description: 'External watch' },
+  { path: '/ollama', label: 'Ollama Monitor', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, section: 'system', description: 'Local models' },
+  { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, section: 'system', description: 'Agent map' },
+  { path: '/agents', label: 'Agent Hub', module: 'agents', component: Agents, icon: Bot, section: 'system', description: 'Runtime controls' },
+  { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings, section: 'system', description: 'Configuration' },
+  { path: '/councils', label: 'Governance Archive', module: 'councils', component: Councils, icon: Landmark, section: 'audit', description: 'Decision audit' },
   { path: '/skills', label: 'Skills', module: 'skills', component: Skills, icon: Puzzle, nav: false },
   { path: '/aws', label: 'AWS', module: 'aws', component: AWS, icon: Cloud },
 ]

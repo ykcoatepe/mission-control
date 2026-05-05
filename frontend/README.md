@@ -74,12 +74,16 @@ Important runtime endpoints include:
 
 Pages should render explicit fallback and stale-data states instead of implying
 that a runtime source is healthy when it only timed out or returned cached data.
+Cost views should preserve and label stale cached data when a background refresh
+fails instead of clearing useful totals from the operator surface.
 
 ## UX Rules
 
 - Keep the UI operator-first: compact, scan-friendly, and action-oriented.
 - Prefer concrete status, timestamps, counts, and source labels over generic
   "healthy" copy.
+- Normalize timestamps from API payloads before rendering relative ages. Backend
+  sources may send seconds, milliseconds, numeric strings, or ISO strings.
 - Keep empty or inactive systems out of primary navigation unless they help the
   operator make a decision.
 - Use route-level code splitting as currently defined in `appRoutes.tsx`.

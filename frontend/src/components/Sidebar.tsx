@@ -1,7 +1,9 @@
 import { NavLink } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { type CSSProperties, useMemo, useState, useEffect } from 'react'
 import { Activity, Bot } from 'lucide-react'
-import { sidebarRoutes } from '../appRoutes'
+import { sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
+import { timeAgo, useApi } from '../lib/hooks'
+import styles from './Sidebar.module.css'
 
 interface McConfig {
   name?: string
@@ -9,13 +11,49 @@ interface McConfig {
   modules?: Record<string, boolean>
 }
 
+type StatusPayload = {
+  agent?: {
+    model?: string
+    activeSessions?: number
+  }
+  heartbeat?: {
+    lastHeartbeat?: number | string
+    lastHeartbeatAt?: number | string
+  }
+}
+
+function normalizeHeartbeatMs(value: number | string | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) return numeric > 1e12 ? numeric : numeric * 1000
+
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  return null
+}
+
 interface SidebarProps {
   isOpen?: boolean
   onClose?: () => void
 }
 
+const navSections: Array<{ key: NonNullable<AppRouteDefinition['section']>, label: string }> = [
+  { key: 'operate', label: 'Operate' },
+  { key: 'intelligence', label: 'Intelligence' },
+  { key: 'system', label: 'System' },
+  { key: 'audit', label: 'Audit' },
+]
+
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const [config, setConfig] = useState<McConfig | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+  const { data: statusData } = useApi<StatusPayload>('/api/status', 30000)
 
   useEffect(() => {
     fetch('/api/config')
@@ -24,73 +62,102 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       .catch(() => setConfig({ name: 'Mission Control', subtitle: 'Mission Control', modules: {} }))
   }, [])
 
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30000)
+    return () => window.clearInterval(timer)
+  }, [])
+
   // Filter nav items based on enabled modules
   const navItems = config?.modules
     ? sidebarRoutes.filter(item => config.modules![item.module] !== false)
     : sidebarRoutes
 
+  const groupedItems = useMemo(() => {
+    return navSections
+      .map((section) => ({
+        ...section,
+        items: navItems.filter((item) => (item.section || 'system') === section.key),
+      }))
+      .filter((section) => section.items.length > 0)
+  }, [navItems])
+
   const displayName = config?.name || 'Mission Control'
   const subtitle = config?.subtitle || 'Mission Control'
+  const heartbeatValue = statusData?.heartbeat?.lastHeartbeat || statusData?.heartbeat?.lastHeartbeatAt
+  const heartbeatMs = normalizeHeartbeatMs(heartbeatValue)
+  const heartbeatAge = heartbeatMs ? timeAgo(new Date(heartbeatMs).toISOString()) : 'No heartbeat'
+  const heartbeatHours = heartbeatMs ? (now - heartbeatMs) / 36e5 : Infinity
+  const stateColor = heartbeatHours > 2 ? '#ff9500' : '#32d74b'
 
   return (
-    <aside 
-      style={{ width: 256, height: '100vh', display: 'flex', flexDirection: 'column', position: 'relative' }} 
-      className={`macos-sidebar ${isOpen ? 'open' : ''}`}
-    >
-      {/* Logo Section */}
-      <div style={{ padding: '16px 16px 12px', position: 'relative', zIndex: 2 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 32, height: 32, borderRadius: 8, background: '#007AFF', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Activity size={16} style={{ color: '#fff' }} />
+    <aside className={`macos-sidebar ${styles.sidebar} ${isOpen ? 'open' : ''}`}>
+      <div className={styles.brand}>
+        <div className={styles.brandRow}>
+          <div className={styles.brandIcon}>
+            <Activity size={17} />
           </div>
-          <div>
-            <h1 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>{subtitle}</h1>
-            <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', fontWeight: 500 }}>Ops Console</p>
+          <div className={styles.brandText}>
+            <h1 className={styles.brandTitle}>{subtitle}</h1>
+            <p className={styles.brandSubtitle}>Operator console</p>
           </div>
+        </div>
+
+        <div className={styles.statusCard} style={{ '--sidebar-state-color': stateColor } as CSSProperties}>
+          <div className={styles.statusTop}>
+            <div>
+              <p className={styles.statusLabel}>Runtime state</p>
+              <div className={styles.statusValue}>{heartbeatHours > 2 ? 'Watch heartbeat' : 'Live'}</div>
+            </div>
+            <span className={styles.statusDot} />
+          </div>
+          <p className={styles.statusMeta}>
+            {heartbeatAge} · {statusData?.agent?.model || 'model unknown'}
+          </p>
         </div>
       </div>
 
-      {/* Divider */}
-      <div className="divider-h" style={{ margin: '0 16px', position: 'relative', zIndex: 2 }} />
+      <div className={styles.divider} />
 
-      {/* Navigation */}
-      <nav style={{ flex: 1, padding: '12px 12px 0', position: 'relative', zIndex: 2 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {navItems.map((item) => (
-            item.icon ? (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                end={item.path === '/'}
-                className={({ isActive }) =>
-                  `macos-list-item ${isActive ? 'active' : ''}`
-                }
-                style={{ display: 'flex', alignItems: 'center', gap: 12 }}
-                onClick={onClose} // Close sidebar on mobile when nav item is clicked
-              >
-                <item.icon size={16} strokeWidth={2} />
-                <span>{item.label}</span>
-              </NavLink>
-            ) : null
-          ))}
-        </div>
+      <nav className={styles.nav}>
+        {groupedItems.map((section) => (
+          <section key={section.key} className={styles.section}>
+            <h2 className={styles.sectionTitle}>{section.label}</h2>
+            <div className={styles.items}>
+              {section.items.map((item) => (
+                item.icon ? (
+                  <NavLink
+                    key={item.path}
+                    to={item.path}
+                    end={item.path === '/'}
+                    className={({ isActive }) =>
+                      `${styles.item} ${isActive ? styles.itemActive : ''}`
+                    }
+                    onClick={onClose}
+                  >
+                    <item.icon className={styles.itemIcon} size={16} strokeWidth={2} />
+                    <span className={styles.itemCopy}>
+                      <span className={styles.itemLabel}>{item.label}</span>
+                      {item.description && <span className={styles.itemDescription}>{item.description}</span>}
+                    </span>
+                  </NavLink>
+                ) : null
+              ))}
+            </div>
+          </section>
+        ))}
       </nav>
 
-      {/* Divider */}
-      <div className="divider-h" style={{ margin: '0 16px', position: 'relative', zIndex: 2 }} />
+      <div className={styles.divider} />
 
-      {/* Footer */}
-      <div style={{ padding: 16, position: 'relative', zIndex: 2 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ position: 'relative' }}>
-            <div style={{ width: 32, height: 32, borderRadius: 8, background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Bot size={16} style={{ color: 'rgba(255,255,255,0.65)' }} />
-            </div>
-            <span className="status-dot status-dot-green" style={{ position: 'absolute', top: -4, right: -4 }} />
+      <div className={styles.footer}>
+        <div className={styles.footerRow}>
+          <div className={styles.footerIcon}>
+            <Bot size={16} />
+            <span className={styles.footerLiveDot} />
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>{displayName}</p>
-            <p style={{ fontSize: 10, color: '#32D74B', fontWeight: 500 }}>Active</p>
+          <div className={styles.footerText}>
+            <p className={styles.footerTitle}>{displayName}</p>
+            <p className={styles.footerMeta}>{statusData?.agent?.activeSessions || 0} active sessions</p>
           </div>
         </div>
       </div>

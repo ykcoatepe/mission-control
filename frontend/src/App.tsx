@@ -8,6 +8,7 @@ import styles from './App.module.css'
 import LoadingSpinner from './components/LoadingSpinner'
 import Sidebar from './components/Sidebar'
 import { useApi } from './lib/hooks'
+import ChatWidget from './components/ChatWidget'
 
 export default function App() {
   const location = useLocation()
@@ -61,6 +62,7 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+      {!isSetupPage && <ChatWidget hideLauncher />}
     </div>
   )
 }

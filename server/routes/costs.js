@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 const util = require('util');
 const { exec } = require('child_process');
 
@@ -10,7 +11,46 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const costsCache = new Map();
   const costsRefreshes = new Map();
   const costsCacheTtl = 60000;
-  const openclawUsageTimeoutMs = Number(process.env.MC_OPENCLAW_USAGE_TIMEOUT_MS || 15000);
+  const costsFallbackCacheTtl = 15000;
+  const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
+  // OpenClaw's session-cost-usage aggregation can take ~55s for 7d on Yordam's host.
+  // A too-low timeout silently produced null OpenClaw data, which mergeUsage then rendered as 0 tokens.
+  const openclawUsageTimeoutMs = Number(process.env.MC_OPENCLAW_USAGE_TIMEOUT_MS || 120000);
+
+  function persistCostsCache() {
+    try {
+      fs.mkdirSync(path.dirname(costsDiskCacheFile), { recursive: true });
+      fs.writeFileSync(costsDiskCacheFile, JSON.stringify(Object.fromEntries(costsCache), null, 2));
+    } catch (error) {
+      console.warn('[Costs API cache persist]', error.message);
+    }
+  }
+
+  function loadCostsCache() {
+    try {
+      if (!fs.existsSync(costsDiskCacheFile)) return;
+      const raw = JSON.parse(fs.readFileSync(costsDiskCacheFile, 'utf8'));
+      Object.entries(raw || {}).forEach(([key, entry]) => {
+        if (entry?.value && Number.isFinite(Number(entry.time))) {
+          costsCache.set(key, entry);
+        }
+      });
+    } catch (error) {
+      console.warn('[Costs API cache load]', error.message);
+    }
+  }
+
+  function setCostsCache(cacheKey, entry) {
+    const previous = costsCache.get(cacheKey);
+    if (!entry?.detailed && previous?.detailed) {
+      return previous;
+    }
+    costsCache.set(cacheKey, entry);
+    persistCostsCache();
+    return entry;
+  }
+
+  loadCostsCache();
 
   function hostUserHome() {
     const candidates = [
@@ -273,11 +313,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   function mergeUsage(openclawData, hermesData, period) {
     if (!openclawData && !hermesData) return null;
 
-    const openclawSource = openclawData || emptyUsage(period, 'openclaw.usage');
-    const hermesSource = hermesData || emptyUsage(period, 'hermes.state.db');
-    const openclaw = namespaceUsage(openclawSource, 'OpenClaw');
-    const hermes = namespaceUsage(hermesSource, 'Hermes');
-    const sources = [openclaw, hermes].filter(Boolean);
+    const sources = [
+      openclawData ? namespaceUsage(openclawData, 'OpenClaw') : null,
+      hermesData ? namespaceUsage(hermesData, 'Hermes') : null,
+    ].filter(Boolean);
     if (!sources.length) return null;
 
     const keySet = new Set();
@@ -318,8 +357,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
     const sumSummary = (field) => sources.reduce((sum, src) => sum + Number(src.summary?.[field] || 0), 0);
     const agents = [
-      openclaw ? { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: openclawSource.source || 'openclaw.usage', summary: openclawSource.summary || {}, byService: openclaw.byService || [] } : null,
-      hermes ? { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: hermesSource.source || 'hermes.state.db', summary: hermesSource.summary || {}, byService: hermes.byService || [] } : null,
+      openclawData ? { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: openclawData.source || 'openclaw.usage', status: 'ready', summary: openclawData.summary || {}, byService: namespaceUsage(openclawData, 'OpenClaw')?.byService || [] } : null,
+      hermesData ? { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: hermesData.source || 'hermes.state.db', status: 'ready', summary: hermesData.summary || {}, byService: namespaceUsage(hermesData, 'Hermes')?.byService || [] } : null,
     ].filter(Boolean);
 
     return {
@@ -414,48 +453,163 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
+  function attachCostsMeta(costsResult, meta = {}) {
+    const now = new Date().toISOString();
+    return {
+      ...costsResult,
+      meta: {
+        updatedAt: costsResult?.meta?.updatedAt || now,
+        refreshing: false,
+        stale: false,
+        ...(costsResult?.meta || {}),
+        ...meta,
+      },
+    };
+  }
+
+  function cachedOpenClawUsage(previous, period) {
+    const openclawAgent = previous?.agents?.find((agent) => agent.key === 'openclaw');
+    if (!openclawAgent) return null;
+
+    const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith('OpenClaw / '));
+    const modelKeys = prefixedModelKeys.map((key) => key.replace(/^OpenClaw \/ /, ''));
+    const dailyByModel = (previous.dailyByModel || []).map((row) => {
+      const out = { date: row.date, totalCost: 0, totalTokens: 0 };
+      prefixedModelKeys.forEach((prefixedKey, index) => {
+        const key = modelKeys[index];
+        const cost = Number(row[prefixedKey] || 0);
+        const tokens = Number(row[`${prefixedKey}_tokens`] || 0);
+        out[key] = cost;
+        out[`${key}_tokens`] = tokens;
+        out[`${key}_costSource`] = row[`${prefixedKey}_costSource`] || 'cached';
+        out.totalCost += cost;
+        out.totalTokens += tokens;
+      });
+      return out;
+    });
+    const daily = dailyByModel.map((row) => ({
+      date: row.date,
+      cost: row.totalCost,
+      totalCost: row.totalCost,
+      tokens: row.totalTokens,
+      totalTokens: row.totalTokens,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    }));
+    const byService = (previous.byService || [])
+      .filter((item) => item.agent === 'OpenClaw' || String(item.name || '').startsWith('OpenClaw / '))
+      .map((item) => ({ ...item, name: String(item.name || '').replace(/^OpenClaw \/ /, '') }));
+
+    return {
+      source: `${openclawAgent.source || 'openclaw.usage'}.cached`,
+      period,
+      periodRange: {
+        start: previous.period?.start || daily[0]?.date || null,
+        end: previous.period?.end || daily[daily.length - 1]?.date || null,
+      },
+      summary: openclawAgent.summary || {},
+      daily,
+      dailyByModel,
+      modelKeys,
+      byService,
+    };
+  }
+
+  function detailedCostsResult(period, combinedUsage, meta = {}) {
+    const rangeRows = combinedUsage.daily || [];
+    return attachCostsMeta({
+      source: combinedUsage.source,
+      period: {
+        key: period,
+        start: combinedUsage.periodRange?.start || (rangeRows[0]?.date || null),
+        end: combinedUsage.periodRange?.end || (rangeRows[rangeRows.length - 1]?.date || null),
+      },
+      daily: rangeRows,
+      summary: {
+        ...(combinedUsage.summary || {}),
+        budget: mcConfig.budget || { monthly: 0, warning: 0 },
+      },
+      dailyByModel: combinedUsage.dailyByModel || [],
+      modelKeys: combinedUsage.modelKeys || [],
+      byService: combinedUsage.byService || [],
+      agents: combinedUsage.agents || [],
+      budget: mcConfig.budget || { monthly: 0 },
+    }, meta);
+  }
+
   function refreshCostsCache(cacheKey, period) {
     if (costsRefreshes.has(cacheKey)) return costsRefreshes.get(cacheKey);
+
+    const startedAt = new Date().toISOString();
     const refresh = new Promise((resolve) => {
       setImmediate(async () => {
         try {
-      const [openclawData, hermesData] = await Promise.all([
-        openclawUsageSummary(period),
-        hermesUsageSummary(period),
-      ]);
-      const combinedUsage = mergeUsage(openclawData, hermesData, period);
-      if (combinedUsage) {
-        const rangeRows = combinedUsage.daily || [];
-        const byService = combinedUsage.byService || [];
-        const modelKeys = combinedUsage.modelKeys || [];
-        const dailyByModel = combinedUsage.dailyByModel || [];
+          const [openclawData, hermesData] = await Promise.all([
+            openclawUsageSummary(period),
+            hermesUsageSummary(period),
+          ]);
+          const combinedUsage = mergeUsage(openclawData, hermesData, period);
+          if (combinedUsage) {
+            const previous = costsCache.get(cacheKey)?.value;
+            const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => agent.key === 'openclaw' && Number(agent.summary?.periodTokens || 0) > 0);
+            if (!openclawData && hasPreviousOpenClaw) {
+              const cachedOpenClawData = cachedOpenClawUsage(previous, period);
+              const usageWithCachedOpenClaw = mergeUsage(cachedOpenClawData, hermesData, period);
+              const preserved = detailedCostsResult(period, usageWithCachedOpenClaw, {
+                refreshing: false,
+                stale: true,
+                refreshStartedAt: startedAt,
+                openclawStatus: 'unavailable',
+                hermesStatus: 'ready',
+                preservedPreviousOpenClaw: true,
+              });
+              setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
+              resolve(preserved);
+              return;
+            }
 
-        const costsResult = {
-          source: combinedUsage.source,
-          period: {
-            key: period,
-            start: combinedUsage.periodRange?.start || (rangeRows[0]?.date || null),
-            end: combinedUsage.periodRange?.end || (rangeRows[rangeRows.length - 1]?.date || null),
-          },
-          daily: rangeRows,
-          summary: {
-            ...(combinedUsage.summary || {}),
-            budget: mcConfig.budget || { monthly: 0, warning: 0 },
-          },
-          dailyByModel,
-          modelKeys,
-          byService,
-          agents: combinedUsage.agents || [],
-          budget: mcConfig.budget || { monthly: 0 },
-        };
-        costsCache.set(cacheKey, { value: costsResult, time: Date.now() });
+            const costsResult = detailedCostsResult(period, combinedUsage, {
+              refreshing: false,
+              stale: false,
+              refreshStartedAt: startedAt,
+              openclawStatus: openclawData ? 'ready' : 'unavailable',
+              hermesStatus: hermesData ? 'ready' : 'unavailable',
+            });
+            setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
             resolve(costsResult);
             return;
-      }
+          }
 
-          const costsResult = await buildSessionsFallbackCost(period);
-      costsCache.set(cacheKey, { value: costsResult, time: Date.now() });
-          resolve(costsResult);
+          if (!costsCache.has(cacheKey)) {
+            const fallback = attachCostsMeta(await buildSessionsFallbackCost(period), {
+              refreshing: false,
+              stale: false,
+              openclawStatus: 'unavailable',
+              hermesStatus: 'unavailable',
+            });
+            setCostsCache(cacheKey, { value: fallback, time: Date.now(), detailed: false });
+            resolve(fallback);
+            return;
+          }
+
+          const previousEntry = costsCache.get(cacheKey);
+          if (previousEntry) {
+            const preserved = attachCostsMeta(previousEntry.value, {
+              refreshing: false,
+              stale: true,
+              refreshStartedAt: startedAt,
+              openclawStatus: 'unavailable',
+              hermesStatus: 'unavailable',
+              preservedPreviousUsage: true,
+            });
+            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
+            resolve(preserved);
+            return;
+          }
+
+          resolve(null);
         } catch (error) {
           console.error('[Costs API background refresh]', error.message);
           resolve(null);
@@ -472,21 +626,36 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     try {
       const period = String(req.query.period || 'month');
       const cacheKey = `costs:${period}`;
-
       const cached = costsCache.get(cacheKey);
-      if (cached && Date.now() - cached.time < costsCacheTtl) {
-        return res.json(cached.value);
+      const refreshing = costsRefreshes.has(cacheKey);
+
+      if (cached) {
+        const ageMs = Date.now() - cached.time;
+        const ttl = cached.detailed ? costsCacheTtl : costsFallbackCacheTtl;
+        const isFresh = ageMs < ttl;
+        if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period);
+        return res.json(attachCostsMeta(cached.value, {
+          refreshing: refreshing || !isFresh,
+          stale: Boolean(cached.value?.meta?.stale) || !isFresh,
+          ageMs,
+        }));
       }
 
-      const costsResult = await refreshCostsCache(cacheKey, period)
-        || (cached ? cached.value : null)
-        || await buildSessionsFallbackCost(period);
-      return res.json(costsResult);
+      if (!refreshing) refreshCostsCache(cacheKey, period);
+      const fallback = attachCostsMeta(await buildSessionsFallbackCost(period), {
+        refreshing: true,
+        stale: false,
+        openclawStatus: 'refreshing',
+        hermesStatus: 'refreshing',
+      });
+      setCostsCache(cacheKey, { value: fallback, time: Date.now(), detailed: false });
+      return res.json(fallback);
     } catch (error) {
       console.error('[Costs API]', error.message);
       return res.status(500).json({ error: error.message });
     }
   });
+
 
   router.get('/api/costs/codexbar', async (req, res) => {
     try {

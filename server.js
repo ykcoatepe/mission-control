@@ -113,6 +113,10 @@ function validateGatewayTokenConfig() {
       throw new Error('Mission Control token drift: mc-config gateway.token does not match openclaw gateway auth token');
     }
   } catch (error) {
+    if (error?.code === 'ENOENT') {
+      console.warn('[startup] OpenClaw config not found; skipping gateway token validation until setup completes');
+      return;
+    }
     console.error('[startup] gateway token validation failed:', error.message);
     throw error;
   }
@@ -539,7 +543,7 @@ const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
 const OPS_EVENTS_PATH = path.join(__dirname, 'data/ops-events.json');
 const AGENT_REGISTRY_PATH = path.join(__dirname, 'data/agent-registry.json');
 
-app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN }));
+app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN, openclawBin: OPENCLAW_BIN }));
 app.use(buildStatusRouter({ statusService }));
 app.use(buildCronRouter({
   readRuntimeSnapshot,
