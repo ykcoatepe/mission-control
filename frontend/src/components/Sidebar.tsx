@@ -17,9 +17,25 @@ type StatusPayload = {
     activeSessions?: number
   }
   heartbeat?: {
-    lastHeartbeat?: number
-    lastHeartbeatAt?: number
+    lastHeartbeat?: number | string
+    lastHeartbeatAt?: number | string
   }
+}
+
+function normalizeHeartbeatMs(value: number | string | undefined): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? value : value * 1000
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value)
+    if (Number.isFinite(numeric)) return numeric > 1e12 ? numeric : numeric * 1000
+
+    const parsed = Date.parse(value)
+    if (Number.isFinite(parsed)) return parsed
+  }
+
+  return null
 }
 
 interface SidebarProps {
@@ -67,9 +83,10 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   const displayName = config?.name || 'Mission Control'
   const subtitle = config?.subtitle || 'Mission Control'
-  const heartbeatTs = statusData?.heartbeat?.lastHeartbeat || statusData?.heartbeat?.lastHeartbeatAt || 0
-  const heartbeatAge = heartbeatTs ? timeAgo(new Date(heartbeatTs * 1000).toISOString()) : 'No heartbeat'
-  const heartbeatHours = heartbeatTs ? (now - heartbeatTs * 1000) / 36e5 : Infinity
+  const heartbeatValue = statusData?.heartbeat?.lastHeartbeat || statusData?.heartbeat?.lastHeartbeatAt
+  const heartbeatMs = normalizeHeartbeatMs(heartbeatValue)
+  const heartbeatAge = heartbeatMs ? timeAgo(new Date(heartbeatMs).toISOString()) : 'No heartbeat'
+  const heartbeatHours = heartbeatMs ? (now - heartbeatMs) / 36e5 : Infinity
   const stateColor = heartbeatHours > 2 ? '#ff9500' : '#32d74b'
 
   return (
