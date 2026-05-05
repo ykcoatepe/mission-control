@@ -124,8 +124,23 @@ function buildChatRouter({ gatewayPort, gatewayToken, openclawBin }) {
       if (!stream) {
         const text = await gwRes.text();
         if (!gwRes.ok && isGatewayChatMiss(gwRes.status, text)) {
-          const fallback = await runMainAgent({ openclawBin, message });
-          return res.json({ choices: [{ message: { role: 'assistant', content: fallback } }] });
+          const controller = new AbortController();
+          let closed = false;
+          const abortFallback = () => {
+            closed = true;
+            controller.abort();
+          };
+          res.on('close', abortFallback);
+          try {
+            const fallback = await runMainAgent({ openclawBin, message, signal: controller.signal });
+            if (closed || res.destroyed) return;
+            return res.json({ choices: [{ message: { role: 'assistant', content: fallback } }] });
+          } catch (fallbackError) {
+            if (closed || fallbackError.name === 'AbortError') return;
+            throw fallbackError;
+          } finally {
+            res.off('close', abortFallback);
+          }
         }
         console.log('[Chat proxy] Gateway responded:', gwRes.status, text.substring(0, 100));
         return res.status(gwRes.status).send(text);
