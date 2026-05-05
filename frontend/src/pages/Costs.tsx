@@ -63,6 +63,7 @@ interface AgentUsageData {
   label: string
   accent?: string
   source?: string
+  status?: 'ready' | 'refreshing' | 'unavailable' | string
   summary: {
     periodUsd?: number
     periodTokens?: number
@@ -103,6 +104,14 @@ interface TokenData {
   }
   byService: TokenServiceData[]
   budget?: { monthly: number }
+  meta?: {
+    updatedAt?: string
+    refreshing?: boolean
+    stale?: boolean
+    ageMs?: number
+    openclawStatus?: 'ready' | 'refreshing' | 'unavailable' | string
+    hermesStatus?: 'ready' | 'refreshing' | 'unavailable' | string
+  }
 }
 
 interface CodexBarDailyEntry {
@@ -824,25 +833,21 @@ export default function Costs() {
     const retryTimers: number[] = []
 
     const loadCosts = (attempt = 0) => {
-      Promise.all([
-        fetch('/api/aws/costs').then(r => r.json()).catch(() => null),
-        fetch(`/api/costs?period=${period}`).then(r => r.json()).catch(() => null),
-        fetch('/api/config').then(r => r.json()).catch(() => ({ modules: {} })),
-        fetch('/api/sessions').then(r => r.json()).catch(() => ({ sessions: [] })),
-        fetch('/api/costs/codexbar').then(r => r.json()).catch(() => null),
-      ])
-        .then(([aws, tokens, configData, sessionsData, codexbar]) => {
+      fetch(`/api/costs?period=${period}`)
+        .then(r => r.json())
+        .then(tokens => {
           if (cancelled) return
-          setAwsCosts(aws)
           setTokenData(tokens)
-          setCodexbarCosts(codexbar && !codexbar.error ? codexbar : null)
-          setConfig(configData)
-          setSessions(sessionsData.sessions || [])
           setBudget(tokens?.budget?.monthly || 0)
           setBudgetInput((tokens?.budget?.monthly || 0).toString())
           setLoading(false)
 
-          const needsDetailedRetry = tokens?.source === 'sessions.fast_fallback' && !(tokens?.agents?.length) && attempt < 8
+          const hasDetailedAgentSplit = tokens?.agents?.some((agent: AgentUsageData) => Number(agent.summary?.periodTokens || 0) > 0)
+          const needsDetailedRetry = (
+            (tokens?.meta?.refreshing || tokens?.source === 'sessions.fast_fallback')
+            && (!hasDetailedAgentSplit || tokens?.meta?.refreshing)
+            && attempt < 60
+          )
           if (needsDetailedRetry) {
             const timer = window.setTimeout(() => loadCosts(attempt + 1), 2500)
             retryTimers.push(timer)
@@ -854,6 +859,21 @@ export default function Costs() {
           setLoading(false)
         })
     }
+
+    Promise.all([
+      fetch('/api/aws/costs').then(r => r.json()).catch(() => null),
+      fetch('/api/config').then(r => r.json()).catch(() => ({ modules: {} })),
+      fetch('/api/sessions').then(r => r.json()).catch(() => ({ sessions: [] })),
+      fetch('/api/costs/codexbar').then(r => r.json()).catch(() => null),
+    ])
+      .then(([aws, configData, sessionsData, codexbar]) => {
+        if (cancelled) return
+        setAwsCosts(aws)
+        setCodexbarCosts(codexbar && !codexbar.error ? codexbar : null)
+        setConfig(configData)
+        setSessions(sessionsData.sessions || [])
+      })
+      .catch(() => null)
 
     loadCosts()
 
@@ -1077,6 +1097,8 @@ export default function Costs() {
   const activePeriodLabel = periodLabels[period]
   const loadedCostsPeriodKey = tokenData?.period?.key
   const costsPeriodPending = !!loadedCostsPeriodKey && loadedCostsPeriodKey !== period
+  const agentSplitRefreshing = !!tokenData?.meta?.refreshing && !(tokenData?.agents?.some(agent => agent.key === 'openclaw' && Number(agent.summary?.periodTokens || 0) > 0))
+  const agentSplitPending = costsPeriodPending || agentSplitRefreshing
   const agentSplitPeriodLabel = loadedCostsPeriodKey && loadedCostsPeriodKey in periodLabels
     ? periodLabels[loadedCostsPeriodKey as keyof typeof periodLabels]
     : activePeriodLabel
@@ -1222,7 +1244,7 @@ export default function Costs() {
     },
   ].filter(Boolean) as Array<{ title: string; body: string; accent: string; icon: typeof Cpu }>
 
-  const agentSplit = costsPeriodPending ? [] : (tokenData?.agents || []).map(agent => {
+  const agentSplit = agentSplitPending ? [] : (tokenData?.agents || []).map(agent => {
     const prefix = `${agent.label} / `
     const modelTotals = new Map<string, { name: string; tokens: number; cost: number }>()
 
@@ -1526,7 +1548,7 @@ export default function Costs() {
           </div>
         </GlassCard>
 
-        {(agentSplit.length > 0 || costsPeriodPending) && (
+        {(agentSplit.length > 0 || agentSplitPending) && (
           <GlassCard delay={0.12} noPad>
             <div style={{ padding: m ? '16px' : '22px', display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
@@ -1535,19 +1557,19 @@ export default function Costs() {
                     Agent Split
                   </h3>
                   <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.48)', marginTop: 4 }}>
-                    {costsPeriodPending
+                    {agentSplitPending
                       ? `Refreshing Agent Split for the selected ${activePeriodLabel.toLowerCase()} period…`
                       : `Showing OpenClaw vs Hermes for the loaded ${agentSplitPeriodLabel.toLowerCase()} period.`}
                   </div>
                 </div>
-                {!costsPeriodPending && (
+                {!agentSplitPending && (
                   <span className="macos-badge macos-badge-blue">
                     {formatCompactTokenValue(totalAgentTokens)} TOKENS
                   </span>
                 )}
               </div>
 
-              {costsPeriodPending ? (
+              {agentSplitPending ? (
                 <div
                   style={{
                     position: 'relative',
