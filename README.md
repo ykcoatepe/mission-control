@@ -17,7 +17,8 @@ The current release is an operator-focused overhaul:
 - **Dashboard / Operator Briefing** - active calls, live session counts, channel
   heartbeat, evidence feed, quick actions, and "needs attention" signals.
 - **Cost Tracker** - OpenClaw + Hermes usage, budget posture, model/service
-  breakdowns, and fast cached responses with background refresh fallback.
+  breakdowns, and fast cached responses that preserve stale-but-useful data when
+  a background usage refresh fails.
 - **Cron Jobs + Calendar** - recurring job status, failed/overdue jobs, compact
   model display, manual run/toggle controls, and schedule-oriented scanning.
 - **Governance Archive** - read-only view of council/governance records. Council
@@ -135,6 +136,10 @@ and Express.
 The backend favors bounded reads, cached snapshots, and explicit fallbacks so the
 UI remains useful when a slow runtime source stalls. User-facing health should
 come from evidence-bearing API responses, not from optimistic labels alone.
+Cost responses merge fresh Hermes data with cached OpenClaw data when OpenClaw
+collection fails, and stale responses carry explicit metadata instead of silently
+looking fresh. Chat fallback requests are abortable on client disconnect so a
+closed browser tab does not leave child agent work running in the background.
 
 ## Validation
 
@@ -144,6 +149,7 @@ Useful local checks:
 npm run build
 cd frontend && npm run build
 node --check server.js
+node --check server/routes/chat.js
 node --check server/routes/costs.js
 ```
 
@@ -155,7 +161,10 @@ the relevant API endpoint directly with `curl`.
 - Dashboard should remain compact and decision-first. Avoid decorative surfaces
   that make runtime state harder to scan.
 - Cost Tracker should continue to return a usable fallback quickly, then refresh
-  richer OpenClaw/Hermes usage in the background.
+  richer OpenClaw/Hermes usage in the background. If one source fails, keep the
+  fresh source data and mark any cached source data as stale.
+- Chat and agent fallback routes should pass abort signals through to child work
+  and listen for response close events before cancelling that work.
 - Governance Archive is intentionally quieter than the old council workflow. If
   the council becomes operationally useful again, improve and re-enable it behind
   the existing environment gate.
