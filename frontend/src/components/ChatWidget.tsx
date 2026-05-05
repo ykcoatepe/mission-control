@@ -88,7 +88,7 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
                 </div>
                 <div>
                   <h3 className={styles.headerTitle}>Müdür</h3>
-                  <p className={styles.headerStatus}>Online</p>
+                  <p className={styles.headerStatus}>{isStreaming ? 'Replying' : 'Online'}</p>
                 </div>
               </div>
               <button onClick={() => setOpen(false)} className={styles.headerButton}>
@@ -100,7 +100,7 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
               {messages.length === 0 ? (
                 <div className={styles.emptyState}>
                   <Bot size={32} />
-                  <p style={{ fontSize: 13, fontWeight: 500, textAlign: 'center' }}>Ask me anything!</p>
+                  <p style={{ fontSize: 13, fontWeight: 500, textAlign: 'center' }}>Ask me anything.</p>
                 </div>
               ) : (
                 <div className={styles.messageList}>
@@ -125,7 +125,11 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
                         <div
                           className={styles.messageContent}
                           dangerouslySetInnerHTML={{
-                            __html: sanitizeHtml(markdownToHtml(msg.content || '...')),
+                            __html: sanitizeHtml(
+                              markdownToHtml(
+                                msg.content || (msg.streaming ? 'Müdür is preparing a reply...' : ''),
+                              ),
+                            ),
                           }}
                         />
                       </div>

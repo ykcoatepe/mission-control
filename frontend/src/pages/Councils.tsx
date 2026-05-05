@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Activity, AlertTriangle, Archive, FileText, RefreshCcw, Search, ShieldCheck, X } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import { useApi, timeAgo } from '../lib/hooks'
@@ -12,7 +13,10 @@ import {
 } from '../lib/status'
 import StatusBadge from '../components/StatusBadge'
 
-const councilLabels: Record<string, string> = {
+type CouncilFilter = 'ALL' | 'EC' | 'OC' | 'TFC' | 'CROSS'
+type CouncilKey = Exclude<CouncilFilter, 'ALL'>
+
+const councilLabels: Record<CouncilFilter, string> = {
   ALL: 'All',
   EC: 'Executive',
   OC: 'Operations',
@@ -20,7 +24,7 @@ const councilLabels: Record<string, string> = {
   CROSS: 'Cross-Council',
 }
 
-const councilTone: Record<string, string> = {
+const councilTone: Record<CouncilKey, string> = {
   EC: '#64D2FF',
   OC: '#32D74B',
   TFC: '#FF9500',
@@ -62,9 +66,58 @@ type TimelineEvent = {
   payload?: { note?: string; action?: string; by?: string; [key: string]: unknown }
 }
 
+type CouncilMetrics = {
+  activeDecisions?: number
+  totalDecisions?: number
+  conditionalApprovals?: number
+  rejectedDecisions?: number
+}
+
+type CouncilArchive = {
+  totalDecisions?: number
+  lastDecisionAt?: string | null
+}
+
+type CouncilSummary = {
+  archive?: CouncilArchive
+  metrics?: CouncilMetrics
+  councils?: Partial<Record<CouncilKey, {
+    totalDecisions?: number
+    openDecisions?: number
+    approved?: number
+    rejected?: number
+  }>>
+}
+
+type DecisionsPayload = {
+  decisions?: Decision[]
+}
+
+type GovernanceScorecard = {
+  overall?: string
+  metrics?: {
+    delegationAutorunAttempts?: number
+    delegationAutorunInfraFailureAttempts?: number
+  }
+  review?: {
+    workflowSurfaceLive24h?: number
+    governanceEventsLive24h?: number
+    workflowSurfaceSilenceHours?: number | null
+    governanceOnlyLive24h?: boolean
+    governanceOnlyLive4d?: boolean
+    selfReferentialSurfaceWarn?: boolean
+    idleAdvisories?: string[]
+    rcaTaskActive?: string | null
+  } | null
+}
+
+type TimelinePayload = {
+  events?: TimelineEvent[]
+}
+
 const safeSegment = (value: string) => {
   const raw = (value || '').toString()
-  const normalized = typeof (raw as any).toWellFormed === 'function' ? (raw as any).toWellFormed() : raw
+  const normalized = raw.replace(/[\uD800-\uDFFF]/g, '')
   return encodeURIComponent(normalized)
 }
 
@@ -89,17 +142,18 @@ function EmptyState({ text }: { text: string }) {
 }
 
 export default function Councils() {
-  const summary = useApi<any>('/api/councils/summary', 10000)
-  const decisionsApi = useApi<any>('/api/councils/decisions', 12000)
-  const scorecard = useApi<any>('/api/councils/governance/scorecard', 12000)
+  const navigate = useNavigate()
+  const summary = useApi<CouncilSummary>('/api/councils/summary', 10000)
+  const decisionsApi = useApi<DecisionsPayload>('/api/councils/decisions', 12000)
+  const scorecard = useApi<GovernanceScorecard>('/api/councils/governance/scorecard', 12000)
 
-  const [activeCouncil, setActiveCouncil] = useState<'ALL' | 'EC' | 'OC' | 'TFC' | 'CROSS'>('ALL')
+  const [activeCouncil, setActiveCouncil] = useState<CouncilFilter>('ALL')
   const [statusFilter, setStatusFilter] = useState('ALL')
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<Decision | null>(null)
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
 
-  const allDecisions = useMemo<Decision[]>(() => (decisionsApi.data?.decisions || []) as Decision[], [decisionsApi.data])
+  const allDecisions = useMemo<Decision[]>(() => decisionsApi.data?.decisions || [], [decisionsApi.data])
   const archive = summary.data?.archive || {}
   const metrics = summary.data?.metrics || {}
   const councils = summary.data?.councils || {}
@@ -109,7 +163,7 @@ export default function Councils() {
     await Promise.all([summary.refetch(), decisionsApi.refetch(), scorecard.refetch()])
     if (selected) {
       const r = await fetch(`/api/councils/decisions/${safeSegment(selected.decisionId)}/timeline`)
-      const j = await r.json()
+      const j = await r.json() as TimelinePayload
       setTimeline(j.events || [])
     }
   }
@@ -118,18 +172,12 @@ export default function Councils() {
     setSelected(decision)
     try {
       const r = await fetch(`/api/councils/decisions/${safeSegment(decision.decisionId)}/timeline`)
-      const j = await r.json()
+      const j = await r.json() as TimelinePayload
       setTimeline(j.events || [])
     } catch {
       setTimeline([])
     }
   }
-
-  useEffect(() => {
-    if (!selected) return
-    const found = allDecisions.find((decision) => decision.decisionId === selected.decisionId)
-    if (found) setSelected(found)
-  }, [allDecisions, selected?.decisionId])
 
   const statusOptions = useMemo(() => {
     const statuses = new Set<string>()
@@ -159,6 +207,9 @@ export default function Councils() {
   const isArchiveMode = Number(metrics.activeDecisions || 0) === 0
   const governanceOnly = Boolean(review?.governanceOnlyLive24h || review?.governanceOnlyLive4d || review?.selfReferentialSurfaceWarn)
   const scoreTone = healthStateColor(workflowState)
+  const selectedDecision = selected
+    ? allDecisions.find((decision) => decision.decisionId === selected.decisionId) || selected
+    : null
 
   return (
     <PageTransition>
@@ -170,7 +221,7 @@ export default function Councils() {
             </div>
             <h1 className="text-title">Decision Archive · Governance Health</h1>
             <p className="text-body" style={{ marginTop: 4, maxWidth: 760 }}>
-              Konsey artık ana operasyon masası değil: kritik kararların arşivi, açık onay alarmı ve governance’ın gerçek workflow’dan kopup kopmadığını gösteren sağlık ekranı.
+              Councils are no longer the live work queue. This page is the decision archive, open-approval alarm, and drift check for governance becoming louder than real workflow.
             </p>
           </div>
           <button onClick={refreshAll} style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.86)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
@@ -191,10 +242,15 @@ export default function Councils() {
                     {isArchiveMode ? 'Archive mode: no open council decisions' : 'Attention: open governance decisions exist'}
                   </div>
                   <div style={{ marginTop: 5, fontSize: 11, color: 'rgba(255,255,255,0.58)' }}>
-                    Normal operasyon burada yürümüyor; sadece riskli/onaylı karar geçmişi ve kopukluk alarmı burada tutuluyor.
+                    Live operation should happen in Cron Jobs, Digital Office, Workshop, or Agent Hub. This archive stays read-only unless council execution is explicitly restored.
                   </div>
                 </div>
                 <StatusBadge status={isArchiveMode ? 'info' : 'warning'} label={isArchiveMode ? 'Archive' : 'Action needed'} />
+              </div>
+              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => navigate('/cron')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Cron Jobs</button>
+                <button onClick={() => navigate('/office')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Digital Office</button>
+                <button onClick={() => navigate('/workshop')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Workshop</button>
               </div>
               <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10 }}>
                 <MiniMetric label="Total decisions" value={compactCount(archive.totalDecisions ?? metrics.totalDecisions)} tone="#64D2FF" sub="full archive" />
@@ -213,7 +269,7 @@ export default function Councils() {
                       <Activity size={15} style={{ color: scoreTone }} /> Governance vs Real Workflow
                     </div>
                     <div style={{ marginTop: 5, fontSize: 11, color: 'rgba(255,255,255,0.58)' }}>
-                      Governance event’i var ama gerçek workflow yoksa bu panel sarıya döner. Bürokrasi alarmı, kısaca.
+                      If governance events exist but real workflow is silent, this turns yellow. It is an audit warning, not a work queue.
                     </div>
                   </div>
                   <StatusBadge status={healthStateBadgeStatus(workflowState)} label={workflowState} />
@@ -243,7 +299,7 @@ export default function Councils() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span style={{ color: 'rgba(255,255,255,0.56)' }}>RCA active</span><b style={{ color: review?.rcaTaskActive ? '#FF9500' : 'rgba(255,255,255,0.86)' }}>{review?.rcaTaskActive || '—'}</b></div>
                 </div>
                 <div style={{ marginTop: 12, fontSize: 10, lineHeight: 1.5, color: 'rgba(255,255,255,0.48)' }}>
-                  Gateway self-heal bu sayfadan çıkarıldı; bu ekran artık mutasyon değil audit/health gösterir.
+                  Gateway self-heal was removed from this page; it now reports audit and health, not mutations.
                 </div>
               </div>
             </div>
@@ -252,14 +308,14 @@ export default function Councils() {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
                 <div>
                   <h3 style={{ margin: 0, fontSize: 14, color: 'rgba(255,255,255,0.93)' }}>Decision Archive ({filteredDecisions.length})</h3>
-                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.50)' }}>Read-only karar geçmişi. Aksiyon queue değil.</p>
+                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.50)' }}>Read-only decision history. Not an action queue.</p>
                 </div>
                 <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
                     <Search size={13} style={{ color: 'rgba(255,255,255,0.45)' }} />
                     <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" style={{ width: 180, border: 'none', outline: 'none', background: 'transparent', color: 'white', fontSize: 12 }} />
                   </div>
-                  <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as any)} style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(20,22,28,0.94)', color: 'white', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as CouncilFilter)} style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(20,22,28,0.94)', color: 'white', border: '1px solid rgba(255,255,255,0.12)' }}>
                     {Object.entries(councilLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                   </select>
                   <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(20,22,28,0.94)', color: 'white', border: '1px solid rgba(255,255,255,0.12)' }}>
@@ -287,7 +343,7 @@ export default function Councils() {
                 })}
               </div>
 
-              {filteredDecisions.length === 0 ? <EmptyState text="Bu filtrelerle karar kaydı yok." /> : (
+              {filteredDecisions.length === 0 ? <EmptyState text="No decision records match these filters." /> : (
                 <div style={{ display: 'grid', gap: 8 }}>
                   {filteredDecisions.slice(0, 80).map((decision) => {
                     const status = normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)
@@ -297,9 +353,9 @@ export default function Councils() {
                       <button key={decision.decisionId} onClick={() => openDecision(decision)} style={{ textAlign: 'left', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, background: 'rgba(255,255,255,0.032)', padding: 12, cursor: 'pointer' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
                           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                            <FileText size={14} style={{ color: councilTone[decision.council] || '#8E8E93', flex: '0 0 auto' }} />
+                            <FileText size={14} style={{ color: councilTone[decision.council as CouncilKey] || '#8E8E93', flex: '0 0 auto' }} />
                             <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', fontWeight: 750, whiteSpace: 'nowrap' }}>{decision.decisionId}</span>
-                            <span style={{ fontSize: 10, color: councilTone[decision.council] || '#8E8E93', fontWeight: 750 }}>{decision.council}</span>
+                            <span style={{ fontSize: 10, color: councilTone[decision.council as CouncilKey] || '#8E8E93', fontWeight: 750 }}>{decision.council}</span>
                           </div>
                           <span style={{ fontSize: 10, color: tone, fontWeight: 800 }}>{status}</span>
                         </div>
@@ -319,33 +375,33 @@ export default function Councils() {
           </>
         )}
 
-        {selected && (
+        {selectedDecision && (
           <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'flex-end' }}>
             <div style={{ width: 'min(720px, 96vw)', height: '100%', background: 'rgba(12,14,20,0.98)', borderLeft: '1px solid rgba(255,255,255,0.08)', padding: 16, overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
                 <div>
-                  <div style={{ fontSize: 12, color: councilTone[selected.council] || 'rgba(255,255,255,0.62)', fontWeight: 800 }}>{selected.council} · {selected.decisionId}</div>
-                  <h3 style={{ margin: '5px 0 0', color: 'white', lineHeight: 1.25 }}>{selected.context}</h3>
+                  <div style={{ fontSize: 12, color: councilTone[selectedDecision.council as CouncilKey] || 'rgba(255,255,255,0.62)', fontWeight: 800 }}>{selectedDecision.council} · {selectedDecision.decisionId}</div>
+                  <h3 style={{ margin: '5px 0 0', color: 'white', lineHeight: 1.25 }}>{selectedDecision.context}</h3>
                 </div>
                 <button onClick={() => setSelected(null)} style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.72)', cursor: 'pointer' }}><X size={18} /></button>
               </div>
 
               <div style={{ marginTop: 14, padding: 13, borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.84)' }}><b>Outcome:</b> {normalizeDecisionStatus(selected.status || selected.outcome || selected.decision)}</div>
+                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.84)' }}><b>Outcome:</b> {normalizeDecisionStatus(selectedDecision.status || selectedDecision.outcome || selectedDecision.decision)}</div>
                 <div style={{ marginTop: 7, fontSize: 11, color: 'rgba(255,255,255,0.62)', lineHeight: 1.55 }}>
-                  Owner: {selected.owner || '—'} · Risk: {selected.risk || '—'} · Revisit: {selected.revisitDate || '—'} · Updated: {selected.updatedAt || selected.createdAt || '—'}
-                  {selected.delegatedTaskState ? ` · Task: ${selected.delegatedTaskState}` : ''}
+                  Owner: {selectedDecision.owner || '—'} · Risk: {selectedDecision.risk || '—'} · Revisit: {selectedDecision.revisitDate || '—'} · Updated: {selectedDecision.updatedAt || selectedDecision.createdAt || '—'}
+                  {selectedDecision.delegatedTaskState ? ` · Task: ${selectedDecision.delegatedTaskState}` : ''}
                 </div>
-                {selected.rationale ? <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.55 }}><b>Rationale:</b> {selected.rationale}</div> : null}
-                {selected.conditions?.length ? <div style={{ marginTop: 10, fontSize: 11, color: '#FFB340' }}>Conditions: {selected.conditions.join(' · ')}</div> : null}
-                {selected.quorum ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Quorum: {selected.quorum.present ?? '—'} / {selected.quorum.required ?? '—'}</div> : null}
-                {selected.voters?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Voters: {selected.voters.join(', ')}</div> : null}
-                {selected.modelFamilies?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Models: {selected.modelFamilies.join(', ')}</div> : null}
-                {selected.evidence?.length ? (
+                {selectedDecision.rationale ? <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.55 }}><b>Rationale:</b> {selectedDecision.rationale}</div> : null}
+                {selectedDecision.conditions?.length ? <div style={{ marginTop: 10, fontSize: 11, color: '#FFB340' }}>Conditions: {selectedDecision.conditions.join(' · ')}</div> : null}
+                {selectedDecision.quorum ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Quorum: {selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</div> : null}
+                {selectedDecision.voters?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Voters: {selectedDecision.voters.join(', ')}</div> : null}
+                {selectedDecision.modelFamilies?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Models: {selectedDecision.modelFamilies.join(', ')}</div> : null}
+                {selectedDecision.evidence?.length ? (
                   <div style={{ marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.66)' }}>
                     <b>Evidence</b>
                     <ul style={{ marginTop: 6, paddingLeft: 18 }}>
-                      {selected.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`} style={{ marginBottom: 4 }}>{item}</li>)}
+                      {selectedDecision.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`} style={{ marginBottom: 4 }}>{item}</li>)}
                     </ul>
                   </div>
                 ) : null}
@@ -353,7 +409,7 @@ export default function Councils() {
 
               <div style={{ marginTop: 16, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
                 <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginBottom: 8, fontWeight: 800 }}>Timeline</div>
-                {timeline.length === 0 ? <EmptyState text="Bu karar için timeline event yok." /> : timeline.slice(0, 30).map((event, index) => (
+                {timeline.length === 0 ? <EmptyState text="No timeline events for this decision." /> : timeline.slice(0, 30).map((event, index) => (
                   <div key={`${event.eventId || index}`} style={{ padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
                     <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.9)', fontWeight: 700 }}>{event.eventType || event.type || 'event'}</div>
                     <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.48)', marginTop: 2 }}>{event.source || 'unknown'} · {timeAgo(event.timestamp || event.createdAt || '')}</div>

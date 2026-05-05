@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Server, Activity, Cpu, HardDrive, RefreshCw, CircleAlert, Clock3, Settings2, Save, Wand2, Copy, ChevronDown, ChevronUp } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
@@ -34,6 +34,8 @@ type OllamaGpuDevice = {
   powerDraw?: number | null
   powerLimit?: number | null
   memUsedEstimate?: boolean
+  metricSource?: string | null
+  memorySource?: string | null
 }
 
 type OllamaGpu = {
@@ -75,6 +77,8 @@ type OllamaTelemetryHistoryItem = {
   latencyMs: number | null
   memoryUsedPercent: number
   cpuUsagePercent: number
+  gpuUtilPercent?: number | null
+  gpuMemoryPercent?: number | null
   runningModels: number
   totalModels: number
   alerts: OllamaAlert[]
@@ -103,6 +107,7 @@ type OllamaModelTelemetryResponse = {
   mode: string
   estimated: boolean
   telemetrySource: string
+  limitations?: string[]
   windowMs: number
   models: OllamaModelTelemetryItem[]
 }
@@ -163,10 +168,6 @@ type OllamaTelemetry = {
   gpu?: OllamaGpu
 }
 
-function toNumberOrNull(value?: number | null) {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 function formatBytes(bytes?: number | null) {
   if (!Number.isFinite(bytes || NaN) || (bytes || 0) <= 0) return '—'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -182,6 +183,19 @@ function formatBytes(bytes?: number | null) {
 function formatMiB(v?: number | null) {
   if (!Number.isFinite(v || NaN) || (v || 0) <= 0) return '—'
   return `${v} MB`
+}
+
+function finiteNumber(value?: number | null): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function presentText(value?: string | null): string | null {
+  const text = String(value || '').trim()
+  return text && text !== '—' ? text : null
+}
+
+function modelMetaParts(model: OllamaModel) {
+  return [model.parameterSize, model.quantization, model.format].map(presentText).filter(Boolean) as string[]
 }
 
 function hasAnyGpuMetricValue(
@@ -229,6 +243,32 @@ function errorMessage(err: unknown, fallback: string) {
 function formatErrorRate(rate?: number | null) {
   if (!Number.isFinite(rate as number)) return '0.0%'
   return (Number(rate) * 100).toFixed(1) + '%'
+}
+
+function modelTelemetryLabels(estimated?: boolean) {
+  if (!estimated) {
+    return {
+      rate: 'Req/min',
+      volume: 'Requests in window',
+      volumeShort: 'Requests',
+      error: 'Average error rate',
+      errorShort: 'Err%',
+      latency: 'p95 latency',
+      source: 'Request telemetry',
+      note: 'Backed by request telemetry when available.',
+    }
+  }
+
+  return {
+    rate: 'Samples/min',
+    volume: 'Samples in window',
+    volumeShort: 'Samples',
+    error: 'Status error pressure',
+    errorShort: 'Err pressure',
+    latency: 'Probe p95',
+    source: 'Estimated telemetry',
+    note: 'Estimated from monitor snapshots and Ollama health probes; this is not a real request log.',
+  }
 }
 
 function summarizePercentTrend(values: number[]) {
@@ -296,6 +336,15 @@ function renderSparkline(values: number[], color: string, gradientId: string) {
   )
 }
 
+function MetricPill({ label, value, tone }: { label: string; value: string; tone?: 'estimate' | 'ok' }) {
+  return (
+    <div style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, padding: '9px 10px', background: 'rgba(255,255,255,0.025)', minWidth: 130 }}>
+      <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.52)' }}>{label}</p>
+      <p style={{ margin: '4px 0 0', fontSize: 13, fontWeight: 700, color: tone === 'estimate' ? '#FFB224' : 'rgba(255,255,255,0.92)' }}>{value}</p>
+    </div>
+  )
+}
+
 function OllamaLoadingState({ isMobile }: { isMobile: boolean }) {
   const panelStyle = {
     padding: isMobile ? 14 : 18,
@@ -356,8 +405,6 @@ export default function OllamaMonitor() {
   const { data, loading, error, refetch } = useApi<OllamaTelemetry>('/api/ollama/telemetry', 2500)
   const { data: historyData } = useApi<OllamaTelemetryHistoryResponse>('/api/ollama/telemetry/history', 5000)
   const { data: modelTelemetryData } = useApi<OllamaModelTelemetryResponse>('/api/ollama/telemetry/models', 5000)
-  const [gpuUtilHistory, setGpuUtilHistory] = useState<number[]>([])
-  const [gpuMemHistory, setGpuMemHistory] = useState<number[]>([])
   const [optimizationProfile, setOptimizationProfile] = useState<OllamaOptimizationProfile | null>(null)
   const [isSavingOptimization, setIsSavingOptimization] = useState(false)
   const [optimizationMessage, setOptimizationMessage] = useState('')
@@ -367,6 +414,8 @@ export default function OllamaMonitor() {
 
   const models = useMemo(() => data?.models || [], [data?.models])
   const modelMetrics = useMemo(() => modelTelemetryData?.models || [], [modelTelemetryData?.models])
+  const modelTelemetryIsEstimated = !!modelTelemetryData?.estimated
+  const modelLabels = useMemo(() => modelTelemetryLabels(modelTelemetryIsEstimated), [modelTelemetryIsEstimated])
   const modelMetricMap = useMemo(() => {
     return new Map(modelMetrics.map((metric) => [metric.name, metric]))
   }, [modelMetrics])
@@ -420,6 +469,10 @@ export default function OllamaMonitor() {
 
   const optimization = data?.optimization
   const optimizationCurrent = optimization?.current
+  const baseOptimizationProfile = useMemo(() => {
+    return optimizationCurrent ? safeProfile(optimizationCurrent) : null
+  }, [optimizationCurrent])
+  const activeOptimizationProfile = optimizationDirty ? optimizationProfile : baseOptimizationProfile
   const recommendation = optimization?.recommendation
   const platform = optimization?.platform || 'unknown'
   const healthScore = Number.isFinite(Number(data?.healthScore)) ? Number(data?.healthScore) : 0
@@ -434,19 +487,13 @@ export default function OllamaMonitor() {
       .slice(-20)
   }, [healthHistory])
 
-  useEffect(() => {
-    if (!optimizationCurrent) return
-    if (optimizationDirty) return
-    const normalized = safeProfile(optimizationCurrent)
-    setOptimizationProfile(normalized)
-  }, [optimizationCurrent, optimizationDirty])
-
   const updateOptimizationProfile = (next: Partial<OllamaOptimizationProfile>) => {
     setOptimizationProfile((prev) => {
-      if (!prev) {
+      const current = prev || activeOptimizationProfile
+      if (!current) {
         return null
       }
-      const updated = { ...prev, ...next }
+      const updated = { ...current, ...next }
       setOptimizationDirty(true)
       return updated
     })
@@ -524,14 +571,14 @@ export default function OllamaMonitor() {
   }
 
   const handleSaveOptimization = async () => {
-    if (!optimizationProfile) return
+    if (!activeOptimizationProfile) return
     setIsSavingOptimization(true)
     setOptimizationMessage('')
     try {
       const dryRunResponse = await fetch('/api/ollama/optimization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'dry-run', profile: optimizationProfile }),
+        body: JSON.stringify({ action: 'dry-run', profile: activeOptimizationProfile }),
       })
       if (!dryRunResponse.ok) {
         const text = await dryRunResponse.text()
@@ -552,7 +599,7 @@ export default function OllamaMonitor() {
       const applyResponse = await fetch('/api/ollama/optimization', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'apply', profile: optimizationProfile, confirm: true }),
+        body: JSON.stringify({ action: 'apply', profile: activeOptimizationProfile, confirm: true }),
       })
       if (!applyResponse.ok) {
         const text = await applyResponse.text()
@@ -601,35 +648,20 @@ export default function OllamaMonitor() {
     }
   }
 
-  const historyGpuAvailable = data?.gpu?.available
-  const historyGpuDevices = data?.gpu?.devices
-  const historyGpuDevice = historyGpuDevices?.[0]
-  const historyGpuUtil = historyGpuDevice?.utilGpu
-  const historyGpuMemUsed = historyGpuDevice?.memUsedMiB
-  const historyGpuMemTotal = historyGpuDevice?.memTotalMiB
-
-  useEffect(() => {
-    if (!historyGpuAvailable || !historyGpuDevices?.length) {
-      setGpuUtilHistory([])
-      setGpuMemHistory([])
-      return
-    }
-
-    const device = historyGpuDevices[0]
-    const utilValue = toNumberOrNull(device?.utilGpu)
-    if (utilValue !== null) {
-      setGpuUtilHistory((prev) => [...prev, utilValue].slice(-30))
-    }
-
-    const memUsed = toNumberOrNull(device?.memUsedMiB)
-    const memTotal = toNumberOrNull(device?.memTotalMiB)
-    if (memUsed !== null && memTotal !== null && memTotal > 0) {
-      const memPercent = Math.max(0, Math.min(100, (memUsed / memTotal) * 100))
-      if (Number.isFinite(memPercent)) {
-        setGpuMemHistory((prev) => [...prev, memPercent].slice(-30))
-      }
-    }
-  }, [historyGpuAvailable, historyGpuDevices, historyGpuUtil, historyGpuMemUsed, historyGpuMemTotal])
+  const visibleGpuUtilHistory = useMemo(() => {
+    if (!data?.gpu?.available) return []
+    return healthHistory
+      .map((item) => item.gpuUtilPercent)
+      .filter((value): value is number => Number.isFinite(value))
+      .slice(-30)
+  }, [data?.gpu?.available, healthHistory])
+  const visibleGpuMemHistory = useMemo(() => {
+    if (!data?.gpu?.available) return []
+    return healthHistory
+      .map((item) => item.gpuMemoryPercent)
+      .filter((value): value is number => Number.isFinite(value))
+      .slice(-30)
+  }, [data?.gpu?.available, healthHistory])
 
   if (loading && !data) {
     return <OllamaLoadingState isMobile={m} />
@@ -727,78 +759,111 @@ export default function OllamaMonitor() {
                       {data.gpu.limitation}
                     </p>
                   )}
-                  {data.gpu.devices.map((device) => (
-                    <div
-                      key={device.index}
-                      style={{
-                        border: '1px solid rgba(255,255,255,0.08)',
-                        borderRadius: 12,
-                        padding: 12,
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        gap: 12,
-                        flexWrap: 'wrap',
-                      }}
-                    >
-                      <div style={{ minWidth: 220 }}>
-                        <p style={{ margin: 0, fontSize: 13, color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}>{device.name}</p>
-                        <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>GPU {device.index}</p>
-                        {(device.vendor || device.cores) && (
-                          <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
-                            {device.vendor || 'Vendor bilinmiyor'}{device.cores ? ` · ${device.cores} çekirdek` : ''}
-                          </p>
-                        )}
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: 10, minWidth: 420 }}>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>GPU Kullanımı</p>
-                          <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.92)' }}>{device.utilGpu ?? '—'}%</p>
-                        </div>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>VRAM</p>
-                          <p style={{ margin: 0, fontSize: 11, color: device.memUsedEstimate ? 'rgba(255, 178, 24, 0.95)' : 'rgba(255,255,255,0.45)' }}>
-                            {device.memUsedEstimate ? 'Tahmini' : 'Ölçülen'}
-                          </p>
-                          <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.92)' }}>
-                            {formatMiB(device.memUsedMiB)} / {formatMiB(device.memTotalMiB)}
-                            {device.memUsedEstimate && (
-                              <span style={{ color: 'rgba(255,255,255,0.45)' }}> (Tahmini)</span>
-                            )}
-                            {!Number.isFinite(device.memUsedMiB as number | undefined) && !Number.isFinite(device.memTotalMiB as number | undefined) && (
-                              <span style={{ color: 'rgba(255,255,255,0.45)' }}> (Bilinmeyen)</span>
-                            )}
-                          </p>
-                        </div>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>Sıcaklık</p>
-                          <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.92)' }}>{device.tempC ?? '—'} °C</p>
-                        </div>
-                        <div>
-                          <p style={{ margin: 0, fontSize: 10, color: 'rgba(255,255,255,0.55)' }}>Güç</p>
-                          <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.92)' }}>{device.powerDraw ?? '—'} / {device.powerLimit ?? '—'} W</p>
-                        </div>
-                      </div>
+                  {data.gpu.devices.map((device) => {
+                      const utilGpu = finiteNumber(device.utilGpu)
+                      const utilMemory = finiteNumber(device.utilMemory)
+                      const memUsed = finiteNumber(device.memUsedMiB)
+                      const memTotal = finiteNumber(device.memTotalMiB)
+                      const memFree = finiteNumber(device.memFreeMiB)
+                      const tempC = finiteNumber(device.tempC)
+                      const powerDraw = finiteNumber(device.powerDraw)
+                      const powerLimit = finiteNumber(device.powerLimit)
+                      const memoryLabel = device.memUsedEstimate
+                        ? 'Memory estimate'
+                        : gpuPlatform === 'darwin'
+                          ? 'GPU memory observed'
+                          : 'VRAM used'
+                      const metricPills = [
+                        utilGpu !== null ? { label: 'GPU load', value: `${Math.round(utilGpu)}%` } : null,
+                        utilMemory !== null ? { label: 'Memory pressure', value: `${Math.round(utilMemory)}%` } : null,
+                        memUsed !== null || memTotal !== null ? {
+                          label: memoryLabel,
+                          value: [memUsed !== null ? formatMiB(memUsed) : null, memTotal !== null ? formatMiB(memTotal) : null].filter(Boolean).join(' / '),
+                          tone: device.memUsedEstimate ? 'estimate' as const : 'ok' as const,
+                        } : null,
+                        memFree !== null ? { label: gpuPlatform === 'darwin' ? 'Memory free observed' : 'VRAM free', value: formatMiB(memFree) } : null,
+                        tempC !== null ? { label: 'Temperature', value: `${Math.round(tempC)} °C` } : null,
+                        powerDraw !== null || powerLimit !== null ? {
+                          label: 'Power',
+                          value: [powerDraw !== null ? `${Math.round(powerDraw)} W` : null, powerLimit !== null ? `${Math.round(powerLimit)} W limit` : null].filter(Boolean).join(' / '),
+                        } : null,
+                      ].filter(Boolean) as { label: string; value: string; tone?: 'estimate' | 'ok' }[]
+                      const subtitle = [device.vendor, device.cores ? `${device.cores} cores` : null].map(presentText).filter(Boolean).join(' · ')
+
+                      return (
+                        <div
+                          key={device.index}
+                          style={{
+                            border: '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: 12,
+                            padding: 12,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 12,
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                            <div style={{ minWidth: 220 }}>
+                              <p style={{ margin: 0, fontSize: 13, color: 'rgba(255,255,255,0.9)', fontWeight: 700 }}>{device.name}</p>
+                              <p style={{ margin: '3px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+                                GPU {device.index}{subtitle ? ` · ${subtitle}` : ''}
+                              </p>
+                            </div>
+                            {device.memUsedEstimate ? (
+                              <p style={{ margin: 0, maxWidth: 360, fontSize: 11, lineHeight: 1.5, color: 'rgba(255,178,24,0.86)' }}>
+                                macOS does not expose per-process VRAM here; memory is estimated from loaded model size.
+                              </p>
+                            ) : null}
+                            {!device.memUsedEstimate && device.memorySource === 'apple-ioreg-unified-memory' ? (
+                              <p style={{ margin: 0, maxWidth: 360, fontSize: 11, lineHeight: 1.5, color: 'rgba(255,255,255,0.62)' }}>
+                                Memory is observed from Apple unified-memory counters, not discrete VRAM.
+                              </p>
+                            ) : null}
+                          </div>
+
+                          {metricPills.length > 0 ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: m ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fit, minmax(130px, 1fr))', gap: 10 }}>
+                              {metricPills.map((metric) => (
+                                <MetricPill key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
+                              ))}
+                            </div>
+                          ) : (
+                            <p style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.56)' }}>
+                              No live GPU counters are available from this machine right now.
+                            </p>
+                          )}
                       {device.index === data.gpu?.devices?.[0]?.index && (
                         <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 8, marginTop: 8 }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>GPU Kullanım Trendi</div>
-                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)' }}>{summarizePercentTrend(gpuUtilHistory)}</div>
-                          </div>
-                          {renderSparkline(gpuUtilHistory, '#5E5CE6', 'gpu-util-gradient')}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>VRAM Kullanım Trendi</div>
-                            <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)' }}>{summarizePercentTrend(gpuMemHistory)}</div>
-                          </div>
-                          {renderSparkline(gpuMemHistory, '#34C759', 'gpu-mem-gradient')}
+                          {visibleGpuUtilHistory.length > 0 && (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>GPU load trend</div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)' }}>{summarizePercentTrend(visibleGpuUtilHistory)}</div>
+                              </div>
+                              {renderSparkline(visibleGpuUtilHistory, '#5E5CE6', 'gpu-util-gradient')}
+                            </>
+                          )}
+                          {visibleGpuMemHistory.length > 0 && (
+                            <>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.72)' }}>
+                                  {gpuPlatform === 'darwin' ? 'GPU memory trend' : 'VRAM trend'}
+                                </div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.62)' }}>{summarizePercentTrend(visibleGpuMemHistory)}</div>
+                              </div>
+                              {renderSparkline(visibleGpuMemHistory, '#34C759', 'gpu-mem-gradient')}
+                            </>
+                          )}
                           {!hasLiveGpuMetrics && (
                             <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>
-                              GPU kullanım metrikleri toplanamadığı için trend verisi gösterilemiyor.
+                              Live GPU counters are not exposed, so unavailable charts and fields are hidden.
                             </p>
                           )}
                         </div>
                       )}
-                    </div>
-                  ))}
+                        </div>
+                      )
+                  })}
                 </div>
               )}
           </div>
@@ -844,17 +909,17 @@ export default function OllamaMonitor() {
                         >
                           <input
                             type="checkbox"
-                            checked={!!optimizationProfile?.enabled}
+                            checked={!!activeOptimizationProfile?.enabled}
                             onChange={(event) => updateOptimizationProfile({ enabled: event.target.checked })}
                           />
-                          <span style={{ fontSize: 13, color: textPrimary }}>{optimizationProfile?.enabled ? 'Aktif' : 'Pasif'}</span>
+                          <span style={{ fontSize: 13, color: textPrimary }}>{activeOptimizationProfile?.enabled ? 'Aktif' : 'Pasif'}</span>
                         </span>
                       </label>
 
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <span style={fieldLabelStyle}>Strategy</span>
                         <select
-                          value={optimizationProfile?.strategy || 'balanced'}
+                          value={activeOptimizationProfile?.strategy || 'balanced'}
                           onChange={(event) =>
                             updateOptimizationProfile({
                               strategy: (event.target.value === 'performance' || event.target.value === 'conservative'
@@ -891,7 +956,7 @@ export default function OllamaMonitor() {
                       <label style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                         <span style={fieldLabelStyle}>Keep-Alive</span>
                         <input
-                          value={optimizationProfile?.keepAlive || ''}
+                          value={activeOptimizationProfile?.keepAlive || ''}
                           onChange={(event) => updateOptimizationProfile({ keepAlive: event.target.value })}
                           style={inputStyle}
                         />
@@ -902,7 +967,7 @@ export default function OllamaMonitor() {
                           type="number"
                           min={1}
                           max={16}
-                          value={optimizationProfile?.maxLoadedModels ?? ''}
+                          value={activeOptimizationProfile?.maxLoadedModels ?? ''}
                           onChange={(event) => updateOptimizationProfile({ maxLoadedModels: Number(event.target.value) })}
                           style={inputStyle}
                         />
@@ -914,7 +979,7 @@ export default function OllamaMonitor() {
                           min={256}
                           max={65536}
                           step={256}
-                          value={optimizationProfile?.numCtx ?? ''}
+                          value={activeOptimizationProfile?.numCtx ?? ''}
                           onChange={(event) => updateOptimizationProfile({ numCtx: Number(event.target.value) })}
                           style={inputStyle}
                         />
@@ -925,7 +990,7 @@ export default function OllamaMonitor() {
                           type="number"
                           min={1}
                           max={16}
-                          value={optimizationProfile?.numParallel ?? ''}
+                          value={activeOptimizationProfile?.numParallel ?? ''}
                           onChange={(event) => updateOptimizationProfile({ numParallel: Number(event.target.value) })}
                           style={inputStyle}
                         />
@@ -1193,6 +1258,11 @@ export default function OllamaMonitor() {
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <Server size={16} />
                 <h3 style={sectionTitleStyle}>Model Durumu</h3>
+                {modelTelemetryData?.estimated ? (
+                  <span style={{ fontSize: 10, color: '#FFB224', background: 'rgba(255,178,36,0.12)', border: '1px solid rgba(255,178,36,0.22)', borderRadius: 999, padding: '3px 8px' }}>
+                    estimated telemetry
+                  </span>
+                ) : null}
               </div>
               {models.length > 0 && (
                 <button
@@ -1215,23 +1285,34 @@ export default function OllamaMonitor() {
               )}
             </div>
             {(models.length > 0 || modelMetrics.length > 0) && (
-              <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: 10, marginBottom: 14 }}>
-                <div style={{ border: panelBorder, borderRadius: 14, padding: 12, background: 'rgba(255,255,255,0.03)' }}>
-                  <p style={metricLabelStyle}>Total models</p>
-                  <p style={metricValueStyle}>{modelSummary.totalModels}</p>
-                </div>
-                <div style={{ border: panelBorder, borderRadius: 14, padding: 12, background: 'rgba(255,255,255,0.03)' }}>
-                  <p style={metricLabelStyle}>Running</p>
-                  <p style={metricValueStyle}>{modelSummary.runningCount}</p>
-                </div>
-                <div style={{ border: panelBorder, borderRadius: 14, padding: 12, background: 'rgba(255,255,255,0.03)' }}>
-                  <p style={metricLabelStyle}>Avg err%</p>
-                  <p style={metricValueStyle}>{formatErrorRate(modelSummary.avgErrorRate)}</p>
-                </div>
-                <div style={{ border: panelBorder, borderRadius: 14, padding: 12, background: 'rgba(255,255,255,0.03)' }}>
-                  <p style={metricLabelStyle}>Total requests</p>
-                  <p style={metricValueStyle}>{modelSummary.totalRequests}</p>
-                </div>
+              <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
+                <MetricPill label="Models available" value={String(modelSummary.totalModels)} />
+                <MetricPill label="Loaded now" value={String(modelSummary.runningCount)} />
+                {modelMetrics.length > 0 ? <MetricPill label={modelLabels.error} value={formatErrorRate(modelSummary.avgErrorRate)} tone={modelTelemetryIsEstimated ? 'estimate' : 'ok'} /> : null}
+                {modelMetrics.length > 0 ? <MetricPill label={modelLabels.volume} value={String(modelSummary.totalRequests)} tone={modelTelemetryIsEstimated ? 'estimate' : 'ok'} /> : null}
+              </div>
+            )}
+            {modelMetrics.length > 0 && (
+              <div
+                style={{
+                  border: modelTelemetryIsEstimated ? '1px solid rgba(255,178,36,0.20)' : panelBorder,
+                  borderRadius: 10,
+                  background: modelTelemetryIsEstimated ? 'rgba(255,178,36,0.08)' : 'rgba(255,255,255,0.03)',
+                  padding: '9px 10px',
+                  marginBottom: 12,
+                }}
+              >
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: modelTelemetryIsEstimated ? '#FFB224' : textSecondary }}>
+                  {modelLabels.source}
+                </p>
+                <p style={{ margin: '4px 0 0', fontSize: 11, color: textSecondary }}>
+                  {modelLabels.note} Source: {modelTelemetryData?.telemetrySource || 'unknown'} · Window: {Math.round((modelTelemetryData?.windowMs || 0) / 60000)}m · Updated: {formatTime(modelTelemetryData?.generatedAt)}
+                </p>
+                {!!modelTelemetryData?.limitations?.length && (
+                  <p style={{ margin: '4px 0 0', fontSize: 11, color: textTertiary }}>
+                    Limits: {modelTelemetryData.limitations.join('; ')}
+                  </p>
+                )}
               </div>
             )}
             {models.length === 0 ? (
@@ -1241,6 +1322,9 @@ export default function OllamaMonitor() {
                 {models.map((model) => {
                   const metric = modelMetricMap.get(model.name)
                   const isExpanded = !!expandedModels[model.name]
+                  const metaParts = modelMetaParts(model)
+                  const requestsPerMinute = finiteNumber(metric?.requestsPerMinute)
+                  const hasErrorRate = metric && finiteNumber(metric.errorRate) !== null
 
                   return (
                     <div
@@ -1287,17 +1371,23 @@ export default function OllamaMonitor() {
                             <StatusBadge status={model.status === 'running' ? 'active' : 'ok'} label={model.status} />
                           </div>
                           <div style={{ display: 'grid', gridTemplateColumns: m ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 0.9fr) repeat(2, minmax(100px, 0.55fr))', gap: 10, alignItems: 'center' }}>
-                            <p style={{ margin: 0, fontSize: 11, color: textTertiary }}>
-                              {model.parameterSize || '—'} · {model.quantization || '—'} · {model.format || '—'}
-                            </p>
-                            <div>
-                              <p style={metricLabelStyle}>Req/min</p>
-                              <p style={{ margin: '3px 0 0', fontSize: 13, fontWeight: 600, color: textPrimary }}>{formatMetric(metric?.requestsPerMinute, 2)}</p>
-                            </div>
-                            <div>
-                              <p style={metricLabelStyle}>Err%</p>
-                              <p style={{ margin: '3px 0 0', fontSize: 13, fontWeight: 600, color: textPrimary }}>{formatErrorRate(metric?.errorRate)}</p>
-                            </div>
+                            {metaParts.length > 0 ? (
+                              <p style={{ margin: 0, fontSize: 11, color: textTertiary }}>
+                                {metaParts.join(' · ')}
+                              </p>
+                            ) : <span />}
+                            {requestsPerMinute !== null ? (
+                              <div>
+                                <p style={metricLabelStyle}>{modelLabels.rate}</p>
+                                <p style={{ margin: '3px 0 0', fontSize: 13, fontWeight: 600, color: textPrimary }}>{formatMetric(requestsPerMinute, 2)}</p>
+                              </div>
+                            ) : <span />}
+                            {hasErrorRate ? (
+                              <div>
+                                <p style={metricLabelStyle}>{modelLabels.errorShort}</p>
+                                <p style={{ margin: '3px 0 0', fontSize: 13, fontWeight: 600, color: textPrimary }}>{formatErrorRate(metric.errorRate)}</p>
+                              </div>
+                            ) : <span />}
                           </div>
                         </div>
                         {isExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
@@ -1308,54 +1398,47 @@ export default function OllamaMonitor() {
                           {metric && (
                             <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
                               <div style={{ border: panelBorder, borderRadius: 12, padding: 10 }}>
-                                <p style={metricLabelStyle}>Req/min</p>
+                                <p style={metricLabelStyle}>{modelLabels.rate}</p>
                                 <p style={{ ...metricValueStyle, fontSize: 16 }}>{formatMetric(metric.requestsPerMinute, 2)}</p>
                               </div>
+                              {finiteNumber(metric.p95LatencyMs) !== null ? (
+                                <div style={{ border: panelBorder, borderRadius: 12, padding: 10 }}>
+                                  <p style={metricLabelStyle}>{modelLabels.latency}</p>
+                                  <p style={{ ...metricValueStyle, fontSize: 16 }}>{formatMetric(metric.p95LatencyMs, 0)} ms</p>
+                                </div>
+                              ) : null}
                               <div style={{ border: panelBorder, borderRadius: 12, padding: 10 }}>
-                                <p style={metricLabelStyle}>p95</p>
-                                <p style={{ ...metricValueStyle, fontSize: 16 }}>{formatMetric(metric.p95LatencyMs, 0)} ms</p>
-                              </div>
-                              <div style={{ border: panelBorder, borderRadius: 12, padding: 10 }}>
-                                <p style={metricLabelStyle}>Err%</p>
+                                <p style={metricLabelStyle}>{modelLabels.errorShort}</p>
                                 <p style={{ ...metricValueStyle, fontSize: 16 }}>{formatErrorRate(metric.errorRate)}</p>
                               </div>
                               <div style={{ border: panelBorder, borderRadius: 12, padding: 10 }}>
-                                <p style={metricLabelStyle}>Requests</p>
+                                <p style={metricLabelStyle}>{modelLabels.volumeShort}</p>
                                 <p style={{ ...metricValueStyle, fontSize: 16 }}>{metric.requestCount}</p>
                               </div>
                             </div>
                           )}
 
                           <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : 'repeat(4, minmax(0, 1fr))', gap: 10 }}>
-                            <div>
-                              <p style={metricLabelStyle}>Boyut</p>
-                              <p style={{ margin: '4px 0 0', fontSize: 13, color: textPrimary }}>{model.sizeLabel || '—'}</p>
-                            </div>
-                            <div>
-                              <p style={metricLabelStyle}>Aile</p>
-                              <p style={{ margin: '4px 0 0', fontSize: 13, color: textPrimary }}>{model.family || '—'}</p>
-                            </div>
-                            <div>
-                              <p style={metricLabelStyle}>Keep-Alive</p>
-                              <p style={{ margin: '4px 0 0', fontSize: 13, color: textPrimary }}>{model.keepAlive || '—'}</p>
-                            </div>
-                            <div>
-                              <p style={metricLabelStyle}>Expired / Loaded</p>
-                              <p style={{ margin: '4px 0 0', fontSize: 13, color: textPrimary }}>{formatTime(model.expiresAt)}/{formatTime(model.loadedAt)}</p>
-                            </div>
+                            {presentText(model.sizeLabel) ? <MetricPill label="Size" value={model.sizeLabel!} /> : null}
+                            {presentText(model.family) ? <MetricPill label="Family" value={model.family!} /> : null}
+                            {presentText(model.keepAlive) ? <MetricPill label="Keep-alive" value={model.keepAlive!} /> : null}
+                            {formatTime(model.loadedAt) !== '—' ? <MetricPill label="Loaded" value={formatTime(model.loadedAt)} /> : null}
+                            {formatTime(model.expiresAt) !== '—' ? <MetricPill label="Expires" value={formatTime(model.expiresAt)} /> : null}
                           </div>
 
                           <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                            <div>
-                              <p style={metricLabelStyle}>Digest</p>
-                              <p style={{ margin: '4px 0 0', fontSize: 11, color: textTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {model.digest || '—'}
-                              </p>
-                            </div>
+                            {presentText(model.digest) ? (
+                              <div>
+                                <p style={metricLabelStyle}>Digest</p>
+                                <p style={{ margin: '4px 0 0', fontSize: 11, color: textTertiary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {model.digest}
+                                </p>
+                              </div>
+                            ) : null}
                             <div>
                               <p style={metricLabelStyle}>Telemetry</p>
                               <p style={{ margin: '4px 0 0', fontSize: 11, color: textTertiary }}>
-                                {metric ? `${metric.status}${metric.estimated ? ' · estimated' : ''}` : 'Telemetry unavailable'}
+                                {metric ? `${metric.status}${metric.estimated ? ' · snapshot-estimated, not request logs' : ''}` : 'Telemetry unavailable'}
                               </p>
                             </div>
                           </div>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import PageTransition from '../components/PageTransition'
 import { useApi, timeAgo } from '../lib/hooks'
@@ -461,6 +461,7 @@ export default function DigitalOffice() {
   const [selectedDeskId, setSelectedDeskId] = useState<string | null>(null)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const detailPanelRef = useRef<HTMLDivElement | null>(null)
 
   const desks = useMemo<RankedDesk[]>(() => {
     const rawDesks = Array.isArray(data?.desks) ? data.desks : []
@@ -510,7 +511,15 @@ export default function DigitalOffice() {
 
   const openDesk = (deskId: string) => {
     setSelectedDeskId(deskId)
-    if (m) setMobileDrawerOpen(true)
+    const desk = desks.find((item) => item.id === deskId)
+    setToast({ type: 'success', text: desk ? `Showing ${desk.name} details` : 'Desk details opened' })
+    if (m) {
+      setMobileDrawerOpen(true)
+      return
+    }
+    window.requestAnimationFrame(() => {
+      detailPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' })
+    })
   }
 
   const handleCopy = async (label: string, value: string) => {
@@ -698,7 +707,7 @@ export default function DigitalOffice() {
                               gap: 6,
                             }}
                           >
-                            Inspect
+                            Details
                             <ArrowRight size={13} />
                           </button>
                         </div>
@@ -813,15 +822,17 @@ export default function DigitalOffice() {
           </div>
 
           {!m && selectedDesk ? (
-            <DrawerContent
-              desk={selectedDesk}
-              mobile={false}
-              onClose={() => undefined}
-              onCopy={handleCopy}
-              onOpenTask={openTask}
-              onOpenAgents={() => navigate('/agents')}
-              onOpenTeam={() => navigate('/team')}
-            />
+            <div ref={detailPanelRef}>
+              <DrawerContent
+                desk={selectedDesk}
+                mobile={false}
+                onClose={() => undefined}
+                onCopy={handleCopy}
+                onOpenTask={openTask}
+                onOpenAgents={() => navigate('/agents')}
+                onOpenTeam={() => navigate('/team')}
+              />
+            </div>
           ) : null}
         </div>
 

@@ -56,6 +56,64 @@ function renderPathBadge(path?: string) {
   )
 }
 
+function blockedExplanation(task: Task) {
+  const text = `${task.error || ''}\n${task.result || ''}`.trim()
+  const lower = text.toLowerCase()
+  const reasons: string[] = []
+  const nextSteps: string[] = []
+
+  if (lower.includes('no usable result')) {
+    reasons.push('The agent process returned success, but the task did not produce a usable final result.')
+    nextSteps.push('Re-run only after the gateway/config issue below is fixed; otherwise it will likely false-complete again.')
+  }
+  if (lower.includes('gateway token mismatch') || lower.includes('unauthorized')) {
+    reasons.push('The local gateway rejected the request because the configured remote token does not match.')
+    nextSteps.push('Align gateway.remote.token with the running gateway, then retry this task.')
+  }
+  if (lower.includes('missing env var')) {
+    const matches = [...text.matchAll(/missing env var "([^"]+)"/g)].map(match => match[1])
+    const unique = Array.from(new Set(matches)).slice(0, 4)
+    reasons.push(unique.length ? `Missing environment variables: ${unique.join(', ')}.` : 'One or more configured environment variables are missing.')
+    nextSteps.push('Set the required env vars only if that integration is needed; optional providers can stay disabled.')
+  }
+  if (!reasons.length && text) {
+    reasons.push(text.split('\n').find(Boolean)?.slice(0, 180) || 'The task reported an execution error.')
+  }
+  if (!nextSteps.length) {
+    nextSteps.push('Open the task report, fix the first concrete failure, then retry.')
+  }
+
+  return { reasons, nextSteps }
+}
+
+function BlockedExplanation({ task, compact = false }: { task: Task; compact?: boolean }) {
+  const explanation = blockedExplanation(task)
+  return (
+    <div style={{
+      padding: compact ? '8px 10px' : '12px 14px',
+      borderRadius: 10,
+      background: 'rgba(255,159,10,0.08)',
+      border: '1px solid rgba(255,159,10,0.2)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: compact ? 5 : 8,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 800, color: '#FFB224' }}>Why blocked</div>
+      {explanation.reasons.slice(0, compact ? 1 : 3).map((reason) => (
+        <p key={reason} style={{ margin: 0, fontSize: compact ? 11 : 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.78)' }}>{reason}</p>
+      ))}
+      {!compact && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+          <div style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.72)' }}>Next useful action</div>
+          {explanation.nextSteps.slice(0, 2).map((step) => (
+            <p key={step} style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.68)' }}>{step}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Workshop() {
   const m = useIsMobile()
   const queryClient = useQueryClient()
@@ -234,10 +292,11 @@ export default function Workshop() {
           {/* Error */}
           {viewTask.error && (
             <div className="macos-panel" style={{ padding: m ? 14 : 20, borderLeft: '3px solid #FF453A' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                 <AlertCircle size={16} style={{ color: '#FF453A' }} />
                 <p style={{ fontSize: 13, color: '#FF453A' }}>{viewTask.error}</p>
               </div>
+              <BlockedExplanation task={viewTask} />
             </div>
           )}
 
@@ -517,10 +576,8 @@ export default function Workshop() {
                       )}
 
                       {col === 'blocked' && (task.error || task.result) && (
-                        <div style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(255,159,10,0.08)', border: '1px solid rgba(255,159,10,0.18)', marginBottom: 10 }}>
-                          <p style={{ fontSize: 11, color: 'rgba(255,159,10,0.9)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                            {task.error || task.result}
-                          </p>
+                        <div style={{ marginBottom: 10 }}>
+                          <BlockedExplanation task={task} compact />
                         </div>
                       )}
 

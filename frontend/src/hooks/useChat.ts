@@ -15,6 +15,10 @@ interface UseChatOptions {
 
 const uuid = () => 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16))
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error || 'Unknown error')
+}
+
 export function useChat(options: UseChatOptions = {}) {
   const { endpoint = '/api/chat', onDelta } = options
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -86,13 +90,16 @@ export function useChat(options: UseChatOptions = {}) {
       const reader = res.body?.getReader()
       const decoder = new TextDecoder()
       let accumulated = ''
+      let buffer = ''
 
       if (reader) {
         while (true) {
           const { done, value } = await reader.read()
-          if (done) break
-          const chunk = decoder.decode(value, { stream: true })
-          for (const line of chunk.split('\n')) {
+          buffer += done ? decoder.decode() : decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = done ? '' : lines.pop() || ''
+
+          for (const line of lines) {
             if (!line.startsWith('data: ')) continue
             const data = line.slice(6)
             if (data === '[DONE]') continue
@@ -110,6 +117,7 @@ export function useChat(options: UseChatOptions = {}) {
               // Ignore malformed delta chunks from the stream.
             }
           }
+          if (done) break
         }
       }
 
@@ -118,12 +126,12 @@ export function useChat(options: UseChatOptions = {}) {
           message.id === assistantId ? { ...message, streaming: false } : message,
         ),
       )
-    } catch (error: any) {
-      if (error?.name !== 'AbortError') {
+    } catch (error: unknown) {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
         setMessages((prev) =>
           prev.map((message) =>
             message.id === assistantId
-              ? { ...message, content: `⚠️ ${error.message}`, streaming: false }
+              ? { ...message, content: `⚠️ ${errorMessage(error)}`, streaming: false }
               : message,
           ),
         )

@@ -539,7 +539,7 @@ const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
 const OPS_EVENTS_PATH = path.join(__dirname, 'data/ops-events.json');
 const AGENT_REGISTRY_PATH = path.join(__dirname, 'data/agent-registry.json');
 
-app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN }));
+app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN, openclawBin: OPENCLAW_BIN }));
 app.use(buildStatusRouter({ statusService }));
 app.use(buildCronRouter({
   readRuntimeSnapshot,
