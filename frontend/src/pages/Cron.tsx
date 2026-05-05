@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Clock, Play, Pause, AlertTriangle, CheckCircle, XCircle, Plus, Trash2, RotateCcw, Cpu } from 'lucide-react'
+import { Clock, Play, Pause, AlertTriangle, XCircle, Plus, Trash2, RotateCcw, Cpu } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
@@ -8,18 +8,15 @@ import StatusBadge from '../components/StatusBadge'
 import { useApi, timeAgo, formatDate } from '../lib/hooks'
 import { normalizeCronStatus } from '../lib/status'
 
-const statusIcons: Record<string, any> = {
-  success: CheckCircle,
-  failed: XCircle,
-  ok: CheckCircle,
-  error: XCircle,
+interface CronHistoryEntry {
+  status?: string
 }
 
 // Success rate calculator from job history
-function calcSuccessRate(history: any[]): { rate: string; pct: number; total: number; ok: number; failed: number } | null {
+function calcSuccessRate(history: CronHistoryEntry[]): { rate: string; pct: number; total: number; ok: number; failed: number } | null {
   if (!history || history.length === 0) return null
   const total = history.length
-  const ok = history.filter((h: any) => h.status === 'done' || h.status === 'success' || h.status === 'ok').length
+  const ok = history.filter((h) => h.status === 'done' || h.status === 'success' || h.status === 'ok').length
   const failed = total - ok
   const pct = Math.round((ok / total) * 100)
   return { rate: `${pct}%`, pct, total, ok, failed }
@@ -67,7 +64,31 @@ interface CronJob {
   model?: string
   thinking?: string
   description: string
-  history: any[]
+  history: CronHistoryEntry[]
+}
+
+interface CronApiResponse {
+  jobs?: CronJob[]
+}
+
+interface CronModelResponse {
+  id?: string
+  name?: string
+}
+
+interface CreateCronJobPayload {
+  name: string
+  schedule: {
+    kind: 'cron'
+    expr: string
+  }
+  sessionTarget: string
+  payload: {
+    kind: string
+    message: string
+    model?: string
+  }
+  enabled: boolean
 }
 
 const FALLBACK_MODEL_OPTIONS = [
@@ -113,7 +134,7 @@ function formatCronModelLabel(id: string, name?: string) {
   return localSuffixNeeded ? `${base} (local)` : base
 }
 
-function buildCronModelOptions(models: any[] = [], jobs: CronJob[] = []) {
+function buildCronModelOptions(models: CronModelResponse[] = [], jobs: CronJob[] = []) {
   const byId = new Map<string, { value: string; label: string }>()
   const registryIds = new Set<string>()
   const add = (value: string, label?: string, fromCurrentJobOnly = false) => {
@@ -184,7 +205,7 @@ function buildCronOverlapMarkers(jobs: CronJob[]) {
     scheduleBuckets.set(key, bucket)
   }
 
-  for (const [key, bucket] of nextRunBuckets.entries()) {
+  for (const bucket of nextRunBuckets.values()) {
     if (bucket.length < 2) continue
     const label = formatOverlapMinute(bucket[0]?.nextRun) || 'same minute'
     const detail = `${bucket.length} jobs share the next execution window`
@@ -218,7 +239,7 @@ function buildCronOverlapMarkers(jobs: CronJob[]) {
 interface CreateJobModalProps {
   isOpen: boolean
   onClose: () => void
-  onSubmit: (job: any) => void
+  onSubmit: (job: CreateCronJobPayload) => void
   modelOptions: { value: string; label: string }[]
 }
 
@@ -245,7 +266,7 @@ function CreateJobModal({ isOpen, onClose, onSubmit, modelOptions }: CreateJobMo
       return
     }
 
-    const job = {
+    const job: CreateCronJobPayload = {
       name: formData.name,
       schedule: {
         kind: 'cron',
@@ -679,13 +700,13 @@ function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: (enab
 
 export default function Cron() {
   const m = useIsMobile()
-  const { data, loading, error, refetch } = useApi<any>('/api/cron', 30000)
-  const { data: modelsData } = useApi<any[]>('/api/models', 60000)
+  const { data, loading, error, refetch } = useApi<CronApiResponse>('/api/cron', 30000)
+  const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [jobSearch, setJobSearch] = useState('')
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'disabled' | 'failed' | 'overlap'>('all')
-  const jobs: CronJob[] = data?.jobs || []
+  const jobs = useMemo<CronJob[]>(() => data?.jobs || [], [data?.jobs])
   const modelOptions = useMemo(
     () => buildCronModelOptions(Array.isArray(modelsData) ? modelsData : [], jobs),
     [modelsData, jobs]
@@ -745,7 +766,7 @@ export default function Cron() {
         headers: { 'Content-Type': 'application/json' }
       })
       if (response.ok) {
-        const jobName = jobs.find((j: any) => j.id === jobId)?.name || jobId
+        const jobName = jobs.find((j) => j.id === jobId)?.name || jobId
         setToast(`✅ "${jobName}" triggered!`)
         setTimeout(() => setToast(null), 4000)
         setTimeout(refetch, 1500)
@@ -781,7 +802,7 @@ export default function Cron() {
     setActionLoading(null)
   }
 
-  const handleCreateJob = async (job: any) => {
+  const handleCreateJob = async (job: CreateCronJobPayload) => {
     try {
       const response = await fetch('/api/cron/create', {
         method: 'POST',
@@ -810,7 +831,7 @@ export default function Cron() {
       })
 
       if (response.ok) {
-        const jobName = jobs.find((j: any) => j.id === jobId)?.name || jobId
+        const jobName = jobs.find((j) => j.id === jobId)?.name || jobId
         setToast(`✅ "${jobName}" model set to ${model || 'default'}`)
         setTimeout(() => setToast(null), 3000)
         refetch()

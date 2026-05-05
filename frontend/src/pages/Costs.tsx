@@ -151,7 +151,7 @@ interface SessionData {
 interface ConfigData {
   modules: {
     aws?: boolean
-    [key: string]: any
+    [key: string]: boolean | undefined
   }
 }
 
@@ -167,6 +167,7 @@ interface ChartDataRow {
   day: string
   fullDate: string
   total: number
+  totalTokens: number
   [key: string]: string | number
 }
 
@@ -210,10 +211,6 @@ function formatTokens(value: number) {
 function formatCompactTokenValue(value: number) {
   const safeValue = Math.round(Number.isFinite(value) ? value : 0)
   return compactNumberFormatter.format(safeValue)
-}
-
-function formatCompactTokens(value: number) {
-  return `${formatCompactTokenValue(value)} tokens`
 }
 
 // Pricing per 1M output tokens
@@ -442,12 +439,34 @@ function TrendBadge({ trend }: { trend: ReturnType<typeof calculateTrend> }) {
   )
 }
 
-function CustomChartTooltip({ active, payload, label }: any) {
+interface ChartTooltipPayloadItem {
+  value?: string | number
+  name?: string
+  dataKey?: string | number
+  color?: string
+  payload?: Record<string, string | number | undefined>
+}
+
+function readNumericField(row: Record<string, unknown>, key: string) {
+  const value = row[key]
+  const numberValue = Number(value || 0)
+  return Number.isFinite(numberValue) ? numberValue : 0
+}
+
+function CustomChartTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: ChartTooltipPayloadItem[]
+  label?: string
+}) {
   if (!active || !payload?.length) return null
 
   const rows = payload
-    .filter((entry: any) => (entry.value || 0) > 0)
-    .sort((a: any, b: any) => (b.value || 0) - (a.value || 0))
+    .filter((entry) => Number(entry.value || 0) > 0)
+    .sort((a, b) => Number(b.value || 0) - Number(a.value || 0))
 
   if (!rows.length) return null
 
@@ -468,23 +487,24 @@ function CustomChartTooltip({ active, payload, label }: any) {
         {label}
       </div>
       <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginBottom: 10 }}>
-        Total: {formatCurrency(data.total || 0)} · Tokens: {formatTokens(data.totalTokens || 0)}
+        Total: {formatCurrency(Number(data.total || 0))} · Tokens: {formatTokens(Number(data.totalTokens || 0))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-        {rows.map((entry: any) => {
-          const model = entry.name || entry.dataKey
-          const tokenKey = `${entry.dataKey}__tokens`
-          const tokens = data[tokenKey] || 0
+        {rows.map((entry) => {
+          const dataKey = String(entry.dataKey || '')
+          const model = String(entry.name || dataKey)
+          const tokenKey = `${dataKey}__tokens`
+          const tokens = Number(data[tokenKey] || 0)
           const local = isLocalModel(model)
           return (
-            <div key={entry.dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
+            <div key={dataKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                 <span
                   style={{
                     width: 10,
                     height: 10,
                     borderRadius: 999,
-                    background: entry.color,
+                    background: entry.color || '#8E8E93',
                     flexShrink: 0,
                   }}
                 />
@@ -493,7 +513,7 @@ function CustomChartTooltip({ active, payload, label }: any) {
                 </span>
               </div>
               <span style={{ color: 'rgba(255,255,255,0.96)', fontSize: 11, fontWeight: 600, textAlign: 'right' }}>
-                {local ? `${formatTokens(tokens)} tok` : `${formatCurrency(entry.value || 0)} · ${formatTokens(tokens)} tok`}
+                {local ? `${formatTokens(tokens)} tok` : `${formatCurrency(Number(entry.value || 0))} · ${formatTokens(tokens)} tok`}
               </span>
             </div>
           )
@@ -820,6 +840,7 @@ export default function Costs() {
   const [savingBudget, setSavingBudget] = useState(false)
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
+  const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
 
   const labels = {
     thisMonth: m ? 'Month' : 'This Month',
@@ -914,7 +935,7 @@ export default function Costs() {
       Object.entries(day).forEach(([key, value]) => {
         if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'totalTokens' || key.endsWith('_tokens')) return
         const cost = Number(value || 0)
-        const tokens = Number((day as any)[`${key}_tokens`] || 0)
+        const tokens = readNumericField(day, `${key}_tokens`)
         const current = totals.get(key) || { totalCost: 0, totalTokens: 0 }
         current.totalCost += Number.isFinite(cost) ? cost : 0
         current.totalTokens += Number.isFinite(tokens) ? tokens : 0
@@ -948,8 +969,8 @@ export default function Costs() {
       }
 
       chartSeries.forEach(series => {
-        const value = Number((day as any)[series.model] || 0)
-        const tokens = Number((day as any)[`${series.model}_tokens`] || 0)
+        const value = readNumericField(day, series.model)
+        const tokens = readNumericField(day, `${series.model}_tokens`)
         row[series.key] = value
         row[`${series.key}__tokens`] = tokens
         row.total = Number(row.total || 0) + value
@@ -986,16 +1007,25 @@ export default function Costs() {
   const hasSessionEstimateChart = sessionEstimateData.some(day => day.tokens > 0)
 
   useEffect(() => {
+    let cancelled = false
     const nextPool = chartData.length > 0 ? chartData : sessionEstimateData
-    if (!nextPool.length) {
-      setActiveChartDate(null)
-      return
-    }
+    const timer = window.setTimeout(() => {
+      if (cancelled) return
+      if (!nextPool.length) {
+        setActiveChartDate(null)
+        return
+      }
 
-    setActiveChartDate(current => {
-      if (current && nextPool.some(day => day.fullDate === current)) return current
-      return nextPool[nextPool.length - 1]?.fullDate || null
-    })
+      setActiveChartDate(current => {
+        if (current && nextPool.some(day => day.fullDate === current)) return current
+        return nextPool[nextPool.length - 1]?.fullDate || null
+      })
+    }, 0)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
   }, [chartData, sessionEstimateData])
 
   const tokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
@@ -1170,7 +1200,7 @@ export default function Costs() {
       model: canonicalModelName(s.model || s.displayName || 'Unknown'),
       tokens: s.totalTokens,
       cost: estimateCost(s.totalTokens, s.model),
-      timestamp: s.updatedAt ? new Date(s.updatedAt).getTime() / 1000 : Date.now() / 1000,
+      timestamp: s.updatedAt ? new Date(s.updatedAt).getTime() / 1000 : fallbackSessionTimestamp,
       color: getModelColor(s.model || ''),
       channel: s.key.split(':')[0] || 'session',
     }))
