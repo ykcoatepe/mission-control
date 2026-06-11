@@ -1,7 +1,8 @@
 import { NavLink } from 'react-router-dom'
 import { type CSSProperties, useMemo, useState, useEffect } from 'react'
-import { Activity, Bot } from 'lucide-react'
+import { Bot } from 'lucide-react'
 import { sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
+import { MissionControlMark } from './MissionControlMark'
 import { timeAgo, useApi } from '../lib/hooks'
 import styles from './Sidebar.module.css'
 
@@ -90,7 +91,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
       <div className={styles.brand}>
         <div className={styles.brandRow}>
           <div className={styles.brandIcon}>
-            <Activity size={17} />
+            <MissionControlMark size={19} />
           </div>
           <div className={styles.brandText}>
             <h1 className={styles.brandTitle}>{subtitle}</h1>
