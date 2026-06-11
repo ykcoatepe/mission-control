@@ -5,6 +5,8 @@ import { sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
 import { timeAgo, useApi } from '../lib/hooks'
 import styles from './Sidebar.module.css'
 
+const EMPTY_CONFIG: McConfig = { name: 'Mission Control', subtitle: 'Mission Control', modules: {} }
+
 interface McConfig {
   name?: string
   subtitle?: string
@@ -51,16 +53,10 @@ const navSections: Array<{ key: NonNullable<AppRouteDefinition['section']>, labe
 ]
 
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
-  const [config, setConfig] = useState<McConfig | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const { data: statusData } = useApi<StatusPayload>('/api/status', 30000)
-
-  useEffect(() => {
-    fetch('/api/config')
-      .then(r => r.json())
-      .then(setConfig)
-      .catch(() => setConfig({ name: 'Mission Control', subtitle: 'Mission Control', modules: {} }))
-  }, [])
+  const { data: configData, error: configError } = useApi<McConfig>('/api/config')
+  const config = configData ?? (configError ? EMPTY_CONFIG : null)
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 30000)
