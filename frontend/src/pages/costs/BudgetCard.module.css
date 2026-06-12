@@ -1,0 +1,161 @@
+/* ── Card inner pad ──────────────────────────────────────────── */
+
+.inner {
+  padding: 24px;
+}
+
+.innerMobile {
+  padding: 16px;
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+
+.headerRowMobile {
+  margin-bottom: 16px;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  margin: 0;
+}
+
+.titleMobile {
+  font-size: 15px;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+/* ── Input row ───────────────────────────────────────────────── */
+
+.inputRow {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.inputRowMobile {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.inputGroup {
+  flex: 1;
+}
+
+.inputLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.65);
+  margin-bottom: 8px;
+}
+
+.inputField {
+  width: 100%;
+  padding: 10px 14px;
+}
+
+/* ── Save button — dynamic opacity+cursor handled inline ──────── */
+
+.saveBtn {
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 80px;
+  /* opacity + cursor set inline (disabled state) */
+}
+
+/* ── Progress section ────────────────────────────────────────── */
+
+.progressSection {
+  margin-top: 20px;
+}
+
+.progressHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.progressHeaderLabel {
+  font-size: 12px;
+  color: rgba(255,255,255,0.65);
+}
+
+.progressHeaderValue {
+  font-size: 12px;
+  color: rgba(255,255,255,0.92);
+  font-family: system-ui;
+  font-feature-settings: "tnum";
+}
+
+.progressTrack {
+  height: 8px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progressFill {
+  height: 100%;
+  border-radius: 4px;
+  transition: all 0.6s ease;
+  /* width + background set inline (dynamic) */
+}
+
+.progressFooter {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+}
+
+.progressFooterLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+}
+
+/* ── Empty-budget placeholder ────────────────────────────────── */
+
+.noBudgetBox {
+  margin-top: 16px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.noBudgetBoxMobile {
+  padding: 14px;
+}
+
+.noBudgetBoxDesktop {
+  padding: 16px;
+}
+
+.noBudgetTitle {
+  font-size: 13px;
+  color: rgba(255,255,255,0.82);
+  font-weight: 500;
+}
+
+.noBudgetSubtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}

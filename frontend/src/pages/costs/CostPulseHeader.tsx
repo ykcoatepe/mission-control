@@ -1,7 +1,9 @@
+import type { CSSProperties } from 'react'
 import { DollarSign } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
 import { formatCurrency, formatTokens, formatCompactTokenValue } from './lib'
 import type { CodexBarCostData } from './types'
+import styles from './CostPulseHeader.module.css'
 
 interface OverviewPill {
   label: string
@@ -45,27 +47,19 @@ export default function CostPulseHeader({
 }: CostPulseHeaderProps) {
   return (
     <GlassCard delay={0} noPad>
-      <div
-        style={{
-          padding: m ? '18px' : '26px',
-          display: 'grid',
-          gridTemplateColumns: m ? '1fr' : 'minmax(0, 1.45fr) minmax(320px, 0.95fr)',
-          gap: m ? '16px' : '24px',
-          background: 'radial-gradient(circle at top left, rgba(50,215,75,0.12), transparent 34%), radial-gradient(circle at top right, rgba(94,92,230,0.16), transparent 28%), linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%)',
-        }}
-      >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', flexWrap: 'wrap' }}>
+      <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
+        <div className={styles.leftCol}>
+          <div className={styles.titleRow}>
             <div>
-              <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: '12px', margin: '0' }}>
-                <DollarSign size={m ? 24 : 28} style={{ color: '#32D74B' }} />
+              <h1 className={`text-title ${styles.titleHeading}`}>
+                <DollarSign size={m ? 24 : 28} className={styles.titleIconColor} />
                 Cost Tracker
               </h1>
-              <p className="text-body" style={{ margin: '8px 0 0 0', maxWidth: 620 }}>
+              <p className={`text-body ${styles.titleSubtitle}`}>
                 {activePeriodLabel} view with budget tracking, daily movement, and the biggest cost drivers.
               </p>
             </div>
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: m ? 'flex-start' : 'flex-end', alignItems: 'center' }}>
+            <div className={m ? `${styles.badgeRow} ${styles.badgeRowMobile}` : styles.badgeRow}>
               <span className="macos-badge macos-badge-blue">{activePeriodLabel}</span>
               <span className={`macos-badge ${hasAwsData ? 'macos-badge-green' : ledgerActive ? 'macos-badge-blue' : 'macos-badge-orange'}`}>
                 {costSourceLabel}
@@ -73,7 +67,7 @@ export default function CostPulseHeader({
             </div>
           </div>
 
-          <div style={{ display: 'inline-flex', gap: 6, padding: 4, borderRadius: 12, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', alignSelf: 'flex-start' }}>
+          <div className={styles.tabStrip}>
             {([
               ['day', 'Daily'],
               ['7d', '7 Days'],
@@ -82,69 +76,41 @@ export default function CostPulseHeader({
               <button
                 key={key}
                 onClick={() => setPeriod(key)}
-                style={{
-                  border: 'none',
-                  cursor: 'pointer',
-                  borderRadius: 9,
-                  padding: '7px 12px',
-                  background: period === key ? 'linear-gradient(180deg, rgba(10,132,255,0.32) 0%, rgba(10,132,255,0.18) 100%)' : 'transparent',
-                  color: period === key ? 'rgba(255,255,255,0.96)' : 'rgba(255,255,255,0.6)',
-                  fontSize: 12,
-                  fontWeight: 700,
-                }}
+                className={period === key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
               >
                 {label}
               </button>
             ))}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr 1fr' : `repeat(${overviewPills.length}, minmax(0, 1fr))`, gap: 10 }}>
+          <div
+            className={styles.pillsGrid}
+            style={{ '--pills-cols': m ? '1fr 1fr' : `repeat(${overviewPills.length}, minmax(0, 1fr))` } as CSSProperties}
+          >
             {overviewPills.map(pill => (
               <div
                 key={pill.label}
                 title={pill.title}
-                style={{
-                  padding: m ? '12px' : '14px',
-                  borderRadius: 16,
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px ${pill.accent}18`,
-                  minHeight: m ? 72 : 76,
-                  display: 'grid',
-                  gridTemplateRows: '30px 1fr',
-                  alignItems: 'start',
-                }}
+                className={m ? `${styles.pill} ${styles.pillMobile}` : styles.pill}
+                style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px ${pill.accent}18` }}
               >
-                <div style={{ fontSize: 11, lineHeight: 1.2, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{pill.label}</div>
-                <div style={{ alignSelf: 'end', fontSize: m ? 13 : 15, color: 'rgba(255,255,255,0.94)', fontWeight: 700, whiteSpace: 'nowrap', fontFeatureSettings: '"tnum"' }}>{pill.value}</div>
+                <div className={styles.pillLabel}>{pill.label}</div>
+                <div className={m ? `${styles.pillValue} ${styles.pillValueMobile}` : styles.pillValue}>{pill.value}</div>
               </div>
             ))}
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className={styles.rightCol}>
           {codexbarActive ? (
-            <div
-              style={{
-                minHeight: 0,
-                padding: m ? '14px' : '18px',
-                borderRadius: 20,
-                border: '1px solid rgba(255,149,0,0.28)',
-                background: 'linear-gradient(155deg, rgba(255,149,0,0.2) 0%, rgba(27,33,54,0.82) 48%, rgba(43,28,13,0.78) 100%)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'space-between',
-                gap: 18,
-                boxShadow: '0 18px 40px rgba(255,149,0,0.16)',
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+            <div className={m ? `${styles.codexbarCard} ${styles.codexbarCardMobile}` : styles.codexbarCard}>
+              <div className={styles.codexbarTopRow}>
                 <div>
-                  <div style={{ fontSize: 11, color: 'rgba(255,214,153,0.85)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>CodexBar Cost Pulse</div>
-                  <div style={{ fontSize: m ? 30 : 38, color: 'rgba(255,255,255,0.96)', fontWeight: 300, marginTop: 10 }}>
+                  <div className={styles.codexbarSubLabel}>CodexBar Cost Pulse</div>
+                  <div className={m ? `${styles.codexbarAmount} ${styles.codexbarAmountMobile}` : styles.codexbarAmount}>
                     {formatCurrency(currentPeriodCost)}
                   </div>
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.62)', marginTop: 6 }}>
+                  <div className={styles.codexbarDesc}>
                     Current month tracked spend
                   </div>
                 </div>
@@ -153,24 +119,28 @@ export default function CostPulseHeader({
                 </span>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', minWidth: 0, minHeight: 70, display: 'grid', gridTemplateRows: '30px 1fr', alignItems: 'start' }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Daily Pace</div>
-                  <div style={{ alignSelf: 'end', fontSize: m ? 16 : 17, color: 'rgba(255,255,255,0.94)', fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(dailyAvg)}</div>
+              <div className={styles.codexbarMiniGrid}>
+                <div className={styles.codexbarMiniCell}>
+                  <div className={styles.codexbarCellLabel}>Daily Pace</div>
+                  <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
+                    {formatCurrency(dailyAvg)}
+                  </div>
                 </div>
-                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', minWidth: 0, minHeight: 70, display: 'grid', gridTemplateRows: '30px 1fr', alignItems: 'start' }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Projection</div>
-                  <div style={{ alignSelf: 'end', fontSize: m ? 16 : 17, color: 'rgba(255,255,255,0.94)', fontWeight: 700, whiteSpace: 'nowrap' }}>{formatCurrency(projectedMonthly)}</div>
+                <div className={styles.codexbarMiniCell}>
+                  <div className={styles.codexbarCellLabel}>Projection</div>
+                  <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
+                    {formatCurrency(projectedMonthly)}
+                  </div>
                 </div>
-                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', minWidth: 0, minHeight: 70, display: 'grid', gridTemplateRows: '30px 1fr', alignItems: 'start' }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session Today</div>
-                  <div style={{ alignSelf: 'end', fontSize: m ? 16 : 17, color: 'rgba(255,255,255,0.94)', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                <div className={styles.codexbarMiniCell}>
+                  <div className={styles.codexbarCellLabel}>Session Today</div>
+                  <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
                     {formatCurrency(codexbarCosts?.sessionCostUSD || 0)}
                   </div>
                 </div>
-                <div title={`${formatTokens(codexbarPeriodTokens)} tokens`} style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', minWidth: 0, minHeight: 70, display: 'grid', gridTemplateRows: '30px 1fr', alignItems: 'start' }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Period Tokens</div>
-                  <div style={{ alignSelf: 'end', fontSize: m ? 16 : 17, color: 'rgba(255,255,255,0.94)', fontWeight: 700, whiteSpace: 'nowrap', fontFeatureSettings: '"tnum"' }}>
+                <div title={`${formatTokens(codexbarPeriodTokens)} tokens`} className={styles.codexbarMiniCell}>
+                  <div className={styles.codexbarCellLabel}>Period Tokens</div>
+                  <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
                     {formatCompactTokenValue(codexbarPeriodTokens)}
                   </div>
                 </div>
@@ -178,87 +148,63 @@ export default function CostPulseHeader({
             </div>
           ) : (
             <>
-              <div
-                style={{
-                  minHeight: 0,
-                  padding: m ? '14px' : '18px',
-                  borderRadius: 20,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'linear-gradient(160deg, rgba(17,19,30,0.86) 0%, rgba(27,33,54,0.8) 58%, rgba(44,31,74,0.7) 100%)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'space-between',
-                  gap: 18,
-                }}
-              >
+              <div className={m ? `${styles.pulseCard} ${styles.pulseCardMobile}` : styles.pulseCard}>
                 <div>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Current Pulse</div>
-                  <div style={{ fontSize: m ? 28 : 36, color: 'rgba(255,255,255,0.96)', fontWeight: 300, marginTop: 10 }}>
+                  <div className={styles.pulseSubLabel}>Current Pulse</div>
+                  <div className={m ? `${styles.pulseAmount} ${styles.pulseAmountMobile}` : styles.pulseAmount}>
                     {formatCurrency(currentPeriodCost)}
                   </div>
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.62)', marginTop: 6 }}>
+                  <div className={styles.pulseDesc}>
                     {period === 'month' ? 'Current month tracked spend' : `${activePeriodLabel} spend in view`}
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-                  <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Daily Pace</div>
-                    <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.94)', fontWeight: 700, marginTop: 8 }}>{formatCurrency(dailyAvg)}</div>
+                <div className={styles.pulseMiniGrid}>
+                  <div className={styles.pulseMiniCell}>
+                    <div className={styles.pulseCellLabel}>Daily Pace</div>
+                    <div className={styles.pulseCellValue}>{formatCurrency(dailyAvg)}</div>
                   </div>
-                  <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Projection</div>
-                    <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.94)', fontWeight: 700, marginTop: 8 }}>{formatCurrency(projectedMonthly)}</div>
+                  <div className={styles.pulseMiniCell}>
+                    <div className={styles.pulseCellLabel}>Projection</div>
+                    <div className={styles.pulseCellValue}>{formatCurrency(projectedMonthly)}</div>
                   </div>
                 </div>
               </div>
 
-              <div
-                style={{
-                  minHeight: 0,
-                  padding: m ? '14px' : '18px',
-                  borderRadius: 20,
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%)',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 16,
-                  opacity: 0.72,
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+              <div className={m ? `${styles.inactivePanel} ${styles.inactivePanelMobile}` : styles.inactivePanel}>
+                <div className={styles.inactiveTopRow}>
                   <div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+                    <div className={styles.inactiveSubLabel}>
                       CodexBar Real Costs
                     </div>
-                    <div style={{ fontSize: m ? 28 : 34, color: 'rgba(255,255,255,0.96)', fontWeight: 300, marginTop: 10 }}>
+                    <div className={m ? `${styles.inactiveAmount} ${styles.inactiveAmountMobile}` : styles.inactiveAmount}>
                       {formatCurrency(0)}
                     </div>
-                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.62)', marginTop: 6 }}>
+                    <div className={styles.inactiveDesc}>
                       {period === 'month' ? 'Current month invoice data' : `${activePeriodLabel} invoice data`}
                     </div>
                   </div>
-                  <span className="macos-badge" style={{ opacity: 0.7 }}>
+                  <span className={`macos-badge ${styles.badgeDimmed}`}>
                     INVOICE DATA
                   </span>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-                  <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Session Today</div>
-                    <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.94)', fontWeight: 700, marginTop: 8 }}>
+                <div className={styles.inactiveMiniGrid}>
+                  <div className={styles.inactiveMiniCell}>
+                    <div className={styles.inactiveCellLabel}>Session Today</div>
+                    <div className={styles.inactiveCellValue}>
                       {formatCurrency(codexbarCosts?.sessionCostUSD || 0)}
                     </div>
                   </div>
-                  <div title="0 tokens" style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Period Tokens</div>
-                    <div style={{ fontSize: 18, color: 'rgba(255,255,255,0.94)', fontWeight: 700, marginTop: 8, fontFeatureSettings: '"tnum"' }}>
+                  <div title="0 tokens" className={styles.inactiveMiniCell}>
+                    <div className={styles.inactiveCellLabel}>Period Tokens</div>
+                    <div className={styles.inactiveCellValue}>
                       {formatCompactTokenValue(0)}
                     </div>
                   </div>
                 </div>
 
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>
+                <div className={styles.inactiveNote}>
                   No CodexBar invoice data is active yet for this view.
                 </div>
               </div>

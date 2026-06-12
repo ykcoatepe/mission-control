@@ -10,6 +10,7 @@ import {
 } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
+import costsStyles from './costs/Costs.module.css'
 import type {
   AWSSCostData,
   TokenData,
@@ -394,17 +395,8 @@ export default function Costs() {
   if (loading) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px' }}>
-          <div
-            style={{
-              width: '32px',
-              height: '32px',
-              border: '2px solid rgba(0,122,255,0.22)',
-              borderTopColor: '#007AFF',
-              borderRadius: '50%',
-              animation: 'spin 1s linear infinite',
-            }}
-          />
+        <div className={costsStyles.loadingWrap}>
+          <div className={costsStyles.spinner} />
         </div>
       </PageTransition>
     )
@@ -413,9 +405,9 @@ export default function Costs() {
   if (error || (!awsCosts && !tokenData)) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '400px', flexDirection: 'column', gap: '16px' }}>
-          <AlertCircle size={48} style={{ color: '#FF453A' }} />
-          <p style={{ color: 'rgba(255,255,255,0.65)' }}>Failed to load cost data</p>
+        <div className={costsStyles.errorWrap}>
+          <AlertCircle size={48} className={costsStyles.errorIcon} />
+          <p className={costsStyles.errorText}>Failed to load cost data</p>
         </div>
       </PageTransition>
     )
@@ -658,16 +650,7 @@ export default function Costs() {
 
   return (
     <PageTransition>
-      <div
-        style={{
-          maxWidth: '1280px',
-          margin: '0 auto',
-          padding: m ? '16px' : '0',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: m ? '20px' : '28px',
-        }}
-      >
+      <div className={m ? `${costsStyles.page} ${costsStyles.pageMobile}` : costsStyles.page}>
         <CostPulseHeader
           m={m}
           period={period}
@@ -698,23 +681,13 @@ export default function Costs() {
         )}
 
         {budget > 0 && monthlyBudgetBase > 0 && monthlyBudgetBase / budget > 0.8 && (
-          <div
-            style={{
-              padding: m ? '12px 16px' : '16px 20px',
-              background: 'rgba(255, 149, 0, 0.15)',
-              border: '1px solid rgba(255, 149, 0, 0.3)',
-              borderRadius: '12px',
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: '12px',
-            }}
-          >
-            <AlertCircle size={20} style={{ color: '#FF9500' }} />
+          <div className={m ? `${costsStyles.budgetAlert} ${costsStyles.budgetAlertMobile}` : `${costsStyles.budgetAlert} ${costsStyles.budgetAlertDesktop}`}>
+            <AlertCircle size={20} className={costsStyles.budgetAlertIcon} />
             <div>
-              <div style={{ fontSize: m ? '13px' : '14px', color: 'rgba(255,255,255,0.92)', fontWeight: '600' }}>
+              <div className={m ? `${costsStyles.budgetAlertTitle} ${costsStyles.budgetAlertTitleMobile}` : costsStyles.budgetAlertTitle}>
                 Budget alert
               </div>
-              <div style={{ fontSize: m ? '12px' : '13px', color: 'rgba(255,255,255,0.75)', marginTop: '2px' }}>
+              <div className={m ? `${costsStyles.budgetAlertBody} ${costsStyles.budgetAlertBodyMobile}` : costsStyles.budgetAlertBody}>
                 You have used {budgetUsagePct}% of the {formatCurrency(budget)} monthly target.
               </div>
             </div>
