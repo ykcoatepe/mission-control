@@ -102,6 +102,10 @@ pages/costs/<Section>.module.css
 The orchestrator owns data fetching and top-level derivations; sections receive
 typed props and own only the memoization that serves them.
 
+`pages/cron/` follows the same shape (lib.ts + lib.test.ts + one component per
+section); pure logic extracted this way gets vitest coverage in the sibling
+`lib.test.ts`.
+
 ## Lint rules that shape code
 
 ESLint runs with the react-hooks compiler rules as errors. The ones that
