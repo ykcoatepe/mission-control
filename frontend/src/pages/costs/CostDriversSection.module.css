@@ -1,0 +1,677 @@
+/* ── Outer two-col grid ──────────────────────────────────────── */
+
+.outerGrid {
+  display: grid;
+  gap: 24px;
+  /* grid-template-columns set inline (1fr or 1.45fr 0.8fr) */
+}
+
+.outerGridMobile {
+  gap: 16px;
+}
+
+/* ── Main drivers card inner pad ─────────────────────────────── */
+
+.driversInner {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.driversInnerMobile {
+  padding: 16px;
+}
+
+/* ── Header + tab strip row ──────────────────────────────────── */
+
+.driversHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.driversTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  margin: 0;
+}
+
+.driversTitleMobile {
+  font-size: 15px;
+}
+
+.driversSubtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+.tabStrip {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.tabBtn {
+  border: none;
+  cursor: pointer;
+  border-radius: 9px;
+  padding: 7px 12px;
+  background: transparent;
+  color: rgba(255,255,255,0.58);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tabBtnActive {
+  background: linear-gradient(180deg, rgba(94,92,230,0.34) 0%, rgba(94,92,230,0.18) 100%);
+  color: rgba(255,255,255,0.96);
+}
+
+/* ── Models view ─────────────────────────────────────────────── */
+
+.modelList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.modelRow {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: grid;
+  gap: 14px;
+  align-items: center;
+  /* grid-template-columns set inline (1fr on mobile, 1.2fr 0.8fr on desktop) */
+}
+
+.modelRowMobile {
+  padding: 14px;
+}
+
+.modelRowLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modelRowTopLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.modelNameGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.modelColorDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* background set inline */
+}
+
+.modelName {
+  font-size: 15px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+}
+
+.modelNameMobile {
+  font-size: 13px;
+}
+
+.modelShare {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+}
+
+.modelProgressTrack {
+  height: 10px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.modelProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  /* width + background set inline */
+}
+
+.modelVariantNote {
+  font-size: 11px;
+  color: rgba(255,255,255,0.4);
+}
+
+.modelStatGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.modelStatCell {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.modelStatLabel {
+  font-size: 10px;
+  color: rgba(255,255,255,0.42);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.modelStatValue {
+  font-size: 14px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.emptyNote {
+  font-size: 13px;
+  color: rgba(255,255,255,0.45);
+}
+
+/* ── Sessions view ───────────────────────────────────────────── */
+
+.sessionList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.sessionRow {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sessionRowMobile {
+  padding: 14px;
+}
+
+.sessionTopLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sessionBadgeGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sessionTimestamp {
+  font-size: 11px;
+  color: rgba(255,255,255,0.38);
+}
+
+.sessionDetail {
+  display: grid;
+  gap: 12px;
+  align-items: start;
+  /* grid-template-columns set inline */
+}
+
+.sessionName {
+  font-size: 15px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+}
+
+.sessionNameMobile {
+  font-size: 14px;
+}
+
+.sessionModel {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  margin-top: 4px;
+}
+
+.sessionCostBlock {
+  /* text-align set inline (right on desktop, left on mobile) */
+}
+
+.sessionCost {
+  font-size: 18px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 700;
+}
+
+.sessionTokens {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+.sessionProgressTrack {
+  height: 8px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.sessionProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  /* width + background set inline */
+}
+
+.sessionEmptyBox {
+  text-align: center;
+  color: rgba(255,255,255,0.45);
+  /* padding set inline (responsive) */
+}
+
+.sessionEmptyTitle {
+  margin-bottom: 8px;
+}
+
+/* ── CodexBar view ───────────────────────────────────────────── */
+
+.codexbarList {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.codexbarStatGrid {
+  display: grid;
+  gap: 10px;
+  /* grid-template-columns set inline */
+}
+
+.codexbarStatCell {
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  /* padding set inline (responsive) */
+}
+
+.codexbarStatLabel {
+  font-size: 10px;
+  color: rgba(255,255,255,0.42);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.codexbarStatValue {
+  font-size: 18px;
+  font-weight: 700;
+  margin-top: 6px;
+  /* font-size + color set inline (responsive / accent) */
+}
+
+.codexbarStatSub {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+.codexbarSectionLabel {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  font-weight: 600;
+  margin-bottom: -4px;
+}
+
+.codexbarModelRow {
+  padding: 16px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,149,0,0.06) 0%, rgba(255,149,0,0.02) 100%);
+  border: 1px solid rgba(255,149,0,0.15);
+}
+
+.codexbarModelRowMobile {
+  padding: 14px;
+}
+
+.codexbarModelTopLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.codexbarModelBadgeGroup {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.codexbarModelName {
+  font-size: 15px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+}
+
+.codexbarModelNameMobile {
+  font-size: 13px;
+}
+
+.codexbarModelShare {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+}
+
+.codexbarModelProgressTrack {
+  height: 8px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+
+.codexbarModelProgressFill {
+  height: 100%;
+  background: #FF9500;
+  border-radius: 999px;
+  /* width set inline */
+}
+
+.codexbarModelStatGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.codexbarModelStatCell {
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.codexbarModelStatLabel {
+  font-size: 10px;
+  color: rgba(255,255,255,0.42);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.codexbarModelStatCostValue {
+  font-size: 14px;
+  color: #FF9500;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.codexbarModelStatTokenValue {
+  font-size: 14px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.codexbarDayRow {
+  border-radius: 14px;
+  /* padding + background + border set inline (isLatest) */
+}
+
+.codexbarDayInner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.codexbarDayLeft {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.codexbarDayDate {
+  font-size: 13px;
+  color: rgba(255,255,255,0.8);
+  font-weight: 600;
+}
+
+.codexbarDayRight {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.codexbarDayCost {
+  font-size: 13px;
+  color: #FF9500;
+  font-weight: 700;
+}
+
+.codexbarDayTokens {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+}
+
+.codexbarFooter {
+  font-size: 11px;
+  color: rgba(255,255,255,0.3);
+  text-align: center;
+  margin-top: 4px;
+}
+
+.codexbarEmpty {
+  padding: 48px 24px;
+  text-align: center;
+  color: rgba(255,255,255,0.45);
+}
+
+.codexbarEmptyTitle {
+  font-size: 14px;
+  margin-bottom: 8px;
+}
+
+.codexbarEmptySubtitle {
+  font-size: 12px;
+}
+
+/* ── Notes / signals view ────────────────────────────────────── */
+
+.notesGrid {
+  display: grid;
+  gap: 14px;
+  /* grid-template-columns set inline */
+}
+
+.signalCard {
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  /* padding + box-shadow set inline (accent) */
+}
+
+.signalCardMobile {
+  padding: 14px;
+}
+
+.signalCardDesktop {
+  padding: 16px;
+}
+
+.signalTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+}
+
+.signalBody {
+  font-size: 12px;
+  color: rgba(255,255,255,0.62);
+  line-height: 1.6;
+  margin-top: 10px;
+}
+
+.methodologyCard {
+  border-radius: 18px;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  /* padding set inline (responsive); grid-column set inline (span full on desktop) */
+}
+
+.methodologyTitle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: rgba(255,255,255,0.9);
+  font-weight: 700;
+}
+
+.methodologyBody {
+  font-size: 12px;
+  color: rgba(255,255,255,0.55);
+  line-height: 1.7;
+  margin-top: 10px;
+}
+
+.iconOrange {
+  color: #FF9500;
+}
+
+/* ── Credits runway card ─────────────────────────────────────── */
+
+.runwayInner {
+  padding: 24px;
+}
+
+.runwayInnerMobile {
+  padding: 16px;
+}
+
+.runwayHeader {
+  margin-bottom: 24px;
+}
+
+.runwayHeaderMobile {
+  margin-bottom: 16px;
+}
+
+.runwayTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  margin: 0;
+}
+
+.runwayTitleMobile {
+  font-size: 15px;
+}
+
+.runwaySubtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+.runwayProgressSection {
+  margin-bottom: 20px;
+}
+
+.runwayProgressHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.runwayProgressLabel {
+  font-size: 14px;
+  color: rgba(255,255,255,0.65);
+}
+
+.runwayProgressLabelMobile {
+  font-size: 12px;
+}
+
+.runwayProgressValue {
+  font-size: 14px;
+  color: rgba(255,255,255,0.92);
+  font-family: system-ui;
+  font-feature-settings: "tnum";
+}
+
+.runwayProgressValueMobile {
+  font-size: 12px;
+}
+
+.runwayTrack {
+  height: 12px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.runwayFill {
+  height: 100%;
+  border-radius: 6px;
+  transition: width 0.6s ease;
+  /* width + background set inline (dynamic) */
+}
+
+.runwayStats {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.runwayStatRow {
+  display: flex;
+  justify-content: space-between;
+}
+
+.runwayStatLabel {
+  color: rgba(255,255,255,0.45);
+}
+
+.runwayStatLabelMobile {
+  font-size: 12px;
+}
+
+.runwayStatLabelDesktop {
+  font-size: 13px;
+}
+
+.runwayStatValue {
+  color: rgba(255,255,255,0.92);
+  font-weight: 600;
+}
+
+.runwayStatValueMobile {
+  font-size: 12px;
+}
+
+.runwayStatValueDesktop {
+  font-size: 13px;
+}

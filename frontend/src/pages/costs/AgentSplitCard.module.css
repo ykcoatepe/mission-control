@@ -1,0 +1,312 @@
+/* ── Outer pad ───────────────────────────────────────────────── */
+
+.outer {
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.outerMobile {
+  padding: 16px;
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.title {
+  font-size: 16px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.94);
+  margin: 0;
+}
+
+.titleMobile {
+  font-size: 15px;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.48);
+  margin-top: 4px;
+}
+
+.badgeGroup {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── Pending/loading skeleton card ───────────────────────────── */
+
+.pendingCard {
+  position: relative;
+  overflow: hidden;
+  padding: 22px;
+  border-radius: 20px;
+  border: 1px solid rgba(10,132,255,0.18);
+  background:
+    radial-gradient(circle at 16% 18%, rgba(10,132,255,0.18), transparent 34%),
+    radial-gradient(circle at 86% 8%, rgba(94,92,230,0.16), transparent 28%),
+    rgba(255,255,255,0.035);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+}
+
+.pendingCardMobile {
+  padding: 18px;
+}
+
+.pendingTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.pendingIconRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pendingIconWrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(10,132,255,0.14);
+  border: 1px solid rgba(10,132,255,0.22);
+}
+
+.pendingSpinner {
+  color: #0A84FF;
+  animation: spin 1s linear infinite;
+}
+
+.pendingTitle {
+  font-size: 14px;
+  color: rgba(255,255,255,0.9);
+  font-weight: 800;
+}
+
+.pendingSubtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.52);
+  margin-top: 3px;
+}
+
+.pendingGrid {
+  display: grid;
+  gap: 12px;
+}
+
+/* grid-template-columns set inline (1fr on mobile, repeat(2,…) on desktop) */
+
+.pendingAgentCell {
+  padding: 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.04);
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.pendingAgentCellMobile {
+  padding: 14px;
+}
+
+.pendingAgentTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pendingAgentLabel {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.pendingDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  /* background set inline per agent */
+}
+
+.pendingAgentName {
+  font-size: 13px;
+  color: rgba(255,255,255,0.72);
+  font-weight: 800;
+}
+
+.pendingSkeletonBar {
+  width: 42px;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.12), rgba(255,255,255,0.22), rgba(255,255,255,0.12));
+  opacity: 0.72;
+}
+
+.pendingMetricGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.pendingMetricLabelBar {
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.10);
+  margin-bottom: 9px;
+}
+
+.pendingMetricValueBar {
+  height: 24px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.08), rgba(255,255,255,0.18), rgba(255,255,255,0.08));
+}
+
+.pendingProgressTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+
+.pendingProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  opacity: 0.58;
+  /* width and background set inline per agent */
+}
+
+/* ── Live agent cards grid ───────────────────────────────────── */
+
+.agentGrid {
+  display: grid;
+  gap: 12px;
+  /* grid-template-columns set inline */
+}
+
+.agentCard {
+  padding: 18px;
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  /* border, background, box-shadow set inline via accent */
+}
+
+.agentCardMobile {
+  padding: 14px;
+}
+
+.agentCardTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.agentCardLabel {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.agentDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  /* background + box-shadow set inline */
+}
+
+.agentName {
+  font-size: 14px;
+  color: rgba(255,255,255,0.9);
+  font-weight: 800;
+}
+
+.agentShare {
+  font-size: 12px;
+  color: rgba(255,255,255,0.58);
+  font-weight: 700;
+}
+
+.agentMetricGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.agentMetricLabel {
+  font-size: 10px;
+  color: rgba(255,255,255,0.42);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.agentMetricValue {
+  font-size: 26px;
+  color: rgba(255,255,255,0.96);
+  font-weight: 300;
+  margin-top: 5px;
+}
+
+.agentMetricValueMobile {
+  font-size: 22px;
+}
+
+.agentCostLabel {
+  font-size: 10px;
+  font-weight: 700;
+  margin-top: 4px;
+  /* color set inline: Metered vs paid */
+}
+
+.agentProgressSection {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.agentProgressTrack {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.08);
+  overflow: hidden;
+}
+
+.agentProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  /* width + background set inline */
+}
+
+.agentTopModel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.48);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}

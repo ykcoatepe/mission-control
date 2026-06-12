@@ -1,0 +1,389 @@
+/* ── Outer container ─────────────────────────────────────────── */
+
+.outer {
+  padding: 26px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.95fr);
+  gap: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(50,215,75,0.12), transparent 34%),
+    radial-gradient(circle at top right, rgba(94,92,230,0.16), transparent 28%),
+    linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.01) 100%);
+}
+
+.outerMobile {
+  padding: 18px;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+/* ── Left column ─────────────────────────────────────────────── */
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.titleRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.titleIconColor {
+  color: #32D74B;
+}
+
+.titleHeading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+}
+
+.titleSubtitle {
+  margin: 8px 0 0 0;
+  max-width: 620px;
+}
+
+.badgeRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.badgeRowMobile {
+  justify-content: flex-start;
+}
+
+/* ── Period tab strip ────────────────────────────────────────── */
+
+.tabStrip {
+  display: inline-flex;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  align-self: flex-start;
+}
+
+.tabBtn {
+  border: none;
+  cursor: pointer;
+  border-radius: 9px;
+  padding: 7px 12px;
+  background: transparent;
+  color: rgba(255,255,255,0.6);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tabBtnActive {
+  background: linear-gradient(180deg, rgba(10,132,255,0.32) 0%, rgba(10,132,255,0.18) 100%);
+  color: rgba(255,255,255,0.96);
+}
+
+/* ── Overview pills grid ─────────────────────────────────────── */
+
+.pillsGrid {
+  display: grid;
+  gap: 10px;
+  /* grid-template-columns driven by --pills-cols CSS var set inline */
+  grid-template-columns: var(--pills-cols, repeat(1, minmax(0, 1fr)));
+}
+
+.pill {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  /* box-shadow uses --pill-accent set inline per-element */
+  min-height: 76px;
+  display: grid;
+  grid-template-rows: 30px 1fr;
+  align-items: start;
+}
+
+.pillMobile {
+  padding: 12px;
+  min-height: 72px;
+}
+
+.pillLabel {
+  font-size: 11px;
+  line-height: 1.2;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.pillValue {
+  align-self: end;
+  font-size: 15px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  white-space: nowrap;
+  font-feature-settings: "tnum";
+}
+
+.pillValueMobile {
+  font-size: 13px;
+}
+
+/* ── Right column ────────────────────────────────────────────── */
+
+.rightCol {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Codexbar active card ────────────────────────────────────── */
+
+.codexbarCard {
+  min-height: 0;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,149,0,0.28);
+  background: linear-gradient(155deg, rgba(255,149,0,0.2) 0%, rgba(27,33,54,0.82) 48%, rgba(43,28,13,0.78) 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+  box-shadow: 0 18px 40px rgba(255,149,0,0.16);
+}
+
+.codexbarCardMobile {
+  padding: 14px;
+}
+
+.codexbarTopRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.codexbarSubLabel {
+  font-size: 11px;
+  color: rgba(255,214,153,0.85);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.codexbarAmount {
+  font-size: 38px;
+  color: rgba(255,255,255,0.96);
+  font-weight: 300;
+  margin-top: 10px;
+}
+
+.codexbarAmountMobile {
+  font-size: 30px;
+}
+
+.codexbarDesc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.62);
+  margin-top: 6px;
+}
+
+.codexbarMiniGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.codexbarMiniCell {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  min-width: 0;
+  min-height: 70px;
+  display: grid;
+  grid-template-rows: 30px 1fr;
+  align-items: start;
+}
+
+.codexbarCellLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.codexbarCellValue {
+  align-self: end;
+  font-size: 17px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.codexbarCellValueMobile {
+  font-size: 16px;
+}
+
+/* ── Inactive pulse card (no codexbar) ───────────────────────── */
+
+.pulseCard {
+  min-height: 0;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(160deg, rgba(17,19,30,0.86) 0%, rgba(27,33,54,0.8) 58%, rgba(44,31,74,0.7) 100%);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.pulseCardMobile {
+  padding: 14px;
+}
+
+.pulseSubLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.pulseAmount {
+  font-size: 36px;
+  color: rgba(255,255,255,0.96);
+  font-weight: 300;
+  margin-top: 10px;
+}
+
+.pulseAmountMobile {
+  font-size: 28px;
+}
+
+.pulseDesc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.62);
+  margin-top: 6px;
+}
+
+.pulseMiniGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pulseMiniCell {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.pulseCellLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.pulseCellValue {
+  font-size: 18px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+/* ── Inactive codexbar panel ─────────────────────────────────── */
+
+.inactivePanel {
+  min-height: 0;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.015) 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  opacity: 0.72;
+}
+
+.inactivePanelMobile {
+  padding: 14px;
+}
+
+.inactiveTopRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.inactiveSubLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.inactiveAmount {
+  font-size: 34px;
+  color: rgba(255,255,255,0.96);
+  font-weight: 300;
+  margin-top: 10px;
+}
+
+.inactiveAmountMobile {
+  font-size: 28px;
+}
+
+.inactiveDesc {
+  font-size: 13px;
+  color: rgba(255,255,255,0.62);
+  margin-top: 6px;
+}
+
+.inactiveMiniGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.inactiveMiniCell {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.inactiveCellLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.inactiveCellValue {
+  font-size: 18px;
+  color: rgba(255,255,255,0.94);
+  font-weight: 700;
+  margin-top: 8px;
+  font-feature-settings: "tnum";
+}
+
+.inactiveNote {
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+}
+
+.badgeDimmed {
+  opacity: 0.7;
+}

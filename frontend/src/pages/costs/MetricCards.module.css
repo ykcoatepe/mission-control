@@ -1,0 +1,136 @@
+/* ── Outer grid ──────────────────────────────────────────────── */
+
+.grid {
+  display: grid;
+  gap: 20px;
+  /* grid-template-columns driven inline by isAwsEnabled/m booleans */
+}
+
+.gridMobile {
+  gap: 12px;
+}
+
+/* ── Card inner pad ──────────────────────────────────────────── */
+
+.cardInner {
+  padding: 24px;
+}
+
+.cardInnerMobile {
+  padding: 16px;
+}
+
+/* ── Icon + label row ────────────────────────────────────────── */
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.iconWrap {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* background set inline (depends on currentPeriodCost for one card) */
+}
+
+.iconWrapMobile {
+  width: 40px;
+  height: 40px;
+}
+
+.cardLabel {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.cardLabelMobile {
+  font-size: 10px;
+}
+
+/* ── Value ───────────────────────────────────────────────────── */
+
+.cardValue {
+  font-size: 32px;
+  font-weight: 300;
+  color: rgba(255,255,255,0.92);
+  font-family: system-ui;
+  font-feature-settings: "tnum";
+  margin: 0;
+}
+
+.cardValueMobile {
+  font-size: 24px;
+}
+
+/* ── Trend row below value ───────────────────────────────────── */
+
+.trendRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.trendLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+}
+
+/* ── Remaining-credits note ──────────────────────────────────── */
+
+.cardNote {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 8px;
+}
+
+/* ── TrendBadge ──────────────────────────────────────────────── */
+
+.trendBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  /* background + color set inline (dynamic: up/down) */
+}
+
+/* ── Static icon colours ─────────────────────────────────────── */
+
+.iconBlue {
+  color: #007AFF;
+}
+
+.iconGreen {
+  color: #32D74B;
+}
+
+.iconOrange {
+  color: #FF9500;
+}
+
+.iconWrapBlue {
+  background: rgba(0,122,255,0.15);
+}
+
+.iconWrapGreen {
+  background: rgba(50,215,75,0.15);
+}
+
+.iconWrapOrange {
+  background: rgba(255,149,0,0.15);
+}

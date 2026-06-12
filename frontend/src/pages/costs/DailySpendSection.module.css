@@ -1,0 +1,568 @@
+/* ── Outer two-col grid ──────────────────────────────────────── */
+
+.outerGrid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 24px;
+}
+
+.outerGridMobile {
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+/* ── Card inner pad (shared by both cards) ───────────────────── */
+
+.cardInner {
+  padding: 24px;
+}
+
+.cardInnerMobile {
+  padding: 16px;
+}
+
+/* ── Card title block ────────────────────────────────────────── */
+
+.cardTitleBlock {
+  margin-bottom: 24px;
+}
+
+.cardTitleBlockMobile {
+  margin-bottom: 16px;
+}
+
+.cardTitle {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.92);
+  margin: 0;
+}
+
+.cardTitleMobile {
+  font-size: 15px;
+}
+
+.cardSubtitle {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+
+/* ── CSS-fallback bar chart ──────────────────────────────────── */
+
+.fallbackWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.fallbackNote {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+}
+
+.fallbackBarList {
+  display: flex;
+  align-items: flex-end;
+  /* gap + height set inline (responsive) */
+  padding-top: 12px;
+}
+
+.fallbackBarCol {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.fallbackBarStack {
+  width: 100%;
+  max-width: 28px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  /* height + min-height set inline */
+}
+
+.fallbackBarLabel {
+  color: rgba(255,255,255,0.45);
+  /* font-size set inline (responsive) */
+}
+
+/* ── Session estimate fallback ───────────────────────────────── */
+
+.sessionEstimateWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sessionEstimateStatGrid {
+  display: grid;
+  gap: 10px;
+  /* grid-template-columns set inline */
+}
+
+.sessionEstimateStatCell {
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.sessionEstimateStatLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.sessionEstimateStatValue {
+  font-size: 15px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+  margin-top: 8px;
+}
+
+/* ── SessionEstimateChart (local, no-ledger view) ────────────── */
+
+.seChart {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.seBarGrid {
+  display: grid;
+  align-items: end;
+  min-height: 248px;
+  /* grid-template-columns + gap set inline */
+}
+
+.seBarBtn {
+  border-radius: 18px;
+  padding: 12px 6px 10px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  -webkit-tap-highlight-color: transparent;
+  /* border + background + box-shadow set inline (isActive) */
+}
+
+.seBarCost {
+  font-size: 10px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+}
+
+.seBarTrack {
+  width: 100%;
+  max-width: 30px;
+  min-height: 12px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  display: flex;
+  align-items: flex-end;
+  overflow: hidden;
+  padding: 3px;
+  /* height set inline */
+}
+
+.seBarFill {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  /* background + opacity set inline */
+}
+
+.seBarDay {
+  font-size: 10px;
+  /* color + font-weight set inline (isActive) */
+}
+
+.seDetailBox {
+  padding: 16px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(94,92,230,0.14) 0%, rgba(255,149,0,0.08) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.seDetailLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.seDetailValue {
+  font-size: 14px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+/* ── AWS bar chart ───────────────────────────────────────────── */
+
+.awsBarList {
+  display: flex;
+  align-items: flex-end;
+  /* height + gap + padding-top set inline */
+}
+
+.awsBarCol {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.awsBarFill {
+  width: 100%;
+  background: #007AFF;
+  border-radius: 4px 4px 0 0;
+  opacity: 0.8;
+  transition: all 0.3s ease;
+  /* height set inline */
+}
+
+.awsBarLabel {
+  text-align: center;
+  line-height: 1.1;
+  color: rgba(255,255,255,0.45);
+  /* font-size set inline */
+}
+
+/* ── Token-based fallback empty ──────────────────────────────── */
+
+.tokenFallbackWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
+  /* height set inline */
+}
+
+.tokenFallbackTitle {
+  font-size: 14px;
+  color: rgba(255,255,255,0.65);
+}
+
+.tokenFallbackSub {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  text-align: center;
+}
+
+/* ── Mobile daily spend chart ────────────────────────────────── */
+
+.mobileChartWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.mobileChartNote {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+}
+
+.mobileBarGrid {
+  display: grid;
+  align-items: end;
+  height: 244px;
+  padding: 12px 0 4px;
+  /* grid-template-columns + gap set inline */
+}
+
+.mobileBarBtn {
+  border-radius: 14px;
+  padding: 10px 4px 8px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  -webkit-tap-highlight-color: transparent;
+  /* border + background + box-shadow set inline (isActive) */
+}
+
+.mobileBarCost {
+  font-size: 10px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+}
+
+.mobileBarStack {
+  width: 100%;
+  max-width: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  min-height: 14px;
+  /* height set inline */
+}
+
+.mobileBarEmptyFill {
+  height: 100%;
+  background: rgba(255,255,255,0.08);
+}
+
+.mobileBarDay {
+  font-size: 10px;
+  /* color + font-weight set inline (isActive) */
+}
+
+.mobileDetailBox {
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.mobileDetailHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.mobileDetailDate {
+  font-size: 13px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 700;
+}
+
+.mobileDetailHint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  margin-top: 2px;
+}
+
+.mobileDetailTotal {
+  font-size: 14px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 700;
+}
+
+.mobileDetailSegments {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mobileDetailSegmentRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.mobileDetailSegmentLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobileDetailDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* background set inline */
+}
+
+.mobileDetailModelName {
+  font-size: 12px;
+  color: rgba(255,255,255,0.76);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobileDetailValue {
+  font-size: 12px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 600;
+  text-align: right;
+}
+
+.mobileLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mobileLegendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.mobileLegendDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* background set inline */
+}
+
+.mobileLegendLabel {
+  font-size: 11px;
+  color: rgba(255,255,255,0.72);
+}
+
+/* ── Spend Composition (right card) ──────────────────────────── */
+
+.compositionList {
+  display: flex;
+  flex-direction: column;
+  /* gap set inline (responsive) */
+}
+
+.compositionRow {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compositionTopLine {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.compositionNameGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.compositionDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* background set inline */
+}
+
+.compositionName {
+  font-size: 14px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 600;
+}
+
+.compositionNameMobile {
+  font-size: 12px;
+}
+
+.compositionSecondary {
+  font-size: 13px;
+  color: rgba(255,255,255,0.92);
+  font-weight: 700;
+}
+
+.compositionSecondaryMobile {
+  font-size: 12px;
+}
+
+.compositionProgressTrack {
+  height: 7px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.compositionProgressFill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 0.6s ease;
+  /* width + background set inline */
+}
+
+.compositionShareNote {
+  font-size: 11px;
+  /* color set inline (codexbar vs normal) */
+}
+
+/* ── Composition fallback (single bar) ───────────────────────── */
+
+.compositionFallback {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.compositionFallbackRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.compositionFallbackLabel {
+  color: rgba(255,255,255,0.65);
+  font-weight: 500;
+  /* font-size set inline */
+}
+
+.compositionFallbackValue {
+  color: rgba(255,255,255,0.92);
+  font-weight: 600;
+  font-family: system-ui;
+  font-feature-settings: "tnum";
+  /* font-size set inline */
+}
+
+.compositionFallbackTrack {
+  height: 6px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.compositionFallbackFill {
+  width: 100%;
+  height: 100%;
+  background: #BF5AF2;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.compositionEmpty {
+  font-size: 13px;
+  color: rgba(255,255,255,0.45);
+}
+
+/* ── Recharts wrapper ────────────────────────────────────────── */
+
+.rechartsWrap {
+  width: 100%;
+  /* height + min-height set inline (responsive) */
+}
