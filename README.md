@@ -1,14 +1,13 @@
-# Mission Control - OpenClaw Ops Console
+# Mission Control - Local AI Ops Console
 
-Mission Control is the local operator console for OpenClaw. It runs at
-`http://127.0.0.1:3333` and gives one fast surface for active sessions, cron
-jobs, cost usage, local models, Digital Office state, governance history, and
-runtime health.
+Mission Control is the local operator console for the AI stack on this machine.
+It runs at `http://127.0.0.1:3333` and gives one fast surface for active
+sessions, cron jobs, cost usage, local models, Digital Office state, governance
+history, and runtime health across OpenClaw, Hermes, GBrain, Ollama, and related
+local tools.
 
 This app is meant to answer the operator question first: what is running, what
 needs attention, what changed recently, and which action is safe to take next.
-
-![Dashboard](screenshot.png)
 
 ## Current Version
 
@@ -61,7 +60,7 @@ The current release is an operator-focused overhaul:
 ### Requirements
 
 - Node.js 18+
-- An OpenClaw workspace on the same machine
+- A local OpenClaw or Hermes setup if you want live runtime data
 - Optional: Brave Search API key for Scout
 - Optional: local Ollama install for the Ollama Monitor page
 
@@ -120,6 +119,7 @@ mode unless a real OpenClaw operation needs active council mutations again.
 | --- | --- |
 | [First Operator Check](docs/tutorial-first-operator-check.md) | You want a first end-to-end walkthrough of the new operator surfaces |
 | [How to Verify Operator Surfaces](docs/how-to-verify-operator-surfaces.md) | You need commands to verify GBrain, Hermes Kanban, cron, costs, and supply-chain behavior |
+| [How to Update the Local Live Build](docs/how-to-update-local-live-build.md) | You merged PRs and need the machine's running `127.0.0.1:3333` app to serve current `master` |
 | [Operator Surfaces Reference](docs/reference-operator-surfaces.md) | You need the exact browser routes, API endpoints, actions, defaults, and constraints |
 | [Read-Only Evidence Design](docs/explanation-read-only-evidence-design.md) | You want the rationale behind read-only probes, explicit stale state, and bounded actions |
 | [Frontend Conventions](docs/reference-frontend-conventions.md) | You are changing frontend code and need the data-layer, styling, UI-kit, and lint conventions |
@@ -141,6 +141,7 @@ mission-control/
 │   ├── src/
 │   │   ├── appRoutes.tsx     # Route and sidebar registry
 │   │   ├── pages/            # Operator pages
+│   │   │   ├── cron/         # Module-folder pattern: typed sections, helpers, vitest coverage
 │   │   │   └── costs/        # Module-folder pattern: types, lib, section components
 │   │   ├── components/       # Shared UI primitives and layout
 │   │   │   └── ui/           # UI kit: PageHeader, StatCard, EmptyState
@@ -153,6 +154,9 @@ mission-control/
 **Stack:** React 19, Vite 7, TypeScript, TanStack Query, Framer Motion,
 Recharts, lucide-react, and Express. Styling is plain CSS: global classes in
 `index.css` plus CSS Modules per page/component (no utility framework).
+The main operator pages now use page-level CSS Modules; inline style remains
+only for runtime values, responsive branches, chart/SVG geometry, and
+third-party portal content.
 
 Frontend conventions (data layer, styling system, UI kit, lint rules) are
 documented in [Frontend Conventions](docs/reference-frontend-conventions.md).
@@ -213,4 +217,4 @@ the relevant API endpoint directly with `curl`.
 - Cannot be offered as a hosted SaaS to third parties
 - Converts to MIT on 2030-02-07
 
-Maintained for local OpenClaw operations.
+Maintained for local AI operations.

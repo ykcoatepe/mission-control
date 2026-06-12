@@ -22,6 +22,20 @@ All routes live in `frontend/src/appRoutes.tsx` as `AppRouteDefinition` entries:
 The sidebar (`components/Sidebar.tsx`) renders these groups and filters out any
 route whose `module` flag is `false` in the active config.
 
+Diagnostics is the one grouped route. `/diagnostics` is visible when at least
+one diagnostic module (`docs`, `scout`, `aws`, or `skills`) is not explicitly
+disabled; `settings` alone does not keep the grouped route visible. Old direct
+routes stay reachable as redirect shims:
+
+| Legacy route | Redirect target |
+| --- | --- |
+| `/memory` | `/diagnostics?tab=memory` |
+| `/scout` | `/diagnostics?tab=scout` |
+| `/aws` | `/diagnostics?tab=aws` |
+| `/skills` | `/diagnostics?tab=skills` |
+
+Those legacy routes stay out of the sidebar with `nav: false`.
+
 ## Data layer
 
 All API access goes through `frontend/src/lib/hooks.ts`, which wraps TanStack
@@ -32,6 +46,17 @@ Query:
 | `fetchJson<T>(url, init?)` | Fetch wrapper; rejects non-2xx and non-JSON payloads |
 | `apiQueryOptions<T>(url, interval?)` | Query options with key `['api', url]` and optional polling interval (ms) |
 | `useApi<T>(url, interval?)` | The standard page hook; returns `{ data, loading, error, refetch }` |
+
+Current scope:
+
+- Core operator pages use page-level CSS Modules: Dashboard, Cron, Calendar,
+  Hermes Kanban, Digital Office, Agents, AWS, Scout, Docs, Memory, Skills,
+  Settings, Setup, Team Structure, Workshop, Councils, Ollama Monitor, GBrain,
+  Costs, and Diagnostics.
+- `pages/Chat.tsx` still carries some local inline layout while using
+  `Chat.module.css`; treat it as the remaining exception, not the template.
+- `pages/costs/` and `pages/cron/` use section-level CSS Modules because those
+  pages are split into typed subcomponents.
 
 Rules:
 
@@ -88,8 +113,8 @@ local markup it replaces; pixel fidelity wins over reuse.
 
 ## Module-folder pattern for large pages
 
-When a page outgrows a single file, it becomes a folder. `pages/costs/` is the
-template:
+When a page outgrows a single file, it becomes a folder. `pages/costs/` and
+`pages/cron/` are the templates:
 
 ```text
 pages/Costs.tsx              # orchestrator: state, queries, composition
@@ -97,14 +122,21 @@ pages/costs/types.ts         # payload interfaces
 pages/costs/lib.ts           # pure helpers (formatters, color mapping)
 pages/costs/<Section>.tsx    # one component per page section
 pages/costs/<Section>.module.css
+
+pages/Cron.tsx               # orchestrator: filters, mutations, composition
+pages/cron/types.ts          # cron payload and view-model interfaces
+pages/cron/lib.ts            # model options, overlap markers, fetch helper
+pages/cron/lib.test.ts       # vitest coverage for pure cron logic
+pages/cron/<Section>.tsx     # table, card list, modal, dialog, badges
+pages/cron/<Section>.module.css
 ```
 
 The orchestrator owns data fetching and top-level derivations; sections receive
 typed props and own only the memoization that serves them.
 
-`pages/cron/` follows the same shape (lib.ts + lib.test.ts + one component per
-section); pure logic extracted this way gets vitest coverage in the sibling
-`lib.test.ts`.
+Pure logic extracted into `lib.ts` gets vitest coverage in the sibling
+`lib.test.ts`. Keep network writes in the orchestrator or a small local fetch
+helper so sections stay render-focused.
 
 ## Lint rules that shape code
 
@@ -131,6 +163,7 @@ comment for genuine rule false positives; two such sites exist today
 ```bash
 cd frontend
 npm run lint     # ESLint, errors block CI
+npm test         # vitest unit suite
 npm run build    # tsc -b + vite build
 ```
 

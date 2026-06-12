@@ -3,7 +3,7 @@
 React + TypeScript + Vite frontend for the Mission Control operator console.
 
 The frontend is not a generic Vite template anymore. It is the live UI for the
-local OpenClaw control plane at `http://127.0.0.1:3333`.
+local AI operator console at `http://127.0.0.1:3333`.
 
 ## App Shape
 
@@ -19,21 +19,22 @@ Current primary surfaces:
 - Dashboard
 - Conversations
 - Workshop
+- Hermes Kanban
 - Cost Tracker
 - Cron Jobs
 - Calendar
+- GBrain
+- Diagnostics
 - Ollama Monitor
 - Governance Archive
 - Team Structure
 - Digital Office
-- Memory
-- Scout
 - Agent Hub
 - Settings
-- AWS
 
-The Skills route still exists for direct access, but it is hidden from sidebar
-navigation until it has a useful operator workflow again.
+Diagnostics groups Memory, Docs, Scout, AWS, and Skills behind one sidebar
+item. The old `/memory`, `/scout`, `/aws`, and `/skills` routes redirect to the
+matching Diagnostics tab.
 
 ## Commands
 
@@ -42,6 +43,7 @@ npm install
 npm run dev -- --host 127.0.0.1
 npm run build
 npm run lint
+npm test
 ```
 
 For normal local operation from the repository root:

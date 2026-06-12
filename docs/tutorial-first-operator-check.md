@@ -90,6 +90,18 @@ Cron should show both OpenClaw and Hermes jobs when available. Hermes jobs are e
 
 Costs should show OpenClaw and Hermes usage when both sources are available. If OpenClaw usage is slow or unavailable, Mission Control can preserve the last detailed OpenClaw data while still showing fresh Hermes usage.
 
+## Step 6: Open Diagnostics
+
+Open:
+
+```text
+http://127.0.0.1:3333/diagnostics
+```
+
+Diagnostics groups the supporting Memory, Docs, Scout, AWS, and Skills pages
+behind one sidebar item. Old bookmarks such as `/memory` and `/scout` redirect
+to the matching Diagnostics tab.
+
 ## What you built
 
 You started the local operator console and verified the new PR surfaces from both the browser and API:
@@ -98,5 +110,6 @@ You started the local operator console and verified the new PR surfaces from bot
 - Hermes Kanban cards are visible in Mission Control.
 - Cron jobs show scheduler ownership and safe actions.
 - Cost data keeps stale and unavailable source states explicit.
+- Diagnostics gives one place for supporting memory, docs, scout, AWS, and skill checks.
 
-For exact endpoint details, see [Operator Surfaces Reference](reference-operator-surfaces.md). For verification and troubleshooting commands, see [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md).
+For exact endpoint details, see [Operator Surfaces Reference](reference-operator-surfaces.md). For verification and troubleshooting commands, see [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md). After merging PRs, use [How to Update the Local Live Build](how-to-update-local-live-build.md) to rebuild and restart the running local app.

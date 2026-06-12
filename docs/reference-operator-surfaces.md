@@ -6,11 +6,61 @@ This reference describes the public routes, API endpoints, local commands, and s
 
 | Route | Page | Data source | Purpose |
 | --- | --- | --- | --- |
-| `/gbrain` | GBrain | `/api/gbrain/overview` | Proof-backed view of GBrain trust, sources, queues, and bridge caveats |
-| `/kanban` | Hermes Kanban | `/api/hermes-kanban` | Hermes task board with detail drawer and bounded write actions |
+| `/` | Dashboard | `/api/status`, `/api/activity`, `/api/sessions`, `/api/costs` | Operator briefing, active sessions, heartbeat, attention signals, and evidence feed |
+| `/office` | Digital Office | `/api/office/telemetry` | Desk telemetry, priority lane, attention queue, and office session state |
 | `/cron` | Cron Jobs | `/api/cron`, `/api/models` | OpenClaw and Hermes cron visibility with scheduler-specific actions |
+| `/conversations` | Conversations | `/api/sessions/*`, `/api/chat/*` | Session browser and transcript review |
+| `/workshop` | Workshop | `/api/tasks/*`, `/api/quick/*` | Local task board and execution queue |
+| `/kanban` | Hermes Kanban | `/api/hermes-kanban` | Hermes task board with detail drawer and bounded write actions |
 | `/costs` | Cost Tracker | `/api/costs`, `/api/costs/codexbar` | OpenClaw, Hermes, and CodexBar usage with source reliability metadata |
+| `/calendar` | Calendar | `/api/calendar`, `/api/cron` | Schedule-first view of recurring work and calendar entries |
+| `/gbrain` | GBrain | `/api/gbrain/overview` | Proof-backed view of GBrain trust, sources, queues, and bridge caveats |
+| `/diagnostics` | Diagnostics | `/api/config` plus selected tab endpoints | Tabbed support surface for Memory, Docs, Scout, AWS, and Skills |
 | `/ollama` | Ollama Monitor | `/api/ollama/*`, `/api/costs` | Local model telemetry plus model token usage context |
+| `/team` | Team Structure | `/api/team/structure`, `/api/models` | Team registry, role grouping, bootstrap state, and model ownership view |
+| `/agents` | Agent Hub | `/api/agents/*`, `/api/sessions` | Active agents, runtime inventory, and session detail |
+| `/settings` | Settings | `/api/config`, `/api/settings/*`, `/api/models` | Gateway configuration, model routing, and local preferences |
+| `/councils` | Governance Archive | `/api/councils/*` | Read-only governance and council history |
+
+Legacy routes:
+
+| Route | Behavior |
+| --- | --- |
+| `/memory` | Redirects to `/diagnostics?tab=memory` |
+| `/scout` | Redirects to `/diagnostics?tab=scout` |
+| `/aws` | Redirects to `/diagnostics?tab=aws` |
+| `/skills` | Redirects to `/diagnostics?tab=skills` |
+
+`/diagnostics` hides any tab whose module flag is explicitly `false` in
+`mc-config.json`. If the requested `?tab=` is hidden or unknown, it selects the
+first visible tab.
+
+## Server Runtime
+
+Mission Control is an Express server that serves the generated Vite build from
+`frontend/dist`.
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `PORT` | `3333` | Local HTTP port for the server and same-origin checks |
+| `MISSION_CONTROL_HOST` | `127.0.0.1` | Bind address for the HTTP listener |
+
+Health endpoints:
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/health` | Returns `{ ok, status, service, generatedAt }` |
+| `GET` | `/healthz` | Same health payload for simple process probes |
+
+Request guardrails:
+
+- `Host` must be one of `localhost`, `127.0.0.1`, or the same values with the
+  active `PORT`.
+- `POST`, `PUT`, `PATCH`, and `DELETE` requests with an `Origin` header must
+  come from `localhost` or `127.0.0.1` on the active `PORT`.
+- `/data/*` is not served statically; it returns `404` JSON.
+- Non-API browser routes fall through to `frontend/dist/index.html` so React
+  Router can handle deep links.
 
 ## GBrain API
 
@@ -243,6 +293,7 @@ npm audit signatures
 
 - [First Operator Check](tutorial-first-operator-check.md)
 - [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md)
+- [How to Update the Local Live Build](how-to-update-local-live-build.md)
 - [Read-Only Evidence Design](explanation-read-only-evidence-design.md)
 - [Frontend Conventions](reference-frontend-conventions.md)
 - [GBrain Hybrid Brain View Handoff](gbrain-hybrid-brain-view-handoff-20260524.md)
