@@ -22,9 +22,10 @@ All routes live in `frontend/src/appRoutes.tsx` as `AppRouteDefinition` entries:
 The sidebar (`components/Sidebar.tsx`) renders these groups and filters out any
 route whose `module` flag is `false` in the active config.
 
-Diagnostics is the one grouped route. `/diagnostics` is visible when
-`settings` is enabled or any of `docs`, `scout`, `aws`, or `skills` is not
-explicitly disabled. Old direct routes stay reachable as redirect shims:
+Diagnostics is the one grouped route. `/diagnostics` is visible when at least
+one diagnostic module (`docs`, `scout`, `aws`, or `skills`) is not explicitly
+disabled; `settings` alone does not keep the grouped route visible. Old direct
+routes stay reachable as redirect shims:
 
 | Legacy route | Redirect target |
 | --- | --- |
