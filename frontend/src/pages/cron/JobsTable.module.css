@@ -1,0 +1,252 @@
+/* The table uses a fixed grid. The header div and the motion.div rows share
+   the same layout via this class. */
+.tableGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 70px minmax(92px, 0.7fr) 144px 72px 72px 250px 62px;
+  column-gap: 12px;
+  align-items: center;
+}
+
+.tableWrap {
+  overflow-x: hidden;
+}
+
+.tableInner {
+  width: 100%;
+}
+
+.tableHead {
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tableHeadCell {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Scheduler tint via --scheduler-color set inline per group */
+.tableGroupHeader {
+  padding: 10px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: color-mix(in srgb, var(--scheduler-color) 6%, transparent);
+  color: var(--scheduler-color);
+}
+
+.tableGroupHeaderFirst {
+  border-top: none;
+}
+
+.tableRow {
+  padding: 13px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background 0.15s, box-shadow 0.15s;
+}
+
+.tableRow:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.tableRowFailed,
+.tableRowFailed:hover {
+  background: rgba(255, 69, 58, 0.06);
+  box-shadow: inset 3px 0 0 #FF453A;
+}
+
+.tableCell {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cellName {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
+  margin: 0;
+}
+
+.cellNameFailed {
+  color: #FF6B6B;
+}
+
+.cellId {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.35);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: monospace;
+  margin: 2px 0 0;
+}
+
+.scheduleColInner {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.scheduleCode {
+  max-width: 100%;
+  font-size: 12px;
+  color: #BF5AF2;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-family: monospace;
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.overlapTag {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(191, 90, 242, 0.14);
+  border: 1px solid rgba(191, 90, 242, 0.24);
+  color: #D8B4FE;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.statusCell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statusCellInner {
+  min-width: 0;
+}
+
+.successBarWrap {
+  margin-top: 4px;
+  width: 58px;
+}
+
+.timeCell {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin: 0;
+}
+
+.timeCellSub {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  margin: 2px 0 0;
+}
+
+.timeCellEmpty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.modelCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modelSelect {
+  width: 100%;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modelSelect:disabled {
+  cursor: not-allowed;
+}
+
+.modelText {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.actionsCell {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.runBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.runBtn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.deleteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 26px;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.2);
+  border-radius: 6px;
+  color: #FF453A;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.deleteBtn:hover:not(:disabled) {
+  background: rgba(255, 69, 58, 0.15);
+}
+
+.runBtn:disabled,
+.deleteBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinIcon {
+  animation: spin 1s linear infinite;
+}

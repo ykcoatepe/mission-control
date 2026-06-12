@@ -1,0 +1,16 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  /* border, background, color driven via --scheduler-color set inline */
+  border: 1px solid color-mix(in srgb, var(--scheduler-color) 33%, transparent);
+  background: color-mix(in srgb, var(--scheduler-color) 9%, transparent);
+  color: var(--scheduler-color);
+}

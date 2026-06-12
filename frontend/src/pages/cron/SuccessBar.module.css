@@ -1,0 +1,43 @@
+.outer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 64px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pct {
+  font-size: 13px;
+  font-weight: 600;
+  /* color driven by success-rate color inline */
+}
+
+.total {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.track {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+  /* width and background driven inline */
+}
+
+.failed {
+  font-size: 10px;
+  color: #FF453A;
+}
