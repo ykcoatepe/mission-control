@@ -124,7 +124,6 @@ mode unless a real OpenClaw operation needs active council mutations again.
 | [Read-Only Evidence Design](docs/explanation-read-only-evidence-design.md) | You want the rationale behind read-only probes, explicit stale state, and bounded actions |
 | [Frontend Conventions](docs/reference-frontend-conventions.md) | You are changing frontend code and need the data-layer, styling, UI-kit, and lint conventions |
 | [GBrain Hybrid Brain View Handoff](docs/gbrain-hybrid-brain-view-handoff-20260524.md) | You need the product handoff that shaped the `/gbrain` implementation |
-| [Archived GBrain Handoff Copy](documents/gbrain-hybrid-brain-view-handoff-20260524.md) | You need the original imported handoff artifact before implementation addenda were added under `docs/` |
 
 ## Architecture
 
