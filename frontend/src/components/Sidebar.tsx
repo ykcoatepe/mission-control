@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom'
 import { type CSSProperties, useMemo, useState, useEffect } from 'react'
 import { Bot } from 'lucide-react'
-import { sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
+import { isRouteEnabled, sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
 import { MissionControlMark } from './MissionControlMark'
 import { timeAgo, useApi } from '../lib/hooks'
 import styles from './Sidebar.module.css'
@@ -66,7 +66,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
 
   // Filter nav items based on enabled modules
   const navItems = config?.modules
-    ? sidebarRoutes.filter(item => config.modules![item.module] !== false)
+    ? sidebarRoutes.filter(item => isRouteEnabled(item, config.modules!))
     : sidebarRoutes
 
   const groupedItems = useMemo(() => {

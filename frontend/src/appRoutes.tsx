@@ -58,6 +58,7 @@ export interface AppRouteDefinition {
   path: string
   label: string
   module: string
+  anyModule?: string[]
   component: RouteComponent
   icon?: LucideIcon
   nav?: boolean
@@ -76,7 +77,7 @@ export const appRoutes: AppRouteDefinition[] = [
   { path: '/costs', label: 'Cost Tracker', module: 'costs', component: Costs, icon: DollarSign, section: 'intelligence', description: 'Spend and model mix' },
   { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, section: 'intelligence', description: 'Schedule' },
   { path: '/gbrain', label: 'GBrain', module: 'docs', component: GBrain, icon: GitBranch, section: 'intelligence', description: 'Shared brain' },
-  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', component: Diagnostics, icon: Wrench, section: 'system', description: 'Memory, docs, scout, AWS' },
+  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', anyModule: ['docs', 'scout', 'aws', 'skills'], component: Diagnostics, icon: Wrench, section: 'system', description: 'Memory, docs, scout, AWS' },
   { path: '/ollama', label: 'Ollama Monitor', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, section: 'system', description: 'Local models' },
   { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, section: 'system', description: 'Agent map' },
   { path: '/agents', label: 'Agent Hub', module: 'agents', component: Agents, icon: Bot, section: 'system', description: 'Runtime controls' },
@@ -90,3 +91,8 @@ export const appRoutes: AppRouteDefinition[] = [
 ]
 
 export const sidebarRoutes = appRoutes.filter((route) => route.nav !== false && route.icon)
+
+export function isRouteEnabled(route: AppRouteDefinition, modules: Record<string, boolean>) {
+  if (modules[route.module] !== false) return true
+  return route.anyModule?.some((moduleName) => modules[moduleName] !== false) ?? false
+}
