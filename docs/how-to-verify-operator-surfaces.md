@@ -7,6 +7,8 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 - Run from the repository root.
 - Install root and frontend dependencies if you need a build.
 - Start Mission Control with `npm start` before using `curl` against local endpoints.
+- If you just merged PRs, first update and rebuild the running local app with
+  [How to Update the Local Live Build](how-to-update-local-live-build.md).
 - Optional live tools: `gbrain`, `hermes`, `openclaw`, `sqlite3`, and local Ollama.
 
 ## Steps
@@ -47,7 +49,26 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    npm start
    ```
 
-5. Verify GBrain endpoints.
+   The server listens on `127.0.0.1:3333` by default. Set `PORT` to run a
+   second local copy:
+
+   ```bash
+   PORT=3499 npm start
+   ```
+
+5. Verify the server health endpoint.
+
+   ```bash
+   curl -fsS http://127.0.0.1:3333/api/health
+   ```
+
+   Expected shape:
+
+   ```json
+   {"ok":true,"status":"ok","service":"mission-control","generatedAt":"..."}
+   ```
+
+6. Verify GBrain endpoints.
 
    ```bash
    curl -s http://127.0.0.1:3333/api/gbrain/overview
@@ -57,7 +78,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
    Confirm that errors are redacted and that absolute home paths are not returned in live failure messages.
 
-6. Verify Hermes Kanban endpoints.
+7. Verify Hermes Kanban endpoints.
 
    ```bash
    curl -s http://127.0.0.1:3333/api/hermes-kanban
@@ -69,7 +90,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    curl -s http://127.0.0.1:3333/api/hermes-kanban/tasks/TASK_ID
    ```
 
-7. Verify cron endpoints.
+8. Verify cron endpoints.
 
    ```bash
    curl -s http://127.0.0.1:3333/api/cron
@@ -77,7 +98,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
    Check that each job has `scheduler`, `schedulerLabel`, `sourceId`, and `actions`. Hermes jobs should have `run: false`, `delete: false`, `toggle: true`, and `model: true`.
 
-8. Verify cost endpoint behavior.
+9. Verify cost endpoint behavior.
 
    ```bash
    curl -s 'http://127.0.0.1:3333/api/costs?period=7d'
@@ -85,7 +106,18 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
    Check the `meta` object. It should make source availability visible with fields such as `openclawStatus`, `hermesStatus`, `stale`, and `refreshing`.
 
-9. Verify the supply-chain gate.
+10. Verify the Diagnostics route and legacy redirects.
+
+   ```bash
+   curl -Ls http://127.0.0.1:3333/diagnostics | head
+   ```
+
+   This confirms the SPA fallback serves the Diagnostics route. In the browser,
+   `/diagnostics` should show Memory, Docs, Scout, AWS, and Skills as tabs when
+   those modules are enabled. `/memory`, `/scout`, `/aws`, and `/skills` should
+   redirect into the matching diagnostics tab after React Router loads.
+
+11. Verify the supply-chain gate.
 
    ```bash
    node scripts/check-npm-supply-chain.mjs
