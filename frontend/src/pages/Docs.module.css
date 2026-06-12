@@ -1,0 +1,283 @@
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pageMobile {
+  gap: 14px;
+}
+
+.pageDesktop {
+  gap: 28px;
+}
+
+/* ── Header icon ─────────────────────────────────────────────── */
+
+.headerIcon {
+  color: #818cf8;
+}
+
+.headerSubtitle {
+  margin-top: 4px;
+}
+
+/* ── Stats grid ──────────────────────────────────────────────── */
+
+.statsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.statsGridMobile {
+  gap: 8px;
+}
+
+.statsGridDesktop {
+  gap: 20px;
+}
+
+.statPad {
+  display: flex;
+  flex-direction: column;
+}
+
+.statPadMobile {
+  padding: 10px 12px;
+}
+
+.statPadDesktop {
+  padding: 20px;
+}
+
+.statIconRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.statIconRowMobile {
+  margin-bottom: 6px;
+}
+
+.statIconRowDesktop {
+  margin-bottom: 14px;
+}
+
+.statIconBox {
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.statIconBoxMobile {
+  width: 28px;
+  height: 28px;
+}
+
+.statIconBoxDesktop {
+  width: 36px;
+  height: 36px;
+}
+
+.statLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+}
+
+.statValue {
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+}
+
+.statValueMobile {
+  font-size: 20px;
+}
+
+.statValueDesktop {
+  font-size: 24px;
+}
+
+.statSuffix {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Upload zone ─────────────────────────────────────────────── */
+
+.uploadZone {
+  text-align: center;
+  transition: all 0.2s ease;
+}
+
+.uploadZoneMobile {
+  padding: 24px 16px;
+}
+
+.uploadZoneDesktop {
+  padding: 36px 24px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #007AFF;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.uploadingText {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+  font-weight: 500;
+}
+
+.successText {
+  font-size: 13px;
+  color: #32D74B;
+  font-weight: 500;
+}
+
+.errorText {
+  font-size: 13px;
+  color: #FF453A;
+  font-weight: 500;
+}
+
+.uploadIconBox {
+  border-radius: 12px;
+  margin: 0 auto 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+}
+
+.uploadPrompt {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+  font-weight: 500;
+}
+
+.uploadHint {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  margin-top: 6px;
+}
+
+/* ── Search ──────────────────────────────────────────────────── */
+
+.searchWrap {
+  position: relative;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.3);
+}
+
+.searchInput {
+  width: 100%;
+  padding-left: 40px;
+  padding-right: 16px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+  font-size: 13px;
+}
+
+/* ── Document grid ───────────────────────────────────────────── */
+
+.docGrid {
+  display: grid;
+}
+
+.docGridMobile {
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+.docGridDesktop {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.docCard {
+  cursor: pointer;
+}
+
+.docCardMobile {
+  padding: 14px;
+}
+
+.docCardDesktop {
+  padding: 20px;
+}
+
+.docCardInner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.docIconBox {
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.docIconBoxMobile {
+  width: 36px;
+  height: 36px;
+}
+
+.docIconBoxDesktop {
+  width: 44px;
+  height: 44px;
+}
+
+.docInfo {
+  min-width: 0;
+  flex: 1;
+}
+
+.docName {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docMeta {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.docExt {
+  font-size: 10px;
+  font-family: monospace;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.35);
+  flex-shrink: 0;
+}

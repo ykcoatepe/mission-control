@@ -1,0 +1,862 @@
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  position: relative;
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.headerRowMobile {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.headerTitleIcon {
+  color: #64D2FF;
+}
+
+.headerSubtitle {
+  margin-top: 4px;
+}
+
+.headerTimestamp {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Toast ───────────────────────────────────────────────────── */
+
+.toastSuccess {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(50, 215, 75, 0.28);
+  background: rgba(50, 215, 75, 0.1);
+  color: #32D74B;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.toastError {
+  border-radius: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 69, 58, 0.28);
+  background: rgba(255, 69, 58, 0.1);
+  color: #FF453A;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* ── Summary panels row ──────────────────────────────────────── */
+
+.summaryGrid {
+  display: grid;
+  gap: 12px;
+  align-items: stretch;
+  margin-bottom: 22px;
+}
+
+.summaryGridMobile {
+  grid-template-columns: 1fr;
+  margin-bottom: 4px;
+}
+
+.summaryGridDesktop {
+  grid-template-columns: minmax(0, 1.18fr) minmax(340px, 0.82fr);
+}
+
+.priorityPanel {
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.priorityPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.priorityLabel {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.priorityDesc {
+  margin-top: 5px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.priorityKpiGrid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.kpiItem {
+  border-radius: 13px;
+  padding: 12px;
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.kpiItemLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.52);
+  white-space: nowrap;
+}
+
+.kpiItemValue {
+  margin-top: 5px;
+  font-size: 24px;
+  font-weight: 850;
+}
+
+.snapshotPanel {
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.snapshotTitle {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.64);
+}
+
+.snapshotKpiGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.snapshotKpiItem {
+  border-radius: 12px;
+  padding: 10px 9px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.snapshotKpiItemHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.snapshotKpiItemLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.snapshotKpiItemValue {
+  margin-top: 5px;
+  font-size: 19px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.snapshotMix {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Main content: queue + detail ────────────────────────────── */
+
+.contentGrid {
+  display: grid;
+  gap: 14px;
+  align-items: start;
+}
+
+.contentGridMobile {
+  grid-template-columns: 1fr;
+  margin-top: 2px;
+}
+
+.contentGridDesktop {
+  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.95fr);
+  margin-top: 10px;
+}
+
+.leftCol {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ── Attention queue panel ───────────────────────────────────── */
+
+.queuePanel {
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.queuePanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.queuePanelTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.queuePanelDesc {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.queueList {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── Individual desk row in queue ────────────────────────────── */
+
+.deskRowSelected {
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(100, 210, 255, 0.35);
+  background: rgba(100, 210, 255, 0.08);
+}
+
+.deskRowDefault {
+  border-radius: 14px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.deskRowTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.deskRowLeft {
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+}
+
+.deskEmoji {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.deskInfo {
+  min-width: 0;
+}
+
+.deskNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.deskName {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.deskRole {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.deskReason {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.deskRight {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.urgencyBox {
+  border-radius: 12px;
+  padding: 8px 10px;
+  min-width: 74px;
+  text-align: center;
+}
+
+.urgencyLabel {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.urgencyValue {
+  margin-top: 3px;
+  font-size: 20px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.deskDetailsBtn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.84);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deskBottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.deskStats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.deskActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.deskOpenTaskBtn {
+  border: 1px solid rgba(50, 215, 75, 0.24);
+  background: rgba(50, 215, 75, 0.12);
+  color: #32D74B;
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deskCopyBtn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.84);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── Floor panel ─────────────────────────────────────────────── */
+
+.floorPanel {
+  border-radius: 18px;
+  padding: 14px;
+}
+
+.floorTitle {
+  font-size: 13px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.floorDesc {
+  margin-top: 4px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.floorGrid {
+  margin-top: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.floorGridMobile {
+  grid-template-columns: 1fr;
+}
+
+.floorGridDesktop {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+
+.floorCardSelected {
+  border-radius: 14px;
+  padding: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  border: 1px solid rgba(100, 210, 255, 0.35);
+}
+
+.floorCardDefault {
+  border-radius: 14px;
+  padding: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.floorCardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.floorCardNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.floorCardEmoji {
+  font-size: 18px;
+}
+
+.floorCardName {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.floorCardRole {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.floorCardTags {
+  margin-top: 10px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.floorCardOpenCount {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.floorCardBlockedCount {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.floorCardReason {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.45;
+}
+
+/* ── Drawer ───────────────────────────────────────────────────── */
+
+.drawerPadMobile {
+  padding: 16px;
+}
+
+.drawerPadDesktop {
+  padding: 18px;
+}
+
+.drawerHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.drawerTitleRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.drawerEmojiBox {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  flex-shrink: 0;
+}
+
+.drawerName {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.drawerRole {
+  margin-top: 3px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.drawerCloseBtn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.7);
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.drawerBadgeRow {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.drawerBadge {
+  font-size: 10px;
+  font-weight: 800;
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.drawerNextAction {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.drawerActionGrid {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+
+.drawerActionGridMobile {
+  grid-template-columns: 1fr;
+}
+
+.drawerActionGridDesktop {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.drawerOpenTaskBtn {
+  border: 1px solid rgba(50, 215, 75, 0.34);
+  background: linear-gradient(135deg, rgba(50, 215, 75, 0.18), rgba(50, 215, 75, 0.09));
+  color: #32D74B;
+  border-radius: 12px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.drawerNavBtn {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.035);
+  color: rgba(255, 255, 255, 0.78);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.drawerCopyBtn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.82);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.drawerWhyBox {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.028);
+  padding: 12px;
+}
+
+.drawerWhyInner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.drawerWhyTitle {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.drawerWhyText {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+.drawerUrgencyBox {
+  border-radius: 14px;
+  padding: 8px 10px;
+  min-width: 70px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.drawerUrgencyLabel {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.drawerUrgencyValue {
+  margin-top: 2px;
+  font-size: 20px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.drawerKpiGrid {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.drawerKpiItem {
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 10px;
+}
+
+.drawerKpiLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.drawerKpiValue {
+  margin-top: 4px;
+  font-size: 18px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.drawerTaskPreviewTitle {
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.drawerTaskList {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.drawerTaskItem {
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  padding: 12px;
+}
+
+.drawerTaskTop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drawerTaskTitle {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.drawerTaskTagRow {
+  margin-top: 5px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.drawerTaskColumnBadge {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.drawerTaskPathBadge {
+  font-size: 10px;
+  border-radius: 999px;
+  padding: 3px 8px;
+}
+
+.drawerTaskOpenBtn {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.82);
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.drawerTaskTimestamp {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.drawerTaskEmpty {
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  padding: 12px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.drawerMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+/* ── Mobile drawer backdrop ──────────────────────────────────── */
+
+.mobileBackdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 6, 10, 0.62);
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  padding: 12px;
+}
+
+.mobileDrawerWrap {
+  width: 100%;
+  max-height: 82vh;
+}
+
+/* ── Loading spinner ─────────────────────────────────────────── */
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 256px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #64D2FF;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
