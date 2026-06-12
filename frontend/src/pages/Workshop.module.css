@@ -1,0 +1,801 @@
+/* ── Loading state ───────────────────────────────────────────── */
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 256px;
+}
+
+.spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid #007AFF;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pageMobile {
+  gap: 14px;
+}
+
+.pageDesktop {
+  gap: 24px;
+}
+
+/* ── Kanban header subtitle ──────────────────────────────────── */
+
+.headerSubtitle {
+  margin-top: 4px;
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+}
+
+.headerRowMobile {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.headerRowDesktop {
+  align-items: center;
+}
+
+.addBtn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  background: #007AFF;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.addBtnMobile {
+  padding: 10px 16px;
+  width: 100%;
+  justify-content: center;
+}
+
+.addBtnDesktop {
+  padding: 10px 20px;
+}
+
+/* ── Kanban columns ──────────────────────────────────────────── */
+
+.kanban {
+  display: flex;
+  /* gap and flexDirection driven inline: m ? 'column' : 'row' */
+}
+
+.kanbanMobile {
+  flex-direction: column;
+  gap: 20px;
+}
+
+.kanbanDesktop {
+  flex-direction: row;
+  gap: 24px;
+}
+
+.kanbanCol {
+  min-width: 0;
+}
+
+.colHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+  padding-left: 4px;
+}
+
+.colTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.colCount {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* ── "Done" pagination bar ───────────────────────────────────── */
+
+.donePager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(50, 215, 75, 0.06);
+  border: 1px solid rgba(50, 215, 75, 0.14);
+}
+
+.donePagerLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.donePagerBtns {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.donePagerBtnGreen {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(50, 215, 75, 0.18);
+  background: rgba(50, 215, 75, 0.08);
+  color: #32D74B;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.donePagerBtnWhite {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.donePagerBtnGhost {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Card list ───────────────────────────────────────────────── */
+
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.cardListDoneDesktop {
+  max-height: min(72vh, 960px);
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.emptyCol {
+  padding: 24px 16px;
+  text-align: center;
+  border: 1px dashed rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.25);
+  font-size: 12px;
+}
+
+/* ── Task card ───────────────────────────────────────────────── */
+
+.cardPriorityRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.priorityDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+  /* background driven inline: priority color */
+}
+
+.cardTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.priorityBadge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: capitalize;
+  font-weight: 500;
+  /* background and color driven inline: priority */
+}
+
+.cardDescription {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 10px;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Executing / blocked banners ─────────────────────────────── */
+
+.executingBanner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.1);
+  border: 1px solid rgba(0, 122, 255, 0.2);
+}
+
+.executingText {
+  font-size: 11px;
+  color: #007AFF;
+  font-weight: 500;
+}
+
+.blockedBanner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.2);
+}
+
+.blockedText {
+  font-size: 11px;
+  color: #FF453A;
+  font-weight: 500;
+}
+
+/* ── Done result preview ─────────────────────────────────────── */
+
+.doneResult {
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(50, 215, 75, 0.08);
+  border: 1px solid rgba(50, 215, 75, 0.15);
+  margin-bottom: 10px;
+}
+
+.doneResultText {
+  font-size: 11px;
+  color: rgba(50, 215, 75, 0.8);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ── Card footer ─────────────────────────────────────────────── */
+
+.cardFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardTagsWrap {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex: 1;
+  overflow: hidden;
+}
+
+.cardActions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.executeBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  /* background and cursor driven inline: executing state */
+}
+
+.discussBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  background: rgba(0, 122, 255, 0.08);
+  color: #007AFF;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.retryBtn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: 7px;
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  background: rgba(255, 69, 58, 0.08);
+  color: #FF453A;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cardTimeAgo {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.3);
+}
+
+/* ── Task report view ────────────────────────────────────────── */
+
+.reportPage {
+  display: flex;
+  flex-direction: column;
+  /* max-width and gap driven inline: mobile vs desktop */
+  margin: 0 auto;
+}
+
+.reportHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.backBtn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 8px;
+  cursor: pointer;
+  display: flex;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.reportTitleWrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.reportTitle {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  /* font-size driven inline */
+}
+
+.reportStatusRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.priorityIndicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  /* background driven inline: priority color */
+}
+
+.reportStatusText {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.reportTagChip {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.reportDecisionFirst {
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* ── Report blocks ───────────────────────────────────────────── */
+
+.reportDescLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.35);
+  margin-bottom: 6px;
+}
+
+.reportDescBody {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+  line-height: 1.6;
+}
+
+.reportRoute {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.42);
+  margin-top: 10px;
+}
+
+.executingRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.executingTitle {
+  font-size: 13px;
+  font-weight: 500;
+  color: #007AFF;
+}
+
+.executingSubtitle {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 2px;
+}
+
+.reportResultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.reportResultLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.reportResultBody {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.82);
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.errorRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.errorText {
+  font-size: 13px;
+  color: #FF453A;
+}
+
+/* ── Report action buttons ───────────────────────────────────── */
+
+.reportActions {
+  display: flex;
+  gap: 10px;
+  /* flexDirection driven inline: m ? 'column' : 'row' */
+}
+
+.primaryActionBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  background: #007AFF;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rerunBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 20px;
+  border-radius: 10px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.deleteBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  background: rgba(255, 69, 58, 0.1);
+  color: #FF453A;
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 8px;
+  align-self: flex-start;
+}
+
+.deleteBtnMobile {
+  width: 100%;
+}
+
+/* ── Blocked explanation wrap in card ───────────────────────── */
+
+.blockedExplanationCardWrap {
+  margin-bottom: 10px;
+}
+
+/* ── Card tag / source chips ─────────────────────────────────── */
+
+.sourceChipScout {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(191, 90, 242, 0.12);
+  color: #BF5AF2;
+}
+
+.sourceChipOther {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.4);
+}
+
+/* ── Path badge ──────────────────────────────────────────────── */
+
+.pathBadge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-weight: 600;
+  /* color, background, border driven inline: executionPathConfig */
+}
+
+/* ── Blocked explanation ─────────────────────────────────────── */
+
+.blockedExplanation {
+  border-radius: 10px;
+  background: rgba(255, 159, 10, 0.08);
+  border: 1px solid rgba(255, 159, 10, 0.2);
+  display: flex;
+  flex-direction: column;
+}
+
+.blockedExplanationCompact {
+  padding: 8px 10px;
+  gap: 5px;
+}
+
+.blockedExplanationFull {
+  padding: 12px 14px;
+  gap: 8px;
+}
+
+.blockedWhy {
+  font-size: 11px;
+  font-weight: 800;
+  color: #FFB224;
+}
+
+.blockedReason {
+  margin: 0;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.blockedReasonCompact { font-size: 11px; }
+.blockedReasonFull { font-size: 12px; }
+
+.blockedNextStepsWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.blockedNextLabel {
+  font-size: 11px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.blockedNextStep {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: rgba(255, 255, 255, 0.68);
+}
+
+/* ── Add task modal ──────────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modalBox {
+  background: rgba(28, 28, 30, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+}
+
+.modalBoxMobile {
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 95vw;
+}
+
+.modalBoxDesktop {
+  border-radius: 16px;
+  padding: 28px;
+  max-width: 480px;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.modalTitle {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.modalCloseBtn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.modalCloseIcon {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.formFields {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.formLabel {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 6px;
+}
+
+.formInput {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+  box-sizing: border-box;
+}
+
+.formTextarea {
+  width: 100%;
+  padding: 10px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+  resize: vertical;
+  min-height: 70px;
+  box-sizing: border-box;
+}
+
+.priorityBtns {
+  display: flex;
+  gap: 6px;
+}
+
+.priorityBtn {
+  flex: 1;
+  padding: 8px 0;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: capitalize;
+  /* border, background, color driven inline: selected state */
+}
+
+.submitBtn {
+  width: 100%;
+  margin-top: 20px;
+  padding: 12px;
+  border-radius: 10px;
+  border: none;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  /* background, cursor, opacity driven inline: valid state */
+}

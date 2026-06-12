@@ -5,6 +5,7 @@ import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
 import GlassCard from '../components/GlassCard'
 import { useApi, timeAgo } from '../lib/hooks'
+import styles from './Scout.module.css'
 
 const scoreColor = (score: number) => {
   if (score >= 85) return '#32D74B'
@@ -86,8 +87,8 @@ export default function Scout() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
-          <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
@@ -160,72 +161,54 @@ export default function Scout() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 12 : 24 }}>
+      <div className={`${styles.page} ${m ? styles.pageMobile : styles.pageDesktop}`}>
         {/* Toast notification */}
         {toast && (
-          <div style={{
-            position: 'fixed',
-            top: '20px',
-            right: '20px',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            background: toast.startsWith('✅') ? 'rgba(50,215,75,0.9)' : 'rgba(255,69,58,0.9)',
-            backdropFilter: 'blur(10px)',
-            color: '#fff',
-            fontSize: '14px',
-            fontWeight: '500',
-            zIndex: 1000,
-            boxShadow: '0 4px 20px rgba(0,0,0,0.25)'
-          }}>
+          <div
+            className={styles.toast}
+            style={{ background: toast.startsWith('✅') ? 'rgba(50,215,75,0.9)' : 'rgba(255,69,58,0.9)' }}
+          >
             {toast}
           </div>
         )}
 
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
+        <div className={styles.headerRow}>
           <div>
-            <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Radar size={m ? 18 : 22} style={{ color: '#BF5AF2' }} /> Scout
+            <h1 className={`text-title ${styles.pageTitle}`}>
+              <Radar size={m ? 18 : 22} className={styles.pageTitleIcon} /> Scout
             </h1>
-            <p className="text-body" style={{ marginTop: 4, fontSize: m ? 11 : 13 }}>
+            <p className={`text-body ${styles.pageSubtitle} ${m ? styles.pageSubtitleMobile : styles.pageSubtitleDesktop}`}>
               Find opportunities across the web — skills, jobs, grants & more
             </p>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 2, fontSize: m ? 10 : 12, opacity: 0.6 }}>
+            <div className={`${styles.scanMeta} ${m ? styles.scanMetaMobile : styles.scanMetaDesktop}`}>
               <span>Last scan: {data?.lastScan ? timeAgo(data.lastScan) : 'never'}</span>
               {cronData?.jobs && getNextScanTime(cronData.jobs) && (
                 <>
-                  <span style={{ color: 'rgba(255,255,255,0.25)' }}>•</span>
+                  <span className={styles.scanMetaDot}>•</span>
                   <span>{getNextScanTime(cronData.jobs)}</span>
                 </>
               )}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div className={styles.headerActions}>
             <button
               onClick={handleRunScan}
               disabled={scanning}
-              className="macos-button"
-              style={{ 
-                display: 'flex', 
-                alignItems: 'center', 
-                gap: 6, 
-                padding: '8px 14px', 
-                fontSize: 12,
+              className={`macos-button ${styles.runScanBtn}`}
+              style={{
                 backgroundColor: scanning ? 'rgba(255,255,255,0.05)' : 'rgba(0,122,255,0.15)',
                 borderColor: scanning ? 'rgba(255,255,255,0.1)' : 'rgba(0,122,255,0.4)',
                 color: scanning ? 'rgba(255,255,255,0.5)' : '#007AFF',
-                cursor: scanning ? 'not-allowed' : 'pointer'
+                cursor: scanning ? 'not-allowed' : 'pointer',
               }}
             >
-              <Search size={13} style={{ 
-                animation: scanning ? 'spin 1s linear infinite' : 'none' 
-              }} />
+              <Search size={13} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
               {scanning ? 'Scanning...' : 'Run Scan'}
             </button>
             <button
               onClick={() => setSortBy(sortBy === 'score' ? 'date' : 'score')}
-              className="macos-button"
-              style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', fontSize: 12 }}
+              className={`macos-button ${styles.sortBtn}`}
             >
               <SortDesc size={13} />
               {sortBy === 'score' ? 'Score' : 'Date'}
@@ -234,29 +217,27 @@ export default function Scout() {
         </div>
 
         {/* Filter Tabs — horizontal scroll on mobile */}
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', WebkitOverflowScrolling: 'touch', paddingBottom: 4, msOverflowStyle: 'none', scrollbarWidth: 'none' }}>
+        <div className={styles.filterTabs}>
           {FILTERS.map(f => (
             <button
               key={f.id}
               onClick={() => setFilter(f.id)}
+              className={`${styles.filterTab} ${m ? styles.filterTabMobile : styles.filterTabDesktop}`}
               style={{
-                display: 'flex', alignItems: 'center', gap: 6,
-                padding: m ? '7px 12px' : '8px 16px',
-                borderRadius: 10, flexShrink: 0,
                 border: filter === f.id ? '1px solid rgba(0,122,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
                 background: filter === f.id ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.04)',
                 color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.55)',
-                fontSize: m ? 11 : 12, fontWeight: 500, cursor: 'pointer',
-                WebkitTapHighlightColor: 'transparent',
               }}
             >
               <f.icon size={m ? 12 : 14} />
               {f.label}
-              <span style={{
-                fontSize: 10, padding: '1px 5px', borderRadius: 6,
-                background: filter === f.id ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)',
-                color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.4)',
-              }}>
+              <span
+                className={styles.filterTabCount}
+                style={{
+                  background: filter === f.id ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)',
+                  color: filter === f.id ? '#fff' : 'rgba(255,255,255,0.4)',
+                }}
+              >
                 {counts[f.id]}
               </span>
             </button>
@@ -264,7 +245,7 @@ export default function Scout() {
         </div>
 
         {/* Stats Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: m ? 8 : 16 }}>
+        <div className={styles.statsGrid} style={{ gap: m ? 8 : 16 }}>
           {[
             { label: 'Showing', value: opportunities.length, color: '#fff' },
             { label: 'High (85+)', value: opportunities.filter((o) => o.score >= 85).length, color: '#32D74B' },
@@ -272,54 +253,29 @@ export default function Scout() {
             { label: 'Avg Score', value: opportunities.length ? Math.round(opportunities.reduce((a, o) => a + o.score, 0) / opportunities.length) : 0, color: '#FF9500' },
           ].map((s, i) => (
             <GlassCard key={s.label} delay={0.05 + i * 0.03} noPad>
-              <div style={{ padding: m ? '10px 12px' : '16px 20px' }}>
-                <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', marginBottom: 4 }}>{s.label}</p>
-                <p style={{ fontSize: m ? 18 : 22, fontWeight: 300, color: s.color, fontVariantNumeric: 'tabular-nums' }}>{s.value}</p>
+              <div className={m ? styles.statCardMobile : styles.statCardDesktop}>
+                <p className={styles.statLabel}>{s.label}</p>
+                <p className={`${styles.statValue} ${m ? styles.statValueMobile : styles.statValueDesktop}`} style={{ color: s.color }}>{s.value}</p>
               </div>
             </GlassCard>
           ))}
         </div>
 
         {/* Opportunity List */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className={styles.oppList}>
           {opportunities.length === 0 ? (
-            <div className="macos-panel" style={{ 
-              padding: m ? '48px 24px' : '64px 48px',
-              textAlign: 'center',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 16
-            }}>
-              <div style={{
-                width: 64,
-                height: 64,
-                borderRadius: '50%',
-                background: 'rgba(191,90,242,0.1)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}>
-                <Radar size={28} style={{ color: '#BF5AF2' }} />
+            <div className={`macos-panel ${m ? styles.emptyStateMobile : styles.emptyStateDesktop}`}>
+              <div className={styles.emptyStateIcon}>
+                <Radar size={28} className={styles.emptyStateRadar} />
               </div>
               <div>
-                <h3 style={{
-                  fontSize: m ? '16px' : '18px',
-                  fontWeight: '600',
-                  color: 'rgba(255,255,255,0.92)',
-                  margin: '0 0 8px 0'
-                }}>
+                <h3 className={`${styles.emptyStateTitle} ${m ? styles.emptyStateTitleMobile : styles.emptyStateTitleDesktop}`}>
                   No results yet
                 </h3>
-                <p style={{
-                  fontSize: m ? '13px' : '15px',
-                  color: 'rgba(255,255,255,0.65)',
-                  margin: 0,
-                  lineHeight: 1.4
-                }}>
-                  {data?.lastScan 
-                    ? (filter === 'all' 
-                        ? 'No opportunities found yet — run your first scan!' 
+                <p className={`${styles.emptyStateBody} ${m ? styles.emptyStateBodyMobile : styles.emptyStateBodyDesktop}`}>
+                  {data?.lastScan
+                    ? (filter === 'all'
+                        ? 'No opportunities found yet — run your first scan!'
                         : 'No results in this category. Try "All" or run a new scan.')
                     : 'Run your first scan to discover opportunities!'
                   }
@@ -329,24 +285,13 @@ export default function Scout() {
                 <button
                   onClick={handleRunScan}
                   disabled={scanning}
+                  className={styles.firstScanBtn}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '12px 24px',
-                    borderRadius: '8px',
-                    border: 'none',
                     background: scanning ? 'rgba(0,122,255,0.5)' : '#007AFF',
-                    color: '#fff',
-                    fontSize: '14px',
-                    fontWeight: '600',
                     cursor: scanning ? 'not-allowed' : 'pointer',
-                    transition: 'all 0.2s'
                   }}
                 >
-                  <Search size={16} style={{ 
-                    animation: scanning ? 'spin 1s linear infinite' : 'none' 
-                  }} />
+                  <Search size={16} style={{ animation: scanning ? 'spin 1s linear infinite' : 'none' }} />
                   {scanning ? 'Scanning...' : 'Run First Scan'}
                 </button>
               )}
@@ -364,111 +309,89 @@ export default function Scout() {
                 {/* Mobile: vertical layout */}
                 {m ? (
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div className={styles.oppMobileRow}>
                       {/* Score badge */}
-                      <div style={{
-                        width: 36, height: 36, borderRadius: 10, flexShrink: 0,
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: `${scoreColor(opp.score)}20`, border: `1px solid ${scoreColor(opp.score)}40`,
-                      }}>
-                        <span style={{ fontSize: 15, fontWeight: 700, color: scoreColor(opp.score) }}>{opp.score}</span>
+                      <div
+                        className={styles.scoreBadgeMobile}
+                        style={{ background: `${scoreColor(opp.score)}20`, border: `1px solid ${scoreColor(opp.score)}40` }}
+                      >
+                        <span className={styles.scoreTextMobile} style={{ color: scoreColor(opp.score) }}>{opp.score}</span>
                       </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {opp.url ? <a href={opp.url} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} style={{ color: 'inherit', textDecoration: 'none' }} onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'} onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}>{opp.title}</a> : opp.title}
+                      <div className={styles.oppMobileInfo}>
+                        <h3 className={styles.oppTitle}>
+                          {opp.url ? <a href={opp.url} target="_blank" rel="noopener" onClick={e => e.stopPropagation()} className={styles.oppTitleLink} onMouseEnter={e => e.currentTarget.style.textDecoration = 'underline'} onMouseLeave={e => e.currentTarget.style.textDecoration = 'none'}>{opp.title}</a> : opp.title}
                         </h3>
-                        <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+                        <div className={styles.oppBadges}>
                           <span className="macos-badge" style={{ fontSize: 10 }}>{opp.source}</span>
                           <span className="macos-badge" style={{ fontSize: 10 }}>{opp.category}</span>
                           {getFreshnessInfo(opp.found) && (
-                            <span style={{
-                              fontSize: 9,
-                              padding: '2px 6px',
-                              borderRadius: 4,
-                              background: 'rgba(255,255,255,0.06)',
-                              color: getFreshnessInfo(opp.found)?.color,
-                              fontWeight: 500
-                            }}>
+                            <span className={styles.freshnessChip} style={{ color: getFreshnessInfo(opp.found)?.color }}>
                               {getFreshnessInfo(opp.found)?.badge}
                             </span>
                           )}
                         </div>
                       </div>
                     </div>
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.4, marginBottom: 10, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                    <p className={styles.oppSummaryMobile}>
                       {opp.summary}
                     </p>
                     {/* Actions — full width on mobile */}
                     {opp.status === 'new' && (
-                      <div style={{ display: 'flex', gap: 8 }} onClick={(e) => e.stopPropagation()}>
-                        <button
-                          onClick={() => handleDeploy(opp.id)}
-                          style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '10px', borderRadius: 8, border: 'none', cursor: 'pointer', color: '#fff', background: '#007AFF', fontSize: 12, fontWeight: 600 }}
-                        >
+                      <div className={styles.mobileActions} onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => handleDeploy(opp.id)} className={styles.deployBtnMobile}>
                           <Rocket size={13} /> Deploy
                         </button>
-                        <button
-                          onClick={() => handleDismiss(opp.id)}
-                          style={{ width: 40, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.06)', cursor: 'pointer', color: 'rgba(255,255,255,0.5)' }}
-                        >
+                        <button onClick={() => handleDismiss(opp.id)} className={styles.dismissBtnMobile}>
                           <X size={14} />
                         </button>
                       </div>
                     )}
                     {opp.status === 'deployed' && (
-                      <span style={{ fontSize: 11, color: '#32D74B', fontWeight: 600 }}>✓ In Workshop</span>
+                      <span className={styles.deployedLabelMobile}>✓ In Workshop</span>
                     )}
                   </div>
                 ) : (
                   /* Desktop: horizontal layout */
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-                    <div style={{
-                      width: 48, height: 48, borderRadius: 12, flexShrink: 0,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: `${scoreColor(opp.score)}20`, border: `1px solid ${scoreColor(opp.score)}40`,
-                    }}>
-                      <span style={{ fontSize: 18, fontWeight: 700, color: scoreColor(opp.score) }}>{opp.score}</span>
+                  <div className={styles.oppDesktopRow}>
+                    <div
+                      className={styles.scoreBadgeDesktop}
+                      style={{ background: `${scoreColor(opp.score)}20`, border: `1px solid ${scoreColor(opp.score)}40` }}
+                    >
+                      <span className={styles.scoreTextDesktop} style={{ color: scoreColor(opp.score) }}>{opp.score}</span>
                     </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                    <div className={styles.oppDesktopInfo}>
+                      <div className={styles.oppTitleRow}>
+                        <h3 className={styles.oppTitleDesktop}>
                           {opp.title}
                         </h3>
                         <span className="macos-badge" style={{ fontSize: 10, flexShrink: 0 }}>{opp.status}</span>
                       </div>
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', marginBottom: 8 }}>
+                      <p className={styles.oppSummaryDesktop}>
                         {opp.summary}
                       </p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div className={styles.oppMeta}>
                         <span className="macos-badge" style={{ fontSize: 10 }}>{opp.source}</span>
                         <span className="macos-badge" style={{ fontSize: 10 }}>{opp.category}</span>
                         {getFreshnessInfo(opp.found) && (
-                          <span style={{
-                            fontSize: 9,
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            background: 'rgba(255,255,255,0.06)',
-                            color: getFreshnessInfo(opp.found)?.color,
-                            fontWeight: 500
-                          }}>
+                          <span className={styles.freshnessChip} style={{ color: getFreshnessInfo(opp.found)?.color }}>
                             {getFreshnessInfo(opp.found)?.badge}
                           </span>
                         )}
-                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>{timeAgo(opp.found)}</span>
+                        <span className={styles.timeAgo}>{timeAgo(opp.found)}</span>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 8, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+                    <div className={styles.desktopActions} onClick={(e) => e.stopPropagation()}>
                       {opp.status === 'new' && (
                         <>
-                          <button onClick={() => handleDeploy(opp.id)} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', borderRadius: 8, border: 'none', cursor: 'pointer', color: '#fff', background: '#007AFF', fontSize: 11 }}>
+                          <button onClick={() => handleDeploy(opp.id)} className={styles.deployBtnDesktop}>
                             <Rocket size={12} /> Deploy
                           </button>
-                          <button onClick={() => handleDismiss(opp.id)} className="macos-button" style={{ display: 'flex', alignItems: 'center', padding: '6px 8px', borderRadius: 8, fontSize: 11, cursor: 'pointer' }}>
+                          <button onClick={() => handleDismiss(opp.id)} className={`macos-button ${styles.dismissBtnDesktop}`}>
                             <X size={12} />
                           </button>
                         </>
                       )}
-                      {opp.status === 'deployed' && <span style={{ fontSize: 10, color: '#32D74B', fontWeight: 600 }}>✓ In Workshop</span>}
+                      {opp.status === 'deployed' && <span className={styles.deployedLabelDesktop}>✓ In Workshop</span>}
                     </div>
                   </div>
                 )}

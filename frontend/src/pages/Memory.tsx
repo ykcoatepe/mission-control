@@ -4,6 +4,7 @@ import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import { useIsMobile } from '../lib/useIsMobile'
 import { formatDate, timeAgo } from '../lib/hooks'
+import styles from './Memory.module.css'
 
 type MemoryScope = 'all' | 'daily' | 'longterm'
 
@@ -145,47 +146,42 @@ export default function Memory() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1360, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div className={styles.page}>
         <div>
-          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <BookOpenText size={22} style={{ color: '#7C4DFF' }} /> Memory Surface
+          <h1 className={`text-title ${styles.pageTitle}`}>
+            <BookOpenText size={22} className={styles.pageTitleIcon} /> Memory Surface
           </h1>
           <p className="text-body" style={{ marginTop: 4 }}>Search daily notes and long-term memory without leaving the operational view.</p>
         </div>
 
         <GlassCard noPad>
-          <div style={{ padding: 14, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ position: 'relative', flex: '1 1 320px' }}>
-              <Search size={16} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.35)' }} />
+          <div className={styles.searchCardPad}>
+            <div className={styles.searchWrap}>
+              <Search size={16} className={styles.searchIcon} />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search memories..."
-                className="macos-input"
-                style={{ width: '100%', padding: '10px 12px 10px 34px', fontSize: 13 }}
+                className={`macos-input ${styles.searchInput}`}
               />
             </div>
-            <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-              <span style={{ borderRadius: 999, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.72)', padding: '7px 10px', fontSize: 11, fontWeight: 600 }}>
+            <div className={styles.filterBadges}>
+              <span className={styles.docCountBadge}>
                 {docs.length} docs
               </span>
-              <span style={{ borderRadius: 999, border: '1px solid rgba(124,77,255,0.25)', background: 'rgba(124,77,255,0.14)', color: 'rgba(255,255,255,0.8)', padding: '7px 10px', fontSize: 11, fontWeight: 600 }}>
+              <span className={styles.scopeBadge}>
                 Scope: {scopeOptions.find((opt) => opt.value === scope)?.label || 'All'}
               </span>
             </div>
-            <div style={{ display: 'inline-flex', gap: 8 }}>
+            <div className={styles.scopeBtns}>
               {scopeOptions.map((opt) => (
                 <button
                   key={opt.value}
                   onClick={() => setScope(opt.value)}
+                  className={styles.scopeBtn}
                   style={{
-                    borderRadius: 9,
                     border: scope === opt.value ? '1px solid rgba(124,77,255,0.6)' : '1px solid rgba(255,255,255,0.1)',
                     background: scope === opt.value ? 'rgba(124,77,255,0.2)' : 'rgba(255,255,255,0.05)',
-                    color: 'rgba(255,255,255,0.85)',
-                    padding: '7px 10px',
-                    fontSize: 12,
-                    cursor: 'pointer',
                   }}
                 >
                   {opt.label}
@@ -195,67 +191,47 @@ export default function Memory() {
           </div>
         </GlassCard>
 
-        {error && <div className="macos-panel" style={{ padding: 12, color: '#ff6b6b' }}>{error}</div>}
+        {error && <div className={`macos-panel ${styles.errorPanel}`}>{error}</div>}
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '300px 1fr', gap: 12, minHeight: 620 }}>
+        <div className={styles.splitGrid} style={{ gridTemplateColumns: isMobile ? '1fr' : '300px 1fr' }}>
           <GlassCard noPad>
-            <div style={{ padding: 12, borderBottom: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)', fontSize: 12, fontWeight: 600 }}>
+            <div className={styles.listHeader}>
               Memory ({docs.length})
             </div>
-            <div style={{ maxHeight: isMobile ? 260 : 620, overflowY: 'auto', padding: 10 }}>
+            <div className={`${styles.listBody} ${isMobile ? styles.listBodyMobile : styles.listBodyDesktop}`}>
               {loading ? (
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>Loading...</div>
+                <div className={styles.listLoading}>Loading...</div>
               ) : docs.length === 0 ? (
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)' }}>No memory found.</div>
+                <div className={styles.listEmpty}>No memory found.</div>
               ) : (
                 grouped.map(([label, items]) => {
                   const collapsed = !!collapsedGroups[label]
                   return (
-                    <div key={label} style={{ marginBottom: 12 }}>
+                    <div key={label} className={styles.groupWrap}>
                       <button
                         onClick={() => setCollapsedGroups((prev) => ({ ...prev, [label]: !collapsed }))}
-                        style={{
-                          width: '100%',
-                          textAlign: 'left',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          fontSize: 11,
-                          color: 'rgba(255,255,255,0.55)',
-                          marginBottom: 6,
-                          border: 'none',
-                          background: 'transparent',
-                          cursor: 'pointer',
-                          padding: 0,
-                        }}
+                        className={styles.groupToggle}
                       >
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <span className={styles.groupToggleLabel}>
                           {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                           {label} ({items.length})
                         </span>
                       </button>
 
                       {!collapsed && (
-                        <div style={{ display: 'grid', gap: 6 }}>
+                        <div className={styles.groupItems}>
                           {items.map((d) => {
                             const active = d.id === selectedId
                             return (
                               <button
                                 key={d.id}
                                 onClick={() => setSelectedId(d.id)}
-                                style={{
-                                  textAlign: 'left',
-                                  borderRadius: 10,
-                                  border: active ? '1px solid rgba(124,77,255,0.55)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: active ? 'rgba(124,77,255,0.18)' : 'rgba(255,255,255,0.03)',
-                                  padding: 10,
-                                  cursor: 'pointer',
-                                }}
+                                className={`${styles.docItem} ${active ? styles.docItemActive : styles.docItemInactive}`}
                               >
-                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.9)', fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.title}</div>
-                                <div style={{ marginTop: 4, display: 'flex', gap: 10, fontSize: 10, color: 'rgba(255,255,255,0.52)' }}>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><FileText size={11} />{d.scope}</span>
-                                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}><Clock3 size={11} />{timeAgo(d.updatedAt)}</span>
+                                <div className={styles.docItemTitle}>{d.title}</div>
+                                <div className={styles.docItemMeta}>
+                                  <span className={styles.docMetaItem}><FileText size={11} />{d.scope}</span>
+                                  <span className={styles.docMetaItem}><Clock3 size={11} />{timeAgo(d.updatedAt)}</span>
                                 </div>
                               </button>
                             )
@@ -270,32 +246,32 @@ export default function Memory() {
           </GlassCard>
 
           <GlassCard noPad>
-            <div style={{ padding: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className={styles.viewerHeader}>
               {selectedDoc ? (
                 <>
-                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.62)' }}>{selectedDoc.scope === 'longterm' ? 'Long-term Memory' : 'Daily Memory'}</div>
-                  <h2 style={{ margin: '4px 0 0', fontSize: 20, color: 'white' }}>{selectedDoc.title}</h2>
-                  <div style={{ marginTop: 8, display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11, color: 'rgba(255,255,255,0.56)' }}>
-                    {selectedDoc.date ? <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}><CalendarDays size={12} />{selectedDoc.date}</span> : null}
-                    <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center' }}><Clock3 size={12} />{formatDate(selectedDoc.updatedAt)}</span>
+                  <div className={styles.viewerScopeLabel}>{selectedDoc.scope === 'longterm' ? 'Long-term Memory' : 'Daily Memory'}</div>
+                  <h2 className={styles.viewerTitle}>{selectedDoc.title}</h2>
+                  <div className={styles.viewerDateRow}>
+                    {selectedDoc.date ? <span className={styles.viewerDateItem}><CalendarDays size={12} />{selectedDoc.date}</span> : null}
+                    <span className={styles.viewerDateItem}><Clock3 size={12} />{formatDate(selectedDoc.updatedAt)}</span>
                   </div>
                 </>
               ) : (
-                <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Select a memory document…</div>
+                <div className={styles.viewerPlaceholder}>Select a memory document…</div>
               )}
             </div>
 
-            <div style={{ maxHeight: 620, overflowY: 'auto', padding: 14 }}>
+            <div className={styles.viewerBody}>
               {!selectedDoc ? null : (
-                <div style={{ display: 'grid', gap: 14 }}>
+                <div className={styles.timelineList}>
                   {timelineEntries.map((e, idx) => (
-                    <div key={`${idx}-${e.title}`} style={{ display: 'grid', gridTemplateColumns: '80px 1fr', gap: 10 }}>
-                      <div style={{ fontSize: 12, color: '#9D8CFF', fontWeight: 700 }}>
+                    <div key={`${idx}-${e.title}`} className={styles.timelineEntry}>
+                      <div className={styles.timelineIndex}>
                         {idx === 0 ? 'Now' : `#${idx + 1}`}
                       </div>
                       <div>
-                        <div style={{ fontSize: 15, color: 'rgba(255,255,255,0.94)', fontWeight: 650 }}>{e.title}</div>
-                        <div style={{ marginTop: 6, fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.76)', whiteSpace: 'pre-wrap' }}>
+                        <div className={styles.timelineEntryTitle}>{e.title}</div>
+                        <div className={styles.timelineEntryBody}>
                           {e.body || selectedDoc.preview}
                         </div>
                       </div>

@@ -1,0 +1,950 @@
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1320px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.pageMobile {
+  gap: 12px;
+}
+
+/* ── Loading / Error states ──────────────────────────────────── */
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 260px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #007AFF;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.errorWrap {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.errorPad {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.errorPadMobile {
+  padding: 16px;
+}
+
+.errorTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #FF453A;
+}
+
+.errorMessage {
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+}
+
+.retryBtn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  cursor: pointer;
+}
+
+/* ── Header row ──────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.headerLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pageTitle {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pageTitleIcon {
+  color: #007AFF;
+}
+
+.headerMeta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.weekLabel {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+}
+
+.badgeRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.headerActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.weekNavGroup {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.navBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  cursor: pointer;
+}
+
+.modeBtn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: white;
+  cursor: pointer;
+  /* background driven inline: active vs inactive */
+}
+
+.refreshBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: white;
+  cursor: pointer;
+}
+
+.createBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: #007AFF;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Recurring jobs card ─────────────────────────────────────── */
+
+.recurringCardHeader {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.recurringCardTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.recurringCardSub {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.recurringCardActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.searchWrap {
+  position: relative;
+}
+
+.searchWrapMobile {
+  min-width: 100%;
+}
+
+.searchWrapDesktop {
+  min-width: 240px;
+}
+
+.searchIcon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.searchInput {
+  width: 100%;
+  padding: 8px 12px 8px 32px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(5, 10, 20, 0.65);
+  color: white;
+}
+
+.hideDisabledBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  /* background driven inline: active vs inactive */
+}
+
+.hiddenCount {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+  font-size: 11px;
+}
+
+/* ── Legend ──────────────────────────────────────────────────── */
+
+.legendToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 10px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.legendWrap {
+  padding: 12px 14px 0;
+}
+
+.legendOverflow {
+  overflow: hidden;
+}
+
+.legendItems {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding-bottom: 12px;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 11px;
+}
+
+.legendDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  /* background driven inline: item.color */
+}
+
+/* ── Recurring pill chips ────────────────────────────────────── */
+
+.recurringChipsWrap {
+  padding: 0 14px 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.noRecurringMsg {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.recurringChip {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  /* background driven inline: cardTone(entry) */
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.recurringChipTitle {
+  font-weight: 600;
+}
+
+.recurringChipSub {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  margin-top: 3px;
+}
+
+.recurringMore {
+  align-self: center;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+}
+
+/* ── Warning banner ──────────────────────────────────────────── */
+
+.warningBanner {
+  width: 100%;
+  color: #FFD60A;
+  font-size: 11px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 149, 0, 0.12);
+  border: 1px solid rgba(255, 149, 0, 0.2);
+}
+
+/* ── Calendar filters row ────────────────────────────────────── */
+
+.filtersRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filterGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filterGroupLabel {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.filterRows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filterRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.filterRowLabel {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  min-width: 52px;
+}
+
+.filterPill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: white;
+  font-size: 11px;
+  cursor: pointer;
+  /* background driven inline: active vs inactive */
+}
+
+.filterPillCapitalize {
+  text-transform: capitalize;
+}
+
+/* ── Week grid ───────────────────────────────────────────────── */
+
+.dayCardHeader {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.dayCardWeekday {
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.dayCardDate {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.dayCardBadges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dayCardBody {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 220px;
+}
+
+.dayCardEmpty {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 8px 6px;
+}
+
+.entryChip {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  /* background driven inline: cardTone(entry) */
+  padding: 7px 8px;
+  color: rgba(255, 255, 255, 0.92);
+  cursor: pointer;
+}
+
+.entryChipTitle {
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.entryChipMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.entryChipTime {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.7);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.entryChipStatus {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.55);
+  text-transform: capitalize;
+}
+
+.entryMore {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+/* ── Upcoming queue card ─────────────────────────────────────── */
+
+.upcomingCardHeader {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.upcomingCardTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.upcomingCardSub {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.upcomingEmpty {
+  padding: 12px 14px;
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 12px;
+}
+
+.upcomingRow {
+  width: 100%;
+  display: grid;
+  /* gridTemplateColumns driven inline */
+  gap: 10px;
+  align-items: center;
+  padding: 12px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.upcomingTime {
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  /* font-size driven inline: mobile vs desktop */
+}
+
+.upcomingDate {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 2px;
+}
+
+.upcomingTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.upcomingMinWidth {
+  min-width: 0;
+}
+
+.upcomingAssignee {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  margin-top: 3px;
+}
+
+.upcomingTimeAgo {
+  color: rgba(255, 255, 255, 0.65);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.upcomingTimeAgoMobile {
+  justify-content: flex-start;
+}
+
+.upcomingTimeAgoDesktop {
+  justify-content: flex-end;
+}
+
+/* ── Detail overlay backdrop ─────────────────────────────────── */
+
+.detailBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  background: rgba(0, 0, 0, 0.45);
+  border: none;
+  backdrop-filter: blur(3px);
+  cursor: default;
+}
+
+/* ── Detail aside panel ──────────────────────────────────────── */
+
+.detailPanel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 960;
+  background: rgba(8, 12, 20, 0.94);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: -16px 0 40px rgba(0, 0, 0, 0.35);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.detailHeaderRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.detailHeaderLeft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detailEyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detailDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  /* background driven inline: cardTone(detailEntry) */
+}
+
+.detailEyebrowText {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.detailTitle {
+  color: rgba(255, 255, 255, 0.95);
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.detailCloseBtn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+/* ── Detail info block ───────────────────────────────────────── */
+
+.detailGrid {
+  display: grid;
+  gap: 10px;
+}
+
+.detailInfoCard {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 10px;
+}
+
+.detailInfoCard2 {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  display: grid;
+  gap: 10px;
+}
+
+.detailFieldLabel {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+}
+
+.detailFieldValue {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.detailFieldValueCapitalize {
+  text-transform: capitalize;
+}
+
+.detailTwoCol {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.detailLinkedIds {
+  display: grid;
+  gap: 6px;
+}
+
+.detailLinkedId {
+  color: rgba(255, 255, 255, 0.66);
+  font-size: 11px;
+}
+
+/* ── Detail recent runs ──────────────────────────────────────── */
+
+.runsHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.runsTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.runsCount {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 11px;
+}
+
+.runsList {
+  display: grid;
+  gap: 8px;
+}
+
+.runRow {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  display: grid;
+  gap: 6px;
+}
+
+.runRowHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.runLabel {
+  color: rgba(255, 255, 255, 0.84);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.runTimestamp {
+  color: rgba(255, 255, 255, 0.48);
+  font-size: 11px;
+}
+
+.runNote {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+}
+
+/* ── Detail action buttons ───────────────────────────────────── */
+
+.detailActions {
+  margin-top: auto;
+  display: grid;
+  gap: 8px;
+}
+
+.detailEditBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: none;
+  background: #007AFF;
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.detailToggleBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.detailCopyBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Entry modal ─────────────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modalOverlayMobile {
+  padding: 16px;
+}
+
+.modalOverlayDesktop {
+  padding: 24px;
+}
+
+.modalBox {
+  width: 100%;
+  max-width: 640px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 16px;
+}
+
+.modalBoxMobile {
+  padding: 16px;
+}
+
+.modalBoxDesktop {
+  padding: 24px;
+}
+
+.modalTitle {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.modalFields {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+
+.formInput {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+}
+
+.formInputMono {
+  font-family: monospace;
+}
+
+.formSelect {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(32, 32, 32, 0.8);
+  color: white;
+}
+
+.formTextarea {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: white;
+  resize: vertical;
+}
+
+.modalActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.cancelBtn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+}
+
+.saveBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: none;
+  background: #007AFF;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}

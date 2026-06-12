@@ -6,6 +6,7 @@ import { Plus, Clock, Zap, CheckCircle, Play, X, AlertCircle, Loader2, ArrowLeft
 import PageTransition from '../components/PageTransition'
 import { apiQueryOptions, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
+import styles from './Workshop.module.css'
 
 const priorityConfig: Record<string, { color: string; label: string }> = {
   high: { color: '#FF453A', label: 'High' },
@@ -59,7 +60,7 @@ const executionPathConfig: Record<string, { label: string; color: string; bg: st
 function renderPathBadge(path?: string) {
   const config = executionPathConfig[String(path || 'task-path')] || executionPathConfig['task-path']
   return (
-    <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 999, color: config.color, background: config.bg, border: config.border, fontWeight: 600 }}>
+    <span className={styles.pathBadge} style={{ color: config.color, background: config.bg, border: config.border }}>
       {config.label}
     </span>
   )
@@ -98,24 +99,16 @@ function blockedExplanation(task: Task) {
 function BlockedExplanation({ task, compact = false }: { task: Task; compact?: boolean }) {
   const explanation = blockedExplanation(task)
   return (
-    <div style={{
-      padding: compact ? '8px 10px' : '12px 14px',
-      borderRadius: 10,
-      background: 'rgba(255,159,10,0.08)',
-      border: '1px solid rgba(255,159,10,0.2)',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: compact ? 5 : 8,
-    }}>
-      <div style={{ fontSize: 11, fontWeight: 800, color: '#FFB224' }}>Why blocked</div>
+    <div className={`${styles.blockedExplanation} ${compact ? styles.blockedExplanationCompact : styles.blockedExplanationFull}`}>
+      <div className={styles.blockedWhy}>Why blocked</div>
       {explanation.reasons.slice(0, compact ? 1 : 3).map((reason) => (
-        <p key={reason} style={{ margin: 0, fontSize: compact ? 11 : 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.78)' }}>{reason}</p>
+        <p key={reason} className={`${styles.blockedReason} ${compact ? styles.blockedReasonCompact : styles.blockedReasonFull}`}>{reason}</p>
       ))}
       {!compact && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-          <div style={{ fontSize: 11, fontWeight: 800, color: 'rgba(255,255,255,0.72)' }}>Next useful action</div>
+        <div className={styles.blockedNextStepsWrap}>
+          <div className={styles.blockedNextLabel}>Next useful action</div>
           {explanation.nextSteps.slice(0, 2).map((step) => (
-            <p key={step} style={{ margin: 0, fontSize: 12, lineHeight: 1.55, color: 'rgba(255,255,255,0.68)' }}>{step}</p>
+            <p key={step} className={styles.blockedNextStep}>{step}</p>
           ))}
         </div>
       )}
@@ -191,8 +184,8 @@ export default function Workshop() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
-          <div style={{ width: 24, height: 24, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
@@ -232,32 +225,29 @@ export default function Workshop() {
     const isExecuting = viewTask.status === 'executing'
     return (
       <PageTransition>
-        <div style={{ maxWidth: m ? '100%' : 800, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 14 : 20 }}>
+        <div className={styles.reportPage} style={{ maxWidth: m ? '100%' : 800, gap: m ? 14 : 20 }}>
           {/* Header */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <button
-              onClick={() => setViewTask(null)}
-              style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, padding: 8, cursor: 'pointer', display: 'flex', color: 'rgba(255,255,255,0.7)' }}
-            >
+          <div className={styles.reportHeader}>
+            <button onClick={() => setViewTask(null)} className={styles.backBtn}>
               <ArrowLeft size={18} />
             </button>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <h2 style={{ fontSize: m ? 15 : 17, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>
+            <div className={styles.reportTitleWrap}>
+              <h2 className={styles.reportTitle} style={{ fontSize: m ? 15 : 17 }}>
                 {viewTask.title}
               </h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                <span style={{ width: 7, height: 7, borderRadius: '50%', background: priorityConfig[viewTask.priority]?.color || '#8E8E93' }} />
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+              <div className={styles.reportStatusRow}>
+                <span className={styles.priorityIndicator} style={{ background: priorityConfig[viewTask.priority]?.color || '#8E8E93' }} />
+                <span className={styles.reportStatusText}>
                   {isExecuting ? 'Sub-agent working...' : viewTask.status === 'done' ? `Completed ${viewTask.completed ? timeAgo(viewTask.completed) : ''}` : 'Queued'}
                 </span>
                 {renderPathBadge(viewTask.executionPath)}
                 {viewTask.structuredTaskRequired ? (
-                  <span style={{ fontSize: 10, padding: '1px 7px', borderRadius: 999, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.65)' }}>
+                  <span className={styles.reportDecisionFirst}>
                     decision-first
                   </span>
                 ) : null}
                 {viewTask.tags?.map(tag => (
-                  <span key={tag} style={{ fontSize: 10, padding: '1px 7px', borderRadius: 5, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.4)' }}>{tag}</span>
+                  <span key={tag} className={styles.reportTagChip}>{tag}</span>
                 ))}
               </div>
             </div>
@@ -266,10 +256,10 @@ export default function Workshop() {
           {/* Description */}
           {viewTask.description && (
             <div className="macos-panel" style={{ padding: m ? 14 : 20 }}>
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', marginBottom: 6 }}>Task Description</p>
-              <p style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', lineHeight: 1.6 }}>{viewTask.description}</p>
+              <p className={styles.reportDescLabel}>Task Description</p>
+              <p className={styles.reportDescBody}>{viewTask.description}</p>
               {viewTask.routingReason ? (
-                <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.42)', marginTop: 10 }}>
+                <p className={styles.reportRoute}>
                   Route: {viewTask.routingReason}
                 </p>
               ) : null}
@@ -279,11 +269,11 @@ export default function Workshop() {
           {/* Executing state */}
           {isExecuting && (
             <div className="macos-panel" style={{ padding: m ? 14 : 20 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div className={styles.executingRow}>
                 <Loader2 size={18} style={{ color: '#007AFF', animation: 'spin 1s linear infinite' }} />
                 <div>
-                  <p style={{ fontSize: 13, fontWeight: 500, color: '#007AFF' }}>Sub-agent is working...</p>
-                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>Results will appear here when done. This page auto-refreshes.</p>
+                  <p className={styles.executingTitle}>Sub-agent is working...</p>
+                  <p className={styles.executingSubtitle}>Results will appear here when done. This page auto-refreshes.</p>
                 </div>
               </div>
             </div>
@@ -292,10 +282,10 @@ export default function Workshop() {
           {/* Report */}
           {viewTask.result && (
             <div className="macos-panel" style={{ padding: m ? 14 : 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.5)' }}>📋 Agent Report</p>
+              <div className={styles.reportResultHeader}>
+                <p className={styles.reportResultLabel}>📋 Agent Report</p>
               </div>
-              <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.82)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+              <div className={styles.reportResultBody}>
                 {viewTask.result}
               </div>
             </div>
@@ -304,26 +294,19 @@ export default function Workshop() {
           {/* Error */}
           {viewTask.error && (
             <div className="macos-panel" style={{ padding: m ? 14 : 20, borderLeft: '3px solid #FF453A' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <div className={styles.errorRow}>
                 <AlertCircle size={16} style={{ color: '#FF453A' }} />
-                <p style={{ fontSize: 13, color: '#FF453A' }}>{viewTask.error}</p>
+                <p className={styles.errorText}>{viewTask.error}</p>
               </div>
               <BlockedExplanation task={viewTask} />
             </div>
           )}
 
           {/* Action buttons */}
-          <div style={{ display: 'flex', gap: 10, flexDirection: m ? 'column' : 'row' }}>
+          <div className={styles.reportActions} style={{ flexDirection: m ? 'column' : 'row' }}>
             {/* Discuss with Müdür — the primary action */}
             {viewTask.result && (
-              <button
-                onClick={() => discussWithMudur(viewTask)}
-                style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  padding: '12px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: '#007AFF', color: '#fff', fontSize: 13, fontWeight: 600,
-                }}
-              >
+              <button onClick={() => discussWithMudur(viewTask)} className={styles.primaryActionBtn}>
                 <MessageSquare size={15} /> Discuss with Müdür
               </button>
             )}
@@ -333,11 +316,7 @@ export default function Workshop() {
               <button
                 onClick={() => { handleExecute(viewTask.id); setViewTask({ ...viewTask, status: 'executing' }); }}
                 disabled={executing[viewTask.id]}
-                style={{
-                  flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  padding: '12px 20px', borderRadius: 10, border: 'none', cursor: 'pointer',
-                  background: '#007AFF', color: '#fff', fontSize: 13, fontWeight: 600,
-                }}
+                className={styles.primaryActionBtn}
               >
                 <Play size={15} /> Execute Task
               </button>
@@ -347,12 +326,7 @@ export default function Workshop() {
             {viewTask.result && (
               <button
                 onClick={() => { handleExecute(viewTask.id); setViewTask({ ...viewTask, status: 'executing', result: undefined }); }}
-                style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                  padding: '12px 20px', borderRadius: 10, cursor: 'pointer',
-                  background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)',
-                  color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: 500,
-                }}
+                className={styles.rerunBtn}
               >
                 <Play size={14} /> Re-run
               </button>
@@ -366,12 +340,7 @@ export default function Workshop() {
               await deleteTaskMutation.mutateAsync(viewTask.id)
               setViewTask(null)
             }}
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(255,69,58,0.3)',
-              background: 'rgba(255,69,58,0.1)', color: '#FF453A', fontSize: 12, cursor: 'pointer',
-              marginTop: 8, width: m ? '100%' : 'auto', alignSelf: 'flex-start',
-            }}
+            className={`${styles.deleteBtn} ${m ? styles.deleteBtnMobile : ''}`}
           >
             🗑 Delete Task
           </button>
@@ -383,31 +352,23 @@ export default function Workshop() {
   // === KANBAN VIEW ===
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 14 : 24 }}>
+      <div className={`${styles.page} ${m ? styles.pageMobile : styles.pageDesktop}`}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: m ? 'flex-start' : 'center', justifyContent: 'space-between', flexDirection: m ? 'column' : 'row', gap: m ? 12 : 0 }}>
+        <div className={`${styles.headerRow} ${m ? styles.headerRowMobile : styles.headerRowDesktop}`}>
           <div>
             <h1 className="text-title">Workshop</h1>
-            <p className="text-body" style={{ marginTop: 4 }}>Create tasks, let your agent research & execute them</p>
+            <p className={`text-body ${styles.headerSubtitle}`}>Create tasks, let your agent research & execute them</p>
           </div>
           <button
             onClick={() => setShowAddModal(true)}
-            style={{
-              display: 'flex', alignItems: 'center', gap: 8,
-              padding: m ? '10px 16px' : '10px 20px',
-              borderRadius: 10, border: 'none', cursor: 'pointer',
-              background: '#007AFF', color: '#fff',
-              fontSize: 13, fontWeight: 600,
-              width: m ? '100%' : undefined,
-              justifyContent: m ? 'center' : undefined,
-            }}
+            className={`${styles.addBtn} ${m ? styles.addBtnMobile : styles.addBtnDesktop}`}
           >
             <Plus size={15} /> Add Task
           </button>
         </div>
 
         {/* Kanban Columns */}
-        <div style={{ display: 'flex', flexDirection: m ? 'column' : 'row', gap: m ? 20 : 24 }}>
+        <div className={`${styles.kanban} ${m ? styles.kanbanMobile : styles.kanbanDesktop}`}>
           {(['queue', 'inProgress', 'blocked', 'done'] as const).map((col) => {
             const tasks: Task[] = columns[col] || []
             const visibleTasks = col === 'done' ? tasks.slice(0, doneVisibleCount) : tasks
@@ -415,46 +376,27 @@ export default function Workshop() {
             const config = columnConfig[col]
             const Icon = config.icon
             return (
-              <div key={col} style={{ flex: m ? undefined : 1, minWidth: 0 }}>
+              <div key={col} className={styles.kanbanCol} style={{ flex: m ? undefined : 1 }}>
                 {/* Column Header */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14, paddingLeft: 4 }}>
+                <div className={styles.colHeader}>
                   <Icon size={15} style={{ color: config.color }} />
-                  <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>{config.title}</h3>
-                  <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 6, background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.5)' }}>{tasks.length}</span>
+                  <h3 className={styles.colTitle}>{config.title}</h3>
+                  <span className={styles.colCount}>{tasks.length}</span>
                 </div>
 
                 {col === 'done' && tasks.length > donePageSize && (
-                  <div style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    marginBottom: 12,
-                    padding: '10px 12px',
-                    borderRadius: 12,
-                    background: 'rgba(50,215,75,0.06)',
-                    border: '1px solid rgba(50,215,75,0.14)',
-                  }}>
-                    <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>
+                  <div className={styles.donePager}>
+                    <p className={styles.donePagerLabel}>
                       Showing latest {visibleTasks.length} of {tasks.length}
                     </p>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <div className={styles.donePagerBtns}>
                       {hiddenDoneCount > 0 && (
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
                             setDoneVisibleCount((current) => Math.min(tasks.length, current + donePageSize))
                           }}
-                          style={{
-                            padding: '5px 10px',
-                            borderRadius: 999,
-                            border: '1px solid rgba(50,215,75,0.18)',
-                            background: 'rgba(50,215,75,0.08)',
-                            color: '#32D74B',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
+                          className={styles.donePagerBtnGreen}
                         >
                           Show {Math.min(donePageSize, hiddenDoneCount)} more
                         </button>
@@ -465,16 +407,7 @@ export default function Workshop() {
                             e.stopPropagation()
                             setDoneVisibleCount(tasks.length)
                           }}
-                          style={{
-                            padding: '5px 10px',
-                            borderRadius: 999,
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            background: 'rgba(255,255,255,0.05)',
-                            color: 'rgba(255,255,255,0.75)',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
+                          className={styles.donePagerBtnWhite}
                         >
                           Show all
                         </button>
@@ -485,16 +418,7 @@ export default function Workshop() {
                             e.stopPropagation()
                             setDoneVisibleCount(donePageSize)
                           }}
-                          style={{
-                            padding: '5px 10px',
-                            borderRadius: 999,
-                            border: '1px solid rgba(255,255,255,0.1)',
-                            background: 'transparent',
-                            color: 'rgba(255,255,255,0.6)',
-                            fontSize: 11,
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                          }}
+                          className={styles.donePagerBtnGhost}
                         >
                           Recent only
                         </button>
@@ -504,18 +428,9 @@ export default function Workshop() {
                 )}
 
                 {/* Cards */}
-                <div style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: 10,
-                  ...(col === 'done' && !m ? {
-                    maxHeight: 'min(72vh, 960px)',
-                    overflowY: 'auto',
-                    paddingRight: 4,
-                  } : {}),
-                }}>
+                <div className={`${styles.cardList} ${col === 'done' && !m ? styles.cardListDoneDesktop : ''}`}>
                   {tasks.length === 0 && (
-                    <div style={{ padding: '24px 16px', textAlign: 'center', border: '1px dashed rgba(255,255,255,0.08)', borderRadius: 12, color: 'rgba(255,255,255,0.25)', fontSize: 12 }}>
+                    <div className={styles.emptyCol}>
                       {col === 'queue' ? 'Add tasks or deploy from Scout' : col === 'inProgress' ? 'Execute a task to start' : 'Completed tasks show here'}
                     </div>
                   )}
@@ -530,27 +445,19 @@ export default function Workshop() {
                       onClick={() => setViewTask(task)}
                     >
                       {/* Priority dot + title */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                        <span style={{ 
-                          display: 'inline-block', 
-                          width: 8, 
-                          height: 8, 
-                          borderRadius: '50%', 
-                          background: task.priority === 'high' ? '#FF453A' : task.priority === 'medium' ? '#FF9500' : '#8E8E93',
-                          marginRight: 8 
-                        }} />
-                        <h4 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                          {task.title}
-                        </h4>
-                        <span style={{ 
-                          fontSize: 10, 
-                          padding: '2px 6px', 
-                          borderRadius: 4, 
-                          background: `rgba(${task.priority === 'high' ? '255,69,58' : task.priority === 'medium' ? '255,149,0' : '142,142,147'}, 0.15)`,
-                          color: task.priority === 'high' ? '#FF453A' : task.priority === 'medium' ? '#FF9500' : '#8E8E93',
-                          textTransform: 'capitalize',
-                          fontWeight: 500
-                        }}>
+                      <div className={styles.cardPriorityRow}>
+                        <span
+                          className={styles.priorityDot}
+                          style={{ background: task.priority === 'high' ? '#FF453A' : task.priority === 'medium' ? '#FF9500' : '#8E8E93' }}
+                        />
+                        <h4 className={styles.cardTitle}>{task.title}</h4>
+                        <span
+                          className={styles.priorityBadge}
+                          style={{
+                            background: `rgba(${task.priority === 'high' ? '255,69,58' : task.priority === 'medium' ? '255,149,0' : '142,142,147'}, 0.15)`,
+                            color: task.priority === 'high' ? '#FF453A' : task.priority === 'medium' ? '#FF9500' : '#8E8E93',
+                          }}
+                        >
                           {task.priority}
                         </span>
                         {renderPathBadge(task.executionPath)}
@@ -558,83 +465,77 @@ export default function Workshop() {
 
                       {/* Description */}
                       {task.description && (
-                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10, lineHeight: 1.5, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                          {task.description}
-                        </p>
+                        <p className={styles.cardDescription}>{task.description}</p>
                       )}
 
                       {/* Status for in-progress */}
                       {col === 'inProgress' && task.status === 'executing' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: 'rgba(0,122,255,0.1)', border: '1px solid rgba(0,122,255,0.2)' }}>
+                        <div className={styles.executingBanner}>
                           <Loader2 size={12} style={{ color: '#007AFF', animation: 'spin 1s linear infinite' }} />
-                          <span style={{ fontSize: 11, color: '#007AFF', fontWeight: 500 }}>Sub-agent working...</span>
+                          <span className={styles.executingText}>Sub-agent working...</span>
                         </div>
                       )}
 
                       {col === 'blocked' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10, padding: '6px 10px', borderRadius: 8, background: 'rgba(255,69,58,0.1)', border: '1px solid rgba(255,69,58,0.2)' }}>
+                        <div className={styles.blockedBanner}>
                           <AlertCircle size={12} style={{ color: '#FF453A' }} />
-                          <span style={{ fontSize: 11, color: '#FF453A', fontWeight: 500 }}>{task.error ? 'Needs attention' : 'Execution blocked'}</span>
+                          <span className={styles.blockedText}>{task.error ? 'Needs attention' : 'Execution blocked'}</span>
                         </div>
                       )}
 
                       {/* Result preview for done tasks */}
                       {col === 'done' && task.result && (
-                        <div style={{ padding: '6px 10px', borderRadius: 8, background: 'rgba(50,215,75,0.08)', border: '1px solid rgba(50,215,75,0.15)', marginBottom: 10 }}>
-                          <p style={{ fontSize: 11, color: 'rgba(50,215,75,0.8)', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-                            ✅ {task.result}
-                          </p>
+                        <div className={styles.doneResult}>
+                          <p className={styles.doneResultText}>✅ {task.result}</p>
                         </div>
                       )}
 
                       {col === 'blocked' && (task.error || task.result) && (
-                        <div style={{ marginBottom: 10 }}>
+                        <div className={styles.blockedExplanationCardWrap}>
                           <BlockedExplanation task={task} compact />
                         </div>
                       )}
 
                       {/* Footer: tags + actions */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', flex: 1, overflow: 'hidden' }}>
+                      <div className={styles.cardFooter}>
+                        <div className={styles.cardTagsWrap}>
                           {task.tags?.map(tag => {
                             const tagColors = ['#007AFF', '#32D74B', '#FF9500', '#FF453A', '#BF5AF2', '#64D2FF'];
                             const colorIndex = tag.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % tagColors.length;
                             const tagColor = tagColors[colorIndex];
                             return (
-                              <span key={tag} style={{ 
-                                fontSize: 10, 
-                                padding: '2px 7px', 
-                                borderRadius: 5, 
-                                background: `rgba(${parseInt(tagColor.slice(1,3), 16)}, ${parseInt(tagColor.slice(3,5), 16)}, ${parseInt(tagColor.slice(5,7), 16)}, 0.15)`, 
+                              <span key={tag} style={{
+                                fontSize: 10,
+                                padding: '2px 7px',
+                                borderRadius: 5,
+                                background: `rgba(${parseInt(tagColor.slice(1,3), 16)}, ${parseInt(tagColor.slice(3,5), 16)}, ${parseInt(tagColor.slice(5,7), 16)}, 0.15)`,
                                 color: tagColor,
                                 border: `1px solid rgba(${parseInt(tagColor.slice(1,3), 16)}, ${parseInt(tagColor.slice(3,5), 16)}, ${parseInt(tagColor.slice(5,7), 16)}, 0.3)`
                               }}>{tag}</span>
                             );
                           })}
                           {task.source && (
-                            <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, background: task.source === 'scout' ? 'rgba(191,90,242,0.12)' : 'rgba(255,255,255,0.06)', color: task.source === 'scout' ? '#BF5AF2' : 'rgba(255,255,255,0.4)' }}>
+                            <span className={task.source === 'scout' ? styles.sourceChipScout : styles.sourceChipOther}>
                               {task.source}
                             </span>
                           )}
                           {task.structuredTaskRequired ? (
-                            <span style={{ fontSize: 10, padding: '2px 7px', borderRadius: 5, background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+                            <span className={styles.reportTagChip}>
                               decision-first
                             </span>
                           ) : null}
                         </div>
 
-                        <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexShrink: 0 }}>
+                        <div className={styles.cardActions}>
                           {/* Execute button for queue tasks */}
                           {col === 'queue' && (
                             <button
                               onClick={(e) => { e.stopPropagation(); handleExecute(task.id); }}
                               disabled={executing[task.id]}
+                              className={styles.executeBtn}
                               style={{
-                                display: 'flex', alignItems: 'center', gap: 5,
-                                padding: '6px 12px', borderRadius: 8,
-                                border: 'none', cursor: executing[task.id] ? 'wait' : 'pointer',
                                 background: executing[task.id] ? 'rgba(0,122,255,0.3)' : '#007AFF',
-                                color: '#fff', fontSize: 11, fontWeight: 600,
+                                cursor: executing[task.id] ? 'wait' : 'pointer',
                               }}
                             >
                               {executing[task.id] ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={12} />}
@@ -646,12 +547,7 @@ export default function Workshop() {
                           {col === 'done' && task.result && (
                             <button
                               onClick={(e) => { e.stopPropagation(); discussWithMudur(task); }}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 4,
-                                padding: '5px 10px', borderRadius: 7,
-                                border: '1px solid rgba(0,122,255,0.3)', background: 'rgba(0,122,255,0.08)',
-                                color: '#007AFF', fontSize: 11, fontWeight: 500, cursor: 'pointer',
-                              }}
+                              className={styles.discussBtn}
                             >
                               <MessageSquare size={11} /> Discuss
                             </button>
@@ -661,19 +557,14 @@ export default function Workshop() {
                             <button
                               onClick={(e) => { e.stopPropagation(); handleExecute(task.id); }}
                               disabled={executing[task.id]}
-                              style={{
-                                display: 'flex', alignItems: 'center', gap: 4,
-                                padding: '5px 10px', borderRadius: 7,
-                                border: '1px solid rgba(255,69,58,0.3)', background: 'rgba(255,69,58,0.08)',
-                                color: '#FF453A', fontSize: 11, fontWeight: 500, cursor: 'pointer',
-                              }}
+                              className={styles.retryBtn}
                             >
                               {executing[task.id] ? <Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={11} />}
                               Retry
                             </button>
                           )}
 
-                          <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)' }}>
+                          <span className={styles.cardTimeAgo}>
                             {task.completed ? timeAgo(task.completed) : task.created ? timeAgo(task.created) : ''}
                           </span>
                         </div>
@@ -694,7 +585,7 @@ export default function Workshop() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
+            className={styles.modalOverlay}
             onClick={() => setShowAddModal(false)}
           >
             <motion.div
@@ -702,49 +593,48 @@ export default function Workshop() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               onClick={(e) => e.stopPropagation()}
-              style={{ background: 'rgba(28,28,30,0.95)', backdropFilter: 'blur(20px)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: m ? 12 : 16, padding: m ? 20 : 28, width: '100%', maxWidth: m ? '95vw' : 480 }}
+              className={`${styles.modalBox} ${m ? styles.modalBoxMobile : styles.modalBoxDesktop}`}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>Add Task</h2>
-                <button onClick={() => setShowAddModal(false)} style={{ background: 'rgba(255,255,255,0.1)', border: 'none', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-                  <X size={16} style={{ color: 'rgba(255,255,255,0.6)' }} />
+              <div className={styles.modalHeader}>
+                <h2 className={styles.modalTitle}>Add Task</h2>
+                <button onClick={() => setShowAddModal(false)} className={styles.modalCloseBtn}>
+                  <X size={16} className={styles.modalCloseIcon} />
                 </button>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className={styles.formFields}>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>Title *</label>
+                  <label className={styles.formLabel}>Title *</label>
                   <input
                     value={addForm.title}
                     onChange={(e) => setAddForm(prev => ({ ...prev, title: e.target.value }))}
                     placeholder="e.g. Research competitors, Write blog post..."
                     autoFocus
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 13, color: 'rgba(255,255,255,0.92)', outline: 'none', boxSizing: 'border-box' }}
+                    className={styles.formInput}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>Description</label>
+                  <label className={styles.formLabel}>Description</label>
                   <textarea
                     value={addForm.description}
                     onChange={(e) => setAddForm(prev => ({ ...prev, description: e.target.value }))}
                     placeholder="What should be done? Any specific instructions..."
                     rows={3}
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 13, color: 'rgba(255,255,255,0.92)', outline: 'none', resize: 'vertical', minHeight: 70, boxSizing: 'border-box' }}
+                    className={styles.formTextarea}
                   />
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>Priority</label>
-                  <div style={{ display: 'flex', gap: 6 }}>
+                  <label className={styles.formLabel}>Priority</label>
+                  <div className={styles.priorityBtns}>
                     {(['low', 'medium', 'high'] as const).map(p => (
                       <button
                         key={p}
                         onClick={() => setAddForm(prev => ({ ...prev, priority: p }))}
+                        className={styles.priorityBtn}
                         style={{
-                          flex: 1, padding: '8px 0', borderRadius: 8, cursor: 'pointer',
                           border: addForm.priority === p ? `1px solid ${priorityConfig[p].color}40` : '1px solid rgba(255,255,255,0.08)',
                           background: addForm.priority === p ? `${priorityConfig[p].color}15` : 'rgba(255,255,255,0.04)',
                           color: addForm.priority === p ? priorityConfig[p].color : 'rgba(255,255,255,0.5)',
-                          fontSize: 12, fontWeight: 500, textTransform: 'capitalize',
                         }}
                       >
                         {p}
@@ -753,12 +643,12 @@ export default function Workshop() {
                   </div>
                 </div>
                 <div>
-                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 6 }}>Tags (comma separated)</label>
+                  <label className={styles.formLabel}>Tags (comma separated)</label>
                   <input
                     value={addForm.tags}
                     onChange={(e) => setAddForm(prev => ({ ...prev, tags: e.target.value }))}
                     placeholder="research, email, dev..."
-                    style={{ width: '100%', padding: '10px 14px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, fontSize: 13, color: 'rgba(255,255,255,0.92)', outline: 'none', boxSizing: 'border-box' }}
+                    className={styles.formInput}
                   />
                 </div>
               </div>
@@ -766,11 +656,10 @@ export default function Workshop() {
               <button
                 onClick={handleAddTask}
                 disabled={!addForm.title.trim()}
+                className={styles.submitBtn}
                 style={{
-                  width: '100%', marginTop: 20, padding: '12px', borderRadius: 10,
-                  border: 'none', cursor: addForm.title.trim() ? 'pointer' : 'not-allowed',
                   background: addForm.title.trim() ? '#007AFF' : 'rgba(255,255,255,0.08)',
-                  color: '#fff', fontSize: 14, fontWeight: 600,
+                  cursor: addForm.title.trim() ? 'pointer' : 'not-allowed',
                   opacity: addForm.title.trim() ? 1 : 0.5,
                 }}
               >

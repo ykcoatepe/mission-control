@@ -1,0 +1,289 @@
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1360px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+
+.pageTitle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pageTitleIcon {
+  color: #7C4DFF;
+}
+
+/* ── Search / filter card ────────────────────────────────────── */
+
+.searchCardPad {
+  padding: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.searchWrap {
+  position: relative;
+  flex: 1 1 320px;
+}
+
+.searchIcon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: rgba(255, 255, 255, 0.35);
+}
+
+.searchInput {
+  width: 100%;
+  padding: 10px 12px 10px 34px;
+  font-size: 13px;
+}
+
+.filterBadges {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.docCountBadge {
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.72);
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scopeBadge {
+  border-radius: 999px;
+  border: 1px solid rgba(124, 77, 255, 0.25);
+  background: rgba(124, 77, 255, 0.14);
+  color: rgba(255, 255, 255, 0.8);
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.scopeBtns {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.scopeBtn {
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.85);
+  padding: 7px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  /* border and background driven inline: active state */
+}
+
+/* ── Error panel ─────────────────────────────────────────────── */
+
+.errorPanel {
+  padding: 12px;
+  color: #ff6b6b;
+}
+
+/* ── Two-column layout ───────────────────────────────────────── */
+
+.splitGrid {
+  display: grid;
+  /* gridTemplateColumns driven inline: isMobile ? '1fr' : '300px 1fr' */
+  gap: 12px;
+  min-height: 620px;
+}
+
+/* ── Left: document list ─────────────────────────────────────── */
+
+.listHeader {
+  padding: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.listBody {
+  padding: 10px;
+  overflow-y: auto;
+}
+
+.listBodyMobile {
+  max-height: 260px;
+}
+
+.listBodyDesktop {
+  max-height: 620px;
+}
+
+.listLoading {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.listEmpty {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Group section ───────────────────────────────────────────── */
+
+.groupWrap {
+  margin-bottom: 12px;
+}
+
+.groupToggle {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 6px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.groupToggleLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.groupItems {
+  display: grid;
+  gap: 6px;
+}
+
+/* ── Document item button ────────────────────────────────────── */
+
+.docItem {
+  text-align: left;
+  border-radius: 10px;
+  padding: 10px;
+  cursor: pointer;
+  /* border and background driven inline: active state */
+}
+
+.docItemActive {
+  border: 1px solid rgba(124, 77, 255, 0.55);
+  background: rgba(124, 77, 255, 0.18);
+}
+
+.docItemInactive {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.docItemTitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.docItemMeta {
+  margin-top: 4px;
+  display: flex;
+  gap: 10px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.docMetaItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Right: document viewer ──────────────────────────────────── */
+
+.viewerHeader {
+  padding: 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.viewerScopeLabel {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.viewerTitle {
+  margin: 4px 0 0;
+  font-size: 20px;
+  color: white;
+}
+
+.viewerDateRow {
+  margin-top: 8px;
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.viewerDateItem {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.viewerPlaceholder {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.viewerBody {
+  max-height: 620px;
+  overflow-y: auto;
+  padding: 14px;
+}
+
+.timelineList {
+  display: grid;
+  gap: 14px;
+}
+
+.timelineEntry {
+  display: grid;
+  grid-template-columns: 80px 1fr;
+  gap: 10px;
+}
+
+.timelineIndex {
+  font-size: 12px;
+  color: #9D8CFF;
+  font-weight: 700;
+}
+
+.timelineEntryTitle {
+  font-size: 15px;
+  color: rgba(255, 255, 255, 0.94);
+  font-weight: 650;
+}
+
+.timelineEntryBody {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.76);
+  white-space: pre-wrap;
+}

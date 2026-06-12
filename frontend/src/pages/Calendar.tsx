@@ -18,6 +18,7 @@ import GlassCard from '../components/GlassCard'
 import StatusBadge from '../components/StatusBadge'
 import { useApi, formatDate, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
+import styles from './Calendar.module.css'
 
 interface CalendarEntry {
   id: string
@@ -203,40 +204,40 @@ function EntryModal({
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: m ? 16 : 24 }}>
-      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} style={{ width: '100%', maxWidth: 640, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', borderRadius: 16, padding: m ? 16 : 24 }}>
-        <h3 style={{ margin: 0, color: 'rgba(255,255,255,0.92)', fontSize: m ? 16 : 18 }}>Calendar Entry</h3>
-        <div style={{ marginTop: 14, display: 'grid', gap: 10 }}>
-          <input value={form.title || ''} onChange={(e) => setForm(prev => ({ ...prev, title: e.target.value }))} placeholder="Title" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white' }} />
+    <div className={`${styles.modalOverlay} ${m ? styles.modalOverlayMobile : styles.modalOverlayDesktop}`}>
+      <motion.div initial={{ opacity: 0, scale: 0.96 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.96 }} className={`${styles.modalBox} ${m ? styles.modalBoxMobile : styles.modalBoxDesktop}`}>
+        <h3 className={styles.modalTitle} style={{ fontSize: m ? 16 : 18 }}>Calendar Entry</h3>
+        <div className={styles.modalFields}>
+          <input value={form.title || ''} onChange={(e) => setForm(prev => ({ ...prev, title: e.target.value }))} placeholder="Title" className={styles.formInput} />
 
           <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : '1fr 1fr', gap: 10 }}>
-            <input type="datetime-local" value={toInputDateTime(form.startsAt)} onChange={(e) => setForm(prev => ({ ...prev, startsAt: e.target.value ? new Date(e.target.value).toISOString() : null }))} style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white' }} />
-            <input value={form.schedule || ''} onChange={(e) => setForm(prev => ({ ...prev, schedule: e.target.value }))} placeholder="Cron schedule (optional)" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white', fontFamily: 'monospace' }} />
+            <input type="datetime-local" value={toInputDateTime(form.startsAt)} onChange={(e) => setForm(prev => ({ ...prev, startsAt: e.target.value ? new Date(e.target.value).toISOString() : null }))} className={styles.formInput} />
+            <input value={form.schedule || ''} onChange={(e) => setForm(prev => ({ ...prev, schedule: e.target.value }))} placeholder="Cron schedule (optional)" className={`${styles.formInput} ${styles.formInputMono}`} />
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : '1fr 1fr 1fr', gap: 10 }}>
-            <select value={form.status || 'scheduled'} onChange={(e) => setForm(prev => ({ ...prev, status: e.target.value }))} style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(32,32,32,0.8)', color: 'white' }}>
+            <select value={form.status || 'scheduled'} onChange={(e) => setForm(prev => ({ ...prev, status: e.target.value }))} className={styles.formSelect}>
               {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
-            <select value={form.assignee || 'Mudur'} onChange={(e) => setForm(prev => ({ ...prev, assignee: e.target.value }))} style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(32,32,32,0.8)', color: 'white' }}>
+            <select value={form.assignee || 'Mudur'} onChange={(e) => setForm(prev => ({ ...prev, assignee: e.target.value }))} className={styles.formSelect}>
               {ASSIGNEE_OPTIONS.map(a => <option key={a} value={a}>{a}</option>)}
             </select>
-            <select value={form.source || 'manual'} onChange={(e) => setForm(prev => ({ ...prev, source: e.target.value }))} style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(32,32,32,0.8)', color: 'white' }}>
+            <select value={form.source || 'manual'} onChange={(e) => setForm(prev => ({ ...prev, source: e.target.value }))} className={styles.formSelect}>
               {SOURCE_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : '1fr 1fr', gap: 10 }}>
-            <input value={form.linkedTaskId || ''} onChange={(e) => setForm(prev => ({ ...prev, linkedTaskId: e.target.value || null }))} placeholder="Linked Task ID" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white' }} />
-            <input value={form.linkedJobId || ''} onChange={(e) => setForm(prev => ({ ...prev, linkedJobId: e.target.value || null }))} placeholder="Linked Job ID" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white' }} />
+            <input value={form.linkedTaskId || ''} onChange={(e) => setForm(prev => ({ ...prev, linkedTaskId: e.target.value || null }))} placeholder="Linked Task ID" className={styles.formInput} />
+            <input value={form.linkedJobId || ''} onChange={(e) => setForm(prev => ({ ...prev, linkedJobId: e.target.value || null }))} placeholder="Linked Job ID" className={styles.formInput} />
           </div>
 
-          <textarea rows={3} value={form.notes || ''} onChange={(e) => setForm(prev => ({ ...prev, notes: e.target.value }))} placeholder="Notes" style={{ width: '100%', padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white', resize: 'vertical' }} />
+          <textarea rows={3} value={form.notes || ''} onChange={(e) => setForm(prev => ({ ...prev, notes: e.target.value }))} placeholder="Notes" className={styles.formTextarea} />
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 14 }}>
-          <button onClick={onClose} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.2)', background: 'transparent', color: 'rgba(255,255,255,0.8)' }}>Cancel</button>
-          <button onClick={async () => { await onSave(form); onClose() }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: 'none', background: '#007AFF', color: 'white', fontWeight: 600 }}>
+        <div className={styles.modalActions}>
+          <button onClick={onClose} className={styles.cancelBtn}>Cancel</button>
+          <button onClick={async () => { await onSave(form); onClose() }} className={styles.saveBtn}>
             <Save size={14} /> Save
           </button>
         </div>
@@ -447,8 +448,8 @@ export default function CalendarPage() {
   if (loading && !data) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 260 }}>
-          <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
@@ -457,19 +458,16 @@ export default function CalendarPage() {
   if (error && !data) {
     return (
       <PageTransition>
-        <div style={{ maxWidth: 960, margin: '0 auto' }}>
+        <div className={styles.errorWrap}>
           <GlassCard noPad>
-            <div style={{ padding: m ? 16 : 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#FF453A' }}>
+            <div className={`${styles.errorPad} ${m ? styles.errorPadMobile : ''}`}>
+              <div className={styles.errorTitle}>
                 <CalendarDays size={18} />
                 <strong>Calendar API unavailable</strong>
               </div>
-              <div style={{ color: 'rgba(255,255,255,0.72)', fontSize: 13 }}>{error}</div>
+              <div className={styles.errorMessage}>{error}</div>
               <div>
-                <button
-                  onClick={refetch}
-                  style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', color: 'white' }}
-                >
+                <button onClick={refetch} className={styles.retryBtn}>
                   Retry
                 </button>
               </div>
@@ -483,19 +481,19 @@ export default function CalendarPage() {
   return (
     <>
       <PageTransition>
-        <div style={{ maxWidth: 1320, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 12 : 16 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <h1 className="text-title" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <CalendarDays size={m ? 18 : 22} style={{ color: '#007AFF' }} /> Calendar
+        <div className={`${styles.page} ${m ? styles.pageMobile : ''}`}>
+          <div className={styles.headerRow}>
+            <div className={styles.headerLeft}>
+              <h1 className={`text-title ${styles.pageTitle}`}>
+                <CalendarDays size={m ? 18 : 22} className={styles.pageTitleIcon} /> Calendar
               </h1>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div className={styles.headerMeta}>
                 <p className="text-body" style={{ margin: 0 }}>
                   Clean view of scheduled jobs, recurring automations, and what is landing next.
                 </p>
-                <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 12 }}>{activeWeekLabel}</div>
+                <div className={styles.weekLabel}>{activeWeekLabel}</div>
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div className={styles.badgeRow}>
                 <div className="macos-badge macos-badge-blue">
                   <span>{todayCount}</span>
                   <span>Today</span>
@@ -510,15 +508,15 @@ export default function CalendarPage() {
                 </div>
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-              <div style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
-                <button onClick={() => setWeekOffset(prev => prev - 1)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: 'white' }}>
+            <div className={styles.headerActions}>
+              <div className={styles.weekNavGroup}>
+                <button onClick={() => setWeekOffset(prev => prev - 1)} className={styles.navBtn}>
                   <ChevronLeft size={14} />
                   {!m && <span>Week</span>}
                 </button>
-                <button onClick={() => setMode('week')} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: mode === 'week' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)', color: 'white' }}>Week</button>
-                <button onClick={() => setMode('today')} style={{ padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: mode === 'today' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)', color: 'white' }}>Today</button>
-                <button onClick={() => setWeekOffset(prev => prev + 1)} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: 'white' }}>
+                <button onClick={() => setMode('week')} className={styles.modeBtn} style={{ background: mode === 'week' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)' }}>Week</button>
+                <button onClick={() => setMode('today')} className={styles.modeBtn} style={{ background: mode === 'today' ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)' }}>Today</button>
+                <button onClick={() => setWeekOffset(prev => prev + 1)} className={styles.navBtn}>
                   {!m && <span>Week</span>}
                   <ChevronRight size={14} />
                 </button>
@@ -527,7 +525,7 @@ export default function CalendarPage() {
                 onClick={handleSync}
                 title="Refresh calendar from cron"
                 aria-label="Refresh calendar from cron"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.16)', background: 'rgba(255,255,255,0.06)', color: 'white' }}
+                className={styles.refreshBtn}
               >
                 <RefreshCw size={14} style={{ animation: syncing ? 'spin 1s linear infinite' : undefined }} />
                 {!m && <span>{syncing ? 'Refreshing' : 'Refresh'}</span>}
@@ -536,7 +534,7 @@ export default function CalendarPage() {
                 onClick={() => openEditor(null)}
                 title="Create calendar entry"
                 aria-label="Create calendar entry"
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: 'none', background: '#007AFF', color: 'white', fontWeight: 600 }}
+                className={styles.createBtn}
               >
                 <Plus size={14} />
                 {!m && <span>New Entry</span>}
@@ -545,46 +543,29 @@ export default function CalendarPage() {
           </div>
 
           <GlassCard noPad>
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div className={styles.recurringCardHeader}>
               <div>
-                <div style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600, fontSize: 13 }}>Recurring Jobs</div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 3 }}>These routines repeat and will appear across the schedule view below.</div>
+                <div className={styles.recurringCardTitle}>Recurring Jobs</div>
+                <div className={styles.recurringCardSub}>These routines repeat and will appear across the schedule view below.</div>
               </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <div style={{ position: 'relative', minWidth: m ? '100%' : 240 }}>
-                  <Search size={14} style={{ position: 'absolute', top: '50%', left: 10, transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.45)' }} />
+              <div className={styles.recurringCardActions}>
+                <div className={`${styles.searchWrap} ${m ? styles.searchWrapMobile : styles.searchWrapDesktop}`}>
+                  <Search size={14} className={styles.searchIcon} />
                   <input
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
                     placeholder="Search recurring jobs"
-                    style={{
-                      width: '100%',
-                      padding: '8px 12px 8px 32px',
-                      borderRadius: 10,
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      background: 'rgba(5, 10, 20, 0.65)',
-                      color: 'white',
-                    }}
+                    className={styles.searchInput}
                   />
                 </div>
                 <button
                   onClick={() => setHideDisabled(prev => !prev)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    padding: '8px 12px',
-                    borderRadius: 999,
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    background: hideDisabled ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)',
-                    color: 'white',
-                    fontSize: 12,
-                    fontWeight: 600,
-                  }}
+                  className={styles.hideDisabledBtn}
+                  style={{ background: hideDisabled ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)' }}
                 >
                   <span>Hide Disabled</span>
                   {hideDisabled && hiddenDisabledCount > 0 && (
-                    <span style={{ padding: '2px 8px', borderRadius: 999, background: 'rgba(255,255,255,0.14)', fontSize: 11 }}>{hiddenDisabledCount} hidden</span>
+                    <span className={styles.hiddenCount}>{hiddenDisabledCount} hidden</span>
                   )}
                 </button>
                 <div className="macos-badge">
@@ -593,10 +574,10 @@ export default function CalendarPage() {
                 </div>
               </div>
             </div>
-            <div style={{ padding: '12px 14px 0' }}>
+            <div className={styles.legendWrap}>
               <button
                 onClick={() => setShowLegend(prev => !prev)}
-                style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '0 0 10px', background: 'transparent', border: 'none', color: 'rgba(255,255,255,0.72)', fontSize: 12, fontWeight: 600 }}
+                className={styles.legendToggleBtn}
               >
                 <motion.span animate={{ rotate: showLegend ? 90 : 0 }} style={{ display: 'inline-flex' }}>
                   <ChevronRight size={14} />
@@ -609,12 +590,12 @@ export default function CalendarPage() {
                     initial={{ height: 0, opacity: 0 }}
                     animate={{ height: 'auto', opacity: 1 }}
                     exit={{ height: 0, opacity: 0 }}
-                    style={{ overflow: 'hidden' }}
+                    className={styles.legendOverflow}
                   >
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, paddingBottom: 12 }}>
+                    <div className={styles.legendItems}>
                       {LEGEND_ITEMS.map(item => (
-                        <div key={item.label} style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 999, background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.72)', fontSize: 11 }}>
-                          <span style={{ width: 10, height: 10, borderRadius: '50%', background: item.color, border: '1px solid rgba(255,255,255,0.12)' }} />
+                        <div key={item.label} className={styles.legendItem}>
+                          <span className={styles.legendDot} style={{ background: item.color }} />
                           <span>{item.label}</span>
                         </div>
                       ))}
@@ -623,39 +604,40 @@ export default function CalendarPage() {
                 )}
               </AnimatePresence>
             </div>
-            <div style={{ padding: '0 14px 12px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className={styles.recurringChipsWrap}>
               {data?.warning && (
-                <div style={{ width: '100%', color: '#FFD60A', fontSize: 11, padding: '8px 10px', borderRadius: 8, background: 'rgba(255, 149, 0, 0.12)', border: '1px solid rgba(255, 149, 0, 0.2)' }}>
+                <div className={styles.warningBanner}>
                   Showing cached calendar data. {data.warning}
                 </div>
               )}
               {alwaysRunning.length === 0 ? (
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>No recurring jobs matched the current filters.</div>
+                <div className={styles.noRecurringMsg}>No recurring jobs matched the current filters.</div>
               ) : alwaysRunning.map(entry => (
-                <button key={entry.id} onClick={() => openDetail(entry)} style={{ border: '1px solid rgba(255,255,255,0.12)', background: cardTone(entry), color: 'rgba(255,255,255,0.92)', borderRadius: 10, padding: '8px 10px', fontSize: 12, textAlign: 'left' }}>
-                  <div style={{ fontWeight: 600 }}>{entry.title}</div>
-                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', marginTop: 3 }}>
+                <button key={entry.id} onClick={() => openDetail(entry)} className={styles.recurringChip} style={{ background: cardTone(entry) }}>
+                  <div className={styles.recurringChipTitle}>{entry.title}</div>
+                  <div className={styles.recurringChipSub}>
                     {entry.schedule ? entry.schedule : 'Recurring automation'}
                   </div>
                 </button>
               ))}
               {hiddenRecurringCount > 0 && (
-                <div style={{ alignSelf: 'center', color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>
+                <div className={styles.recurringMore}>
                   +{hiddenRecurringCount} more recurring jobs
                 </div>
               )}
             </div>
           </GlassCard>
 
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ color: 'rgba(255,255,255,0.84)', fontSize: 13, fontWeight: 600 }}>Calendar Filters</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, minWidth: 52 }}>Source</div>
+          <div className={styles.filtersRow}>
+            <div className={styles.filterGroup}>
+              <div className={styles.filterGroupLabel}>Calendar Filters</div>
+              <div className={styles.filterRows}>
+                <div className={styles.filterRow}>
+                  <div className={styles.filterRowLabel}>Source</div>
                   <button
                     onClick={() => setSourceFilter(null)}
-                    style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.12)', background: sourceFilter === null ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)', color: 'white', fontSize: 11 }}
+                    className={styles.filterPill}
+                    style={{ background: sourceFilter === null ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)' }}
                   >
                     All
                   </button>
@@ -663,7 +645,8 @@ export default function CalendarPage() {
                     <button
                       key={source}
                       onClick={() => setSourceFilter(source)}
-                      style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.12)', background: sourceFilter === source ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)', color: 'white', fontSize: 11, textTransform: 'capitalize' }}
+                      className={`${styles.filterPill} ${styles.filterPillCapitalize}`}
+                      style={{ background: sourceFilter === source ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)' }}
                     >
                       {source}
                     </button>
@@ -674,11 +657,12 @@ export default function CalendarPage() {
                     </span>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, minWidth: 52 }}>Assignee</div>
+                <div className={styles.filterRow}>
+                  <div className={styles.filterRowLabel}>Assignee</div>
                   <button
                     onClick={() => setAssigneeFilter(null)}
-                    style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.12)', background: assigneeFilter === null ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)', color: 'white', fontSize: 11 }}
+                    className={styles.filterPill}
+                    style={{ background: assigneeFilter === null ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)' }}
                   >
                     All
                   </button>
@@ -686,7 +670,8 @@ export default function CalendarPage() {
                     <button
                       key={assignee}
                       onClick={() => setAssigneeFilter(assignee)}
-                      style={{ padding: '6px 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.12)', background: assigneeFilter === assignee ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)', color: 'white', fontSize: 11 }}
+                      className={styles.filterPill}
+                      style={{ background: assigneeFilter === assignee ? 'rgba(0, 122, 255, 0.28)' : 'rgba(255,255,255,0.05)' }}
                     >
                       {assignee}
                     </button>
@@ -710,43 +695,43 @@ export default function CalendarPage() {
               const visibleEntries = list.slice(0, 8)
               return (
                 <GlassCard key={key} noPad>
-                  <div style={{ padding: '10px 12px', borderBottom: '1px solid rgba(255,255,255,0.07)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+                  <div className={styles.dayCardHeader}>
                     <div>
-                      <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: 13, fontWeight: 600 }}>
+                      <div className={styles.dayCardWeekday}>
                         {mode === 'today' ? 'Today' : header.weekday}
                       </div>
-                      <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }}>
+                      <div className={styles.dayCardDate}>
                         {header.date}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <div className={styles.dayCardBadges}>
                       {isToday && mode !== 'today' && (
                         <span className="macos-badge macos-badge-blue">Today</span>
                       )}
                       <span className="text-caption">{list.length}</span>
                     </div>
                   </div>
-                  <div style={{ padding: 8, display: 'flex', flexDirection: 'column', gap: 6, minHeight: 220 }}>
+                  <div className={styles.dayCardBody}>
                     {list.length === 0 ? (
-                      <div style={{ color: 'rgba(255,255,255,0.35)', fontSize: 11, lineHeight: 1.5, padding: '8px 6px' }}>
+                      <div className={styles.dayCardEmpty}>
                         No scheduled jobs here yet.
                       </div>
                     ) : visibleEntries.map(entry => (
-                      <button key={`${key}:${entry.id}`} onClick={() => openDetail(entry)} style={{ textAlign: 'left', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 8, background: cardTone(entry), padding: '7px 8px', color: 'rgba(255,255,255,0.92)' }}>
-                        <div style={{ fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.title}</div>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 4 }}>
-                          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                      <button key={`${key}:${entry.id}`} onClick={() => openDetail(entry)} className={styles.entryChip} style={{ background: cardTone(entry) }}>
+                        <div className={styles.entryChipTitle}>{entry.title}</div>
+                        <div className={styles.entryChipMeta}>
+                          <div className={styles.entryChipTime}>
                             <Clock size={10} />
                             {entry.startsAt ? formatTimeLabel(entry.startsAt) : 'Repeats'}
                           </div>
-                          <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.55)', textTransform: 'capitalize' }}>
+                          <div className={styles.entryChipStatus}>
                             {entry.status}
                           </div>
                         </div>
                       </button>
                     ))}
                     {list.length > visibleEntries.length && (
-                      <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, padding: '6px 8px' }}>
+                      <div className={styles.entryMore}>
                         +{list.length - visibleEntries.length} more jobs
                       </div>
                     )}
@@ -757,10 +742,10 @@ export default function CalendarPage() {
           </div>
 
           <GlassCard noPad>
-            <div style={{ padding: '12px 14px', borderBottom: '1px solid rgba(255,255,255,0.08)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div className={styles.upcomingCardHeader}>
               <div>
-                <div style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600, fontSize: 13 }}>Upcoming Queue</div>
-                <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 3 }}>The next scheduled runs ordered by time.</div>
+                <div className={styles.upcomingCardTitle}>Upcoming Queue</div>
+                <div className={styles.upcomingCardSub}>The next scheduled runs ordered by time.</div>
               </div>
               <div className="macos-badge">
                 <span>{nextUp.length}</span>
@@ -769,25 +754,26 @@ export default function CalendarPage() {
             </div>
             <div>
               {nextUp.length === 0 ? (
-                <div style={{ padding: '12px 14px', color: 'rgba(255,255,255,0.45)', fontSize: 12 }}>No upcoming scheduled runs. Add an entry or sync cron to populate this queue.</div>
+                <div className={styles.upcomingEmpty}>No upcoming scheduled runs. Add an entry or sync cron to populate this queue.</div>
               ) : nextUp.map(entry => (
                 <button
                   key={entry.id}
                   onClick={() => openDetail(entry)}
-                  style={{ width: '100%', display: 'grid', gridTemplateColumns: m ? '1fr' : '0.9fr 2.1fr 0.9fr 1fr', gap: 10, alignItems: 'center', padding: '12px 14px', borderTop: '1px solid rgba(255,255,255,0.06)', background: 'transparent', color: 'inherit', textAlign: 'left' }}
+                  className={styles.upcomingRow}
+                  style={{ gridTemplateColumns: m ? '1fr' : '0.9fr 2.1fr 0.9fr 1fr' }}
                 >
                   <div>
-                    <div style={{ color: 'rgba(255,255,255,0.92)', fontSize: m ? 16 : 18, fontWeight: 600 }}>{formatTimeLabel(entry.startsAt)}</div>
-                    <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 2 }}>{formatUpcomingDate(entry.startsAt)}</div>
+                    <div className={styles.upcomingTime} style={{ fontSize: m ? 16 : 18 }}>{formatTimeLabel(entry.startsAt)}</div>
+                    <div className={styles.upcomingDate}>{formatUpcomingDate(entry.startsAt)}</div>
                   </div>
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{entry.title}</div>
-                    <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 11, marginTop: 3 }}>
+                  <div className={styles.upcomingMinWidth}>
+                    <div className={styles.upcomingTitle}>{entry.title}</div>
+                    <div className={styles.upcomingAssignee}>
                       {entry.assignee || 'Unassigned'} {entry.source ? `• ${entry.source}` : ''}
                     </div>
                   </div>
                   <div><StatusBadge status={normalizeStatusForBadge(entry.status)} label={entry.status} /></div>
-                  <div style={{ color: 'rgba(255,255,255,0.65)', fontSize: 11, display: 'inline-flex', alignItems: 'center', gap: 4, justifyContent: m ? 'flex-start' : 'flex-end' }}>{timeAgo(entry.startsAt || '')} <ChevronRight size={12} /></div>
+                  <div className={`${styles.upcomingTimeAgo} ${m ? styles.upcomingTimeAgoMobile : styles.upcomingTimeAgoDesktop}`}>{timeAgo(entry.startsAt || '')} <ChevronRight size={12} /></div>
                 </button>
               ))}
             </div>
@@ -804,114 +790,91 @@ export default function CalendarPage() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              style={{ position: 'fixed', inset: 0, zIndex: 950, background: 'rgba(0, 0, 0, 0.45)', border: 'none', backdropFilter: 'blur(3px)' }}
+              className={styles.detailBackdrop}
             />
             <motion.aside
               initial={{ x: 320, opacity: 0 }}
               animate={{ x: 0, opacity: 1 }}
               exit={{ x: 320, opacity: 0 }}
               transition={{ type: 'spring', damping: 24, stiffness: 240 }}
-              style={{
-                position: 'fixed',
-                top: 0,
-                right: 0,
-                bottom: 0,
-                zIndex: 960,
-                width: m ? '100%' : 320,
-                background: 'rgba(8, 12, 20, 0.94)',
-                borderLeft: '1px solid rgba(255,255,255,0.08)',
-                boxShadow: '-16px 0 40px rgba(0,0,0,0.35)',
-                padding: 18,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 16,
-                overflowY: 'auto',
-              }}
+              className={styles.detailPanel}
+              style={{ width: m ? '100%' : 320 }}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: '50%', background: cardTone(detailEntry), border: '1px solid rgba(255,255,255,0.12)' }} />
-                    <span style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, letterSpacing: 0.4, textTransform: 'uppercase' }}>Job detail</span>
+              <div className={styles.detailHeaderRow}>
+                <div className={styles.detailHeaderLeft}>
+                  <div className={styles.detailEyebrow}>
+                    <span className={styles.detailDot} style={{ background: cardTone(detailEntry) }} />
+                    <span className={styles.detailEyebrowText}>Job detail</span>
                   </div>
-                  <div style={{ color: 'rgba(255,255,255,0.95)', fontSize: 20, fontWeight: 700, lineHeight: 1.2 }}>{detailEntry.title}</div>
+                  <div className={styles.detailTitle}>{detailEntry.title}</div>
                   <div><StatusBadge status={normalizeStatusForBadge(detailEntry.status)} label={detailEntry.status} /></div>
                 </div>
-                <button onClick={() => setDetailEntry(null)} style={{ width: 34, height: 34, borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'white', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={() => setDetailEntry(null)} className={styles.detailCloseBtn}>
                   <X size={16} />
                 </button>
               </div>
 
-              <div style={{ display: 'grid', gap: 10 }}>
-                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'grid', gap: 10 }}>
+              <div className={styles.detailGrid}>
+                <div className={styles.detailInfoCard}>
                   <div>
-                    <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Schedule</div>
-                    <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 4 }}>{detailEntry.schedule || formatTimeLabel(detailEntry.startsAt)}</div>
+                    <div className={styles.detailFieldLabel}>Schedule</div>
+                    <div className={styles.detailFieldValue}>{detailEntry.schedule || formatTimeLabel(detailEntry.startsAt)}</div>
                   </div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <div className={styles.detailTwoCol}>
                     <div>
-                      <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Source</div>
-                      <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 4, textTransform: 'capitalize' }}>{detailEntry.source || '—'}</div>
+                      <div className={styles.detailFieldLabel}>Source</div>
+                      <div className={`${styles.detailFieldValue} ${styles.detailFieldValueCapitalize}`}>{detailEntry.source || '—'}</div>
                     </div>
                     <div>
-                      <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Assignee</div>
-                      <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 4 }}>{detailEntry.assignee || 'Unassigned'}</div>
+                      <div className={styles.detailFieldLabel}>Assignee</div>
+                      <div className={styles.detailFieldValue}>{detailEntry.assignee || 'Unassigned'}</div>
                     </div>
                   </div>
                   <div>
-                    <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Last updated</div>
-                    <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, marginTop: 4 }}>{formatDate(detailEntry.updatedAt || detailEntry.startsAt || new Date().toISOString())}</div>
+                    <div className={styles.detailFieldLabel}>Last updated</div>
+                    <div className={styles.detailFieldValue}>{formatDate(detailEntry.updatedAt || detailEntry.startsAt || new Date().toISOString())}</div>
                   </div>
                   {(detailEntry.linkedTaskId || detailEntry.linkedJobId) && (
-                    <div style={{ display: 'grid', gap: 6 }}>
+                    <div className={styles.detailLinkedIds}>
                       {detailEntry.linkedTaskId && (
-                        <div style={{ color: 'rgba(255,255,255,0.66)', fontSize: 11 }}>Task ID: {detailEntry.linkedTaskId}</div>
+                        <div className={styles.detailLinkedId}>Task ID: {detailEntry.linkedTaskId}</div>
                       )}
                       {detailEntry.linkedJobId && (
-                        <div style={{ color: 'rgba(255,255,255,0.66)', fontSize: 11 }}>Job ID: {detailEntry.linkedJobId}</div>
+                        <div className={styles.detailLinkedId}>Job ID: {detailEntry.linkedJobId}</div>
                       )}
                     </div>
                   )}
                 </div>
 
-                <div style={{ padding: '12px 14px', borderRadius: 14, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', display: 'grid', gap: 10 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <div style={{ color: 'rgba(255,255,255,0.9)', fontSize: 13, fontWeight: 600 }}>Recent Runs</div>
-                    <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11 }}>Last 5</div>
+                <div className={styles.detailInfoCard2}>
+                  <div className={styles.runsHeader}>
+                    <div className={styles.runsTitle}>Recent Runs</div>
+                    <div className={styles.runsCount}>Last 5</div>
                   </div>
-                  <div style={{ display: 'grid', gap: 8 }}>
+                  <div className={styles.runsList}>
                     {detailRecentRuns.map(run => (
-                      <div key={run.id} style={{ padding: '10px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', display: 'grid', gap: 6 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <div style={{ color: 'rgba(255,255,255,0.84)', fontSize: 12, fontWeight: 600 }}>{run.label}</div>
+                      <div key={run.id} className={styles.runRow}>
+                        <div className={styles.runRowHeader}>
+                          <div className={styles.runLabel}>{run.label}</div>
                           <StatusBadge status={normalizeStatusForBadge(run.status)} label={run.status} />
                         </div>
-                        <div style={{ color: 'rgba(255,255,255,0.48)', fontSize: 11 }}>{formatDate(run.timestamp)}</div>
-                        <div style={{ color: 'rgba(255,255,255,0.62)', fontSize: 11 }}>{run.note}</div>
+                        <div className={styles.runTimestamp}>{formatDate(run.timestamp)}</div>
+                        <div className={styles.runNote}>{run.note}</div>
                       </div>
                     ))}
                   </div>
                 </div>
               </div>
 
-              <div style={{ marginTop: 'auto', display: 'grid', gap: 8 }}>
-                <button
-                  onClick={() => openEditor(detailEntry)}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, border: 'none', background: '#007AFF', color: 'white', fontWeight: 700 }}
-                >
+              <div className={styles.detailActions}>
+                <button onClick={() => openEditor(detailEntry)} className={styles.detailEditBtn}>
                   <Pencil size={14} />
                   Edit
                 </button>
-                <button
-                  onClick={handleToggleDetailStatus}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white', fontWeight: 600 }}
-                >
+                <button onClick={handleToggleDetailStatus} className={styles.detailToggleBtn}>
                   {String(detailEntry.status || '').toLowerCase() === 'disabled' ? 'Enable Job' : 'Disable Job'}
                 </button>
-                <button
-                  onClick={handleCopyJobId}
-                  style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '10px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.05)', color: 'white', fontWeight: 600 }}
-                >
+                <button onClick={handleCopyJobId} className={styles.detailCopyBtn}>
                   <Copy size={14} />
                   {copiedJobId === (detailEntry.linkedJobId || detailEntry.id) ? 'Copied' : 'Copy Job ID'}
                 </button>

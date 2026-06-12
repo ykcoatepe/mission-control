@@ -7,6 +7,7 @@ import GlassCard from '../components/GlassCard'
 import StatusBadge from '../components/StatusBadge'
 import AnimatedCounter from '../components/AnimatedCounter'
 import { useApi, timeAgo } from '../lib/hooks'
+import styles from './Agents.module.css'
 
 interface AgentInfo {
   id: string
@@ -132,8 +133,8 @@ export default function Agents() {
   if (loading || !data) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
-          <div style={{ width: 32, height: 32, border: '2px solid #BF5AF2', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
@@ -142,35 +143,20 @@ export default function Agents() {
   return (
     <>
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: m ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: m ? 20 : 28 }}>
+      <div className={`${styles.page} ${m ? styles.pageMobile : styles.pageDesktop}`}>
         {/* Header */}
-        <div style={{ display: 'flex', alignItems: m ? 'flex-start' : 'center', justifyContent: 'space-between', flexDirection: m ? 'column' : 'row', gap: m ? 12 : 0 }}>
+        <div className={`${styles.headerRow} ${m ? styles.headerRowMobile : styles.headerRowDesktop}`}>
           <div>
-            <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <h1 className={`text-title ${styles.pageHeading}`}>
               <Bot size={m ? 18 : 22} style={{ color: '#BF5AF2' }} /> Agent Hub
             </h1>
-            <p className="text-body" style={{ marginTop: 4 }}>Your AI agents — active sessions, sub-agents & more</p>
+            <p className={`text-body ${styles.pageSubtitle}`}>Your AI agents — active sessions, sub-agents & more</p>
           </div>
           <motion.button
             whileHover={m ? undefined : { scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
             onClick={() => setShowCreateModal(true)}
-            style={{
-              background: 'linear-gradient(135deg, #BF5AF2 0%, #9C3AE8 100%)',
-              border: 'none',
-              borderRadius: 10,
-              padding: m ? '10px 16px' : '12px 20px',
-              color: 'white',
-              fontSize: m ? 13 : 14,
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8,
-              boxShadow: '0 4px 12px rgba(191,90,242,0.3)',
-              width: m ? '100%' : undefined,
-              justifyContent: m ? 'center' : undefined,
-            }}
+            className={`${styles.createBtn} ${m ? styles.createBtnMobile : styles.createBtnDesktop}`}
           >
             <Plus size={16} />
             Create Agent
@@ -179,7 +165,7 @@ export default function Agents() {
 
         <div>
           {/* Agent Grid */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div className={styles.agentGrid}>
 
             <div style={{ display: 'grid', gridTemplateColumns: m ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: m ? 12 : 16 }}>
               {[
@@ -190,8 +176,8 @@ export default function Agents() {
               ].map((item, index) => (
                 <GlassCard key={item.label} delay={0.02 + index * 0.03} noPad>
                   <div style={{ padding: m ? '14px 16px' : '16px 18px' }}>
-                    <p className="text-label" style={{ marginBottom: 8 }}>{item.label}</p>
-                    <p style={{ fontSize: m ? 22 : 26, fontWeight: 300, color: item.accent, fontVariantNumeric: 'tabular-nums' }}>
+                    <p className={`text-label ${styles.kpiLabel}`}>{item.label}</p>
+                    <p className={styles.kpiValue} style={{ fontSize: m ? 22 : 26, color: item.accent }}>
                       {item.value}
                     </p>
                   </div>
@@ -201,8 +187,8 @@ export default function Agents() {
 
             {/* Real OpenClaw Agents Section */}
             <div>
-              <h3 style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                <Activity size={18} style={{ color: '#007AFF' }} />
+              <h3 className={styles.sectionHeading}>
+                <Activity size={18} className={styles.iconBlue} />
                 Live Agents
               </h3>
               <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: m ? 12 : 16 }}>
@@ -216,62 +202,38 @@ export default function Agents() {
                     onClick={() => setSelectedAgent(selectedAgent === agent.id ? null : agent.id)}
                     className="macos-panel"
                     style={{
-                      borderRadius: m ? 12 : 16, 
+                      borderRadius: m ? 12 : 16,
                       padding: m ? 14 : 20,
                       cursor: 'pointer',
                       borderColor: selectedAgent === agent.id ? 'rgba(0,122,255,0.35)' : undefined,
                       background: selectedAgent === agent.id ? 'rgba(0,122,255,0.08)' : undefined,
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
-                      <div style={{ 
-                        width: 48, 
-                        height: 48, 
-                        borderRadius: 14, 
-                        background: 'rgba(255,255,255,0.06)', 
-                        border: '1px solid rgba(255,255,255,0.1)', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        fontSize: 20, 
-                        flexShrink: 0 
-                      }}>
-                        {agent.avatar || '🤖'}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {agent.name}
-                          </h3>
-                          <StatusBadge
-                            status={agent.status ?? 'off'}
-                            pulse={agent.status === 'active'}
-                          />
+                    <div className={styles.agentCardBody}>
+                      <div className={styles.agentAvatar}>{agent.avatar || '🤖'}</div>
+                      <div className={styles.agentMeta}>
+                        <div className={styles.agentNameRow}>
+                          <h3 className={styles.agentName}>{agent.name}</h3>
+                          <StatusBadge status={agent.status ?? 'off'} pulse={agent.status === 'active'} />
                         </div>
-                        <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>
-                          {agent.role}
-                        </p>
-                        <p style={{ fontSize: 10, color: '#BF5AF2', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {agent.model || 'Unknown model'}
-                        </p>
+                        <p className={styles.agentRole}>{agent.role}</p>
+                        <p className={styles.agentModel}>{agent.model || 'Unknown model'}</p>
                       </div>
                     </div>
-                    
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 16, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.5 }}>
-                      {agent.description}
-                    </p>
-                    
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <BarChart3 size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> 
+
+                    <p className={styles.agentDescription}>{agent.description}</p>
+
+                    <div className={styles.agentStats}>
+                      <span className={styles.agentStatItem}>
+                        <BarChart3 size={11} className={styles.agentStatIcon} />
                         {((agent.totalTokens || 0) / 1000).toFixed(0)}k tokens
                       </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <MessageSquare size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> 
+                      <span className={styles.agentStatItem}>
+                        <MessageSquare size={11} className={styles.agentStatIcon} />
                         {agent.sessionCount || 0} sessions
                       </span>
-                      <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Activity size={11} style={{ color: 'rgba(255,255,255,0.4)' }} />
+                      <span className={styles.agentStatItem}>
+                        <Activity size={11} className={styles.agentStatIcon} />
                         {agent.lastActive ? timeAgo(agent.lastActive) : 'no signal'}
                       </span>
                     </div>
@@ -283,8 +245,8 @@ export default function Agents() {
             {/* Registry Section */}
             {agentMetrics.idleAgents.length > 0 && (
               <div>
-                <h3 style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Bot size={18} style={{ color: '#BF5AF2' }} />
+                <h3 className={styles.sectionHeading}>
+                  <Bot size={18} className={styles.iconPurple} />
                   Agent Registry
                 </h3>
                 <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: m ? 12 : 16 }}>
@@ -303,30 +265,26 @@ export default function Agents() {
                         background: selectedAgent === agent.id ? 'rgba(191,90,242,0.08)' : undefined,
                       }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
-                          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>
-                          {agent.avatar || '🤖'}
-                        </div>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.92)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{agent.name}</h3>
+                      <div className={styles.agentCardBody}>
+                        <div className={styles.agentAvatar}>{agent.avatar || '🤖'}</div>
+                        <div className={styles.agentMeta}>
+                          <div className={styles.agentNameRow}>
+                            <h3 className={styles.agentName}>{agent.name}</h3>
                             <StatusBadge status={agent.status ?? 'off'} pulse={agent.status === 'active'} />
                           </div>
-                          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>{agent.role}</p>
-                          <p style={{ fontSize: 10, color: '#BF5AF2', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {agent.model || 'Unknown Model'}
-                          </p>
+                          <p className={styles.agentRole}>{agent.role}</p>
+                          <p className={styles.agentModel}>{agent.model || 'Unknown Model'}</p>
                         </div>
                       </div>
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 16, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', lineHeight: 1.5 }}>{agent.description}</p>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 16, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <BarChart3 size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> {((agent.totalTokens || 0) / 1000).toFixed(0)}k tokens
+                      <p className={styles.agentDescription}>{agent.description}</p>
+                      <div className={styles.agentStats}>
+                        <span className={styles.agentStatItem}>
+                          <BarChart3 size={11} className={styles.agentStatIcon} /> {((agent.totalTokens || 0) / 1000).toFixed(0)}k tokens
                         </span>
-                        <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                          <Activity size={11} style={{ color: 'rgba(255,255,255,0.4)' }} /> {agent.lastActive ? timeAgo(agent.lastActive) : 'n/a'}
+                        <span className={styles.agentStatItem}>
+                          <Activity size={11} className={styles.agentStatIcon} /> {agent.lastActive ? timeAgo(agent.lastActive) : 'n/a'}
                         </span>
-                        <span style={{ marginLeft: 'auto' }}>
+                        <span className={styles.agentStatRole}>
                           {agent.role}
                         </span>
                       </div>
@@ -348,14 +306,12 @@ export default function Agents() {
                 >
                   <GlassCard hover={false} noPad>
                     <div style={{ padding: m ? 16 : 24 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                          <div style={{ width: 56, height: 56, borderRadius: 14, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
-                            {selected.avatar}
-                          </div>
+                      <div className={styles.detailHeader}>
+                        <div className={styles.detailHeaderLeft}>
+                          <div className={styles.detailAvatar}>{selected.avatar}</div>
                           <div style={{ minWidth: 0 }}>
-                            <h3 style={{ fontSize: 16, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>{selected.name}</h3>
-                            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected.description}</p>
+                            <h3 className={styles.detailAgentName}>{selected.name}</h3>
+                            <p className={styles.detailAgentDesc}>{selected.description}</p>
                           </div>
                         </div>
                         <motion.button
@@ -375,9 +331,9 @@ export default function Agents() {
                           { label: 'Model', value: selected.model?.replace('us.anthropic.', '').replace(/claude-opus-(\d+).*/, 'Claude Opus $1').replace(/claude-sonnet-(\d+).*/, 'Claude Sonnet $1').replace(/claude-haiku-(\d+).*/, 'Claude Haiku $1').replace(/-/g, ' ') || 'Unknown' },
                           { label: 'Status', value: <StatusBadge status={selected.status ?? 'off'} size="md" /> },
                         ].map((item, idx) => (
-                          <div key={idx} style={{ textAlign: 'center', padding: 12, borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                            <p style={{ fontSize: 20, fontWeight: 300, color: 'rgba(255,255,255,0.92)' }}>{item.value}</p>
-                            <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.45)', marginTop: 4, textTransform: 'uppercase', letterSpacing: '0.1em' }}>{item.label}</p>
+                          <div key={idx} className={styles.detailMetaItem}>
+                            <p className={styles.detailMetaValue}>{item.value}</p>
+                            <p className={styles.detailMetaLabel}>{item.label}</p>
                           </div>
                         ))}
                       </div>
@@ -389,16 +345,8 @@ export default function Agents() {
           </div>
 
           {/* Recommended Agents Section */}
-          <div style={{ marginTop: 40 }}>
-            <h2 style={{ 
-              fontSize: 18, 
-              fontWeight: 700, 
-              color: 'rgba(255,255,255,0.92)', 
-              marginBottom: 16,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10
-            }}>
+          <div className={styles.recommendedSection}>
+            <h2 className={styles.recommendedHeading}>
               Recommended Agents
             </h2>
             <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(2, 1fr)', gap: m ? 12 : 16 }}>
@@ -442,17 +390,7 @@ export default function Agents() {
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ delay: 0.6 + i * 0.08 }}
                   whileHover={{ y: -2, scale: 1.01 }}
-                  style={{
-                    borderRadius: m ? 12 : 16, 
-                    padding: m ? 14 : 20,
-                    background: 'rgba(255,255,255,0.03)',
-                    backdropFilter: 'blur(20px)',
-                    WebkitBackdropFilter: 'blur(20px)',
-                    border: '1px dashed rgba(255,255,255,0.15)',
-                    opacity: 0.75,
-                    cursor: 'pointer',
-                    transition: 'all 0.3s ease'
-                  }}
+                  className={`${styles.templateCard} ${m ? styles.templateCardMobile : styles.templateCardDesktop}`}
                   onClick={() => {
                     setCreateForm({
                       name: template.name,
@@ -464,89 +402,28 @@ export default function Agents() {
                     setShowCreateModal(true)
                   }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 16 }}>
-                    <div style={{ 
-                      width: 48, 
-                      height: 48, 
-                      borderRadius: 14, 
-                      background: 'rgba(255,255,255,0.05)', 
-                      border: '1px dashed rgba(255,255,255,0.2)', 
-                      display: 'flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center', 
-                      fontSize: 18, 
-                      flexShrink: 0 
-                    }}>
-                      ⚙️
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <h3 style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{template.name}</h3>
-                        <span style={{
-                          fontSize: 9,
-                          fontWeight: 600,
-                          color: 'rgba(255,255,255,0.4)',
-                          background: 'rgba(255,255,255,0.06)',
-                          padding: '2px 6px',
-                          borderRadius: 4,
-                          textTransform: 'uppercase',
-                          letterSpacing: '0.1em'
-                        }}>
-                          Template
-                        </span>
+                  <div className={styles.templateCardBody}>
+                    <div className={styles.templateAvatar}>⚙️</div>
+                    <div className={styles.templateMeta}>
+                      <div className={styles.templateNameRow}>
+                        <h3 className={styles.templateName}>{template.name}</h3>
+                        <span className={styles.templateBadge}>Template</span>
                       </div>
-                      <p style={{ fontSize: 10, color: '#BF5AF2', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>
-                        {template.model}
-                      </p>
+                      <p className={styles.templateModel}>{template.model}</p>
                     </div>
                   </div>
-                  <p style={{ 
-                    fontSize: 12, 
-                    color: 'rgba(255,255,255,0.35)', 
-                    marginBottom: 16, 
-                    display: '-webkit-box', 
-                    WebkitLineClamp: 2, 
-                    WebkitBoxOrient: 'vertical', 
-                    overflow: 'hidden', 
-                    lineHeight: 1.5 
-                  }}>
-                    {template.description}
-                  </p>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', gap: 4 }}>
+                  <p className={styles.templateDescription}>{template.description}</p>
+                  <div className={styles.templateFooter}>
+                    <div className={styles.templateSkills}>
                       {template.skills.slice(0, 3).map(skill => (
-                        <span 
-                          key={skill}
-                          style={{
-                            fontSize: 9,
-                            color: 'rgba(255,255,255,0.35)',
-                            background: 'rgba(255,255,255,0.04)',
-                            padding: '2px 6px',
-                            borderRadius: 4,
-                            border: '1px solid rgba(255,255,255,0.08)'
-                          }}
-                        >
-                          {skill}
-                        </span>
+                        <span key={skill} className={styles.skillChip}>{skill}</span>
                       ))}
                       {template.skills.length > 3 && (
-                        <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>
-                          +{template.skills.length - 3}
-                        </span>
+                        <span className={styles.skillChipMore}>+{template.skills.length - 3}</span>
                       )}
                     </div>
                     <button
-                      style={{
-                        background: 'rgba(0,122,255,0.15)',
-                        border: '1px solid rgba(0,122,255,0.3)',
-                        borderRadius: 6,
-                        color: '#007AFF',
-                        fontSize: 11,
-                        fontWeight: 600,
-                        padding: '4px 10px',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s ease'
-                      }}
+                      className={styles.addBtn}
                       onClick={(e) => {
                         e.stopPropagation()
                         setCreateForm({
@@ -577,20 +454,7 @@ export default function Agents() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              style={{
-                position: 'fixed',
-                top: 0,
-                left: 0,
-                right: 0,
-                bottom: 0,
-                background: 'rgba(0,0,0,0.6)',
-                backdropFilter: 'blur(8px)',
-                zIndex: 1000,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 20
-              }}
+              className={styles.modalOverlay}
               onClick={() => setShowCreateModal(false)}
             >
               <motion.div
@@ -598,44 +462,24 @@ export default function Agents() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.9, y: 20 }}
                 onClick={(e) => e.stopPropagation()}
-                style={{
-                  background: 'rgba(28, 28, 30, 0.95)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255,255,255,0.1)',
-                  borderRadius: m ? 12 : 16,
-                  padding: m ? 20 : 32,
-                  width: '100%',
-                  maxWidth: m ? '95vw' : 600,
-                  maxHeight: '90vh',
-                  overflowY: 'auto'
-                }}
+                className={`${styles.modalBox} ${m ? styles.modalBoxMobile : styles.modalBoxDesktop}`}
               >
                 {/* Modal Header */}
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
-                  <h2 style={{ fontSize: 20, fontWeight: 700, color: 'rgba(255,255,255,0.92)' }}>Create Agent</h2>
+                <div className={styles.modalHeader}>
+                  <h2 className={styles.modalTitle}>Create Agent</h2>
                   <motion.button
                     whileHover={{ scale: 1.1 }}
                     whileTap={{ scale: 0.9 }}
                     onClick={() => setShowCreateModal(false)}
-                    style={{
-                      background: 'rgba(255,255,255,0.1)',
-                      border: 'none',
-                      borderRadius: 8,
-                      width: 32,
-                      height: 32,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      cursor: 'pointer'
-                    }}
+                    className={styles.modalCloseBtn}
                   >
-                    <X size={16} style={{ color: 'rgba(255,255,255,0.6)' }} />
+                    <X size={16} className={styles.modalCloseIcon} />
                   </motion.button>
                 </div>
 
                 {/* Agent Templates */}
-                <div style={{ marginBottom: 32 }}>
-                  <h3 style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 12 }}>Quick Start Templates</h3>
+                <div className={styles.quickStartSection}>
+                  <h3 className={styles.quickStartHeading}>Quick Start Templates</h3>
                   <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
                     {templates.map((template) => (
                       <motion.div
@@ -643,17 +487,10 @@ export default function Agents() {
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
                         onClick={() => applyTemplate(template)}
-                        style={{
-                          background: 'rgba(255,255,255,0.04)',
-                          border: '1px solid rgba(255,255,255,0.08)',
-                          borderRadius: 12,
-                          padding: 16,
-                          cursor: 'pointer',
-                          textAlign: 'center'
-                        }}
+                        className={styles.quickStartCard}
                       >
-                        <div style={{ fontSize: 12, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 4 }}>{template.name}</div>
-                        <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)' }}>
+                        <div className={styles.quickStartName}>{template.name}</div>
+                        <div className={styles.quickStartModel}>
                           {template.model.includes('opus') ? 'Opus' : template.model.includes('sonnet') ? 'Sonnet' : 'Haiku'}
                         </div>
                       </motion.div>
@@ -665,70 +502,35 @@ export default function Agents() {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: m ? 16 : 20 }}>
                   {/* Name */}
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
-                      Name *
-                    </label>
+                    <label className={styles.formLabel}>Name *</label>
                     <input
                       type="text"
                       value={createForm.name}
                       onChange={(e) => setCreateForm(prev => ({ ...prev, name: e.target.value }))}
                       placeholder="e.g. Research Bot, Code Reviewer"
-                      style={{
-                        width: '100%',
-                        padding: '12px 16px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 8,
-                        fontSize: 14,
-                        color: 'rgba(255,255,255,0.92)',
-                        outline: 'none'
-                      }}
+                      className={styles.formInput}
                     />
                   </div>
 
                   {/* Description */}
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
-                      Description
-                    </label>
+                    <label className={styles.formLabel}>Description</label>
                     <textarea
                       value={createForm.description}
                       onChange={(e) => setCreateForm(prev => ({ ...prev, description: e.target.value }))}
                       placeholder="Brief description of what this agent does..."
                       rows={3}
-                      style={{
-                        width: '100%',
-                        padding: '12px 16px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 8,
-                        fontSize: 14,
-                        color: 'rgba(255,255,255,0.92)',
-                        outline: 'none',
-                        resize: 'vertical',
-                        minHeight: 80
-                      }}
+                      className={`${styles.formTextarea} ${styles.formTextareaDescription}`}
                     />
                   </div>
 
                   {/* Model */}
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
-                      Model *
-                    </label>
+                    <label className={styles.formLabel}>Model *</label>
                     <select
                       value={createForm.model}
                       onChange={(e) => setCreateForm(prev => ({ ...prev, model: e.target.value }))}
-                      style={{
-                        width: '100%',
-                        padding: '12px 16px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 8,
-                        fontSize: 14,
-                        color: 'rgba(255,255,255,0.92)',
-                        outline: 'none'
-                      }}
+                      className={styles.formSelect}
                     >
                       {(modelsData || []).map((model) => (
                         <option key={model.id} value={model.id}>{model.name}</option>
@@ -738,91 +540,48 @@ export default function Agents() {
 
                   {/* System Prompt */}
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
-                      System Prompt
-                    </label>
+                    <label className={styles.formLabel}>System Prompt</label>
                     <textarea
                       value={createForm.systemPrompt}
                       onChange={(e) => setCreateForm(prev => ({ ...prev, systemPrompt: e.target.value }))}
                       placeholder="You are a helpful assistant..."
                       rows={4}
-                      style={{
-                        width: '100%',
-                        padding: '12px 16px',
-                        background: 'rgba(255,255,255,0.04)',
-                        border: '1px solid rgba(255,255,255,0.12)',
-                        borderRadius: 8,
-                        fontSize: 14,
-                        color: 'rgba(255,255,255,0.92)',
-                        outline: 'none',
-                        resize: 'vertical',
-                        minHeight: 100
-                      }}
+                      className={`${styles.formTextarea} ${styles.formTextareaSystemPrompt}`}
                     />
                   </div>
 
                   {/* Skills */}
                   <div>
-                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.65)', marginBottom: 8 }}>
-                      Skills
-                    </label>
-                    <div style={{ 
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      borderRadius: 8,
-                      padding: 16,
-                      maxHeight: 200,
-                      overflowY: 'auto'
-                    }}>
+                    <label className={styles.formLabel}>Skills</label>
+                    <div className={styles.skillsBox}>
                       {skillsData?.installed?.length ? (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
+                        <div className={styles.skillsGrid}>
                           {skillsData.installed.map((skill) => (
-                            <label
-                              key={skill.name}
-                              style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                cursor: 'pointer',
-                                fontSize: 13,
-                                color: 'rgba(255,255,255,0.65)'
-                              }}
-                            >
+                            <label key={skill.name} className={styles.skillLabel}>
                               <input
                                 type="checkbox"
                                 checked={createForm.skills.includes(skill.name)}
                                 onChange={() => handleSkillToggle(skill.name)}
-                                style={{ marginRight: 4 }}
+                                className={styles.skillCheckbox}
                               />
                               {skill.name}
                             </label>
                           ))}
                         </div>
                       ) : (
-                        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.45)', textAlign: 'center', padding: 20 }}>
-                          No skills available
-                        </div>
+                        <div className={styles.skillsEmpty}>No skills available</div>
                       )}
                     </div>
                   </div>
                 </div>
 
                 {/* Modal Actions */}
-                <div style={{ display: 'flex', gap: 12, marginTop: 32, justifyContent: 'flex-end' }}>
+                <div className={styles.modalActions}>
                   <motion.button
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => setShowCreateModal(false)}
-                    style={{
-                      background: 'rgba(255,255,255,0.08)',
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '12px 24px',
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: 'rgba(255,255,255,0.65)',
-                      cursor: 'pointer'
-                    }}
+                    className={styles.cancelBtn}
                   >
                     Cancel
                   </motion.button>
@@ -831,16 +590,11 @@ export default function Agents() {
                     whileTap={{ scale: 0.98 }}
                     onClick={handleCreateAgent}
                     disabled={!createForm.name.trim()}
+                    className={styles.createAgentBtn}
                     style={{
                       background: createForm.name.trim() ? 'linear-gradient(135deg, #BF5AF2 0%, #9C3AE8 100%)' : 'rgba(255,255,255,0.12)',
-                      border: 'none',
-                      borderRadius: 8,
-                      padding: '12px 24px',
-                      fontSize: 14,
-                      fontWeight: 600,
-                      color: 'white',
                       cursor: createForm.name.trim() ? 'pointer' : 'not-allowed',
-                      opacity: createForm.name.trim() ? 1 : 0.5
+                      opacity: createForm.name.trim() ? 1 : 0.5,
                     }}
                   >
                     Create Agent
