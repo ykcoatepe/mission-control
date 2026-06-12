@@ -5,6 +5,7 @@ import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
 import GlassCard from '../components/GlassCard'
 import { useApi } from '../lib/hooks'
+import styles from './AWS.module.css'
 
 interface AWSService {
   name: string
@@ -99,8 +100,8 @@ export default function AWS() {
   if (awsLoading) {
     return (
       <PageTransition>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 256 }}>
-          <div style={{ width: 32, height: 32, border: '2px solid #007AFF', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+        <div className={styles.loadingWrap}>
+          <div className={styles.spinner} />
         </div>
       </PageTransition>
     )
@@ -109,10 +110,10 @@ export default function AWS() {
   if (!awsEnabled) {
     return (
       <PageTransition>
-        <div style={{ maxWidth: 1080, margin: '0 auto', padding: isMobile ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 24 }}>
+        <div className={`${styles.disabledPage} ${isMobile ? styles.disabledPageMobile : styles.disabledPageDesktop}`}>
           <div>
             <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Cloud size={22} style={{ color: '#FF9500' }} /> AWS Dashboard
+              <Cloud size={22} className={styles.disabledIconColor} /> AWS Dashboard
             </h1>
             <p className="text-body" style={{ marginTop: 4 }}>
               AWS module is currently disabled in Mission Control configuration.
@@ -120,26 +121,26 @@ export default function AWS() {
           </div>
 
           <GlassCard delay={0.05} noPad>
-            <div style={{ padding: isMobile ? 18 : 28, display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,149,0,0.12)', border: '1px solid rgba(255,149,0,0.24)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Cloud size={20} style={{ color: '#FF9500' }} />
+            <div className={`${styles.disabledCardPad} ${isMobile ? styles.disabledCardPadMobile : styles.disabledCardPadDesktop}`}>
+              <div className={styles.disabledIconRow}>
+                <div className={styles.disabledIcon}>
+                  <Cloud size={20} className={styles.disabledIconColor} />
                 </div>
                 <div>
-                  <div style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Module disabled</div>
-                  <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.55)', marginTop: 4 }}>No AWS calls are being made. Enable the module from settings/config before using Bedrock, billing, or gallery tools.</div>
+                  <div className={styles.disabledTitle}>Module disabled</div>
+                  <div className={styles.disabledDesc}>No AWS calls are being made. Enable the module from settings/config before using Bedrock, billing, or gallery tools.</div>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : 'repeat(3, 1fr)', gap: 12 }}>
+              <div className={`${styles.configGrid} ${isMobile ? styles.configGridMobile : styles.configGridDesktop}`}>
                 {[
                   { label: 'Module flag', value: String(configData?.modules?.aws ?? false) },
                   { label: 'AWS enabled', value: String(configData?.aws?.enabled ?? false) },
                   { label: 'Region', value: configData?.aws?.region || 'us-east-1' },
                 ].map((item) => (
-                  <div key={item.label} style={{ padding: '14px 16px', borderRadius: 12, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>{item.label}</div>
-                    <div style={{ fontSize: 16, fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>{item.value}</div>
+                  <div key={item.label} className={styles.configItem}>
+                    <div className={styles.configItemLabel}>{item.label}</div>
+                    <div className={styles.configItemValue}>{item.value}</div>
                   </div>
                 ))}
               </div>
@@ -233,7 +234,7 @@ export default function AWS() {
   return (
     <>
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 24 }}>
+      <div className={`${styles.page} ${isMobile ? styles.pageMobile : styles.pageDesktop}`}>
         {/* Header */}
         <div>
           <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -245,7 +246,7 @@ export default function AWS() {
         </div>
 
         {/* Stats Row */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'repeat(2, 1fr)' : 'repeat(4, 1fr)', gap: 16 }}>
+        <div className={`${styles.statsGrid} ${isMobile ? styles.statsGridMobile : styles.statsGridDesktop}`}>
           {[
             { label: 'Account ID', value: account.id, color: '#fff' },
             { label: 'Region', value: account.region, color: '#007AFF' },
@@ -253,41 +254,34 @@ export default function AWS() {
             { label: 'Bedrock Models', value: allModels.length, color: '#BF5AF2' },
           ].map((s, i) => (
             <GlassCard key={s.label} delay={0.05 + i * 0.03} noPad>
-              <div style={{ padding: '16px 20px' }}>
-                <p className="text-label" style={{ marginBottom: 8 }}>{s.label}</p>
-                <p style={{ fontSize: 20, fontWeight: 300, color: s.color, fontVariantNumeric: 'tabular-nums' }}>{s.value}</p>
-                {s.label === 'Credits' && <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', marginTop: 4 }}>{credits.note}</p>}
+              <div className={styles.statPad}>
+                <p className={`text-label ${styles.statLabel}`}>{s.label}</p>
+                <p className={styles.statValue} style={{ color: s.color }}>{s.value}</p>
+                {s.label === 'Credits' && <p className={styles.statNote}>{credits.note}</p>}
               </div>
             </GlassCard>
           ))}
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 16 : 20 }}>
+        <div className={`${styles.splitGrid} ${isMobile ? styles.splitGridMobile : styles.splitGridDesktop}`}>
           {/* Services */}
           <GlassCard delay={0.15} noPad>
-            <div style={{ padding: '20px 24px' }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16 }}>Services</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <div className={styles.sectionPad}>
+              <h2 className={styles.sectionTitle}>Services</h2>
+              <div className={styles.serviceList}>
                 {services.map((svc) => (
-                  <motion.div key={svc.name} whileHover={{ scale: 1.01 }} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 14px', borderRadius: 10,
-                    background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                  }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 13, fontWeight: 500, color: 'rgba(255,255,255,0.85)' }}>{svc.name}</div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>{svc.description}</div>
+                  <motion.div key={svc.name} whileHover={{ scale: 1.01 }} className={styles.serviceRow}>
+                    <div className={styles.serviceInfo}>
+                      <div className={styles.serviceName}>{svc.name}</div>
+                      <div className={styles.serviceDesc}>{svc.description}</div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)' }}>{svc.detail}</span>
-                      <span style={{
-                        fontSize: 10, padding: '2px 8px', borderRadius: 6,
-                        background: svc.status === 'active' ? 'rgba(50,215,75,0.15)' : 'rgba(255,255,255,0.06)',
-                        color: svc.status === 'active' ? '#32D74B' : 'rgba(255,255,255,0.4)',
-                        border: `1px solid ${svc.status === 'active' ? 'rgba(50,215,75,0.3)' : 'rgba(255,255,255,0.08)'}`,
-                      }}>{svc.status}</span>
+                    <div className={styles.serviceActions}>
+                      <span className={styles.serviceDetail}>{svc.detail}</span>
+                      <span className={svc.status === 'active' ? styles.serviceBadgeActive : styles.serviceBadgeAvailable}>
+                        {svc.status}
+                      </span>
                       <button onClick={() => handleTestService(svc.name)} disabled={testingService === svc.name}
-                        style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', cursor: 'pointer', color: 'rgba(255,255,255,0.5)' }}>
+                        className={styles.serviceTestBtn}>
                         {testResults[svc.name] === 'success' ? <CheckCircle size={12} color="#32D74B" /> :
                          testResults[svc.name] === 'error' ? <AlertCircle size={12} color="#FF453A" /> : <Play size={12} />}
                       </button>
@@ -300,44 +294,50 @@ export default function AWS() {
 
           {/* Billing — REAL from Cost Explorer */}
           <GlassCard delay={0.2} noPad>
-            <div style={{ padding: '20px 24px' }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', marginBottom: 16 }}>Billing & Credits</h2>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div className={styles.sectionPad}>
+              <h2 className={styles.sectionTitle}>Billing &amp; Credits</h2>
+              <div className={styles.billingGrid}>
                 {/* Credits + Spending */}
-                <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
-                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(50,215,75,0.08)', border: '1px solid rgba(50,215,75,0.2)' }}>
-                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>Credits Left</p>
-                    <p style={{ fontSize: isMobile ? 18 : 22, fontWeight: 300, color: '#32D74B', fontVariantNumeric: 'tabular-nums' }}>
+                <div className={`${styles.billingMiniGrid} ${isMobile ? styles.billingMiniGridMobile : styles.billingMiniGridDesktop}`}>
+                  <div className={styles.creditsBox}>
+                    <p className={styles.billingBoxLabel}>Credits Left</p>
+                    <p className={`${styles.creditsValue} ${isMobile ? styles.billingValueMobile : styles.billingValueDesktop}`}>
                       ${costData ? costData.remaining?.toLocaleString() : '25,000'}
                     </p>
                   </div>
-                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,149,0,0.08)', border: '1px solid rgba(255,149,0,0.2)' }}>
-                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 1 }}>This Month</p>
-                    <p style={{ fontSize: isMobile ? 18 : 22, fontWeight: 300, color: '#FF9500', fontVariantNumeric: 'tabular-nums' }}>
+                  <div className={styles.spendBox}>
+                    <p className={styles.billingBoxLabel}>This Month</p>
+                    <p className={`${styles.spendValue} ${isMobile ? styles.billingValueMobile : styles.billingValueDesktop}`}>
                       ${costData ? costData.total?.toFixed(2) : '0.00'}
                     </p>
                   </div>
                 </div>
 
                 {/* Service Breakdown */}
-                <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                  <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>By Service</p>
+                <div className={styles.serviceBreakdown}>
+                  <p className={styles.serviceBreakdownLabel}>By Service</p>
                   {(costData?.services || []).map((svc) => (
-                    <div key={svc.name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                      <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', paddingRight: 12 }}>{svc.name}</span>
-                      <span style={{ fontSize: 12, color: svc.cost > 10 ? '#FF9500' : 'rgba(255,255,255,0.7)', fontWeight: svc.cost > 10 ? 600 : 400, fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>${svc.cost.toFixed(2)}</span>
+                    <div key={svc.name} className={styles.serviceBreakdownRow}>
+                      <span className={styles.serviceBreakdownName}>{svc.name}</span>
+                      <span style={{
+                        fontSize: 12,
+                        color: svc.cost > 10 ? '#FF9500' : 'rgba(255,255,255,0.7)',
+                        fontWeight: svc.cost > 10 ? 600 : 400,
+                        fontVariantNumeric: 'tabular-nums',
+                        flexShrink: 0,
+                      }}>${svc.cost.toFixed(2)}</span>
                     </div>
                   ))}
                   {(!costData?.services || costData.services.length === 0) && (
-                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.3)' }}>No cost data yet</p>
+                    <p className={styles.serviceBreakdownEmpty}>No cost data yet</p>
                   )}
                 </div>
 
                 {/* Daily Spend Mini Chart */}
                 {dailyCosts.length > 1 && (
-                  <div style={{ padding: 14, borderRadius: 12, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
-                    <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: 1 }}>Daily Spend</p>
-                    <div style={{ display: 'flex', alignItems: 'flex-end', gap: 3, height: 60 }}>
+                  <div className={styles.dailyChart}>
+                    <p className={styles.dailyChartLabel}>Daily Spend</p>
+                    <div className={styles.dailyBars}>
                       {dailyCosts.map((d, i) => {
                         const maxCost = Math.max(...dailyCosts.map((x) => x.cost), 1)
                         const height = Math.max((d.cost / maxCost) * 100, 2)
@@ -352,9 +352,9 @@ export default function AWS() {
                         )
                       })}
                     </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6 }}>
-                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{dailyCosts[0]?.date?.slice(5)}</span>
-                      <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.25)' }}>{dailyCosts[dailyCosts.length-1]?.date?.slice(5)}</span>
+                    <div className={styles.dailyDateRow}>
+                      <span className={styles.dailyDateLabel}>{dailyCosts[0]?.date?.slice(5)}</span>
+                      <span className={styles.dailyDateLabel}>{dailyCosts[dailyCosts.length-1]?.date?.slice(5)}</span>
                     </div>
                   </div>
                 )}
@@ -366,27 +366,23 @@ export default function AWS() {
         {/* Image Gallery */}
         {galleryData && galleryData.images.length > 0 && (
           <GlassCard delay={0.22} noPad>
-            <div style={{ padding: '20px 24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)', display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <Image size={16} style={{ color: '#BF5AF2' }} /> Generated Images ({galleryData.images.length})
+            <div className={styles.sectionPad}>
+              <div className={styles.galleryHeader}>
+                <h2 className={styles.sectionTitleWithIcon}>
+                  <Image size={16} className={styles.galleryIcon} /> Generated Images ({galleryData.images.length})
                 </h2>
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
+              <div className={styles.galleryGrid}>
                 {galleryData.images.map((img) => (
                   <motion.div
                     key={img.id}
                     whileHover={{ scale: 1.03 }}
-                    style={{
-                      borderRadius: 12, overflow: 'hidden', cursor: 'pointer',
-                      border: '1px solid rgba(255,255,255,0.08)',
-                      background: 'rgba(255,255,255,0.03)',
-                    }}
+                    className={styles.galleryThumb}
                     onClick={() => setLightboxUrl(img.url)}
                   >
-                    <img src={img.url} alt="" style={{ width: '100%', aspectRatio: '1', objectFit: 'cover', display: 'block' }} />
-                    <div style={{ padding: '8px 10px' }}>
-                      <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+                    <img src={img.url} alt="" className={styles.galleryThumbImg} />
+                    <div className={styles.galleryThumbCaption}>
+                      <p className={styles.galleryThumbDate}>
                         {new Date(img.created).toLocaleString()}
                       </p>
                     </div>
@@ -399,86 +395,74 @@ export default function AWS() {
 
         {/* Bedrock Models Section */}
         <GlassCard delay={0.25} noPad>
-          <div style={{ padding: '20px 24px' }}>
+          <div className={styles.sectionPad}>
             {/* Models Header + Search */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>
+            <div className={styles.modelsHeader}>
+              <h2 className={styles.modelsTitle}>
                 Bedrock Models ({models.length}{category !== 'all' ? ` / ${allModels.length}` : ''})
               </h2>
-              <div style={{ position: 'relative' }}>
-                <Search size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.3)' }} />
+              <div className={styles.searchWrap}>
+                <Search size={13} className={styles.searchIcon} />
                 <input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search models..."
-                  style={{
-                    padding: '8px 12px 8px 30px', borderRadius: 8, width: 220,
-                    border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)',
-                    color: '#fff', fontSize: 12, outline: 'none',
-                  }}
+                  className={styles.searchInput}
                 />
               </div>
             </div>
 
             {/* Category Filter Tabs */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 20 }}>
+            <div className={styles.filterRow}>
               {CATEGORY_FILTERS.filter(f => counts[f.id] > 0 || f.id === 'all').map(f => (
-                <button key={f.id} onClick={() => setCategory(f.id)} style={{
-                  display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
-                  border: category === f.id ? '1px solid rgba(0,122,255,0.4)' : '1px solid rgba(255,255,255,0.08)',
-                  background: category === f.id ? 'rgba(0,122,255,0.15)' : 'rgba(255,255,255,0.04)',
-                  color: category === f.id ? '#fff' : 'rgba(255,255,255,0.55)', fontSize: 12, fontWeight: 500, transition: 'all 0.2s',
-                }}>
+                <button key={f.id} onClick={() => setCategory(f.id)}
+                  className={category === f.id ? styles.filterBtnActive : styles.filterBtnInactive}
+                >
                   <f.icon size={13} />
                   {f.label}
-                  <span style={{
-                    fontSize: 10, padding: '1px 6px', borderRadius: 6,
-                    background: category === f.id ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.06)',
-                    color: category === f.id ? '#fff' : 'rgba(255,255,255,0.4)',
-                  }}>{counts[f.id]}</span>
+                  <span className={category === f.id ? styles.filterBadgeActive : styles.filterBadgeInactive}>
+                    {counts[f.id]}
+                  </span>
                 </button>
               ))}
             </div>
 
             {/* Model Grid */}
             {modelsLoading ? (
-              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12 }}>Loading models from Bedrock...</p>
+              <p className={styles.modelsLoading}>Loading models from Bedrock...</p>
             ) : models.length === 0 ? (
-              <p style={{ color: 'rgba(255,255,255,0.4)', fontSize: 12, textAlign: 'center', padding: 20 }}>No models match your search.</p>
+              <p className={styles.modelsEmpty}>No models match your search.</p>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className={styles.modelsList}>
                 {sortedProviders.map(([provider, provModels]) => (
                   <div key={provider}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.7)' }}>{provider}</span>
-                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', padding: '1px 6px', borderRadius: 6, background: 'rgba(255,255,255,0.06)' }}>{provModels.length}</span>
+                    <div className={styles.providerHeader}>
+                      <span className={styles.providerName}>{provider}</span>
+                      <span className={styles.providerCount}>{provModels.length}</span>
                     </div>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 8 }}>
+                    <div className={styles.modelGrid}>
                       {provModels.map((m) => {
                         const action = getModelAction(m)
                         return (
                           <motion.div key={m.modelId} whileHover={{ scale: 1.02 }}
                             onClick={() => { setSelectedModel(m); setActionStatus('idle'); setActionMessage(''); setImagePrompt(''); setGeneratedImageUrl(''); setTtsText('') }}
-                            style={{
-                              padding: '12px 14px', borderRadius: 10, cursor: 'pointer',
-                              background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)',
-                              transition: 'border-color 0.2s',
-                            }}
+                            className={styles.modelCard}
                             onMouseEnter={(e) => (e.currentTarget.style.borderColor = `${action.color}40`)}
                             onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.06)')}
                           >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 12, fontWeight: 500, color: 'rgba(255,255,255,0.85)', marginBottom: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            <div className={styles.modelCardInner}>
+                              <div className={styles.modelCardInfo}>
+                                <div className={styles.modelCardName}>
                                   {m.modelName}
                                 </div>
-                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                <div className={styles.modelCardId}>
                                   {m.modelId}
                                 </div>
                               </div>
-                              <span style={{
-                                fontSize: 9, padding: '2px 6px', borderRadius: 5, flexShrink: 0, marginLeft: 8,
-                                background: `${action.color}15`, color: action.color, border: `1px solid ${action.color}30`,
+                              <span className={styles.modelActionBadge} style={{
+                                background: `${action.color}15`,
+                                color: action.color,
+                                border: `1px solid ${action.color}30`,
                               }}>{action.label}</span>
                             </div>
                           </motion.div>
@@ -500,55 +484,49 @@ export default function AWS() {
               <motion.div
                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                 onClick={() => setSelectedModel(null)}
-                style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}
+                className={styles.modalOverlay}
               >
                 <motion.div
                   initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                   onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: 520, maxHeight: '85vh', borderRadius: 16, padding: 28,
-                    background: 'rgba(30,30,40,0.95)', border: '1px solid rgba(255,255,255,0.1)',
-                    backdropFilter: 'blur(60px) saturate(200%)',
-                    boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-                    overflowY: 'auto',
-                  }}
+                  className={styles.modalBox}
                 >
                   {/* Modal Header */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+                  <div className={styles.modalHeader}>
                     <div>
-                      <h3 style={{ fontSize: 16, fontWeight: 600, color: '#fff', marginBottom: 4 }}>{selectedModel.modelName}</h3>
-                      <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{selectedModel.provider} · {selectedModel.modelId}</p>
+                      <h3 className={styles.modalModelName}>{selectedModel.modelName}</h3>
+                      <p className={styles.modalModelMeta}>{selectedModel.provider} · {selectedModel.modelId}</p>
                     </div>
-                    <button onClick={() => setSelectedModel(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'rgba(255,255,255,0.4)', padding: 4 }}>
+                    <button onClick={() => setSelectedModel(null)} className={styles.modalCloseBtn}>
                       <X size={18} />
                     </button>
                   </div>
 
                   {/* Modalities */}
-                  <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
+                  <div className={styles.modalModalities}>
                     <div>
-                      <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Input</p>
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <p className={styles.modalModalityLabel}>Input</p>
+                      <div className={styles.modalModalityBadges}>
                         {(selectedModel.inputModalities || []).map(m => (
-                          <span key={m} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 6, background: 'rgba(0,122,255,0.15)', color: '#007AFF', border: '1px solid rgba(0,122,255,0.3)' }}>{m}</span>
+                          <span key={m} className={styles.modalInputBadge}>{m}</span>
                         ))}
                       </div>
                     </div>
                     <div>
-                      <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.4)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 1 }}>Output</p>
-                      <div style={{ display: 'flex', gap: 4 }}>
+                      <p className={styles.modalModalityLabel}>Output</p>
+                      <div className={styles.modalModalityBadges}>
                         {(selectedModel.outputModalities || []).map(m => (
-                          <span key={m} style={{ fontSize: 10, padding: '3px 8px', borderRadius: 6, background: 'rgba(50,215,75,0.15)', color: '#32D74B', border: '1px solid rgba(50,215,75,0.3)' }}>{m}</span>
+                          <span key={m} className={styles.modalOutputBadge}>{m}</span>
                         ))}
                       </div>
                     </div>
                   </div>
 
                   {/* Action Area */}
-                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.08)', paddingTop: 20 }}>
+                  <div className={styles.modalActionArea}>
                     {action.type === 'agent' && (
                       <div>
-                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 12 }}>
+                        <p className={styles.modalActionDesc}>
                           Switch active model to this. Takes effect on next message.
                         </p>
                         <button
@@ -568,18 +546,14 @@ export default function AWS() {
 
                     {action.type === 'image' && (
                       <div>
-                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 12 }}>
+                        <p className={styles.modalActionDesc}>
                           Generate an image using {selectedModel.modelName}.
                         </p>
                         <input
                           value={imagePrompt}
                           onChange={(e) => setImagePrompt(e.target.value)}
                           placeholder="Describe the image you want..."
-                          style={{
-                            width: '100%', padding: '10px 14px', borderRadius: 8, marginBottom: 10,
-                            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)',
-                            color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box',
-                          }}
+                          className={styles.modalActionInput}
                           onKeyDown={(e) => e.key === 'Enter' && handleGenerateImage(selectedModel.modelId, imagePrompt)}
                         />
                         <button
@@ -595,8 +569,8 @@ export default function AWS() {
                           {actionStatus === 'loading' ? '⏳ Generating...' : 'Generate Image'}
                         </button>
                         {generatedImageUrl && (
-                          <div style={{ marginTop: 16, borderRadius: 12, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.1)' }}>
-                            <img src={generatedImageUrl} alt="Generated" style={{ width: '100%', display: 'block' }} />
+                          <div className={styles.modalGeneratedImg}>
+                            <img src={generatedImageUrl} alt="Generated" className={styles.modalGeneratedImgEl} />
                           </div>
                         )}
                       </div>
@@ -604,7 +578,7 @@ export default function AWS() {
 
                     {action.type === 'tts' && (
                       <div>
-                        <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.6)', marginBottom: 12 }}>
+                        <p className={styles.modalActionDesc}>
                           Convert text to speech using {selectedModel.modelName}.
                         </p>
                         <textarea
@@ -612,23 +586,16 @@ export default function AWS() {
                           onChange={(e) => setTtsText(e.target.value)}
                           placeholder="Enter text to speak..."
                           rows={3}
-                          style={{
-                            width: '100%', padding: '10px 14px', borderRadius: 8, marginBottom: 10, resize: 'vertical',
-                            border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)',
-                            color: '#fff', fontSize: 13, outline: 'none', boxSizing: 'border-box',
-                          }}
+                          className={styles.modalActionTextarea}
                         />
-                        <button disabled style={{
-                          width: '100%', padding: '12px 16px', borderRadius: 10, border: 'none',
-                          background: 'rgba(50,215,75,0.3)', color: '#fff', fontSize: 13, fontWeight: 500, cursor: 'not-allowed', opacity: 0.6,
-                        }}>
+                        <button disabled className={styles.modalTtsBtnDisabled}>
                           Coming Soon — Use Polly via Services
                         </button>
                       </div>
                     )}
 
                     {action.type === 'none' && (
-                      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', textAlign: 'center' }}>
+                      <p className={styles.modalNoneText}>
                         This model type isn't directly actionable from the dashboard yet.
                       </p>
                     )}
@@ -655,23 +622,14 @@ export default function AWS() {
     {lightboxUrl && (
       <div
         onClick={() => setLightboxUrl(null)}
-        style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
-          background: 'rgba(0,0,0,0.9)', backdropFilter: 'blur(12px)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          cursor: 'zoom-out', padding: 40,
-        }}
+        className={styles.lightbox}
       >
         <img
           src={lightboxUrl} alt="Generated"
-          style={{ maxWidth: '90vw', maxHeight: '90vh', borderRadius: 16, boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}
+          className={styles.lightboxImg}
           onClick={(e) => e.stopPropagation()}
         />
-        <button onClick={() => setLightboxUrl(null)} style={{
-          position: 'fixed', top: 24, right: 24, background: 'rgba(255,255,255,0.15)',
-          border: '1px solid rgba(255,255,255,0.2)', borderRadius: 10, padding: '8px 16px',
-          color: '#fff', cursor: 'pointer', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6,
-        }}>
+        <button onClick={() => setLightboxUrl(null)} className={styles.lightboxClose}>
           <X size={14} /> Close
         </button>
       </div>

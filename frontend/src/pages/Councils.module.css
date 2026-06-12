@@ -1,0 +1,562 @@
+/* ── Page layout ─────────────────────────────────────────────── */
+/* Note: .councils-page global class on root div is required for
+   the index.css hover-transform suppression rule. Do not remove it. */
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.archiveLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #64D2FF;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.pageSubtitle {
+  margin-top: 4px;
+  max-width: 760px;
+}
+
+.refreshBtn {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.86);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+/* ── Loading / error banners ─────────────────────────────────── */
+
+.loadingBanner {
+  padding: 16px;
+}
+
+.errorBanner {
+  padding: 16px;
+  border-left: 3px solid #FF453A;
+}
+
+/* ── Alert panel (archive mode / open decisions) ─────────────── */
+
+.alertPanel {
+  padding: 16px;
+}
+
+.alertPanelHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.alertPanelTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.94);
+}
+
+.alertPanelDesc {
+  margin-top: 5px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.alertPanelNavRow {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.navBtn {
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.82);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.alertMetricsGrid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+  gap: 10px;
+}
+
+/* ── Mini metric component ───────────────────────────────────── */
+
+.miniMetric {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  padding: 10px 12px;
+  min-height: 76px;
+}
+
+.miniMetricLabel {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.56);
+  font-weight: 600;
+}
+
+.miniMetricValue {
+  margin-top: 4px;
+  font-size: 23px;
+  font-weight: 800;
+  font-feature-settings: "tnum";
+}
+
+.miniMetricSub {
+  margin-top: 3px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── Two-panel row: workflow + health ────────────────────────── */
+
+.twoPanelGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.workflowPanel {
+  padding: 15px;
+}
+
+.workflowPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.workflowPanelTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.workflowPanelDesc {
+  margin-top: 5px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.workflowKpiGrid {
+  margin-top: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.idleAdvisories {
+  margin-top: 12px;
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.idleAdvisoryBadge {
+  border-radius: 999px;
+  padding: 5px 8px;
+  background: rgba(255, 149, 0, 0.10);
+  border: 1px solid rgba(255, 149, 0, 0.22);
+  color: #FFB340;
+  font-size: 10px;
+  font-weight: 650;
+}
+
+.healthPanel {
+  padding: 15px;
+}
+
+.healthPanelTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.healthMetricGrid {
+  margin-top: 12px;
+  display: grid;
+  gap: 9px;
+}
+
+.healthMetricRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.healthMetricRowLabel {
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.healthPanelFooter {
+  margin-top: 12px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+/* ── Decision archive panel ──────────────────────────────────── */
+
+.archivePanel {
+  padding: 15px;
+}
+
+.archivePanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.archivePanelTitle {
+  margin: 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.93);
+}
+
+.archivePanelSubtitle {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.50);
+}
+
+.archiveFilterRow {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.searchBox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.searchIcon {
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.searchInput {
+  width: 180px;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: white;
+  font-size: 12px;
+}
+
+.archiveSelect {
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(20, 22, 28, 0.94);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+/* ── Council tabs ────────────────────────────────────────────── */
+
+.councilTabGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.councilTab {
+  padding: 12px;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+}
+
+.councilTabHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.councilTabName {
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.councilTabStats {
+  margin-top: 8px;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+/* ── Empty state (local) ────────────────────────────────────── */
+
+.emptyState {
+  padding: 18px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
+}
+
+/* ── Decision list ───────────────────────────────────────────── */
+
+.decisionList {
+  display: grid;
+  gap: 8px;
+}
+
+.decisionRow {
+  text-align: left;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.032);
+  padding: 12px;
+  cursor: pointer;
+}
+
+.decisionRowTop {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.decisionRowIdGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.decisionRowId {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.92);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.decisionRowCouncil {
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.decisionRowStatus {
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.decisionRowContext {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.68);
+  line-height: 1.45;
+}
+
+.decisionRowMeta {
+  margin-top: 7px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.42);
+}
+
+/* ── Detail drawer ───────────────────────────────────────────── */
+
+.drawerOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: flex-end;
+}
+
+.drawer {
+  width: min(720px, 96vw);
+  height: 100%;
+  background: rgba(12, 14, 20, 0.98);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.drawerHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.drawerCouncilLabel {
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.drawerDecisionTitle {
+  margin: 5px 0 0;
+  color: white;
+  line-height: 1.25;
+}
+
+.drawerCloseBtn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.72);
+  cursor: pointer;
+}
+
+.drawerDetails {
+  margin-top: 14px;
+  padding: 13px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.drawerOutcome {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.drawerMeta {
+  margin-top: 7px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+  line-height: 1.55;
+}
+
+.drawerRationale {
+  margin-top: 10px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.72);
+  line-height: 1.55;
+}
+
+.drawerConditions {
+  margin-top: 10px;
+  font-size: 11px;
+  color: #FFB340;
+}
+
+.drawerQuorum {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.drawerVoters {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.drawerModels {
+  margin-top: 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.drawerEvidence {
+  margin-top: 10px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.66);
+}
+
+.drawerEvidenceList {
+  margin-top: 6px;
+  padding-left: 18px;
+}
+
+.drawerEvidenceItem {
+  margin-bottom: 4px;
+}
+
+/* ── Timeline ────────────────────────────────────────────────── */
+
+.timelineSection {
+  margin-top: 16px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.timelineTitle {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 8px;
+  font-weight: 800;
+}
+
+.timelineEvent {
+  padding: 9px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.timelineEventType {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 700;
+}
+
+.timelineEventMeta {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.48);
+  margin-top: 2px;
+}
+
+.timelineEventNote {
+  margin-top: 5px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.70);
+}

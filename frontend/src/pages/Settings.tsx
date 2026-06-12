@@ -5,6 +5,7 @@ import { useIsMobile } from '../lib/useIsMobile'
 import GlassCard from '../components/GlassCard'
 import StatusBadge from '../components/StatusBadge'
 import { useApi } from '../lib/hooks'
+import styles from './Settings.module.css'
 
 interface OpenClawConfig {
   model?: string
@@ -29,7 +30,7 @@ export default function Settings() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', padding: isMobile ? '16px' : '0', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 24 }}>
+      <div className={`${styles.page} ${isMobile ? styles.pageMobile : ''}`} style={{ gap: isMobile ? 16 : 24 }}>
         {/* Header */}
         <div>
           <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -38,34 +39,34 @@ export default function Settings() {
           <p className="text-body" style={{ marginTop: 4 }}>Gateway configuration, model routing & preferences</p>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: isMobile ? 16 : 20 }}>
+        <div className={`${styles.cardGrid} ${isMobile ? styles.cardGridMobile : styles.cardGridDesktop}`}>
           {/* Model Routing Card */}
           <ModelRoutingCard isMobile={isMobile} />
 
           {/* OpenClaw Configuration Card */}
           <GlassCard noPad>
-            <div style={{ padding: isMobile ? 16 : 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(191,90,242,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardIconPurple}>
                   <Shield size={18} style={{ color: '#BF5AF2' }} />
                 </div>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>OpenClaw Configuration</h2>
+                <h2 className={styles.cardTitle}>OpenClaw Configuration</h2>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div className={styles.configRows}>
                 {[
                   { label: 'Gateway Port', value: configData?.gateway_port || 18789 },
                   { label: 'Memory Path', value: configData?.memory_path || '/home/ubuntu/clawd/memory', mono: true },
                   { label: 'Skills Path', value: configData?.skills_path || '/home/ubuntu/clawd/skills', mono: true },
                   { label: 'AWS Region', value: configData?.bedrock_region || 'us-east-1', mono: true },
                 ].map((item) => (
-                  <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 12 }}>
-                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)', flexShrink: 0 }}>{item.label}</span>
-                    <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', fontFamily: item.mono ? 'monospace' : 'inherit', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>{String(item.value)}</span>
+                  <div key={item.label} className={styles.configRow}>
+                    <span className={styles.configRowLabel}>{item.label}</span>
+                    <span className={item.mono ? styles.configRowValueMono : styles.configRowValue}>{String(item.value)}</span>
                   </div>
                 ))}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
-                  <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>Status</span>
+                <div className={styles.configRowLast}>
+                  <span className={styles.configRowLabel}>Status</span>
                   <StatusBadge status="active" label="Connected" />
                 </div>
               </div>
@@ -77,24 +78,24 @@ export default function Settings() {
 
           {/* System Information Card */}
           <GlassCard noPad>
-            <div style={{ padding: isMobile ? 16 : 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-                <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,149,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
+              <div className={styles.cardHeader}>
+                <div className={styles.cardIconOrange}>
                   <Database size={18} style={{ color: '#FF9500' }} />
                 </div>
-                <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>System Information</h2>
+                <h2 className={styles.cardTitle}>System Information</h2>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div className={styles.configRows}>
                 {[
                   { label: 'Mission Control Version', value: configData?.system?.mission_control_version ? `v${configData.system.mission_control_version}` : '—' },
                   { label: 'OpenClaw Version', value: configData?.system?.openclaw_version || '—' },
                   { label: 'Node.js Version', value: configData?.system?.node_version || '—' },
                   { label: 'Platform', value: (configData?.system?.platform && configData?.system?.arch) ? `${configData.system.platform} ${configData.system.arch}` : '—' },
                 ].map((item) => (
-                  <div key={item.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.65)' }}>{item.label}</span>
-                    <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.92)' }}>{item.value}</span>
+                  <div key={item.label} className={styles.configRow}>
+                    <span className={styles.sysInfoLabel}>{item.label}</span>
+                    <span className={styles.sysInfoValue}>{item.value}</span>
                   </div>
                 ))}
               </div>
@@ -137,14 +138,14 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
   const handleSave = async () => {
     setSaving(true)
     setSaveStatus('idle')
-    
+
     try {
       const res = await fetch('/api/settings/model-routing', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(routing)
       })
-      
+
       if (res.ok) {
         setSaveStatus('success')
         setTimeout(() => setSaveStatus('idle'), 3000)
@@ -168,46 +169,38 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
     }))),
   ]
 
-  const selectStyle = { 
-    width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
-    background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13,
-    cursor: 'pointer', appearance: 'none' as const,
-    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'12\' height=\'12\' viewBox=\'0 0 12 12\'%3E%3Cpath fill=\'%23999\' d=\'M6 8L1 3h10z\'/%3E%3C/svg%3E")',
-    backgroundRepeat: 'no-repeat', backgroundPosition: 'right 16px center',
-  }
-
   return (
     <GlassCard noPad>
-      <div style={{ padding: isMobile ? 16 : 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,149,0,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardIconOrange}>
             <Zap size={18} style={{ color: '#FF9500' }} />
           </div>
-          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Model Routing</h2>
+          <h2 className={styles.cardTitle}>Model Routing</h2>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className={styles.fieldGroup}>
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Main Model</label>
-            <select value={routing.main} onChange={(e) => setRouting({ ...routing, main: e.target.value })} style={selectStyle}>
+            <select value={routing.main} onChange={(e) => setRouting({ ...routing, main: e.target.value })} className={styles.selectField}>
               {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Sub-agent Model</label>
-            <select value={routing.subagent} onChange={(e) => setRouting({ ...routing, subagent: e.target.value })} style={selectStyle}>
+            <select value={routing.subagent} onChange={(e) => setRouting({ ...routing, subagent: e.target.value })} className={styles.selectField}>
               {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
                 <option key={m.value} value={m.value}>{m.label}</option>
               ))}
             </select>
           </div>
-          
+
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Heartbeat Model</label>
-            <select value={routing.heartbeat} onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })} style={selectStyle}>
+            <select value={routing.heartbeat} onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })} className={styles.selectField}>
               {MODEL_OPTIONS.map(m => (
                 <option key={m.value || 'inherit'} value={m.value}>{m.label}</option>
               ))}
@@ -217,14 +210,7 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
           <button
             onClick={handleSave}
             disabled={saving}
-            style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '12px 16px', borderRadius: 10, border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-              background: saving ? 'rgba(255,149,0,0.3)' : '#FF9500',
-              color: '#fff', fontSize: 13, fontWeight: 500,
-              opacity: saving ? 0.5 : 1,
-              transition: 'all 0.2s',
-            }}
+            className={`${styles.saveBtn} ${saving ? styles.saveBtnOrangeSaving : styles.saveBtnOrange}`}
           >
             {saving ? (
               <>
@@ -240,13 +226,13 @@ function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
           </button>
 
           {saveStatus === 'success' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#32D74B', fontSize: 12 }}>
+            <div className={styles.statusSuccess}>
               <span className="status-dot status-dot-green" />
               Model routing saved successfully
             </div>
           )}
           {saveStatus === 'error' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF453A', fontSize: 12 }}>
+            <div className={styles.statusError}>
               <span className="status-dot status-dot-red" />
               Failed to save model routing
             </div>
@@ -273,14 +259,14 @@ function HeartbeatConfigCard({ isMobile }: { isMobile: boolean }) {
   const handleSave = async () => {
     setSaving(true)
     setSaveStatus('idle')
-    
+
     try {
       const res = await fetch('/api/settings/heartbeat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interval })
       })
-      
+
       if (res.ok) {
         setSaveStatus('success')
         setTimeout(() => setSaveStatus('idle'), 3000)
@@ -298,25 +284,21 @@ function HeartbeatConfigCard({ isMobile }: { isMobile: boolean }) {
 
   return (
     <GlassCard noPad>
-      <div style={{ padding: isMobile ? 16 : 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(255,69,58,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardIconRed}>
             <Clock size={18} style={{ color: '#FF453A' }} />
           </div>
-          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Heartbeat Interval</h2>
+          <h2 className={styles.cardTitle}>Heartbeat Interval</h2>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div className={styles.fieldGroup}>
           <div>
             <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Check Interval</label>
             <select
               value={interval}
               onChange={(e) => setInterval(e.target.value)}
-              style={{ 
-                width: '100%', padding: '12px 16px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', 
-                background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.92)', fontSize: 13,
-                cursor: 'pointer'
-              }}
+              className={styles.heartbeatSelect}
             >
               {intervalOptions.map(opt => (
                 <option key={opt.value} value={opt.value} style={{ background: '#1a1a1a', color: '#fff' }}>
@@ -329,14 +311,7 @@ function HeartbeatConfigCard({ isMobile }: { isMobile: boolean }) {
           <button
             onClick={handleSave}
             disabled={saving}
-            style={{
-              width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              padding: '12px 16px', borderRadius: 10, border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-              background: saving ? 'rgba(255,69,58,0.3)' : '#FF453A',
-              color: '#fff', fontSize: 13, fontWeight: 500,
-              opacity: saving ? 0.5 : 1,
-              transition: 'all 0.2s',
-            }}
+            className={`${styles.saveBtn} ${saving ? styles.saveBtnRedSaving : styles.saveBtnRed}`}
           >
             {saving ? (
               <>
@@ -352,13 +327,13 @@ function HeartbeatConfigCard({ isMobile }: { isMobile: boolean }) {
           </button>
 
           {saveStatus === 'success' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#32D74B', fontSize: 12 }}>
+            <div className={styles.statusSuccess}>
               <span className="status-dot status-dot-green" />
               Heartbeat interval saved successfully
             </div>
           )}
           {saveStatus === 'error' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF453A', fontSize: 12 }}>
+            <div className={styles.statusError}>
               <span className="status-dot status-dot-red" />
               Failed to save heartbeat interval
             </div>
@@ -374,7 +349,6 @@ function ExportImportCard({ isMobile }: { isMobile: boolean }) {
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle')
 
   const handleExport = () => {
-    // Trigger download
     window.location.href = '/api/settings/export'
   }
 
@@ -384,16 +358,16 @@ function ExportImportCard({ isMobile }: { isMobile: boolean }) {
 
     setImporting(true)
     setImportStatus('idle')
-    
+
     try {
       const formData = new FormData()
       formData.append('config', file)
-      
+
       const res = await fetch('/api/settings/import', {
         method: 'POST',
         body: formData
       })
-      
+
       if (res.ok) {
         setImportStatus('success')
         setTimeout(() => setImportStatus('idle'), 3000)
@@ -406,30 +380,24 @@ function ExportImportCard({ isMobile }: { isMobile: boolean }) {
       setTimeout(() => setImportStatus('idle'), 3000)
     } finally {
       setImporting(false)
-      // Clear file input
       e.target.value = ''
     }
   }
 
   return (
     <GlassCard noPad>
-      <div style={{ padding: isMobile ? 16 : 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'rgba(50,215,75,0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
+        <div className={styles.cardHeader}>
+          <div className={styles.cardIconGreen}>
             <Globe size={18} style={{ color: '#32D74B' }} />
           </div>
-          <h2 style={{ fontSize: 15, fontWeight: 600, color: 'rgba(255,255,255,0.92)' }}>Export / Import</h2>
+          <h2 className={styles.cardTitle}>Export / Import</h2>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className={styles.exportImportGroup}>
           <button
             onClick={handleExport}
-            style={{
-              width: '100%', padding: '12px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              border: '1px solid rgba(50,215,75,0.3)', background: 'rgba(50,215,75,0.1)',
-              color: '#32D74B', fontSize: 13, cursor: 'pointer', fontWeight: 500,
-              transition: 'all 0.15s',
-            }}
+            className={styles.exportBtn}
             onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(50,215,75,0.2)' }}
             onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(50,215,75,0.1)' }}
           >
@@ -437,25 +405,17 @@ function ExportImportCard({ isMobile }: { isMobile: boolean }) {
             Export Configuration
           </button>
 
-          <div style={{ position: 'relative' }}>
+          <div className={styles.importWrap}>
             <input
               type="file"
               accept=".json"
               onChange={handleImport}
               disabled={importing}
-              style={{
-                position: 'absolute', width: '100%', height: '100%', opacity: 0, cursor: importing ? 'not-allowed' : 'pointer'
-              }}
+              className={importing ? styles.importFileInputDisabled : styles.importFileInput}
             />
             <button
               disabled={importing}
-              style={{
-                width: '100%', padding: '12px 16px', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-                border: '1px solid rgba(0,122,255,0.3)', background: 'rgba(0,122,255,0.1)',
-                color: '#007AFF', fontSize: 13, cursor: importing ? 'not-allowed' : 'pointer', fontWeight: 500,
-                opacity: importing ? 0.5 : 1,
-                transition: 'all 0.15s',
-              }}
+              className={importing ? styles.importBtnDisabled : styles.importBtn}
               onMouseEnter={(e) => { if (!importing) e.currentTarget.style.background = 'rgba(0,122,255,0.2)' }}
               onMouseLeave={(e) => { if (!importing) e.currentTarget.style.background = 'rgba(0,122,255,0.1)' }}
             >
@@ -474,13 +434,13 @@ function ExportImportCard({ isMobile }: { isMobile: boolean }) {
           </div>
 
           {importStatus === 'success' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#32D74B', fontSize: 12 }}>
+            <div className={styles.statusSuccess}>
               <span className="status-dot status-dot-green" />
               Configuration imported successfully. Restart required.
             </div>
           )}
           {importStatus === 'error' && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF453A', fontSize: 12 }}>
+            <div className={styles.statusError}>
               <span className="status-dot status-dot-red" />
               Failed to import configuration
             </div>

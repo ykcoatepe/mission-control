@@ -12,6 +12,7 @@ import {
   type HealthState,
 } from '../lib/status'
 import StatusBadge from '../components/StatusBadge'
+import styles from './Councils.module.css'
 
 type CouncilFilter = 'ALL' | 'EC' | 'OC' | 'TFC' | 'CROSS'
 type CouncilKey = Exclude<CouncilFilter, 'ALL'>
@@ -125,17 +126,17 @@ const compactCount = (value: unknown) => Number(value || 0).toLocaleString('en-U
 
 function MiniMetric({ label, value, tone = 'rgba(255,255,255,0.94)', sub }: { label: string; value: string | number; tone?: string; sub?: string }) {
   return (
-    <div style={{ background: 'rgba(255,255,255,0.04)', borderRadius: 12, padding: '10px 12px', minHeight: 76 }}>
-      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.56)', fontWeight: 600 }}>{label}</div>
-      <div style={{ marginTop: 4, fontSize: 23, color: tone, fontWeight: 800, fontFeatureSettings: '"tnum"' }}>{value}</div>
-      {sub ? <div style={{ marginTop: 3, fontSize: 10, color: 'rgba(255,255,255,0.42)' }}>{sub}</div> : null}
+    <div className={styles.miniMetric}>
+      <div className={styles.miniMetricLabel}>{label}</div>
+      <div className={styles.miniMetricValue} style={{ color: tone }}>{value}</div>
+      {sub ? <div className={styles.miniMetricSub}>{sub}</div> : null}
     </div>
   )
 }
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div style={{ padding: 18, borderRadius: 14, background: 'rgba(255,255,255,0.035)', border: '1px dashed rgba(255,255,255,0.12)', color: 'rgba(255,255,255,0.58)', fontSize: 12 }}>
+    <div className={styles.emptyState}>
       {text}
     </div>
   )
@@ -213,46 +214,50 @@ export default function Councils() {
 
   return (
     <PageTransition>
-      <div className="councils-page" style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 18 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+      {/* Note: councils-page global class required for index.css hover-transform suppression on .macos-panel */}
+      <div className={`councils-page ${styles.page}`}>
+        <div className={styles.headerRow}>
           <div>
-            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: '#64D2FF', fontSize: 12, fontWeight: 700, marginBottom: 6 }}>
+            <div className={styles.archiveLabel}>
               <Archive size={15} /> DECISION ARCHIVE
             </div>
             <h1 className="text-title">Decision Archive · Governance Health</h1>
-            <p className="text-body" style={{ marginTop: 4, maxWidth: 760 }}>
+            <p className={`text-body ${styles.pageSubtitle}`}>
               Councils are no longer the live work queue. This page is the decision archive, open-approval alarm, and drift check for governance becoming louder than real workflow.
             </p>
           </div>
-          <button onClick={refreshAll} style={{ padding: '8px 12px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.86)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+          <button onClick={refreshAll} className={styles.refreshBtn}>
             <RefreshCcw size={14} /> Refresh
           </button>
         </div>
 
-        {(summary.loading || decisionsApi.loading) && <div className="macos-panel" style={{ padding: 16 }}>Loading governance archive...</div>}
-        {(summary.error || decisionsApi.error) && <div className="macos-panel" style={{ padding: 16, borderLeft: '3px solid #FF453A' }}>Error: {summary.error || decisionsApi.error}</div>}
+        {(summary.loading || decisionsApi.loading) && <div className={`macos-panel ${styles.loadingBanner}`}>Loading governance archive...</div>}
+        {(summary.error || decisionsApi.error) && <div className={`macos-panel ${styles.errorBanner}`}>Error: {summary.error || decisionsApi.error}</div>}
 
         {!!summary.data && (
           <>
-            <div className="macos-panel" style={{ padding: 16, border: `1px solid ${isArchiveMode ? 'rgba(100,210,255,0.28)' : 'rgba(255,149,0,0.42)'}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div
+              className={`macos-panel ${styles.alertPanel}`}
+              style={{ border: `1px solid ${isArchiveMode ? 'rgba(100,210,255,0.28)' : 'rgba(255,149,0,0.42)'}` }}
+            >
+              <div className={styles.alertPanelHeader}>
                 <div>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800, color: 'rgba(255,255,255,0.94)' }}>
+                  <div className={styles.alertPanelTitle}>
                     <ShieldCheck size={16} style={{ color: isArchiveMode ? '#64D2FF' : '#FF9500' }} />
                     {isArchiveMode ? 'Archive mode: no open council decisions' : 'Attention: open governance decisions exist'}
                   </div>
-                  <div style={{ marginTop: 5, fontSize: 11, color: 'rgba(255,255,255,0.58)' }}>
+                  <div className={styles.alertPanelDesc}>
                     Live operation should happen in Cron Jobs, Digital Office, Workshop, or Agent Hub. This archive stays read-only unless council execution is explicitly restored.
                   </div>
                 </div>
                 <StatusBadge status={isArchiveMode ? 'info' : 'warning'} label={isArchiveMode ? 'Archive' : 'Action needed'} />
               </div>
-              <div style={{ marginTop: 12, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => navigate('/cron')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Cron Jobs</button>
-                <button onClick={() => navigate('/office')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Digital Office</button>
-                <button onClick={() => navigate('/workshop')} style={{ padding: '7px 10px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.82)', cursor: 'pointer', fontSize: 11, fontWeight: 700 }}>Open Workshop</button>
+              <div className={styles.alertPanelNavRow}>
+                <button onClick={() => navigate('/cron')} className={styles.navBtn}>Open Cron Jobs</button>
+                <button onClick={() => navigate('/office')} className={styles.navBtn}>Open Digital Office</button>
+                <button onClick={() => navigate('/workshop')} className={styles.navBtn}>Open Workshop</button>
               </div>
-              <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(155px, 1fr))', gap: 10 }}>
+              <div className={styles.alertMetricsGrid}>
                 <MiniMetric label="Total decisions" value={compactCount(archive.totalDecisions ?? metrics.totalDecisions)} tone="#64D2FF" sub="full archive" />
                 <MiniMetric label="Open approvals" value={compactCount(metrics.activeDecisions)} tone={Number(metrics.activeDecisions || 0) > 0 ? '#FF9500' : '#32D74B'} sub="should be rare" />
                 <MiniMetric label="Conditional" value={compactCount(metrics.conditionalApprovals)} tone="#FF9500" sub="approved with caveats" />
@@ -261,79 +266,92 @@ export default function Councils() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.05fr) minmax(340px, 0.95fr)', gap: 14, alignItems: 'stretch' }}>
-              <div className="macos-panel" style={{ padding: 15, border: `1px solid ${scoreTone}44` }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+            <div className={styles.twoPanelGrid}>
+              <div className={`macos-panel ${styles.workflowPanel}`} style={{ border: `1px solid ${scoreTone}44` }}>
+                <div className={styles.workflowPanelHeader}>
                   <div>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800, color: 'rgba(255,255,255,0.92)' }}>
+                    <div className={styles.workflowPanelTitle}>
                       <Activity size={15} style={{ color: scoreTone }} /> Governance vs Real Workflow
                     </div>
-                    <div style={{ marginTop: 5, fontSize: 11, color: 'rgba(255,255,255,0.58)' }}>
+                    <div className={styles.workflowPanelDesc}>
                       If governance events exist but real workflow is silent, this turns yellow. It is an audit warning, not a work queue.
                     </div>
                   </div>
                   <StatusBadge status={healthStateBadgeStatus(workflowState)} label={workflowState} />
                 </div>
-                <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0,1fr))', gap: 10 }}>
+                <div className={styles.workflowKpiGrid}>
                   <MiniMetric label="Real workflow" value={compactCount(review?.workflowSurfaceLive24h)} tone="#32D74B" sub="live 24h" />
                   <MiniMetric label="Governance auto-ops" value={compactCount(review?.governanceEventsLive24h)} tone="#FF9500" sub="live 24h" />
                   <MiniMetric label="Silence" value={review?.workflowSurfaceSilenceHours == null ? '—' : `${Math.round(Number(review.workflowSurfaceSilenceHours))}h`} tone={governanceOnly ? '#FF9500' : 'rgba(255,255,255,0.92)'} sub="since workflow signal" />
                 </div>
                 {review?.idleAdvisories?.length ? (
-                  <div style={{ marginTop: 12, display: 'flex', gap: 7, flexWrap: 'wrap' }}>
+                  <div className={styles.idleAdvisories}>
                     {review.idleAdvisories.slice(0, 6).map((item: string) => (
-                      <span key={item} style={{ borderRadius: 999, padding: '5px 8px', background: 'rgba(255,149,0,0.10)', border: '1px solid rgba(255,149,0,0.22)', color: '#FFB340', fontSize: 10, fontWeight: 650 }}>{item}</span>
+                      <span key={item} className={styles.idleAdvisoryBadge}>{item}</span>
                     ))}
                   </div>
                 ) : null}
               </div>
 
-              <div className="macos-panel" style={{ padding: 15 }}>
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 800, color: 'rgba(255,255,255,0.92)' }}>
+              <div className={`macos-panel ${styles.healthPanel}`}>
+                <div className={styles.healthPanelTitle}>
                   <AlertTriangle size={15} style={{ color: scorecard.data?.overall === 'yellow' ? '#FF9500' : '#32D74B' }} /> Health signals
                 </div>
-                <div style={{ marginTop: 12, display: 'grid', gap: 9 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span style={{ color: 'rgba(255,255,255,0.56)' }}>Overall</span><b style={{ color: scorecard.data?.overall === 'yellow' ? '#FF9500' : '#32D74B', textTransform: 'uppercase' }}>{scorecard.data?.overall || 'unknown'}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span style={{ color: 'rgba(255,255,255,0.56)' }}>Autorun attempts</span><b>{compactCount(scorecard.data?.metrics?.delegationAutorunAttempts)}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span style={{ color: 'rgba(255,255,255,0.56)' }}>Infra failures</span><b style={{ color: Number(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts || 0) > 0 ? '#FF453A' : '#32D74B' }}>{compactCount(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)}</b></div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}><span style={{ color: 'rgba(255,255,255,0.56)' }}>RCA active</span><b style={{ color: review?.rcaTaskActive ? '#FF9500' : 'rgba(255,255,255,0.86)' }}>{review?.rcaTaskActive || '—'}</b></div>
+                <div className={styles.healthMetricGrid}>
+                  <div className={styles.healthMetricRow}>
+                    <span className={styles.healthMetricRowLabel}>Overall</span>
+                    <b style={{ color: scorecard.data?.overall === 'yellow' ? '#FF9500' : '#32D74B', textTransform: 'uppercase' }}>{scorecard.data?.overall || 'unknown'}</b>
+                  </div>
+                  <div className={styles.healthMetricRow}>
+                    <span className={styles.healthMetricRowLabel}>Autorun attempts</span>
+                    <b>{compactCount(scorecard.data?.metrics?.delegationAutorunAttempts)}</b>
+                  </div>
+                  <div className={styles.healthMetricRow}>
+                    <span className={styles.healthMetricRowLabel}>Infra failures</span>
+                    <b style={{ color: Number(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts || 0) > 0 ? '#FF453A' : '#32D74B' }}>{compactCount(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)}</b>
+                  </div>
+                  <div className={styles.healthMetricRow}>
+                    <span className={styles.healthMetricRowLabel}>RCA active</span>
+                    <b style={{ color: review?.rcaTaskActive ? '#FF9500' : 'rgba(255,255,255,0.86)' }}>{review?.rcaTaskActive || '—'}</b>
+                  </div>
                 </div>
-                <div style={{ marginTop: 12, fontSize: 10, lineHeight: 1.5, color: 'rgba(255,255,255,0.48)' }}>
+                <div className={styles.healthPanelFooter}>
                   Gateway self-heal was removed from this page; it now reports audit and health, not mutations.
                 </div>
               </div>
             </div>
 
-            <div className="macos-panel" style={{ padding: 15 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 12 }}>
+            <div className={`macos-panel ${styles.archivePanel}`}>
+              <div className={styles.archivePanelHeader}>
                 <div>
-                  <h3 style={{ margin: 0, fontSize: 14, color: 'rgba(255,255,255,0.93)' }}>Decision Archive ({filteredDecisions.length})</h3>
-                  <p style={{ margin: '4px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.50)' }}>Read-only decision history. Not an action queue.</p>
+                  <h3 className={styles.archivePanelTitle}>Decision Archive ({filteredDecisions.length})</h3>
+                  <p className={styles.archivePanelSubtitle}>Read-only decision history. Not an action queue.</p>
                 </div>
-                <div style={{ display: 'inline-flex', gap: 8, flexWrap: 'wrap' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 10px', borderRadius: 10, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.10)' }}>
-                    <Search size={13} style={{ color: 'rgba(255,255,255,0.45)' }} />
-                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" style={{ width: 180, border: 'none', outline: 'none', background: 'transparent', color: 'white', fontSize: 12 }} />
+                <div className={styles.archiveFilterRow}>
+                  <div className={styles.searchBox}>
+                    <Search size={13} className={styles.searchIcon} />
+                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" className={styles.searchInput} />
                   </div>
-                  <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as CouncilFilter)} style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(20,22,28,0.94)', color: 'white', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as CouncilFilter)} className={styles.archiveSelect}>
                     {Object.entries(councilLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                   </select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} style={{ padding: '7px 10px', borderRadius: 10, background: 'rgba(20,22,28,0.94)', color: 'white', border: '1px solid rgba(255,255,255,0.12)' }}>
+                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={styles.archiveSelect}>
                     {statusOptions.map((status) => <option key={status} value={status}>{status === 'ALL' ? 'All statuses' : status}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10, marginBottom: 12 }}>
+              <div className={styles.councilTabGrid}>
                 {(['EC', 'OC', 'TFC', 'CROSS'] as const).map((key) => {
                   const item = councils[key] || {}
                   return (
-                    <button key={key} onClick={() => setActiveCouncil(key)} className="macos-panel" style={{ padding: 12, textAlign: 'left', border: activeCouncil === key ? `1px solid ${councilTone[key]}` : '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)', cursor: 'pointer' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center' }}>
-                        <span style={{ fontSize: 12, fontWeight: 800, color: 'rgba(255,255,255,0.9)' }}>{councilLabels[key]}</span>
+                    <button key={key} onClick={() => setActiveCouncil(key)} className={`macos-panel ${styles.councilTab}`}
+                      style={{ border: activeCouncil === key ? `1px solid ${councilTone[key]}` : '1px solid rgba(255,255,255,0.08)' }}>
+                      <div className={styles.councilTabHeader}>
+                        <span className={styles.councilTabName}>{councilLabels[key]}</span>
                         <span style={{ fontSize: 18, fontWeight: 850, color: councilTone[key] }}>{compactCount(item.totalDecisions)}</span>
                       </div>
-                      <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap', fontSize: 10, color: 'rgba(255,255,255,0.52)' }}>
+                      <div className={styles.councilTabStats}>
                         <span>open {compactCount(item.openDecisions)}</span>
                         <span>approved {compactCount(item.approved)}</span>
                         <span>rejected {compactCount(item.rejected)}</span>
@@ -344,23 +362,23 @@ export default function Councils() {
               </div>
 
               {filteredDecisions.length === 0 ? <EmptyState text="No decision records match these filters." /> : (
-                <div style={{ display: 'grid', gap: 8 }}>
+                <div className={styles.decisionList}>
                   {filteredDecisions.slice(0, 80).map((decision) => {
                     const status = normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)
                     const open = isOpenDecisionStatus(status)
                     const tone = open ? '#FF9500' : status === 'rejected' ? '#FF453A' : status === 'approved_with_conditions' ? '#FFB340' : '#32D74B'
                     return (
-                      <button key={decision.decisionId} onClick={() => openDecision(decision)} style={{ textAlign: 'left', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 12, background: 'rgba(255,255,255,0.032)', padding: 12, cursor: 'pointer' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, alignItems: 'center' }}>
-                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+                      <button key={decision.decisionId} onClick={() => openDecision(decision)} className={styles.decisionRow}>
+                        <div className={styles.decisionRowTop}>
+                          <div className={styles.decisionRowIdGroup}>
                             <FileText size={14} style={{ color: councilTone[decision.council as CouncilKey] || '#8E8E93', flex: '0 0 auto' }} />
-                            <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.92)', fontWeight: 750, whiteSpace: 'nowrap' }}>{decision.decisionId}</span>
-                            <span style={{ fontSize: 10, color: councilTone[decision.council as CouncilKey] || '#8E8E93', fontWeight: 750 }}>{decision.council}</span>
+                            <span className={styles.decisionRowId}>{decision.decisionId}</span>
+                            <span className={styles.decisionRowCouncil} style={{ color: councilTone[decision.council as CouncilKey] || '#8E8E93' }}>{decision.council}</span>
                           </div>
-                          <span style={{ fontSize: 10, color: tone, fontWeight: 800 }}>{status}</span>
+                          <span className={styles.decisionRowStatus} style={{ color: tone }}>{status}</span>
                         </div>
-                        <p style={{ margin: '6px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.68)', lineHeight: 1.45 }}>{decision.context || 'No context'}</p>
-                        <div style={{ marginTop: 7, display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 10, color: 'rgba(255,255,255,0.42)' }}>
+                        <p className={styles.decisionRowContext}>{decision.context || 'No context'}</p>
+                        <div className={styles.decisionRowMeta}>
                           <span>Owner: {decision.owner || '—'}</span>
                           <span>Risk: {decision.risk || '—'}</span>
                           <span>{timeAgo(decision.updatedAt || decision.createdAt || '')}</span>
@@ -376,44 +394,44 @@ export default function Councils() {
         )}
 
         {selectedDecision && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(6px)', display: 'flex', justifyContent: 'flex-end' }}>
-            <div style={{ width: 'min(720px, 96vw)', height: '100%', background: 'rgba(12,14,20,0.98)', borderLeft: '1px solid rgba(255,255,255,0.08)', padding: 16, overflowY: 'auto' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+          <div className={styles.drawerOverlay}>
+            <div className={styles.drawer}>
+              <div className={styles.drawerHeader}>
                 <div>
-                  <div style={{ fontSize: 12, color: councilTone[selectedDecision.council as CouncilKey] || 'rgba(255,255,255,0.62)', fontWeight: 800 }}>{selectedDecision.council} · {selectedDecision.decisionId}</div>
-                  <h3 style={{ margin: '5px 0 0', color: 'white', lineHeight: 1.25 }}>{selectedDecision.context}</h3>
+                  <div className={styles.drawerCouncilLabel} style={{ color: councilTone[selectedDecision.council as CouncilKey] || 'rgba(255,255,255,0.62)' }}>{selectedDecision.council} · {selectedDecision.decisionId}</div>
+                  <h3 className={styles.drawerDecisionTitle}>{selectedDecision.context}</h3>
                 </div>
-                <button onClick={() => setSelected(null)} style={{ border: 'none', background: 'transparent', color: 'rgba(255,255,255,0.72)', cursor: 'pointer' }}><X size={18} /></button>
+                <button onClick={() => setSelected(null)} className={styles.drawerCloseBtn}><X size={18} /></button>
               </div>
 
-              <div style={{ marginTop: 14, padding: 13, borderRadius: 12, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.035)' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.84)' }}><b>Outcome:</b> {normalizeDecisionStatus(selectedDecision.status || selectedDecision.outcome || selectedDecision.decision)}</div>
-                <div style={{ marginTop: 7, fontSize: 11, color: 'rgba(255,255,255,0.62)', lineHeight: 1.55 }}>
+              <div className={styles.drawerDetails}>
+                <div className={styles.drawerOutcome}><b>Outcome:</b> {normalizeDecisionStatus(selectedDecision.status || selectedDecision.outcome || selectedDecision.decision)}</div>
+                <div className={styles.drawerMeta}>
                   Owner: {selectedDecision.owner || '—'} · Risk: {selectedDecision.risk || '—'} · Revisit: {selectedDecision.revisitDate || '—'} · Updated: {selectedDecision.updatedAt || selectedDecision.createdAt || '—'}
                   {selectedDecision.delegatedTaskState ? ` · Task: ${selectedDecision.delegatedTaskState}` : ''}
                 </div>
-                {selectedDecision.rationale ? <div style={{ marginTop: 10, fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.55 }}><b>Rationale:</b> {selectedDecision.rationale}</div> : null}
-                {selectedDecision.conditions?.length ? <div style={{ marginTop: 10, fontSize: 11, color: '#FFB340' }}>Conditions: {selectedDecision.conditions.join(' · ')}</div> : null}
-                {selectedDecision.quorum ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Quorum: {selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</div> : null}
-                {selectedDecision.voters?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Voters: {selectedDecision.voters.join(', ')}</div> : null}
-                {selectedDecision.modelFamilies?.length ? <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.62)' }}>Models: {selectedDecision.modelFamilies.join(', ')}</div> : null}
+                {selectedDecision.rationale ? <div className={styles.drawerRationale}><b>Rationale:</b> {selectedDecision.rationale}</div> : null}
+                {selectedDecision.conditions?.length ? <div className={styles.drawerConditions}>Conditions: {selectedDecision.conditions.join(' · ')}</div> : null}
+                {selectedDecision.quorum ? <div className={styles.drawerQuorum}>Quorum: {selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</div> : null}
+                {selectedDecision.voters?.length ? <div className={styles.drawerVoters}>Voters: {selectedDecision.voters.join(', ')}</div> : null}
+                {selectedDecision.modelFamilies?.length ? <div className={styles.drawerModels}>Models: {selectedDecision.modelFamilies.join(', ')}</div> : null}
                 {selectedDecision.evidence?.length ? (
-                  <div style={{ marginTop: 10, fontSize: 11, color: 'rgba(255,255,255,0.66)' }}>
+                  <div className={styles.drawerEvidence}>
                     <b>Evidence</b>
-                    <ul style={{ marginTop: 6, paddingLeft: 18 }}>
-                      {selectedDecision.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`} style={{ marginBottom: 4 }}>{item}</li>)}
+                    <ul className={styles.drawerEvidenceList}>
+                      {selectedDecision.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`} className={styles.drawerEvidenceItem}>{item}</li>)}
                     </ul>
                   </div>
                 ) : null}
               </div>
 
-              <div style={{ marginTop: 16, paddingTop: 10, borderTop: '1px solid rgba(255,255,255,0.08)' }}>
-                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.8)', marginBottom: 8, fontWeight: 800 }}>Timeline</div>
+              <div className={styles.timelineSection}>
+                <div className={styles.timelineTitle}>Timeline</div>
                 {timeline.length === 0 ? <EmptyState text="No timeline events for this decision." /> : timeline.slice(0, 30).map((event, index) => (
-                  <div key={`${event.eventId || index}`} style={{ padding: '9px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.9)', fontWeight: 700 }}>{event.eventType || event.type || 'event'}</div>
-                    <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.48)', marginTop: 2 }}>{event.source || 'unknown'} · {timeAgo(event.timestamp || event.createdAt || '')}</div>
-                    {event.payload?.note ? <div style={{ marginTop: 5, fontSize: 11, color: 'rgba(255,255,255,0.70)' }}>{event.payload.note}</div> : null}
+                  <div key={`${event.eventId || index}`} className={styles.timelineEvent}>
+                    <div className={styles.timelineEventType}>{event.eventType || event.type || 'event'}</div>
+                    <div className={styles.timelineEventMeta}>{event.source || 'unknown'} · {timeAgo(event.timestamp || event.createdAt || '')}</div>
+                    {event.payload?.note ? <div className={styles.timelineEventNote}>{event.payload.note}</div> : null}
                   </div>
                 ))}
               </div>
