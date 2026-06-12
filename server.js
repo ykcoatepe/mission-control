@@ -446,7 +446,7 @@ function createSessionsService() {
 }
 
 const app = express();
-const PORT = 3333;
+const PORT = Number(process.env.PORT) || 3333;
 const HOST = process.env.MISSION_CONTROL_HOST || '127.0.0.1';
 
 app.disable('x-powered-by');
