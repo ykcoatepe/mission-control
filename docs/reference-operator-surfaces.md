@@ -7,7 +7,7 @@ This reference describes the public routes, API endpoints, local commands, and s
 | Route | Page | Data source | Purpose |
 | --- | --- | --- | --- |
 | `/` | Dashboard | `/api/status`, `/api/activity`, `/api/sessions`, `/api/costs` | Operator briefing, active sessions, heartbeat, attention signals, and evidence feed |
-| `/office` | Digital Office | `/api/status`, `/api/tasks`, `/api/sessions` | Desk telemetry, priority lane, attention queue, and office session state |
+| `/office` | Digital Office | `/api/office/telemetry` | Desk telemetry, priority lane, attention queue, and office session state |
 | `/cron` | Cron Jobs | `/api/cron`, `/api/models` | OpenClaw and Hermes cron visibility with scheduler-specific actions |
 | `/conversations` | Conversations | `/api/sessions/*`, `/api/chat/*` | Session browser and transcript review |
 | `/workshop` | Workshop | `/api/tasks/*`, `/api/quick/*` | Local task board and execution queue |
@@ -17,7 +17,7 @@ This reference describes the public routes, API endpoints, local commands, and s
 | `/gbrain` | GBrain | `/api/gbrain/overview` | Proof-backed view of GBrain trust, sources, queues, and bridge caveats |
 | `/diagnostics` | Diagnostics | `/api/config` plus selected tab endpoints | Tabbed support surface for Memory, Docs, Scout, AWS, and Skills |
 | `/ollama` | Ollama Monitor | `/api/ollama/*`, `/api/costs` | Local model telemetry plus model token usage context |
-| `/team` | Team Structure | `/api/agents/*`, `/api/models` | Team registry, role grouping, and model ownership view |
+| `/team` | Team Structure | `/api/team/structure`, `/api/models` | Team registry, role grouping, bootstrap state, and model ownership view |
 | `/agents` | Agent Hub | `/api/agents/*`, `/api/sessions` | Active agents, runtime inventory, and session detail |
 | `/settings` | Settings | `/api/config`, `/api/settings/*`, `/api/models` | Gateway configuration, model routing, and local preferences |
 | `/councils` | Governance Archive | `/api/councils/*` | Read-only governance and council history |
