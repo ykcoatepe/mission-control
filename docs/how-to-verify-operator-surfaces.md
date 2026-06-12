@@ -1,6 +1,6 @@
 # How to Verify Operator Surfaces
 
-Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chain changes in this PR.
+Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chain surfaces after a change.
 
 ## Prerequisites
 
@@ -11,27 +11,26 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
 ## Steps
 
-1. Run the focused server tests.
+1. Run the backend test suite.
 
    ```bash
-   node tests/gbrainOverview.test.js
-   node tests/costSanity.test.js
-   node tests/openclawUsageScript.test.js
-   node tests/checkNpmSupplyChain.test.mjs
+   npm test
    ```
 
-   These cover GBrain live normalization, cost normalization, OpenClaw usage parsing, and the advisory parser used by CI.
-
-2. Check syntax for changed server files.
+   This runs every file in `tests/` via `node --test` — GBrain normalization,
+   cost sanity, cron data, OpenClaw usage parsing, and the supply-chain
+   advisory parser. To iterate on a single area, run one file directly:
 
    ```bash
-   node --check server.js
-   node --check server/routes/gbrain.js
-   node --check server/routes/hermesKanban.js
-   node --check server/routes/cron.js
-   node --check server/routes/costs.js
-   node --check server/services/cronData.js
-   node --check server/services/costSanity.js
+   node --test tests/gbrainOverview.test.js
+   ```
+
+2. Lint and type-check the frontend if your change touches it.
+
+   ```bash
+   cd frontend
+   npm run lint
+   cd ..
    ```
 
 3. Build the frontend.
@@ -96,17 +95,17 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
 ## Verification
 
-The minimum local verification for this PR is:
+The minimum local verification before pushing is:
 
 ```bash
-node tests/gbrainOverview.test.js
-node tests/costSanity.test.js
-node tests/openclawUsageScript.test.js
-node tests/checkNpmSupplyChain.test.mjs
+npm test
 git diff --check
 ```
 
-Use the frontend build and local `curl` checks when the change affects browser behavior or live runtime data.
+CI repeats these on every PR (`.github/workflows/ci.yml` runs the backend
+suite plus frontend lint and build; `supply-chain.yml` runs the advisory
+gate). Use the frontend build and local `curl` checks when the change affects
+browser behavior or live runtime data.
 
 ## Troubleshooting
 

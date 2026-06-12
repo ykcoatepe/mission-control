@@ -124,6 +124,7 @@ mode unless a real OpenClaw operation needs active council mutations again.
 | [How to Verify Operator Surfaces](docs/how-to-verify-operator-surfaces.md) | You need commands to verify GBrain, Hermes Kanban, cron, costs, and supply-chain behavior |
 | [Operator Surfaces Reference](docs/reference-operator-surfaces.md) | You need the exact browser routes, API endpoints, actions, defaults, and constraints |
 | [Read-Only Evidence Design](docs/explanation-read-only-evidence-design.md) | You want the rationale behind read-only probes, explicit stale state, and bounded actions |
+| [Frontend Conventions](docs/reference-frontend-conventions.md) | You are changing frontend code and need the data-layer, styling, UI-kit, and lint conventions |
 | [GBrain Hybrid Brain View Handoff](docs/gbrain-hybrid-brain-view-handoff-20260524.md) | You need the product handoff that shaped the `/gbrain` implementation |
 
 ## Architecture
@@ -135,19 +136,28 @@ mission-control/
 │   ├── routes/               # API route modules
 │   └── services/             # Runtime, session, cron, team, and cache services
 ├── scripts/                  # Local helpers and usage summarizers
+├── tests/                    # Backend test suite (node --test)
+├── .github/workflows/        # CI: tests, lint, build, supply-chain gate
 ├── mc-config.default.json    # Safe config template
 ├── frontend/
 │   ├── src/
 │   │   ├── appRoutes.tsx     # Route and sidebar registry
 │   │   ├── pages/            # Operator pages
+│   │   │   └── costs/        # Module-folder pattern: types, lib, section components
 │   │   ├── components/       # Shared UI primitives and layout
-│   │   └── lib/              # Hooks and client helpers
+│   │   │   └── ui/           # UI kit: PageHeader, StatCard, EmptyState
+│   │   ├── lib/              # Hooks (react-query data layer) and client helpers
+│   │   └── utils/            # Sanitization helpers
 │   └── dist/                 # Generated build served by Express
 └── mission-control.service   # systemd template
 ```
 
-**Stack:** React 19, Vite 7, TypeScript, Framer Motion, Recharts, lucide-react,
-and Express.
+**Stack:** React 19, Vite 7, TypeScript, TanStack Query, Framer Motion,
+Recharts, lucide-react, and Express. Styling is plain CSS: global classes in
+`index.css` plus CSS Modules per page/component (no utility framework).
+
+Frontend conventions (data layer, styling system, UI kit, lint rules) are
+documented in [Frontend Conventions](docs/reference-frontend-conventions.md).
 
 The backend favors bounded reads, cached snapshots, and explicit fallbacks so the
 UI remains useful when a slow runtime source stalls. User-facing health should
@@ -159,15 +169,18 @@ closed browser tab does not leave child agent work running in the background.
 
 ## Validation
 
-Useful local checks:
+Local checks (these are also what CI runs on every PR):
 
 ```bash
-npm run build
-cd frontend && npm run build
-node --check server.js
-node --check server/routes/chat.js
-node --check server/routes/costs.js
+npm test                       # backend test suite (node --test, tests/)
+cd frontend
+npm run lint                   # ESLint (react-hooks compiler rules are errors)
+npm run build                  # tsc + vite production build
 ```
+
+CI lives in `.github/workflows/ci.yml` (backend tests + frontend lint/build)
+and `.github/workflows/supply-chain.yml` (npm incident IOC gate, frozen
+lockfiles, registry signatures).
 
 For UI changes, verify the running app at `http://127.0.0.1:3333` and inspect
 the relevant API endpoint directly with `curl`.

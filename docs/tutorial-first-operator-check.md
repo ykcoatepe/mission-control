@@ -1,6 +1,6 @@
 # First Operator Check
 
-This tutorial walks through the first useful Mission Control check after this PR: start the local console, verify GBrain trust, inspect Hermes Kanban work, and confirm cron and cost surfaces are returning operator-grade data.
+This tutorial walks through the first useful Mission Control check: start the local console, verify GBrain trust, inspect Hermes Kanban work, and confirm cron and cost surfaces are returning operator-grade data.
 
 ## What you'll need
 
