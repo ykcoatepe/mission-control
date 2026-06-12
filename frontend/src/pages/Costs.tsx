@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useApi, fetchJson } from '../lib/hooks'
 import {
@@ -48,7 +48,17 @@ import DailySpendSection from './costs/DailySpendSection'
 import type { SessionEstimateDay, BlendedCostItem } from './costs/DailySpendSection'
 import CostDriversSection from './costs/CostDriversSection'
 
+const STALE_COSTS_RETRY_INTERVAL_MS = 2500
+const STALE_COSTS_RETRY_LIMIT = 60
+const STALE_COSTS_RETRY_TIMEOUT_MS = STALE_COSTS_RETRY_INTERVAL_MS * STALE_COSTS_RETRY_LIMIT
 
+type CostsTokenData = TokenData & {
+  meta?: TokenData['meta'] & {
+    preservedPreviousOpenClaw?: boolean
+    preservedPreviousUsage?: boolean
+    refreshStartedAt?: string
+  }
+}
 
 
 export default function Costs() {
@@ -58,6 +68,7 @@ export default function Costs() {
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
+  const staleCostsRetry = useRef<{ key: string; startedAt: number } | null>(null)
 
   // ---- Four period-independent fetches ----
   const { data: awsCosts } = useApi<AWSSCostData>('/api/aws/costs')
@@ -75,12 +86,38 @@ export default function Costs() {
     queryKey: ['api', `/api/costs?period=${period}`],
     queryFn: () => fetchJson<TokenData>(`/api/costs?period=${period}`),
     refetchInterval: (query) => {
-      const tokens = query.state.data
+      const tokens = query.state.data as CostsTokenData | undefined
       const stale =
         tokens?.source === 'sessions.fast_fallback' ||
         tokens?.meta?.refreshing ||
         tokens?.meta?.stale
-      return stale ? 2500 : false
+      if (!stale) {
+        staleCostsRetry.current = null
+        return false
+      }
+
+      const preservedFreshCache =
+        tokens?.meta?.stale &&
+        !tokens.meta.refreshing &&
+        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousUsage)
+      if (preservedFreshCache) {
+        staleCostsRetry.current = null
+        return false
+      }
+
+      const retryKey = [
+        period,
+        tokens?.source || 'unknown',
+        tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',
+      ].join(':')
+      const now = Date.now()
+      if (staleCostsRetry.current?.key !== retryKey) {
+        staleCostsRetry.current = { key: retryKey, startedAt: now }
+      }
+
+      return now - staleCostsRetry.current.startedAt < STALE_COSTS_RETRY_TIMEOUT_MS
+        ? STALE_COSTS_RETRY_INTERVAL_MS
+        : false
     },
     refetchOnWindowFocus: false,
   })

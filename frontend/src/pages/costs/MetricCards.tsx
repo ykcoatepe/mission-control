@@ -76,6 +76,28 @@ export default function MetricCards({
       <GlassCard delay={0} noPad>
         <div style={{ padding: m ? '16px' : '24px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+            <div style={{ width: m ? '40px' : '48px', height: m ? '40px' : '48px', borderRadius: '12px', background: 'rgba(0,122,255,0.15)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Calendar size={m ? 16 : 20} style={{ color: '#007AFF' }} />
+            </div>
+            <span style={{ fontSize: m ? '10px' : '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              {labels.dailyAvg}
+            </span>
+          </div>
+          <p style={{ fontSize: m ? '24px' : '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
+            <AnimatedCounter end={dailyAvg} formatter={formatCurrency} />
+          </p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: '10px', flexWrap: 'wrap' }}>
+            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)' }}>
+              {compareLabel.daily} {formatComparisonValue(previousDailyAvg)}
+            </div>
+            <TrendBadge trend={dailyTrend} />
+          </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard delay={0.05} noPad>
+        <div style={{ padding: m ? '16px' : '24px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
             <div
               style={{
                 width: m ? '40px' : '48px',
@@ -107,7 +129,7 @@ export default function MetricCards({
       </GlassCard>
 
       {isAwsEnabled && hasAwsData && awsCosts && (
-        <GlassCard delay={0.05} noPad>
+        <GlassCard delay={0.1} noPad>
           <div style={{ padding: m ? '16px' : '24px' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
               <div style={{ width: m ? '40px' : '48px', height: m ? '40px' : '48px', borderRadius: '12px', background: 'rgba(50,215,75,0.15)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -126,28 +148,6 @@ export default function MetricCards({
           </div>
         </GlassCard>
       )}
-
-      <GlassCard delay={0.1} noPad>
-        <div style={{ padding: m ? '16px' : '24px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
-            <div style={{ width: m ? '40px' : '48px', height: m ? '40px' : '48px', borderRadius: '12px', background: 'rgba(0,122,255,0.15)', border: '1px solid rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Calendar size={m ? 16 : 20} style={{ color: '#007AFF' }} />
-            </div>
-            <span style={{ fontSize: m ? '10px' : '11px', fontWeight: '700', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-              {labels.dailyAvg}
-            </span>
-          </div>
-          <p style={{ fontSize: m ? '24px' : '32px', fontWeight: '300', color: 'rgba(255,255,255,0.92)', fontFamily: 'system-ui', fontFeatureSettings: '"tnum"', margin: '0' }}>
-            <AnimatedCounter end={dailyAvg} formatter={formatCurrency} />
-          </p>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginTop: '10px', flexWrap: 'wrap' }}>
-            <div style={{ fontSize: '11px', color: 'rgba(255,255,255,0.45)' }}>
-              {compareLabel.daily} {formatComparisonValue(previousDailyAvg)}
-            </div>
-            <TrendBadge trend={dailyTrend} />
-          </div>
-        </div>
-      </GlassCard>
 
       <GlassCard delay={0.15} noPad>
         <div style={{ padding: m ? '16px' : '24px' }}>

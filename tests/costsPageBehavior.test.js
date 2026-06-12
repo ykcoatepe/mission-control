@@ -19,6 +19,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('STALE_COSTS_RETRY_LIMIT = 60') && source.includes('STALE_COSTS_RETRY_TIMEOUT_MS') && source.includes('preservedPreviousOpenClaw') && source.includes('preservedPreviousUsage'),
+  'Costs page stale retry polling should be capped and stop on fresh preserved cache responses',
+);
+
+assert.ok(
   source.includes("if (period === 'day') return days.slice(-2, -1)"),
   'CodexBar day comparison should use the previous real day row',
 );
