@@ -8,13 +8,14 @@ import styles from './CreateJobModal.module.css'
 
 interface CreateJobModalProps {
   onClose: () => void
-  onSubmit: (job: CreateCronJobPayload) => void
+  onSubmit: (job: CreateCronJobPayload) => Promise<void>
   modelOptions: ModelOption[]
 }
 
 export default function CreateJobModal({ onClose, onSubmit, modelOptions }: CreateJobModalProps) {
   const m = useIsMobile()
   const [formError, setFormError] = useState<string | null>(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
   const [formData, setFormData] = useState({
     name: '',
     schedule: '',
@@ -28,8 +29,10 @@ export default function CreateJobModal({ onClose, onSubmit, modelOptions }: Crea
     setFormData(prev => ({ ...prev, schedule: expr }))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (isSubmitting) return
+    setFormError(null)
 
     if (!formData.name || !formData.schedule || !formData.message) {
       setFormError('Name, schedule, and message are required')
@@ -51,8 +54,15 @@ export default function CreateJobModal({ onClose, onSubmit, modelOptions }: Crea
       enabled: true
     }
 
-    onSubmit(job)
-    onClose()
+    setIsSubmitting(true)
+    try {
+      await onSubmit(job)
+      onClose()
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Create failed')
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -70,6 +80,7 @@ export default function CreateJobModal({ onClose, onSubmit, modelOptions }: Crea
           </h2>
           <button
             onClick={onClose}
+            disabled={isSubmitting}
             className={styles.modalClose}
           >
             ×
@@ -195,15 +206,17 @@ export default function CreateJobModal({ onClose, onSubmit, modelOptions }: Crea
             <button
               type="button"
               onClick={onClose}
+              disabled={isSubmitting}
               className={m ? `${styles.cancelBtn} ${styles.cancelBtnMobile}` : styles.cancelBtn}
             >
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSubmitting}
               className={m ? `${styles.submitBtn} ${styles.submitBtnMobile}` : styles.submitBtn}
             >
-              Create Job
+              {isSubmitting ? 'Creating...' : 'Create Job'}
             </button>
           </div>
         </form>

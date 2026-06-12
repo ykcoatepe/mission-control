@@ -233,6 +233,7 @@ export default function Cron() {
       refetch()
     } catch (err) {
       showToast('error', `Create failed: ${errorMessage(err)}`)
+      throw err
     }
   }
 
