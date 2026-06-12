@@ -32,8 +32,9 @@ The current release is an operator-focused overhaul:
   active sessions, team registry, runtime ownership, and agent attention cues.
 - **Ollama Monitor** - local model inventory, health, memory posture, and tuning
   surfaces for local LLM operations.
-- **Memory / Scout / AWS / Settings** - supporting diagnostics and configuration
-  surfaces kept available where useful.
+- **Diagnostics** - consolidated tab page (Memory, Docs, Scout, AWS, Skills) for
+  supporting diagnostic surfaces; old individual routes redirect here.
+- **Settings** - configuration surface.
 
 ## Pages
 
@@ -51,12 +52,9 @@ The current release is an operator-focused overhaul:
 | `/councils` | Governance Archive | Read-only governance/council history and state |
 | `/team` | Team Structure | Team registry and role/ownership view |
 | `/office` | Digital Office | Desk telemetry, attention queue, office session state |
-| `/memory` | Memory | Memory and documentation inspection |
-| `/scout` | Scout | Opportunity and web-signal scanning |
+| `/diagnostics` | Diagnostics | Supporting diagnostics: memory, docs, scout, AWS, skills — old routes redirect here |
 | `/agents` | Agent Hub | Active agents, sessions, and runtime inventory |
 | `/settings` | Settings | Mission Control configuration |
-| `/aws` | AWS | Optional AWS cost and Bedrock surfaces |
-| `/skills` | Skills | Route still exists, but it is hidden from sidebar until it has useful data |
 
 ## Quick Start
 
@@ -175,6 +173,7 @@ Local checks (these are also what CI runs on every PR):
 npm test                       # backend test suite (node --test, tests/)
 cd frontend
 npm run lint                   # ESLint (react-hooks compiler rules are errors)
+npm test                       # vitest unit suite
 npm run build                  # tsc + vite production build
 ```
 
