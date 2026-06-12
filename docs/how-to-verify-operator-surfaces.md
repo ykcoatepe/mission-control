@@ -56,10 +56,18 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    PORT=3499 npm start
    ```
 
+   Set the base URL for the instance you are verifying:
+
+   ```bash
+   export MC_BASE_URL=http://127.0.0.1:3333
+   # or, when verifying the second local copy:
+   export MC_BASE_URL=http://127.0.0.1:3499
+   ```
+
 5. Verify the server health endpoint.
 
    ```bash
-   curl -fsS http://127.0.0.1:3333/api/health
+   curl -fsS "$MC_BASE_URL/api/health"
    ```
 
    Expected shape:
@@ -71,9 +79,9 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 6. Verify GBrain endpoints.
 
    ```bash
-   curl -s http://127.0.0.1:3333/api/gbrain/overview
-   curl -s http://127.0.0.1:3333/api/gbrain/health
-   curl -s http://127.0.0.1:3333/api/gbrain/sources
+   curl -s "$MC_BASE_URL/api/gbrain/overview"
+   curl -s "$MC_BASE_URL/api/gbrain/health"
+   curl -s "$MC_BASE_URL/api/gbrain/sources"
    ```
 
    Confirm that errors are redacted and that absolute home paths are not returned in live failure messages.
@@ -81,19 +89,19 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 7. Verify Hermes Kanban endpoints.
 
    ```bash
-   curl -s http://127.0.0.1:3333/api/hermes-kanban
+   curl -s "$MC_BASE_URL/api/hermes-kanban"
    ```
 
    If the board has a task id, inspect its detail:
 
    ```bash
-   curl -s http://127.0.0.1:3333/api/hermes-kanban/tasks/TASK_ID
+   curl -s "$MC_BASE_URL/api/hermes-kanban/tasks/TASK_ID"
    ```
 
 8. Verify cron endpoints.
 
    ```bash
-   curl -s http://127.0.0.1:3333/api/cron
+   curl -s "$MC_BASE_URL/api/cron"
    ```
 
    Check that each job has `scheduler`, `schedulerLabel`, `sourceId`, and `actions`. Hermes jobs should have `run: false`, `delete: false`, `toggle: true`, and `model: true`.
@@ -101,7 +109,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 9. Verify cost endpoint behavior.
 
    ```bash
-   curl -s 'http://127.0.0.1:3333/api/costs?period=7d'
+   curl -s "$MC_BASE_URL/api/costs?period=7d"
    ```
 
    Check the `meta` object. It should make source availability visible with fields such as `openclawStatus`, `hermesStatus`, `stale`, and `refreshing`.
@@ -109,7 +117,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 10. Verify the Diagnostics route and legacy redirects.
 
    ```bash
-   curl -Ls http://127.0.0.1:3333/diagnostics | head
+   curl -Ls "$MC_BASE_URL/diagnostics" | head
    ```
 
    This confirms the SPA fallback serves the Diagnostics route. In the browser,
