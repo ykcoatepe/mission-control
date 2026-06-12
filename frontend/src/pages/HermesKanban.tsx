@@ -21,6 +21,7 @@ import {
 import PageTransition from '../components/PageTransition'
 import { apiQueryOptions, fetchJson, timeAgo } from '../lib/hooks'
 import { useIsMobile } from '../lib/useIsMobile'
+import styles from './HermesKanban.module.css'
 
 type HermesTask = {
   id: string
@@ -124,47 +125,40 @@ function TaskCard({ task, onSelect }: { task: HermesTask; onSelect: (task: Herme
   return (
     <button
       onClick={() => onSelect(task)}
-      className="macos-panel"
-      style={{
-        width: '100%',
-        padding: 14,
-        textAlign: 'left',
-        cursor: 'pointer',
-        border: '1px solid rgba(255,255,255,0.09)',
-      }}
+      className={`macos-panel ${styles.taskCard}`}
     >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 13, lineHeight: 1.35, fontWeight: 750, color: 'rgba(255,255,255,0.92)' }}>
+      <div className={styles.taskCardTop}>
+        <h3 className={styles.taskCardTitle}>
           {task.title}
         </h3>
-        <span style={{ flexShrink: 0, fontSize: 10, borderRadius: 999, padding: '3px 7px', color: priority.color, background: 'rgba(255,255,255,0.05)' }}>
+        <span className={styles.taskCardPriorityBadge} style={{ color: priority.color }}>
           {priority.label}
         </span>
       </div>
 
       {task.body ? (
-        <p style={{ margin: '8px 0 0', fontSize: 12, lineHeight: 1.45, color: 'rgba(255,255,255,0.48)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+        <p className={styles.taskCardBody}>
           {task.body}
         </p>
       ) : null}
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 12 }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'rgba(255,255,255,0.6)', background: 'rgba(255,255,255,0.05)', borderRadius: 999, padding: '3px 7px' }}>
+      <div className={styles.taskCardTags}>
+        <span className={styles.taskCardAssignee}>
           <UserRound size={10} /> {task.assignee || 'unassigned'}
         </span>
         {task.workspace_path ? (
-          <span style={{ fontSize: 10, color: '#64D2FF', background: 'rgba(100,210,255,0.1)', borderRadius: 999, padding: '3px 7px' }}>
+          <span className={styles.taskCardWorkspace}>
             {task.workspace_kind || 'dir'}
           </span>
         ) : null}
         {task.worker_pid ? (
-          <span style={{ fontSize: 10, color: '#BF5AF2', background: 'rgba(191,90,242,0.1)', borderRadius: 999, padding: '3px 7px' }}>
+          <span className={styles.taskCardPid}>
             pid {task.worker_pid}
           </span>
         ) : null}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginTop: 12, fontSize: 10, color: 'rgba(255,255,255,0.34)' }}>
+      <div className={styles.taskCardMeta}>
         <span>{task.createdAt ? timeAgo(task.createdAt) : 'no timestamp'}</span>
         {task.tenant ? <span>{task.tenant}</span> : null}
       </div>
@@ -256,16 +250,16 @@ export default function HermesKanban() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1440, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: m ? 14 : 22 }}>
-        <div style={{ display: 'flex', alignItems: m ? 'stretch' : 'center', justifyContent: 'space-between', gap: 12, flexDirection: m ? 'column' : 'row' }}>
+      <div className={`${styles.page} ${m ? styles.pageMobile : styles.pageDesktop}`}>
+        <div className={`${styles.headerRow} ${m ? styles.headerRowMobile : styles.headerRowDesktop}`}>
           <div>
             <h1 className="text-title">Hermes Kanban</h1>
-            <p className="text-body" style={{ marginTop: 4 }}>hmudur board, worker state, blockers, and handoffs</p>
+            <p className={`text-body ${styles.headerSubtitle}`}>hmudur board, worker state, blockers, and handoffs</p>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div className={styles.headerBtnGroup}>
             <button
               onClick={() => boardQuery.refetch()}
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 14px', borderRadius: 10, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.78)', cursor: 'pointer', fontSize: 12, fontWeight: 700 }}
+              className={styles.refreshBtn}
             >
               <RefreshCw size={14} /> Refresh
             </button>
@@ -273,13 +267,13 @@ export default function HermesKanban() {
               onClick={() => {
                 if (confirm('Dispatch one ready Hermes Kanban worker?')) void runAction({ action: 'dispatch', taskId: 'board' })
               }}
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 14px', borderRadius: 10, border: '1px solid rgba(191,90,242,0.25)', background: 'rgba(191,90,242,0.12)', color: '#BF5AF2', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+              className={styles.dispatchBtn}
             >
               <Play size={14} /> Dispatch
             </button>
             <button
               onClick={() => setShowCreate(true)}
-              style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 16px', borderRadius: 10, border: 'none', background: '#007AFF', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 800 }}
+              className={styles.newCardBtn}
             >
               <Plus size={14} /> New Card
             </button>
@@ -287,28 +281,28 @@ export default function HermesKanban() {
         </div>
 
         {boardQuery.isLoading ? (
-          <div className="macos-panel" style={{ padding: 22, display: 'flex', alignItems: 'center', gap: 10, color: 'rgba(255,255,255,0.7)' }}>
-            <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', color: '#007AFF' }} /> Loading Hermes board
+          <div className={`macos-panel ${styles.loadingWrap}`}>
+            <Loader2 size={16} className={styles.spinnerIcon} /> Loading Hermes board
           </div>
         ) : board?.ok === false || boardQuery.error ? (
-          <div className="macos-panel" style={{ padding: 18, borderLeft: '3px solid #FF453A' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: '#FF453A', fontWeight: 800, fontSize: 13 }}>
+          <div className={`macos-panel ${styles.errorPanel}`}>
+            <div className={styles.errorTitle}>
               <AlertCircle size={16} /> Hermes Kanban unavailable
             </div>
-            <p style={{ margin: '8px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.62)' }}>{board?.error || boardQuery.error?.message || 'Unknown error'}</p>
-            <p style={{ margin: '8px 0 0', fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>
+            <p className={styles.errorDesc}>{board?.error || boardQuery.error?.message || 'Unknown error'}</p>
+            <p className={styles.errorHint}>
               Check that Mission Control is running the latest server and can reach the hmudur profile database.
             </p>
           </div>
         ) : (
           <>
-            <div className="macos-panel" style={{ padding: m ? 14 : 16, display: 'grid', gridTemplateColumns: m ? '1fr' : 'minmax(220px, 1.2fr) repeat(5, minmax(110px, 1fr))', gap: 12, alignItems: 'stretch' }}>
-              <div style={{ borderLeft: '3px solid #64D2FF', paddingLeft: 12 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.48)', fontSize: 10, fontWeight: 850, textTransform: 'uppercase' }}>
+            <div className={`macos-panel ${styles.statsPanel} ${m ? styles.statsPanelMobile : styles.statsPanelDesktop}`}>
+              <div className={styles.nextActionCol}>
+                <div className={styles.nextActionLabel}>
                   <Zap size={13} /> Next action
                 </div>
-                <div style={{ marginTop: 8, fontSize: 18, lineHeight: 1.2, fontWeight: 850, color: 'rgba(255,255,255,0.94)' }}>{getNextAction(board)}</div>
-                <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>
+                <div className={styles.nextActionValue}>{getNextAction(board)}</div>
+                <div className={styles.nextActionRefreshed}>
                   Refreshed {board?.refreshedAt ? timeAgo(board.refreshedAt) : 'just now'}
                 </div>
               </div>
@@ -319,56 +313,61 @@ export default function HermesKanban() {
                 { label: 'Done', value: board?.summary?.done || 0, color: '#32D74B' },
                 { label: 'Oldest ready', value: compactAge(board?.stats?.oldest_ready_age_seconds), color: '#FF9500' },
               ].map((item) => (
-                <div key={item.label} style={{ padding: 12, borderRadius: 8, background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                  <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.46)', fontWeight: 800, textTransform: 'uppercase' }}>{item.label}</div>
-                  <div style={{ marginTop: 8, fontSize: typeof item.value === 'number' ? 24 : 15, fontWeight: 850, color: item.color, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.value}</div>
+                <div key={item.label} className={styles.statItem}>
+                  <div className={styles.statItemLabel}>{item.label}</div>
+                  <div
+                    className={typeof item.value === 'number' ? styles.statItemValueLarge : styles.statItemValueSmall}
+                    style={{ color: item.color }}
+                  >{item.value}</div>
                 </div>
               ))}
             </div>
 
-            <div className="macos-panel" style={{ padding: 12, display: 'grid', gridTemplateColumns: m ? '1fr' : 'minmax(220px, 1fr) auto auto', gap: 10, alignItems: 'center' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 8, border: '1px solid rgba(255,255,255,0.09)', background: 'rgba(255,255,255,0.04)', padding: '0 10px', minHeight: 38 }}>
-                <Search size={14} style={{ color: 'rgba(255,255,255,0.42)', flexShrink: 0 }} />
-                <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search cards, workspace, tenant, skills" style={{ width: '100%', border: 0, outline: 0, background: 'transparent', color: 'rgba(255,255,255,0.9)', fontSize: 12 }} />
+            <div className={`macos-panel ${styles.filterBar} ${m ? styles.filterBarMobile : styles.filterBarDesktop}`}>
+              <label className={styles.searchLabel}>
+                <Search size={14} className={styles.searchIcon} />
+                <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search cards, workspace, tenant, skills" className={styles.searchInput} />
               </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, borderRadius: 8, border: '1px solid rgba(255,255,255,0.09)', background: 'rgba(255,255,255,0.04)', padding: '0 10px', minHeight: 38 }}>
-                <UsersRound size={14} style={{ color: 'rgba(255,255,255,0.42)', flexShrink: 0 }} />
-                <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)} style={{ minWidth: m ? '100%' : 150, border: 0, outline: 0, background: 'transparent', color: 'rgba(255,255,255,0.9)', fontSize: 12 }}>
+              <label className={styles.assigneeLabel}>
+                <UsersRound size={14} className={styles.assigneeIcon} />
+                <select value={assigneeFilter} onChange={(event) => setAssigneeFilter(event.target.value)}
+                  className={`${styles.assigneeSelect} ${m ? styles.assigneeSelectMobile : styles.assigneeSelectDesktop}`}>
                   <option value="all">All assignees</option>
                   {assigneeOptions.map((assignee) => <option key={assignee} value={assignee}>{assignee}</option>)}
                 </select>
               </label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: m ? 'stretch' : 'flex-end' }}>
-                <SlidersHorizontal size={14} style={{ color: 'rgba(255,255,255,0.4)' }} />
+              <div className={`${styles.modeRow} ${m ? styles.modeRowMobile : styles.modeRowDesktop}`}>
+                <SlidersHorizontal size={14} className={styles.modeIcon} />
                 {(['active', 'all'] as const).map((mode) => (
-                  <button key={mode} onClick={() => setStatusMode(mode)} style={{ flex: m ? 1 : 'initial', padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.09)', background: statusMode === mode ? 'rgba(0,122,255,0.18)' : 'rgba(255,255,255,0.04)', color: statusMode === mode ? '#64D2FF' : 'rgba(255,255,255,0.62)', fontSize: 12, fontWeight: 800, cursor: 'pointer', textTransform: 'capitalize' }}>
+                  <button key={mode} onClick={() => setStatusMode(mode)}
+                    className={`${statusMode === mode ? styles.modeBtnActive : styles.modeBtnInactive} ${m ? styles.modeBtnMobile : ''}`}>
                     {mode}
                   </button>
                 ))}
               </div>
               {(searchText || assigneeFilter !== 'all') ? (
-                <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+                <div className={styles.filterResults}>
                   <span>{filteredCount} matching cards</span>
-                  <button onClick={() => { setSearchText(''); setAssigneeFilter('all') }} style={{ border: 0, background: 'transparent', color: '#64D2FF', cursor: 'pointer', fontSize: 11, fontWeight: 800 }}>Clear filters</button>
+                  <button onClick={() => { setSearchText(''); setAssigneeFilter('all') }} className={styles.clearFiltersBtn}>Clear filters</button>
                 </div>
               ) : null}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : 'repeat(3, minmax(260px, 1fr))', gap: 14, alignItems: 'start' }}>
+            <div className={`${styles.boardGrid} ${m ? styles.boardGridMobile : styles.boardGridDesktop}`}>
               {visibleStatuses.map((status) => {
                 const config = statusConfig[status] || statusConfig.todo
                 const Icon = config.icon
                 const tasks = filteredColumns[status] || []
                 return (
-                  <section key={status} style={{ display: 'flex', flexDirection: 'column', gap: 10, minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px' }}>
+                  <section key={status} className={styles.column}>
+                    <div className={styles.columnHeader}>
                       <Icon size={15} style={{ color: config.color }} />
-                      <h2 style={{ margin: 0, fontSize: 13, fontWeight: 800, color: 'rgba(255,255,255,0.9)' }}>{config.label}</h2>
-                      <span style={{ fontSize: 10, borderRadius: 999, padding: '2px 7px', color: config.color, background: 'rgba(255,255,255,0.05)' }}>{tasks.length}</span>
+                      <h2 className={styles.columnTitle}>{config.label}</h2>
+                      <span className={styles.columnCount} style={{ color: config.color }}>{tasks.length}</span>
                     </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div className={styles.columnCards}>
                       {tasks.length ? tasks.map((task) => <TaskCard key={task.id} task={task} onSelect={setSelectedTask} />) : (
-                        <div style={{ padding: 18, borderRadius: 10, border: '1px dashed rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.32)', fontSize: 12, textAlign: 'center' }}>
+                        <div className={styles.columnEmpty}>
                           {config.empty}
                         </div>
                       )}
@@ -382,91 +381,94 @@ export default function HermesKanban() {
       </div>
 
       {selectedTask ? (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.55)', display: 'flex', justifyContent: 'flex-end' }} onClick={() => setSelectedTask(null)}>
-          <aside onClick={(event) => event.stopPropagation()} style={{ width: m ? '100%' : 560, height: '100%', overflowY: 'auto', background: 'rgba(20,20,22,0.98)', borderLeft: '1px solid rgba(255,255,255,0.1)', padding: m ? 18 : 24, display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+        <div className={styles.drawerOverlay} onClick={() => setSelectedTask(null)}>
+          <aside onClick={(event) => event.stopPropagation()}
+            className={`${styles.drawer} ${m ? styles.drawerMobile : styles.drawerDesktop}`}>
+            <div className={styles.drawerHeader}>
               <div>
-                <p style={{ margin: 0, fontSize: 11, color: 'rgba(255,255,255,0.42)' }}>{selectedTask.id}</p>
-                <h2 style={{ margin: '5px 0 0', fontSize: 18, lineHeight: 1.25, color: 'rgba(255,255,255,0.94)' }}>{detail?.task?.title || selectedTask.title}</h2>
+                <p className={styles.drawerTaskId}>{selectedTask.id}</p>
+                <h2 className={styles.drawerTaskTitle}>{detail?.task?.title || selectedTask.title}</h2>
               </div>
-              <button onClick={() => setSelectedTask(null)} style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: 9, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer' }}>
+              <button onClick={() => setSelectedTask(null)} className={styles.drawerCloseBtn}>
                 <X size={16} />
               </button>
             </div>
 
             {detailQuery.isLoading ? (
-              <div className="macos-panel" style={{ padding: 16, display: 'flex', gap: 8, alignItems: 'center', color: 'rgba(255,255,255,0.65)' }}>
-                <Loader2 size={15} style={{ animation: 'spin 1s linear infinite' }} /> Loading detail
+              <div className={`macos-panel ${styles.detailLoadingWrap}`}>
+                <Loader2 size={15} className={styles.detailLoadingIcon} /> Loading detail
               </div>
             ) : null}
 
-            <div className="macos-panel" style={{ padding: 16 }}>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div className={`macos-panel ${styles.detailPanel}`}>
+              <div className={styles.detailBadgeRow}>
                 {[
                   { label: detail?.task?.status || selectedTask.status, color: statusConfig[selectedTask.status]?.color || '#8E8E93' },
                   { label: detail?.task?.assignee || selectedTask.assignee || 'unassigned', color: '#64D2FF' },
                   { label: `priority ${detail?.task?.priority ?? selectedTask.priority ?? 0}`, color: priorityLabel(detail?.task?.priority ?? selectedTask.priority).color },
                 ].map((item) => (
-                  <span key={item.label} style={{ fontSize: 11, fontWeight: 800, color: item.color, background: 'rgba(255,255,255,0.05)', borderRadius: 999, padding: '5px 9px' }}>{item.label}</span>
+                  <span key={item.label} className={styles.detailBadge} style={{ color: item.color }}>{item.label}</span>
                 ))}
               </div>
               {(detail?.task?.body || selectedTask.body) ? (
-                <p style={{ margin: '14px 0 0', whiteSpace: 'pre-wrap', fontSize: 13, lineHeight: 1.6, color: 'rgba(255,255,255,0.72)' }}>{detail?.task?.body || selectedTask.body}</p>
+                <p className={styles.detailBody}>{detail?.task?.body || selectedTask.body}</p>
               ) : null}
-              <div style={{ marginTop: 14, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>
+              <div className={styles.detailMeta}>
                 <span>Created {selectedTask.createdAt ? timeAgo(selectedTask.createdAt) : 'unknown'}</span>
                 <span>Heartbeat {selectedTask.lastHeartbeatAt ? timeAgo(selectedTask.lastHeartbeatAt) : 'none'}</span>
-                <span style={{ gridColumn: '1 / -1', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Workspace {selectedTask.workspace_path || 'scratch'}</span>
+                <span className={styles.detailMetaWorkspace}>Workspace {selectedTask.workspace_path || 'scratch'}</span>
               </div>
             </div>
 
-            <div className="macos-panel" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <h3 style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 850 }}>Operator Actions</h3>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={assigneeText} onChange={(event) => setAssigneeText(event.target.value)} placeholder="assignee profile" style={{ flex: 1, minWidth: 0, padding: '9px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-                <button disabled={!assigneeText.trim()} onClick={() => runAction({ action: 'assign', taskId: selectedTask.id, assignee: assigneeText.trim() })} style={{ padding: '9px 12px', borderRadius: 8, border: 'none', background: assigneeText.trim() ? '#007AFF' : 'rgba(255,255,255,0.08)', color: '#fff', fontWeight: 800, cursor: assigneeText.trim() ? 'pointer' : 'not-allowed' }}>Assign</button>
+            <div className={`macos-panel ${styles.actionsPanel}`}>
+              <h3 className={styles.actionsPanelTitle}>Operator Actions</h3>
+              <div className={styles.assignRow}>
+                <input value={assigneeText} onChange={(event) => setAssigneeText(event.target.value)} placeholder="assignee profile" className={styles.assignInput} />
+                <button disabled={!assigneeText.trim()} onClick={() => runAction({ action: 'assign', taskId: selectedTask.id, assignee: assigneeText.trim() })}
+                  className={assigneeText.trim() ? styles.assignBtnActive : styles.assignBtnDisabled}>Assign</button>
               </div>
-              <textarea value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Add an audit comment" rows={3} style={{ padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)', resize: 'vertical' }} />
-              <button disabled={!commentText.trim()} onClick={async () => { await runAction({ action: 'comment', taskId: selectedTask.id, text: commentText.trim() }); setCommentText('') }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, padding: '10px 12px', borderRadius: 8, border: '1px solid rgba(100,210,255,0.25)', background: 'rgba(100,210,255,0.1)', color: '#64D2FF', fontWeight: 800, cursor: commentText.trim() ? 'pointer' : 'not-allowed' }}>
+              <textarea value={commentText} onChange={(event) => setCommentText(event.target.value)} placeholder="Add an audit comment" rows={3} className={styles.commentTextarea} />
+              <button disabled={!commentText.trim()} onClick={async () => { await runAction({ action: 'comment', taskId: selectedTask.id, text: commentText.trim() }); setCommentText('') }}
+                className={commentText.trim() ? styles.commentBtnActive : styles.commentBtnDisabled}>
                 <MessageSquare size={14} /> Comment
               </button>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={blockReason} onChange={(event) => setBlockReason(event.target.value)} placeholder="block reason" style={{ flex: 1, minWidth: 0, padding: '9px 11px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-                <button onClick={() => runAction({ action: 'block', taskId: selectedTask.id, reason: blockReason.trim() || 'Blocked from Mission Control' })} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,69,58,0.26)', background: 'rgba(255,69,58,0.1)', color: '#FF453A', fontWeight: 800, cursor: 'pointer' }}>Block</button>
+              <div className={styles.blockRow}>
+                <input value={blockReason} onChange={(event) => setBlockReason(event.target.value)} placeholder="block reason" className={styles.blockInput} />
+                <button onClick={() => runAction({ action: 'block', taskId: selectedTask.id, reason: blockReason.trim() || 'Blocked from Mission Control' })} className={styles.blockBtn}>Block</button>
               </div>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <button onClick={() => runAction({ action: 'unblock', taskId: selectedTask.id })} style={{ padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(50,215,75,0.25)', background: 'rgba(50,215,75,0.1)', color: '#32D74B', fontWeight: 800, cursor: 'pointer' }}>Unblock</button>
-                <button onClick={() => { if (confirm(`Archive ${selectedTask.id}?`)) void runAction({ action: 'archive', taskId: selectedTask.id }) }} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '9px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', fontWeight: 800, cursor: 'pointer' }}>
+              <div className={styles.actionBtnRow}>
+                <button onClick={() => runAction({ action: 'unblock', taskId: selectedTask.id })} className={styles.unblockBtn}>Unblock</button>
+                <button onClick={() => { if (confirm(`Archive ${selectedTask.id}?`)) void runAction({ action: 'archive', taskId: selectedTask.id }) }} className={styles.archiveBtn}>
                   <Archive size={14} /> Archive
                 </button>
               </div>
-              {actionMutation.isPending ? <p style={{ margin: 0, fontSize: 11, color: '#007AFF' }}>Applying action...</p> : null}
+              {actionMutation.isPending ? <p className={styles.actionPending}>Applying action...</p> : null}
             </div>
 
-            <div className="macos-panel" style={{ padding: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 850 }}>Runs</h3>
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className={`macos-panel ${styles.runsPanel}`}>
+              <h3 className={styles.runsPanelTitle}>Runs</h3>
+              <div className={styles.runsList}>
                 {detail?.runs?.length ? detail.runs.map((run) => (
-                  <div key={run.id} style={{ padding: 10, borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: 11, color: 'rgba(255,255,255,0.74)', fontWeight: 800 }}>
+                  <div key={run.id} className={styles.runItem}>
+                    <div className={styles.runItemHeader}>
                       <span>{run.profile || 'worker'} · {run.status || 'unknown'}</span>
                       <span>{run.startedAt ? timeAgo(run.startedAt) : ''}</span>
                     </div>
-                    {run.summary || run.error ? <p style={{ margin: '6px 0 0', fontSize: 12, lineHeight: 1.45, color: run.error ? '#FF9F0A' : 'rgba(255,255,255,0.55)' }}>{run.error || run.summary}</p> : null}
+                    {run.summary || run.error ? <p className={`${styles.runItemSummary} ${run.error ? styles.runItemSummaryErr : styles.runItemSummaryOk}`}>{run.error || run.summary}</p> : null}
                   </div>
-                )) : <p style={{ margin: '10px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>No runs recorded.</p>}
+                )) : <p className={styles.runsEmpty}>No runs recorded.</p>}
               </div>
             </div>
 
-            <div className="macos-panel" style={{ padding: 16 }}>
-              <h3 style={{ margin: 0, fontSize: 12, color: 'rgba(255,255,255,0.7)', fontWeight: 850 }}>Recent Events</h3>
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className={`macos-panel ${styles.eventsPanel}`}>
+              <h3 className={styles.eventsPanelTitle}>Recent Events</h3>
+              <div className={styles.eventsList}>
                 {detail?.events?.length ? detail.events.slice().reverse().slice(0, 8).map((event, index) => (
-                  <div key={`${event.kind}-${index}`} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12, color: 'rgba(255,255,255,0.58)', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: 7 }}>
+                  <div key={`${event.kind}-${index}`} className={styles.eventRow}>
                     <span>{event.kind}</span>
-                    <span style={{ color: 'rgba(255,255,255,0.35)' }}>{event.createdAt ? timeAgo(event.createdAt) : ''}</span>
+                    <span className={styles.eventTimestamp}>{event.createdAt ? timeAgo(event.createdAt) : ''}</span>
                   </div>
-                )) : <p style={{ margin: '10px 0 0', fontSize: 12, color: 'rgba(255,255,255,0.35)' }}>No events recorded.</p>}
+                )) : <p className={styles.eventsEmpty}>No events recorded.</p>}
               </div>
             </div>
           </aside>
@@ -474,25 +476,26 @@ export default function HermesKanban() {
       ) : null}
 
       {showCreate ? (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.58)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 18 }} onClick={() => setShowCreate(false)}>
-          <div onClick={(event) => event.stopPropagation()} style={{ width: '100%', maxWidth: 560, borderRadius: 14, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(24,24,26,0.98)', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <h2 style={{ margin: 0, fontSize: 17, color: 'rgba(255,255,255,0.94)' }}>New Hermes Card</h2>
-              <button onClick={() => setShowCreate(false)} style={{ width: 32, height: 32, borderRadius: 8, border: '1px solid rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.7)', cursor: 'pointer' }}><X size={15} /></button>
+        <div className={styles.createOverlay} onClick={() => setShowCreate(false)}>
+          <div onClick={(event) => event.stopPropagation()} className={styles.createModal}>
+            <div className={styles.createModalHeader}>
+              <h2 className={styles.createModalTitle}>New Hermes Card</h2>
+              <button onClick={() => setShowCreate(false)} className={styles.createModalCloseBtn}><X size={15} /></button>
             </div>
-            <input value={createForm.title} onChange={(event) => setCreateForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Title" autoFocus style={{ padding: 11, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-            <textarea value={createForm.body} onChange={(event) => setCreateForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="Body and acceptance criteria" rows={5} style={{ padding: 11, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)', resize: 'vertical' }} />
-            <div style={{ display: 'grid', gridTemplateColumns: m ? '1fr' : '1fr 1fr', gap: 10 }}>
-              <input value={createForm.assignee} onChange={(event) => setCreateForm((prev) => ({ ...prev, assignee: event.target.value }))} placeholder="Assignee" style={{ padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-              <input value={createForm.priority} onChange={(event) => setCreateForm((prev) => ({ ...prev, priority: event.target.value }))} placeholder="Priority" type="number" style={{ padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-              <input value={createForm.workspace} onChange={(event) => setCreateForm((prev) => ({ ...prev, workspace: event.target.value }))} placeholder="workspace, e.g. dir:/Users/..." style={{ padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
-              <input value={createForm.skills} onChange={(event) => setCreateForm((prev) => ({ ...prev, skills: event.target.value }))} placeholder="skills, comma separated" style={{ padding: 10, borderRadius: 8, border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.9)' }} />
+            <input value={createForm.title} onChange={(event) => setCreateForm((prev) => ({ ...prev, title: event.target.value }))} placeholder="Title" autoFocus className={styles.createInput} />
+            <textarea value={createForm.body} onChange={(event) => setCreateForm((prev) => ({ ...prev, body: event.target.value }))} placeholder="Body and acceptance criteria" rows={5} className={styles.createTextarea} />
+            <div className={`${styles.createFieldGrid} ${m ? styles.createFieldGridMobile : styles.createFieldGridDesktop}`}>
+              <input value={createForm.assignee} onChange={(event) => setCreateForm((prev) => ({ ...prev, assignee: event.target.value }))} placeholder="Assignee" className={styles.createInput} />
+              <input value={createForm.priority} onChange={(event) => setCreateForm((prev) => ({ ...prev, priority: event.target.value }))} placeholder="Priority" type="number" className={styles.createInput} />
+              <input value={createForm.workspace} onChange={(event) => setCreateForm((prev) => ({ ...prev, workspace: event.target.value }))} placeholder="workspace, e.g. dir:/Users/..." className={styles.createInput} />
+              <input value={createForm.skills} onChange={(event) => setCreateForm((prev) => ({ ...prev, skills: event.target.value }))} placeholder="skills, comma separated" className={styles.createInput} />
             </div>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'rgba(255,255,255,0.66)' }}>
+            <label className={styles.createTriageLabel}>
               <input type="checkbox" checked={createForm.triage} onChange={(event) => setCreateForm((prev) => ({ ...prev, triage: event.target.checked }))} />
               Start in triage
             </label>
-            <button disabled={!createForm.title.trim() || actionMutation.isPending} onClick={createTask} style={{ padding: 12, borderRadius: 10, border: 'none', background: createForm.title.trim() ? '#007AFF' : 'rgba(255,255,255,0.08)', color: '#fff', fontSize: 13, fontWeight: 850, cursor: createForm.title.trim() ? 'pointer' : 'not-allowed' }}>
+            <button disabled={!createForm.title.trim() || actionMutation.isPending} onClick={createTask}
+              className={createForm.title.trim() ? styles.createBtnActive : styles.createBtnDisabled}>
               Create Card
             </button>
           </div>

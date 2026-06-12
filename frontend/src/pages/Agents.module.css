@@ -1,0 +1,647 @@
+/* ── Loading state ───────────────────────────────────────────── */
+
+.loadingWrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 256px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid #BF5AF2;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Page layout ─────────────────────────────────────────────── */
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.pageMobile {
+  padding: 16px;
+  gap: 20px;
+}
+
+.pageDesktop {
+  gap: 28px;
+}
+
+/* ── Header ──────────────────────────────────────────────────── */
+
+.headerRow {
+  display: flex;
+  justify-content: space-between;
+}
+
+.headerRowMobile {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.headerRowDesktop {
+  align-items: center;
+}
+
+/* ── Create button ───────────────────────────────────────────── */
+
+.createBtn {
+  background: linear-gradient(135deg, #BF5AF2 0%, #9C3AE8 100%);
+  border: none;
+  border-radius: 10px;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 12px rgba(191, 90, 242, 0.3);
+}
+
+.createBtnMobile {
+  padding: 10px 16px;
+  font-size: 13px;
+  width: 100%;
+  justify-content: center;
+}
+
+.createBtnDesktop {
+  padding: 12px 20px;
+  font-size: 14px;
+}
+
+/* ── Header title row ────────────────────────────────────────── */
+
+.pageHeading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pageSubtitle {
+  margin-top: 4px;
+}
+
+.kpiLabel {
+  margin-bottom: 8px;
+}
+
+/* ── Agent grid ──────────────────────────────────────────────── */
+
+.agentGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* ── KPI row ─────────────────────────────────────────────────── */
+
+.kpiValue {
+  font-weight: 300;
+  font-variant-numeric: tabular-nums;
+  /* font-size and color driven inline */
+}
+
+/* ── Section headings ────────────────────────────────────────── */
+
+.sectionHeading {
+  font-size: 16px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.iconBlue { color: #007AFF; }
+.iconPurple { color: #BF5AF2; }
+
+/* ── Agent card ──────────────────────────────────────────────── */
+
+.agentCardBody {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.agentAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.agentMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.agentNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.agentName {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentRole {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+
+.agentModel {
+  font-size: 10px;
+  color: #BF5AF2;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agentDescription {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+.agentStats {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+.agentStatItem {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agentStatIcon {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.agentStatRole {
+  margin-left: auto;
+}
+
+/* ── Detail panel ────────────────────────────────────────────── */
+
+.detailHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.detailHeaderLeft {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.detailAvatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+}
+
+.detailAgentName {
+  font-size: 16px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.detailAgentDesc {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detailMetaItem {
+  text-align: center;
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.detailMetaValue {
+  font-size: 20px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.detailMetaLabel {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  margin-top: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+/* ── Recommended agents section ──────────────────────────────── */
+
+.recommendedSection {
+  margin-top: 40px;
+}
+
+.recommendedHeading {
+  font-size: 18px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.templateCard {
+  border: 1px dashed rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  opacity: 0.75;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.templateCardMobile {
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.templateCardDesktop {
+  border-radius: 16px;
+  padding: 20px;
+}
+
+.templateCardBody {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.templateAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px dashed rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.templateMeta {
+  flex: 1;
+  min-width: 0;
+}
+
+.templateNameRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.templateName {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.templateBadge {
+  font-size: 9px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.templateModel {
+  font-size: 10px;
+  color: #BF5AF2;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 2px;
+}
+
+.templateDescription {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.35);
+  margin-bottom: 16px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+
+.templateFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.templateSkills {
+  display: flex;
+  gap: 4px;
+}
+
+.skillChip {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.04);
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.skillChipMore {
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+.addBtn {
+  background: rgba(0, 122, 255, 0.15);
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  border-radius: 6px;
+  color: #007AFF;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+/* ── Create Agent Modal ───────────────────────────────────────── */
+
+.modalOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.modalBox {
+  background: rgba(28, 28, 30, 0.95);
+  backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modalBoxMobile {
+  border-radius: 12px;
+  padding: 20px;
+  max-width: 95vw;
+}
+
+.modalBoxDesktop {
+  border-radius: 16px;
+  padding: 32px;
+  max-width: 600px;
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.modalTitle {
+  font-size: 20px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.92);
+}
+
+.modalCloseBtn {
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.modalCloseIcon {
+  color: rgba(255, 255, 255, 0.6);
+}
+
+/* ── Quick start templates ───────────────────────────────────── */
+
+.quickStartSection {
+  margin-bottom: 32px;
+}
+
+.quickStartHeading {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 12px;
+}
+
+.quickStartCard {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  padding: 16px;
+  cursor: pointer;
+  text-align: center;
+}
+
+.quickStartName {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  margin-bottom: 4px;
+}
+
+.quickStartModel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.45);
+}
+
+/* ── Form fields ─────────────────────────────────────────────── */
+
+.formLabel {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+  margin-bottom: 8px;
+}
+
+.formInput {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+}
+
+.formTextarea {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+  resize: vertical;
+}
+
+.formTextareaDescription { min-height: 80px; }
+.formTextareaSystemPrompt { min-height: 100px; }
+
+.formSelect {
+  width: 100%;
+  padding: 12px 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.92);
+  outline: none;
+}
+
+/* ── Skills picker ───────────────────────────────────────────── */
+
+.skillsBox {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 16px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.skillsGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.skillLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.skillCheckbox {
+  margin-right: 4px;
+}
+
+.skillsEmpty {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.45);
+  text-align: center;
+  padding: 20px;
+}
+
+/* ── Modal actions ───────────────────────────────────────────── */
+
+.modalActions {
+  display: flex;
+  gap: 12px;
+  margin-top: 32px;
+  justify-content: flex-end;
+}
+
+.cancelBtn {
+  background: rgba(255, 255, 255, 0.08);
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+}
+
+.createAgentBtn {
+  border: none;
+  border-radius: 8px;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+  /* background and cursor driven inline */
+}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { CheckCircle, ArrowRight, ArrowLeft, Settings, Zap, Search } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import { useIsMobile } from '../lib/useIsMobile'
+import styles from './Setup.module.css'
 
 interface SetupData {
   dashboardName: string
@@ -91,7 +92,7 @@ export default function Setup() {
       const response = await fetch('/api/setup')
       const data = await response.json()
       setStatus(data)
-      
+
       // Pre-populate form with detected values
       if (data.detectedConfig?.agentName) {
         setSetupData(prev => ({ ...prev, dashboardName: data.detectedConfig.agentName + ' Control' }))
@@ -113,7 +114,7 @@ export default function Setup() {
   const handleSaveSetup = async () => {
     try {
       setLoading(true)
-      
+
       // Combine template queries with custom queries
       const allQueries = [...setupData.scout.queries]
       customQueries.forEach(q => {
@@ -121,7 +122,7 @@ export default function Setup() {
           allQueries.push({ q: q.trim(), category: 'custom', source: 'web', weight: 0.8 })
         }
       })
-      
+
       const payload = {
         ...setupData,
         scout: {
@@ -129,13 +130,13 @@ export default function Setup() {
           queries: allQueries
         }
       }
-      
+
       const response = await fetch('/api/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       })
-      
+
       if (response.ok) {
         navigate('/')
       } else {
@@ -180,132 +181,45 @@ export default function Setup() {
   if (loading && !status) {
     return (
       <PageTransition>
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'center', 
-          alignItems: 'center', 
-          height: '60vh',
-          color: 'rgba(255, 255, 255, 0.7)'
-        }}>
+        <div className={styles.loadingWrap}>
           Loading setup...
         </div>
       </PageTransition>
     )
   }
 
-  const cardStyle = {
-    background: 'rgba(255, 255, 255, 0.05)',
-    backdropFilter: 'blur(20px)',
-    WebkitBackdropFilter: 'blur(20px)',
-    border: '1px solid rgba(255, 255, 255, 0.12)',
-    borderRadius: 16,
-    padding: isMobile ? 20 : 32,
-    maxWidth: 600,
-    margin: '0 auto'
-  }
-
-  const buttonStyle = {
-    background: '#007AFF',
-    color: 'white',
-    border: 'none',
-    borderRadius: 10,
-    padding: '12px 24px',
-    fontSize: 16,
-    fontWeight: 600,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    transition: 'all 0.2s ease'
-  }
-
-  const secondaryButtonStyle = {
-    background: 'rgba(255, 255, 255, 0.1)',
-    color: 'rgba(255, 255, 255, 0.9)',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    borderRadius: 10,
-    padding: '12px 24px',
-    fontSize: 16,
-    fontWeight: 500,
-    cursor: 'pointer',
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    transition: 'all 0.2s ease'
-  }
-
-  const inputStyle = {
-    background: 'rgba(0, 0, 0, 0.3)',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    borderRadius: 8,
-    padding: '12px 16px',
-    color: 'white',
-    fontSize: 16,
-    width: '100%',
-    outline: 'none'
-  }
-
   return (
     <PageTransition>
-      <div style={{ maxWidth: 800, margin: '0 auto' }}>
-        
+      <div className={styles.page}>
+
         {/* Step 1: Welcome */}
         {step === 1 && (
-          <div style={cardStyle}>
-            <div style={{ textAlign: 'center', marginBottom: 32 }}>
-              <h1 style={{ 
-                fontSize: isMobile ? 28 : 36, 
-                fontWeight: 700, 
-                color: 'white', 
-                marginBottom: 16,
-                background: 'linear-gradient(135deg, #007AFF, #5856D6)',
-                backgroundClip: 'text',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent'
-              }}>
+          <div className={`${styles.card} ${isMobile ? styles.cardMobile : styles.cardDesktop}`}>
+            <div className={styles.welcomeHeader}>
+              <h1 className={`${styles.welcomeTitle} ${isMobile ? styles.welcomeTitleMobile : styles.welcomeTitleDesktop}`}>
                 Welcome to Mission Control
               </h1>
-              <p style={{ 
-                fontSize: 18, 
-                color: 'rgba(255, 255, 255, 0.8)', 
-                lineHeight: 1.5,
-                maxWidth: 400,
-                margin: '0 auto'
-              }}>
+              <p className={styles.welcomeSubtitle}>
                 Your command center for OpenClaw AI agents. Let's get you set up in just a few steps.
               </p>
             </div>
 
             {/* Gateway Status */}
-            <div style={{
-              background: 'rgba(0, 0, 0, 0.2)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: 12,
-              padding: 20,
-              marginBottom: 24
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+            <div className={styles.gatewayBox}>
+              <div className={styles.gatewayRow}>
                 {status?.gatewayRunning ? (
                   <CheckCircle size={24} style={{ color: '#32D74B' }} />
                 ) : (
-                  <div style={{ 
-                    width: 24, 
-                    height: 24, 
-                    borderRadius: '50%', 
-                    background: '#FF453A',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center'
-                  }}>
-                    <div style={{ width: 8, height: 8, background: 'white', borderRadius: '50%' }} />
+                  <div className={styles.gatewayOffIndicator}>
+                    <div className={styles.gatewayOffDot} />
                   </div>
                 )}
-                <span style={{ fontSize: 18, fontWeight: 600, color: 'white' }}>
+                <span className={styles.gatewayLabel}>
                   OpenClaw Gateway
                 </span>
               </div>
-              
-              <div style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: 14 }}>
+
+              <div className={styles.gatewayStatus}>
                 Status: {status?.gatewayRunning ? 'Running' : 'Not detected'}<br />
                 {status?.gatewayVersion && `Version: ${status.gatewayVersion}`}<br />
                 Port: {status?.gatewayPort || 18789}
@@ -314,17 +228,11 @@ export default function Setup() {
 
             {/* Detected Config */}
             {status?.detectedConfig && (
-              <div style={{
-                background: 'rgba(0, 122, 255, 0.1)',
-                border: '1px solid rgba(0, 122, 255, 0.3)',
-                borderRadius: 12,
-                padding: 20,
-                marginBottom: 32
-              }}>
-                <h3 style={{ color: '#007AFF', fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+              <div className={styles.detectedConfigBox}>
+                <h3 className={styles.detectedConfigTitle}>
                   Detected Configuration
                 </h3>
-                <div style={{ color: 'rgba(255, 255, 255, 0.8)', fontSize: 14 }}>
+                <div className={styles.detectedConfigBody}>
                   {status.detectedConfig.model && <div>Model: {status.detectedConfig.model.replace('amazon-bedrock/', '')}</div>}
                   {status.detectedConfig.channels.length > 0 && <div>Channels: {status.detectedConfig.channels.join(', ')}</div>}
                   {status.detectedConfig.workspacePath && <div>Workspace: {status.detectedConfig.workspacePath}</div>}
@@ -333,9 +241,9 @@ export default function Setup() {
               </div>
             )}
 
-            <div style={{ textAlign: 'center' }}>
-              <button 
-                style={buttonStyle}
+            <div className={styles.welcomeActions}>
+              <button
+                className={styles.primaryBtn}
                 onClick={() => setStep(2)}
               >
                 Let's Get Started
@@ -347,31 +255,18 @@ export default function Setup() {
 
         {/* Step 2: Configure */}
         {step === 2 && (
-          <div style={cardStyle}>
-            <h2 style={{ 
-              fontSize: 28, 
-              fontWeight: 700, 
-              color: 'white', 
-              marginBottom: 24,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12
-            }}>
+          <div className={`${styles.card} ${isMobile ? styles.cardMobile : styles.cardDesktop}`}>
+            <h2 className={styles.stepTitle}>
               <Settings size={32} style={{ color: '#007AFF' }} />
               Configure Dashboard
             </h2>
 
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ 
-                display: 'block', 
-                color: 'rgba(255, 255, 255, 0.9)', 
-                fontWeight: 500, 
-                marginBottom: 8 
-              }}>
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>
                 Dashboard Name
               </label>
               <input
-                style={inputStyle}
+                className={styles.input}
                 type="text"
                 value={setupData.dashboardName}
                 onChange={(e) => setSetupData(prev => ({ ...prev, dashboardName: e.target.value }))}
@@ -379,56 +274,32 @@ export default function Setup() {
               />
             </div>
 
-            <div style={{ marginBottom: 24 }}>
-              <label style={{ 
-                display: 'block', 
-                color: 'rgba(255, 255, 255, 0.9)', 
-                fontWeight: 500, 
-                marginBottom: 8 
-              }}>
+            <div className={styles.fieldGroup}>
+              <label className={styles.fieldLabel}>
                 Gateway Token
               </label>
               <input
-                style={inputStyle}
+                className={styles.input}
                 type="text"
                 value={setupData.gateway.token}
-                onChange={(e) => setSetupData(prev => ({ 
-                  ...prev, 
+                onChange={(e) => setSetupData(prev => ({
+                  ...prev,
                   gateway: { ...prev.gateway, token: e.target.value }
                 }))}
                 placeholder="Enter your gateway authentication token"
               />
-              <p style={{ fontSize: 12, color: 'rgba(255, 255, 255, 0.6)', marginTop: 4 }}>
+              <p className={styles.fieldHint}>
                 This connects Mission Control to your OpenClaw gateway for secure communication.
               </p>
             </div>
 
-            <div style={{ marginBottom: 32 }}>
-              <label style={{ 
-                display: 'block', 
-                color: 'rgba(255, 255, 255, 0.9)', 
-                fontWeight: 500, 
-                marginBottom: 12 
-              }}>
+            <div className={styles.fieldGroupLast}>
+              <label className={styles.fieldLabel}>
                 Enable Modules
               </label>
-              <div style={{ 
-                display: 'grid', 
-                gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(3, 1fr)', 
-                gap: 12 
-              }}>
+              <div className={`${styles.modulesGrid} ${isMobile ? styles.modulesGridMobile : styles.modulesGridDesktop}`}>
                 {Object.entries(setupData.modules).map(([key, enabled]) => (
-                  <label key={key} style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    cursor: 'pointer',
-                    padding: '8px 12px',
-                    borderRadius: 8,
-                    background: enabled ? 'rgba(0, 122, 255, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                    border: `1px solid ${enabled ? 'rgba(0, 122, 255, 0.4)' : 'rgba(255, 255, 255, 0.1)'}`,
-                    transition: 'all 0.2s ease'
-                  }}>
+                  <label key={key} className={enabled ? styles.moduleToggleActive : styles.moduleToggleInactive}>
                     <input
                       type="checkbox"
                       checked={enabled}
@@ -436,14 +307,9 @@ export default function Setup() {
                         ...prev,
                         modules: { ...prev.modules, [key]: e.target.checked }
                       }))}
-                      style={{ margin: 0 }}
+                      className={styles.moduleCheckbox}
                     />
-                    <span style={{ 
-                      color: enabled ? '#007AFF' : 'rgba(255, 255, 255, 0.8)',
-                      fontSize: 14,
-                      fontWeight: 500,
-                      textTransform: 'capitalize'
-                    }}>
+                    <span className={enabled ? styles.moduleLabelActive : styles.moduleLabelInactive}>
                       {key}
                     </span>
                   </label>
@@ -451,12 +317,12 @@ export default function Setup() {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <button style={secondaryButtonStyle} onClick={() => setStep(1)}>
+            <div className={styles.navRow}>
+              <button className={styles.secondaryBtn} onClick={() => setStep(1)}>
                 <ArrowLeft size={20} />
                 Back
               </button>
-              <button style={buttonStyle} onClick={() => setStep(3)}>
+              <button className={styles.primaryBtn} onClick={() => setStep(3)}>
                 Continue
                 <ArrowRight size={20} />
               </button>
@@ -466,80 +332,39 @@ export default function Setup() {
 
         {/* Step 3: Scout Setup */}
         {step === 3 && (
-          <div style={cardStyle}>
-            <h2 style={{ 
-              fontSize: 28, 
-              fontWeight: 700, 
-              color: 'white', 
-              marginBottom: 8,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12
-            }}>
+          <div className={`${styles.card} ${isMobile ? styles.cardMobile : styles.cardDesktop}`}>
+            <h2 className={styles.stepTitle}>
               <Search size={32} style={{ color: '#007AFF' }} />
               Scout Setup
             </h2>
-            <p style={{ 
-              color: 'rgba(255, 255, 255, 0.7)', 
-              marginBottom: 24,
-              fontSize: 16
-            }}>
+            <p className={styles.scoutSectionDesc}>
               What opportunities do you want to find? Scout will search for relevant leads automatically.
             </p>
 
-            <div style={{ marginBottom: 24 }}>
-              <h3 style={{ 
-                color: 'rgba(255, 255, 255, 0.9)', 
-                fontSize: 18, 
-                fontWeight: 600, 
-                marginBottom: 16 
-              }}>
+            <div className={styles.fieldGroup}>
+              <h3 className={styles.scoutSectionTitle}>
                 Quick Templates
               </h3>
-              
-              <div style={{ display: 'grid', gap: 12 }}>
+
+              <div className={styles.templateList}>
                 {Object.entries(scoutTemplates).map(([key, template]) => {
                   const selected = isTemplateSelected(key as keyof typeof scoutTemplates)
                   return (
-                    <div key={key} style={{
-                      background: selected ? 'rgba(0, 122, 255, 0.15)' : 'rgba(255, 255, 255, 0.05)',
-                      border: `1px solid ${selected ? 'rgba(0, 122, 255, 0.3)' : 'rgba(255, 255, 255, 0.1)'}`,
-                      borderRadius: 10,
-                      padding: 16
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div key={key} className={selected ? styles.templateActive : styles.templateInactive}>
+                      <div className={styles.templateRow}>
                         <div>
-                          <h4 style={{ 
-                            color: 'white', 
-                            fontSize: 16, 
-                            fontWeight: 600, 
-                            marginBottom: 4,
-                            textTransform: 'capitalize'
-                          }}>
+                          <h4 className={styles.templateTitle}>
                             {key} Opportunities
                           </h4>
-                          <p style={{ 
-                            color: 'rgba(255, 255, 255, 0.6)', 
-                            fontSize: 14,
-                            margin: 0
-                          }}>
-                            {template.length} search queries • {key === 'freelance' ? 'Find web development jobs' : 
-                             key === 'skills' ? 'Track OpenClaw ecosystem' : 
-                             key === 'bounties' ? 'Security bug bounty programs' : 
+                          <p className={styles.templateDesc}>
+                            {template.length} search queries • {key === 'freelance' ? 'Find web development jobs' :
+                             key === 'skills' ? 'Track OpenClaw ecosystem' :
+                             key === 'bounties' ? 'Security bug bounty programs' :
                              'Startup grants and competitions'}
                           </p>
                         </div>
                         <button
-                          style={{
-                            background: selected ? '#007AFF' : 'rgba(255, 255, 255, 0.1)',
-                            color: selected ? 'white' : 'rgba(255, 255, 255, 0.8)',
-                            border: 'none',
-                            borderRadius: 8,
-                            padding: '8px 16px',
-                            fontSize: 14,
-                            fontWeight: 500,
-                            cursor: 'pointer'
-                          }}
+                          className={selected ? styles.templateBtnActive : styles.templateBtnInactive}
                           onClick={() => {
                             if (selected) {
                               removeScoutTemplate(key as keyof typeof scoutTemplates)
@@ -557,20 +382,15 @@ export default function Setup() {
               </div>
             </div>
 
-            <div style={{ marginBottom: 32 }}>
-              <h3 style={{ 
-                color: 'rgba(255, 255, 255, 0.9)', 
-                fontSize: 18, 
-                fontWeight: 600, 
-                marginBottom: 16 
-              }}>
+            <div className={styles.fieldGroupLast}>
+              <h3 className={styles.scoutSectionTitle}>
                 Custom Searches
               </h3>
-              
+
               {customQueries.map((query, index) => (
-                <div key={index} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                <div key={index} className={styles.customQueryRow}>
                   <input
-                    style={{ ...inputStyle, flex: 1 }}
+                    className={`${styles.input} ${styles.customQueryInput}`}
                     type="text"
                     value={query}
                     onChange={(e) => {
@@ -582,14 +402,7 @@ export default function Setup() {
                   />
                   {customQueries.length > 1 && (
                     <button
-                      style={{
-                        background: 'rgba(255, 69, 58, 0.2)',
-                        border: '1px solid rgba(255, 69, 58, 0.3)',
-                        color: '#FF453A',
-                        borderRadius: 8,
-                        padding: '0 12px',
-                        cursor: 'pointer'
-                      }}
+                      className={styles.removeQueryBtn}
                       onClick={() => {
                         const newQueries = customQueries.filter((_, i) => i !== index)
                         setCustomQueries(newQueries)
@@ -600,24 +413,21 @@ export default function Setup() {
                   )}
                 </div>
               ))}
-              
+
               <button
-                style={{
-                  ...secondaryButtonStyle,
-                  marginTop: 8
-                }}
+                className={`${styles.secondaryBtn} ${styles.addQueryBtn}`}
                 onClick={() => setCustomQueries([...customQueries, ''])}
               >
                 Add Another Query
               </button>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <button style={secondaryButtonStyle} onClick={() => setStep(2)}>
+            <div className={styles.navRow}>
+              <button className={styles.secondaryBtn} onClick={() => setStep(2)}>
                 <ArrowLeft size={20} />
                 Back
               </button>
-              <button style={buttonStyle} onClick={() => setStep(4)}>
+              <button className={styles.primaryBtn} onClick={() => setStep(4)}>
                 Continue
                 <ArrowRight size={20} />
               </button>
@@ -627,37 +437,22 @@ export default function Setup() {
 
         {/* Step 4: Done */}
         {step === 4 && (
-          <div style={cardStyle}>
-            <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <div className={`${styles.card} ${isMobile ? styles.cardMobile : styles.cardDesktop}`}>
+            <div className={styles.doneHeader}>
               <CheckCircle size={64} style={{ color: '#32D74B', marginBottom: 16 }} />
-              <h2 style={{ 
-                fontSize: 28, 
-                fontWeight: 700, 
-                color: 'white', 
-                marginBottom: 16 
-              }}>
+              <h2 className={`${styles.stepTitle} ${styles.stepTitleCentered}`}>
                 Setup Complete!
               </h2>
-              <p style={{ 
-                fontSize: 18, 
-                color: 'rgba(255, 255, 255, 0.8)', 
-                lineHeight: 1.5 
-              }}>
+              <p className={styles.welcomeSubtitle}>
                 Your Mission Control dashboard is ready to go.
               </p>
             </div>
 
-            <div style={{
-              background: 'rgba(0, 0, 0, 0.2)',
-              border: '1px solid rgba(255, 255, 255, 0.1)',
-              borderRadius: 12,
-              padding: 20,
-              marginBottom: 32
-            }}>
-              <h3 style={{ color: 'white', fontSize: 16, fontWeight: 600, marginBottom: 12 }}>
+            <div className={styles.doneSummaryBox}>
+              <h3 className={styles.doneSummaryTitle}>
                 Configuration Summary
               </h3>
-              <div style={{ color: 'rgba(255, 255, 255, 0.7)', fontSize: 14 }}>
+              <div className={styles.doneSummaryBody}>
                 <div>Dashboard Name: {setupData.dashboardName}</div>
                 <div>Gateway Token: {setupData.gateway.token ? '●●●●●●●●' : 'Not set'}</div>
                 <div>Modules Enabled: {Object.values(setupData.modules).filter(Boolean).length}</div>
@@ -665,9 +460,9 @@ export default function Setup() {
               </div>
             </div>
 
-            <div style={{ textAlign: 'center' }}>
-              <button 
-                style={buttonStyle}
+            <div className={styles.doneActions}>
+              <button
+                className={styles.primaryBtn}
                 onClick={handleSaveSetup}
                 disabled={loading}
               >
@@ -677,7 +472,7 @@ export default function Setup() {
             </div>
           </div>
         )}
-        
+
       </div>
     </PageTransition>
   )

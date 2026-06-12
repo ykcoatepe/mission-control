@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Users, UserCog, Sparkles, RefreshCw, Hammer, ChevronDown, Check } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
+import styles from './TeamStructure.module.css'
 
 type Member = {
   id: string
@@ -33,23 +34,6 @@ type TeamPayload = {
   updatedAt?: string
 }
 
-const modelPickerButtonStyle: CSSProperties = {
-  width: 210,
-  maxWidth: '100%',
-  minWidth: 120,
-  height: 30,
-  padding: '0 10px',
-  borderRadius: 8,
-  border: '1px solid rgba(255,255,255,0.12)',
-  background: 'rgba(255,255,255,0.04)',
-  color: 'rgba(255,255,255,0.92)',
-  fontSize: 11,
-  textAlign: 'left',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  cursor: 'pointer',
-}
 
 function modelOptionLabel(name: string, id: string) {
   const k = String(id || '').trim()
@@ -216,7 +200,7 @@ export default function TeamStructure() {
     const isOpen = openModelPicker === agentId
     const direction = pickerDirection[agentId] || 'down'
     return (
-      <div data-model-picker-root="true" style={{ position: 'relative', marginLeft: 'auto' }}>
+      <div data-model-picker-root="true" className={styles.modelPickerRoot}>
         <button
           type="button"
           onClick={(event) => {
@@ -230,16 +214,16 @@ export default function TeamStructure() {
             setPickerDirection((prev) => ({ ...prev, [agentId]: shouldOpenUp ? 'up' : 'down' }))
             setOpenModelPicker(agentId)
           }}
-          style={{ ...modelPickerButtonStyle, borderColor: isOpen ? 'rgba(0,122,255,0.5)' : modelPickerButtonStyle.border as string }}
+          className={`${styles.modelPickerBtn} ${isOpen ? styles.modelPickerBtnOpen : ''}`}
           title={current || 'Select model'}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', width: '100%', gap: 6 }}>
-            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{resolveCurrentModelLabel(agentId, fallbackModel)}</span>
+          <span className={styles.modelPickerBtnInner}>
+            <span className={styles.modelPickerBtnText}>{resolveCurrentModelLabel(agentId, fallbackModel)}</span>
             <ChevronDown size={12} style={{ marginLeft: 'auto', opacity: 0.8, flexShrink: 0 }} />
           </span>
         </button>
         {isOpen ? (
-          <div style={{ position: 'absolute', [direction === 'up' ? 'bottom' : 'top']: 34, right: 0, width: 260, zIndex: 3000, border: '1px solid rgba(255,255,255,0.14)', borderRadius: 10, background: 'rgba(15,19,32,0.98)', boxShadow: '0 16px 40px rgba(0,0,0,0.45)', maxHeight: 220, overflowY: 'auto', padding: 6 }}>
+          <div className={styles.modelPickerDropdown} style={{ [direction === 'up' ? 'bottom' : 'top']: 34 }}>
             {models.map((opt) => {
               const selected = opt.id === current
               return (
@@ -250,10 +234,10 @@ export default function TeamStructure() {
                     setOpenModelPicker(null)
                     void handleModelChange(agentId, fallbackModel || '', opt.id)
                   }}
-                  style={{ width: '100%', border: 'none', borderRadius: 8, background: selected ? 'rgba(0,122,255,0.18)' : 'transparent', color: selected ? '#8CC8FF' : 'rgba(255,255,255,0.9)', fontSize: 12, textAlign: 'left', padding: '8px 10px', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                  className={`${styles.modelOption} ${selected ? styles.modelOptionSelected : styles.modelOptionDefault}`}
                   title={opt.id}
                 >
-                  {selected ? <Check size={12} /> : <span style={{ width: 12 }} />}
+                  {selected ? <Check size={12} /> : <span className={styles.modelOptionPlaceholder} />}
                   {modelOptionLabel(opt.name, opt.id)}
                 </button>
               )
@@ -266,72 +250,72 @@ export default function TeamStructure() {
 
   return (
     <PageTransition>
-      <div style={{ maxWidth: 1280, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+      <div className={styles.page}>
+        <div className={styles.headerRow}>
           <div>
-            <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Users size={22} style={{ color: '#64D2FF' }} /> Team Structure
+            <h1 className={`text-title ${styles.pageTitle}`}>
+              <Users size={22} className={styles.pageTitleIcon} /> Team Structure
             </h1>
             <p className="text-body" style={{ marginTop: 4 }}>Main agent + regularly used subagents grouped by roles and responsibilities.</p>
           </div>
-          <div style={{ display: 'inline-flex', gap: 8 }}>
-            <button onClick={load} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.9)', cursor: 'pointer' }}><RefreshCw size={14} /> Refresh</button>
+          <div className={styles.headerActions}>
+            <button onClick={load} className={styles.refreshBtn}><RefreshCw size={14} /> Refresh</button>
             {data?.missingSuggested?.length ? (
-              <button onClick={bootstrap} disabled={bootstrapping} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '8px 12px', borderRadius: 8, border: 'none', background: '#007AFF', color: 'white', cursor: 'pointer', opacity: bootstrapping ? 0.6 : 1 }}>
+              <button onClick={bootstrap} disabled={bootstrapping} className={styles.bootstrapBtn} style={{ opacity: bootstrapping ? 0.6 : 1 }}>
                 <Hammer size={14} /> {bootstrapping ? 'Generating...' : `Generate Role Suggestions (${data.missingSuggested.length})`}
               </button>
             ) : null}
           </div>
         </div>
 
-        {error && <div className="macos-panel" style={{ padding: 12, color: '#ff6b6b' }}>{error}</div>}
+        {error && <div className={`macos-panel ${styles.errorPanel}`}>{error}</div>}
         {toast && (
-          <div className="macos-panel" style={{ padding: 12, border: `1px solid ${toast.type === 'success' ? 'rgba(50,215,75,0.35)' : 'rgba(255,69,58,0.35)'}`, background: toast.type === 'success' ? 'rgba(50,215,75,0.12)' : 'rgba(255,69,58,0.12)', color: toast.type === 'success' ? '#32D74B' : '#FF453A', fontSize: 12, fontWeight: 600 }}>
+          <div className={`macos-panel ${styles.toastPanel}`} style={{ border: `1px solid ${toast.type === 'success' ? 'rgba(50,215,75,0.35)' : 'rgba(255,69,58,0.35)'}`, background: toast.type === 'success' ? 'rgba(50,215,75,0.12)' : 'rgba(255,69,58,0.12)', color: toast.type === 'success' ? '#32D74B' : '#FF453A' }}>
             {toast.text}
           </div>
         )}
 
         {loading && !data ? (
-          <div className="macos-panel" style={{ padding: 16 }}>Loading team structure...</div>
+          <div className={`macos-panel ${styles.loadingPanel}`}>Loading team structure...</div>
         ) : null}
 
         {!!data && (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(240px,1fr))', gap: 12 }}>
+            <div className={styles.statGrid}>
               <div style={{ position: 'relative', zIndex: openModelPicker === data.lead?.id ? 40 : 1 }}>
                 <GlassCard noPad overflowVisible>
-                  <div style={{ padding: 14 }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>Lead Agent</div>
-                  <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
-                    <span style={{ fontSize: 24 }}>{data.lead?.emoji || '🤖'}</span>
-                    <div>
-                      <div style={{ color: 'rgba(255,255,255,0.95)', fontWeight: 700 }}>{data.lead?.name || 'main'}</div>
-                      <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>{data.lead?.model || '—'}</div>
+                  <div className={styles.statPad}>
+                    <div className={styles.statLabel}>Lead Agent</div>
+                    <div className={styles.statAgentRow}>
+                      <span className={styles.statEmoji}>{data.lead?.emoji || '🤖'}</span>
+                      <div>
+                        <div className={styles.statAgentName}>{data.lead?.name || 'main'}</div>
+                        <div className={styles.statAgentModel}>{data.lead?.model || '—'}</div>
+                      </div>
                     </div>
-                  </div>
-                  {data.lead ? (
-                    <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 10, letterSpacing: 0.3, textTransform: 'uppercase', color: 'rgba(255,255,255,0.42)' }}>Model</span>
-                      {renderModelPicker(data.lead.id, data.lead.modelKey || '')}
-                    </div>
-                  ) : null}
+                    {data.lead ? (
+                      <div className={styles.statModelRow}>
+                        <span className={styles.statModelLabel}>Model</span>
+                        {renderModelPicker(data.lead.id, data.lead.modelKey || '')}
+                      </div>
+                    ) : null}
                   </div>
                 </GlassCard>
               </div>
 
               <GlassCard noPad>
-                <div style={{ padding: 14 }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>Subagents</div>
-                  <div style={{ marginTop: 8, fontSize: 24, color: '#64D2FF', fontWeight: 800 }}>{totalMembers}</div>
+                <div className={styles.statPad}>
+                  <div className={styles.statLabel}>Subagents</div>
+                  <div className={styles.statValueBlue}>{totalMembers}</div>
                 </div>
               </GlassCard>
 
               <GlassCard noPad>
-                <div style={{ padding: 14 }}>
-                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.55)' }}>Total Agents</div>
-                  <div style={{ marginTop: 8, fontSize: 24, color: '#32D74B', fontWeight: 800 }}>{data.totalAgents}</div>
+                <div className={styles.statPad}>
+                  <div className={styles.statLabel}>Total Agents</div>
+                  <div className={styles.statValueGreen}>{data.totalAgents}</div>
                   {data.mode ? (
-                    <div style={{ marginTop: 6, fontSize: 11, color: 'rgba(255,255,255,0.56)' }}>
+                    <div className={styles.statMode}>
                       Mode: {data.mode}{data.shadow?.enabled ? data.shadow?.canary ? ' · shadow+canary' : ' · shadow' : ''}
                     </div>
                   ) : null}
@@ -341,15 +325,15 @@ export default function TeamStructure() {
 
             {data.missingSuggested?.length ? (
               <GlassCard noPad>
-                <div style={{ padding: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.88)', fontWeight: 700 }}>
+                <div className={styles.suggestionsPad}>
+                  <div className={styles.suggestionsHeader}>
                     <Sparkles size={14} /> Suggested Missing Roles
                   </div>
-                  <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+                  <div className={styles.suggestionsList}>
                     {data.missingSuggested.map((m) => (
-                      <div key={m.id} style={{ border: '1px solid rgba(255,255,255,0.14)', background: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: '8px 10px', fontSize: 12, color: 'rgba(255,255,255,0.82)' }}>
-                        <div style={{ fontWeight: 700 }}>{m.emoji} {m.name} · {m.role}</div>
-                        {m.reason ? <div style={{ marginTop: 4, color: 'rgba(255,255,255,0.6)' }}>{m.reason}</div> : null}
+                      <div key={m.id} className={styles.suggestionItem}>
+                        <div className={styles.suggestionTitle}>{m.emoji} {m.name} · {m.role}</div>
+                        {m.reason ? <div className={styles.suggestionReason}>{m.reason}</div> : null}
                       </div>
                     ))}
                   </div>
@@ -357,60 +341,58 @@ export default function TeamStructure() {
               </GlassCard>
             ) : null}
 
-            <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', alignItems: 'start' }}>
+            <div className={styles.roleGrid}>
               {visibleRoleGroups.map((group) => (
                 <div key={group.role} style={{ position: 'relative', zIndex: activeGroupRole === group.role ? 30 : 1 }}>
                   <GlassCard noPad overflowVisible>
-                    <div style={{ padding: 14, borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'rgba(255,255,255,0.92)', fontWeight: 700 }}>
-                        <UserCog size={14} /> {group.emoji ? `${group.emoji} ` : ''}{group.role}
+                    <div className={styles.groupCardHeader}>
+                      <div className={styles.groupCardHeaderRow}>
+                        <div className={styles.groupCardTitle}>
+                          <UserCog size={14} /> {group.emoji ? `${group.emoji} ` : ''}{group.role}
+                        </div>
+                        <span className={styles.groupCardCount}>{group.members.length}</span>
                       </div>
-                      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>{group.members.length}</span>
                     </div>
-                    </div>
-                    <div style={{ padding: 12, display: 'grid', gap: 8 }}>
-                    {group.members.length === 0 ? (
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)' }}>No members</div>
-                    ) : group.members.map((m) => (
-                      <div key={m.id} style={{ border: '1px solid rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.03)', borderRadius: 10, padding: 10 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 18 }}>{m.emoji || '🤖'}</span>
-                          <div>
-                            <div style={{ color: 'rgba(255,255,255,0.92)', fontWeight: 650, fontSize: 13 }}>{m.name}</div>
-                            <div style={{ color: 'rgba(255,255,255,0.56)', fontSize: 11 }}>{m.id}</div>
+                    <div className={styles.groupCardBody}>
+                      {group.members.length === 0 ? (
+                        <div className={styles.groupEmpty}>No members</div>
+                      ) : group.members.map((m) => (
+                        <div key={m.id} className={styles.memberItem}>
+                          <div className={styles.memberTop}>
+                            <span className={styles.memberEmoji}>{m.emoji || '🤖'}</span>
+                            <div>
+                              <div className={styles.memberName}>{m.name}</div>
+                              <div className={styles.memberId}>{m.id}</div>
+                            </div>
                           </div>
-                        </div>
-                        {m.title || m.summary ? (
-                          <div style={{ marginTop: 8, color: 'rgba(255,255,255,0.68)', fontSize: 11 }}>
-                            {m.title ? <div style={{ fontWeight: 600 }}>{m.title}</div> : null}
-                            {m.summary ? <div style={{ marginTop: m.title ? 2 : 0 }}>{m.summary}</div> : null}
-                          </div>
-                        ) : null}
-                        <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 10, letterSpacing: 0.3, textTransform: 'uppercase', color: 'rgba(255,255,255,0.42)' }}>Model</span>
-                          {renderModelPicker(m.id, m.modelKey || '')}
-                        </div>
-                        {savingModel[m.id] ? <div style={{ marginTop: 4, fontSize: 10, color: '#8CC8FF' }}>Saving model...</div> : null}
-                        <div style={{ marginTop: 8, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          <span style={{ border: '1px solid rgba(255,255,255,0.12)', borderRadius: 999, padding: '3px 8px', fontSize: 10, color: 'rgba(255,255,255,0.72)' }}>
-                            {m.registryStatus === 'registered' ? 'Registry' : 'Unregistered'}
-                          </span>
-                          <span style={{ border: '1px solid rgba(255,255,255,0.12)', borderRadius: 999, padding: '3px 8px', fontSize: 10, color: 'rgba(255,255,255,0.72)' }}>
-                            {m.runtimeStatus === 'active' ? 'Runtime active' : 'Runtime inactive'}
-                          </span>
-                          {m.source ? (
-                            <span style={{ border: '1px solid rgba(255,255,255,0.12)', borderRadius: 999, padding: '3px 8px', fontSize: 10, color: 'rgba(255,255,255,0.72)' }}>
-                              {m.source}
-                            </span>
+                          {m.title || m.summary ? (
+                            <div className={styles.memberSummary}>
+                              {m.title ? <div className={styles.memberSummaryTitle}>{m.title}</div> : null}
+                              {m.summary ? <div style={{ marginTop: m.title ? 2 : 0 }}>{m.summary}</div> : null}
+                            </div>
                           ) : null}
+                          <div className={styles.memberModelRow}>
+                            <span className={styles.memberModelLabel}>Model</span>
+                            {renderModelPicker(m.id, m.modelKey || '')}
+                          </div>
+                          {savingModel[m.id] ? <div className={styles.memberSaving}>Saving model...</div> : null}
+                          <div className={styles.memberBadges}>
+                            <span className={styles.memberBadge}>
+                              {m.registryStatus === 'registered' ? 'Registry' : 'Unregistered'}
+                            </span>
+                            <span className={styles.memberBadge}>
+                              {m.runtimeStatus === 'active' ? 'Runtime active' : 'Runtime inactive'}
+                            </span>
+                            {m.source ? (
+                              <span className={styles.memberBadge}>{m.source}</span>
+                            ) : null}
+                          </div>
+                          <ul className={styles.memberResponsibilities}>
+                            {m.responsibilities?.slice(0, 2).map((r, i) => <li key={i}>{r}</li>)}
+                          </ul>
+                          {m.workspace ? <div className={styles.memberWorkspace}>{m.workspace}</div> : null}
                         </div>
-                        <ul style={{ marginTop: 8, paddingLeft: 18, color: 'rgba(255,255,255,0.72)', fontSize: 11 }}>
-                          {m.responsibilities?.slice(0, 2).map((r, i) => <li key={i}>{r}</li>)}
-                        </ul>
-                        {m.workspace ? <div style={{ marginTop: 6, color: 'rgba(255,255,255,0.46)', fontSize: 10, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>{m.workspace}</div> : null}
-                      </div>
-                    ))}
+                      ))}
                     </div>
                   </GlassCard>
                 </div>

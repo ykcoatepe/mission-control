@@ -1,0 +1,407 @@
+/* ── Page container ──────────────────────────────────────────── */
+
+.page {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+/* ── Loading state ───────────────────────────────────────────── */
+
+.loadingWrap {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 60vh;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+/* ── Step card ───────────────────────────────────────────────── */
+
+.card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+.cardMobile {
+  padding: 20px;
+}
+
+.cardDesktop {
+  padding: 32px;
+}
+
+/* ── Step 1: Welcome ─────────────────────────────────────────── */
+
+.welcomeHeader {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.welcomeTitle {
+  font-weight: 700;
+  color: white;
+  margin-bottom: 16px;
+  background: linear-gradient(135deg, #007AFF, #5856D6);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.welcomeTitleMobile {
+  font-size: 28px;
+}
+
+.welcomeTitleDesktop {
+  font-size: 36px;
+}
+
+.welcomeSubtitle {
+  font-size: 18px;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.5;
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.gatewayBox {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+
+.gatewayRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.gatewayOffIndicator {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #FF453A;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gatewayOffDot {
+  width: 8px;
+  height: 8px;
+  background: white;
+  border-radius: 50%;
+}
+
+.gatewayLabel {
+  font-size: 18px;
+  font-weight: 600;
+  color: white;
+}
+
+.gatewayStatus {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+}
+
+.detectedConfigBox {
+  background: rgba(0, 122, 255, 0.1);
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 32px;
+}
+
+.detectedConfigTitle {
+  color: #007AFF;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.detectedConfigBody {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+}
+
+.welcomeActions {
+  text-align: center;
+}
+
+/* ── Step 2: Configure ───────────────────────────────────────── */
+
+.stepTitle {
+  font-size: 28px;
+  font-weight: 700;
+  color: white;
+  margin-bottom: 24px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stepTitleCentered {
+  justify-content: center;
+  margin-bottom: 16px;
+}
+
+.fieldLabel {
+  display: block;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+
+.fieldGroup {
+  margin-bottom: 24px;
+}
+
+.fieldGroupLast {
+  margin-bottom: 32px;
+}
+
+.input {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  padding: 12px 16px;
+  color: white;
+  font-size: 16px;
+  width: 100%;
+  outline: none;
+}
+
+.fieldHint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 4px;
+}
+
+.modulesGrid {
+  display: grid;
+  gap: 12px;
+}
+
+.modulesGridMobile {
+  grid-template-columns: 1fr 1fr;
+}
+
+.modulesGridDesktop {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.moduleToggleActive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(0, 122, 255, 0.2);
+  border: 1px solid rgba(0, 122, 255, 0.4);
+  transition: all 0.2s ease;
+}
+
+.moduleToggleInactive {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.2s ease;
+}
+
+.moduleCheckbox {
+  margin: 0;
+}
+
+.moduleLabelActive {
+  color: #007AFF;
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.moduleLabelInactive {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 14px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+/* ── Step 3: Scout ───────────────────────────────────────────── */
+
+.scoutSectionTitle {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+
+.scoutSectionDesc {
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 24px;
+  font-size: 16px;
+}
+
+.templateList {
+  display: grid;
+  gap: 12px;
+}
+
+.templateActive {
+  background: rgba(0, 122, 255, 0.15);
+  border: 1px solid rgba(0, 122, 255, 0.3);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.templateInactive {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.templateRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.templateTitle {
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  text-transform: capitalize;
+}
+
+.templateDesc {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
+  margin: 0;
+}
+
+.templateBtnActive {
+  background: #007AFF;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.templateBtnInactive {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.customQueryRow {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.customQueryInput {
+  flex: 1;
+}
+
+.removeQueryBtn {
+  background: rgba(255, 69, 58, 0.2);
+  border: 1px solid rgba(255, 69, 58, 0.3);
+  color: #FF453A;
+  border-radius: 8px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.addQueryBtn {
+  margin-top: 8px;
+}
+
+/* ── Step 4: Done ────────────────────────────────────────────── */
+
+.doneHeader {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.doneSummaryBox {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 20px;
+  margin-bottom: 32px;
+}
+
+.doneSummaryTitle {
+  color: white;
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+.doneSummaryBody {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 14px;
+}
+
+.doneActions {
+  text-align: center;
+}
+
+/* ── Navigation buttons ──────────────────────────────────────── */
+
+.navRow {
+  display: flex;
+  justify-content: space-between;
+}
+
+.primaryBtn {
+  background: #007AFF;
+  color: white;
+  border: none;
+  border-radius: 10px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
+
+.secondaryBtn {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+  padding: 12px 24px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+}
