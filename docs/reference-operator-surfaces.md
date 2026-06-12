@@ -1,6 +1,6 @@
 # Operator Surfaces Reference
 
-This reference describes the public routes, API endpoints, local commands, and safety behavior added or changed by the `codex/gbrain` PR.
+This reference describes the public routes, API endpoints, local commands, and safety behavior of the Mission Control operator surfaces.
 
 ## Browser Routes
 
@@ -211,11 +211,18 @@ Cost normalization rules:
 - Unknown zero-cost cloud models remain `unknown`, not estimated spend.
 - Estimated daily spend is only applied to rows with tokens for that day.
 
-## Supply-Chain Gate
+## CI Gates
 
-The PR adds `.github/workflows/supply-chain.yml` and `scripts/check-npm-supply-chain.mjs`.
+Two workflows run on every PR and push to `master`:
 
-The script:
+- `.github/workflows/ci.yml` — `backend-tests` (root `npm test`, the full
+  `tests/` suite via `node --test`) and `frontend-checks` (`npm run lint`,
+  then `npm run build` which type-checks with `tsc -b` and builds with Vite).
+- `.github/workflows/supply-chain.yml` — the npm incident gate described below.
+
+### Supply-chain gate
+
+`scripts/check-npm-supply-chain.mjs`:
 
 - Fetches `NPM_INCIDENT_ADVISORY_URL`, defaulting to the Snyk TanStack/Mini Shai-Hulud advisory page.
 - Extracts exact npm package and version indicators from embedded Nuxt JavaScript.
@@ -223,7 +230,7 @@ The script:
 - Fails only on exact malicious package/version matches.
 - Fails closed when no npm indicators can be parsed.
 
-CI also runs:
+The supply-chain workflow also runs:
 
 ```bash
 npm ci --ignore-scripts
@@ -237,4 +244,5 @@ npm audit signatures
 - [First Operator Check](tutorial-first-operator-check.md)
 - [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md)
 - [Read-Only Evidence Design](explanation-read-only-evidence-design.md)
+- [Frontend Conventions](reference-frontend-conventions.md)
 - [GBrain Hybrid Brain View Handoff](gbrain-hybrid-brain-view-handoff-20260524.md)
