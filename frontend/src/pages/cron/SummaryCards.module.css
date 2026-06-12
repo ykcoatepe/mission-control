@@ -1,0 +1,92 @@
+.grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+
+.gridMobile {
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+/* ── Interactive stat card (inside GlassCard noPad) ──────────── */
+
+.inner {
+  padding: 20px;
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+}
+
+.innerMobile {
+  padding: 10px 12px;
+}
+
+.inner:hover {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+/* Active state driven by CSS var --stat-color set inline */
+.innerActive {
+  border-color: var(--stat-color);
+  background: color-mix(in srgb, var(--stat-color) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--stat-color) 13%, transparent);
+}
+
+.innerActive:hover {
+  background: color-mix(in srgb, var(--stat-color) 8%, transparent);
+  border-color: var(--stat-color);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.topMobile {
+  margin-bottom: 6px;
+}
+
+.iconWrap {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* background tint via --stat-color */
+  background: color-mix(in srgb, var(--stat-color, rgba(255,255,255,0.5)) 13%, transparent);
+}
+
+.iconWrapMobile {
+  width: 26px;
+  height: 26px;
+}
+
+.label {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+}
+
+.labelMobile {
+  font-size: 10px;
+}
+
+.value {
+  font-size: 24px;
+  font-weight: 300;
+  color: rgba(255, 255, 255, 0.92);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+.valueMobile {
+  font-size: 20px;
+}

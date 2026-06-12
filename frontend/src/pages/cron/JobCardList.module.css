@@ -1,0 +1,202 @@
+.cardList {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Scheduler tint via --scheduler-color set inline per group */
+.groupHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 2px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--scheduler-color);
+}
+
+.groupHeaderFirst {
+  margin-top: 0;
+}
+
+.groupHeaderCount {
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 700;
+}
+
+.cardPad {
+  padding: 14px;
+}
+
+.overlapPill {
+  margin-bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(191, 90, 242, 0.14);
+  border: 1px solid rgba(191, 90, 242, 0.26);
+  color: #D8B4FE;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.cardTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.cardNameWrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.cardName {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.92);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 0;
+}
+
+.cardSchedulerBadge {
+  margin-top: 4px;
+}
+
+.scheduleCode {
+  font-size: 11px;
+  color: #BF5AF2;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-family: monospace;
+  display: inline-block;
+  margin-bottom: 10px;
+}
+
+.cardSection {
+  margin-bottom: 10px;
+}
+
+.cardMiniLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+
+.cardDetailsGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.cardDetailLabel {
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  font-weight: 600;
+  margin: 0 0 2px;
+}
+
+.cardDetailValue {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.65);
+  margin: 0;
+}
+
+.cardModelRow {
+  margin-bottom: 10px;
+}
+
+.cardModelInner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.modelSelect {
+  width: 100%;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modelSelect:disabled {
+  cursor: not-allowed;
+}
+
+.modelText {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.cardActions {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.runBtn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.deleteBtn {
+  padding: 6px 8px;
+  background: rgba(255, 69, 58, 0.1);
+  border: 1px solid rgba(255, 69, 58, 0.2);
+  border-radius: 6px;
+  color: #FF453A;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.deleteBtn:hover:not(:disabled) {
+  background: rgba(255, 69, 58, 0.18);
+}
+
+.runBtn:disabled,
+.deleteBtn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.spinIcon {
+  animation: spin 1s linear infinite;
+}
