@@ -93,6 +93,7 @@ export const appRoutes: AppRouteDefinition[] = [
 export const sidebarRoutes = appRoutes.filter((route) => route.nav !== false && route.icon)
 
 export function isRouteEnabled(route: AppRouteDefinition, modules: Record<string, boolean>) {
+  if (route.anyModule) return route.anyModule.some((moduleName) => modules[moduleName] !== false)
   if (modules[route.module] !== false) return true
-  return route.anyModule?.some((moduleName) => modules[moduleName] !== false) ?? false
+  return false
 }

@@ -25,4 +25,15 @@ describe('isRouteEnabled', () => {
       skills: false,
     })).toBe(false)
   })
+
+  it('hides Diagnostics when settings is enabled but all diagnostic modules are disabled', () => {
+    expect(diagnosticsRoute).toBeDefined()
+    expect(isRouteEnabled(diagnosticsRoute!, {
+      settings: true,
+      docs: false,
+      scout: false,
+      aws: false,
+      skills: false,
+    })).toBe(false)
+  })
 })
