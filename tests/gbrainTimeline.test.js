@@ -265,8 +265,8 @@ async function testWorstRecentRegressionSurvivesCleanSnapshot() {
   assert.equal(timeline.incidentBanner.title, 'Worst recent regression still needs acknowledgement');
   assert.match(timeline.incidentBanner.detail, /1,084 missing embeddings/);
   assert.match(timeline.incidentBanner.detail, /8 stale sources/);
-  assert.equal(timeline.incidentBanner.snapshotId, timeline.entries[1].id);
-  assert.equal(recovered.timelineSummary.incidentBanner.snapshotId, timeline.entries[1].id);
+  assert.equal(timeline.incidentBanner.snapshotId, timeline.entries[1].fingerprint);
+  assert.equal(recovered.timelineSummary.incidentBanner.snapshotId, timeline.entries[1].fingerprint);
 }
 
 async function testSourceWarningsAreNotReportedAsStaleSources() {
@@ -297,6 +297,42 @@ async function testSourceWarningsAreNotReportedAsStaleSources() {
   assert.doesNotMatch(timeline.incidentBanner.detail, /stale source/i);
 }
 
+async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 60 * 60 * 1000 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T09:01:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T09:02:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+  const regressionEntries = timeline.entries.filter((entry) => entry.trust.status === 'warning');
+
+  assert.equal(regressionEntries.length, 2);
+  assert.notEqual(regressionEntries[0].id, regressionEntries[1].id);
+  assert.equal(regressionEntries[0].fingerprint, regressionEntries[1].fingerprint);
+  assert.equal(timeline.incidentBanner.snapshotId, regressionEntries[0].fingerprint);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
@@ -305,6 +341,7 @@ async function testSourceWarningsAreNotReportedAsStaleSources() {
   await testServiceSummaryDiffAndIncident();
   await testWorstRecentRegressionSurvivesCleanSnapshot();
   await testSourceWarningsAreNotReportedAsStaleSources();
+  await testRegressionAcknowledgementKeySurvivesHeartbeat();
 
   console.log('gbrainTimeline tests passed');
 })();

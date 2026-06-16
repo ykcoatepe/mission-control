@@ -141,6 +141,11 @@ function fingerprintSnapshot(snapshot) {
   });
 }
 
+function snapshotAcknowledgementId(snapshot) {
+  if (!snapshot) return '';
+  return snapshot.fingerprint || fingerprintSnapshot(snapshot);
+}
+
 function timelinePathFor(projectRoot) {
   return path.join(projectRoot, 'data', 'gbrain', 'evidence-timeline.jsonl');
 }
@@ -302,7 +307,7 @@ function buildWorstRecentRegressionBanner(entries = []) {
     status: severityRank(worst.entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
     title: 'Worst recent regression still needs acknowledgement',
     detail: `${worst.signals.details.join(' / ')} at ${worst.entry.capturedAt || 'unknown time'}.`,
-    snapshotId: worst.entry.id,
+    snapshotId: snapshotAcknowledgementId(worst.entry),
     kind: 'recent-regression',
   };
 }
@@ -327,7 +332,7 @@ function buildIncidentBanner(current, previous) {
     status: current.trust?.status === 'critical' ? 'critical' : 'warning',
     title: 'Trust evidence changed',
     detail: reasons.join(' '),
-    snapshotId: current.id,
+    snapshotId: snapshotAcknowledgementId(current),
   };
 }
 
