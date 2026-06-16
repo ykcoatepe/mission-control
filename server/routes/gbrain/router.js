@@ -41,6 +41,7 @@ function buildGBrainRouter(options = {}) {
       integrationRuntime,
       timelineSummary: result.timelineSummary,
       incidentBanner: result.timelineSummary?.incidentBanner || null,
+      incidentBanners: result.timelineSummary?.incidentBanners || [],
     }));
   });
 

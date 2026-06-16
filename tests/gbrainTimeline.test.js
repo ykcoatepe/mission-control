@@ -8,6 +8,7 @@ const {
   computeTrustDiff,
   createGBrainTimelineService,
   fingerprintSnapshot,
+  buildTimelineIncidentBanners,
   normalizeSnapshot,
   pruneTimeline,
   readTimeline,
@@ -333,6 +334,50 @@ async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
   assert.equal(timeline.incidentBanner.snapshotId, regressionEntries[0].fingerprint);
 }
 
+async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Older severe regression',
+    embeddingsDetail: '20 missing',
+    caveats: 5,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Recovered',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:01:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Newer smaller regression',
+    embeddingsDetail: '1 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T09:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Recovered again',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T09:01:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+  const banners = buildTimelineIncidentBanners(timeline.entries);
+
+  assert.equal(timeline.incidentBanners.length, 2);
+  assert.equal(banners.length, 2);
+  assert.match(timeline.incidentBanners[0].detail, /20 missing embeddings/);
+  assert.match(timeline.incidentBanners[1].detail, /1 missing embedding/);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
@@ -342,6 +387,7 @@ async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
   await testWorstRecentRegressionSurvivesCleanSnapshot();
   await testSourceWarningsAreNotReportedAsStaleSources();
   await testRegressionAcknowledgementKeySurvivesHeartbeat();
+  await testRecoveredRegressionListKeepsLaterIncidentsVisible();
 
   console.log('gbrainTimeline tests passed');
 })();

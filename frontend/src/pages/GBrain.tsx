@@ -167,6 +167,7 @@ interface GBrainOverview {
   }
   timelineSummary?: TimelineSummary
   incidentBanner?: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface SourceFreshness {
@@ -226,6 +227,7 @@ interface TimelineSummary {
   warning: string
   diff: TimelineDiff
   incidentBanner: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface TimelineEntry {
@@ -256,6 +258,7 @@ interface TimelineResponse {
   schemaVersion: number
   diff: TimelineDiff
   incidentBanner: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface GBrainActionResult {
@@ -452,12 +455,19 @@ export default function GBrain() {
   }
 
   const timelineSummary = data?.timelineSummary
-  const rawIncidentBanner = data?.incidentBanner || timeline?.incidentBanner || timelineSummary?.incidentBanner
-  const incidentKey = rawIncidentBanner?.snapshotId || `${rawIncidentBanner?.title || ''}:${rawIncidentBanner?.detail || ''}`
-  const canAcknowledgeIncident = rawIncidentBanner?.kind === 'recent-regression' && Boolean(incidentKey)
-  const incidentBanner = rawIncidentBanner && (!canAcknowledgeIncident || !acknowledgedIncidents.has(incidentKey))
-    ? rawIncidentBanner
-    : null
+  const incidentCandidates = data?.incidentBanners?.length
+    ? data.incidentBanners
+    : timeline?.incidentBanners?.length
+      ? timeline.incidentBanners
+      : timelineSummary?.incidentBanners?.length
+        ? timelineSummary.incidentBanners
+        : [data?.incidentBanner || timeline?.incidentBanner || timelineSummary?.incidentBanner].filter(Boolean) as IncidentBanner[]
+  const incidentBanner = incidentCandidates.find((candidate) => {
+    const key = candidate.snapshotId || `${candidate.title}:${candidate.detail}`
+    return candidate.kind !== 'recent-regression' || !acknowledgedIncidents.has(key)
+  }) || null
+  const incidentKey = incidentBanner?.snapshotId || `${incidentBanner?.title || ''}:${incidentBanner?.detail || ''}`
+  const canAcknowledgeIncident = incidentBanner?.kind === 'recent-regression' && Boolean(incidentKey)
   const timelineEnabled = timeline?.enabled ?? timelineSummary?.enabled ?? true
   const timelineEntries = timeline?.entries || []
   const visibleTimelineEntries = timelineEntries.slice(0, 2)

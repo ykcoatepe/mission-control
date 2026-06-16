@@ -296,20 +296,26 @@ function regressionSignals(entry) {
   return { score, missingEmbeddings, stalePages, staleSources, caveats, details };
 }
 
-function buildWorstRecentRegressionBanner(entries = []) {
-  const worst = entries
-    .map((entry) => ({ entry, signals: regressionSignals(entry) }))
-    .filter((item) => item.signals.score > 0 && item.signals.details.length > 0)
-    .sort((a, b) => b.signals.score - a.signals.score)[0];
-
-  if (!worst) return null;
+function regressionBannerForEntry(entry, signals) {
   return {
-    status: severityRank(worst.entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
+    status: severityRank(entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
     title: 'Worst recent regression still needs acknowledgement',
-    detail: `${worst.signals.details.join(' / ')} at ${worst.entry.capturedAt || 'unknown time'}.`,
-    snapshotId: snapshotAcknowledgementId(worst.entry),
+    detail: `${signals.details.join(' / ')} at ${entry.capturedAt || 'unknown time'}.`,
+    snapshotId: snapshotAcknowledgementId(entry),
     kind: 'recent-regression',
   };
+}
+
+function buildRecentRegressionBanners(entries = []) {
+  return entries
+    .map((entry) => ({ entry, signals: regressionSignals(entry) }))
+    .filter((item) => item.signals.score > 0 && item.signals.details.length > 0)
+    .sort((a, b) => b.signals.score - a.signals.score)
+    .map((item) => regressionBannerForEntry(item.entry, item.signals));
+}
+
+function buildWorstRecentRegressionBanner(entries = []) {
+  return buildRecentRegressionBanners(entries)[0] || null;
 }
 
 function buildIncidentBanner(current, previous) {
@@ -337,16 +343,23 @@ function buildIncidentBanner(current, previous) {
 }
 
 function buildTimelineIncidentBanner(entries = []) {
+  return buildTimelineIncidentBanners(entries)[0] || null;
+}
+
+function buildTimelineIncidentBanners(entries = []) {
   const current = entries[0];
   const previous = entries[1];
-  return buildIncidentBanner(current, previous) || buildWorstRecentRegressionBanner(entries);
+  const activeIncident = buildIncidentBanner(current, previous);
+  if (activeIncident) return [activeIncident];
+  return buildRecentRegressionBanners(entries);
 }
 
 function summarizeTimeline(readResult, captureResult = {}) {
   const entries = readResult.entries || [];
   const [latest, previous] = entries;
   const diff = computeTrustDiff(latest, previous);
-  const incidentBanner = buildTimelineIncidentBanner(entries);
+  const incidentBanners = buildTimelineIncidentBanners(entries);
+  const incidentBanner = incidentBanners[0] || null;
   const warning = captureResult.warning || readResult.warnings?.[0] || '';
   return {
     enabled: true,
@@ -359,6 +372,7 @@ function summarizeTimeline(readResult, captureResult = {}) {
     warning,
     diff,
     incidentBanner,
+    incidentBanners,
   };
 }
 
@@ -453,6 +467,7 @@ function createGBrainTimelineService(options = {}) {
             warning: '',
             diff: { kind: 'disabled', changes: [], summary: 'Evidence Timeline disabled.' },
             incidentBanner: null,
+            incidentBanners: [],
           },
         };
       }
@@ -476,13 +491,16 @@ function createGBrainTimelineService(options = {}) {
           schemaVersion: SCHEMA_VERSION,
           diff: { kind: 'disabled', changes: [], summary: 'Evidence Timeline disabled.' },
           incidentBanner: null,
+          incidentBanners: [],
         };
       }
       const result = readTimeline({ ...baseOptions, limit: query.limit });
+      const incidentBanners = buildTimelineIncidentBanners(result.entries);
       return {
         ...result,
         diff: computeTrustDiff(result.entries[0], result.entries[1]),
-        incidentBanner: buildTimelineIncidentBanner(result.entries),
+        incidentBanner: incidentBanners[0] || null,
+        incidentBanners,
       };
     },
   };
@@ -501,7 +519,9 @@ module.exports = {
   pruneTimeline,
   computeTrustDiff,
   buildIncidentBanner,
+  buildRecentRegressionBanners,
   buildWorstRecentRegressionBanner,
+  buildTimelineIncidentBanners,
   buildTimelineIncidentBanner,
   createGBrainTimelineService,
   timelinePathFor,

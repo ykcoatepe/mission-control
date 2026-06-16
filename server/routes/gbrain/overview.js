@@ -399,6 +399,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
 
   if (extra.timelineSummary) overview.timelineSummary = extra.timelineSummary;
   if (extra.incidentBanner !== undefined) overview.incidentBanner = extra.incidentBanner;
+  if (extra.incidentBanners !== undefined) overview.incidentBanners = extra.incidentBanners;
   return overview;
 }
 
