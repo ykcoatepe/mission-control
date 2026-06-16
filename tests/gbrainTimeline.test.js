@@ -70,7 +70,7 @@ function overview(overrides = {}) {
     ],
     caveats: overrides.warnings || ['Official integrations doctor mismatch'],
     warnings: [],
-    live: { sources: { warningCount: overrides.sourceWarnings ?? 0 } },
+    live: { sources: { warningCount: overrides.sourceWarnings ?? 0, freshness: { staleCount: overrides.sourceStaleCount ?? 0 } } },
   };
 }
 
@@ -269,6 +269,34 @@ async function testWorstRecentRegressionSurvivesCleanSnapshot() {
   assert.equal(recovered.timelineSummary.incidentBanner.snapshotId, timeline.entries[1].id);
 }
 
+async function testSourceWarningsAreNotReportedAsStaleSources() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live source warning',
+    caveats: 1,
+    sourceWarnings: 7,
+    warnings: ['7 live sources reported a warning status.'],
+    refreshedAt: '2026-06-10T08:29:31.341Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    caveats: 0,
+    sourceWarnings: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:30:47.445Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.title, 'Worst recent regression still needs acknowledgement');
+  assert.match(timeline.incidentBanner.detail, /1 caveat/);
+  assert.doesNotMatch(timeline.incidentBanner.detail, /stale source/i);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
@@ -276,6 +304,7 @@ async function testWorstRecentRegressionSurvivesCleanSnapshot() {
   await testServiceDisabledContract();
   await testServiceSummaryDiffAndIncident();
   await testWorstRecentRegressionSurvivesCleanSnapshot();
+  await testSourceWarningsAreNotReportedAsStaleSources();
 
   console.log('gbrainTimeline tests passed');
 })();

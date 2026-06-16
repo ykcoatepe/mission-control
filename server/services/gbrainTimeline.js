@@ -90,6 +90,7 @@ function normalizeSnapshot(overview, options = {}) {
     defaultThresholdHours: sourceThresholdHours,
     status: normalizeStatus(sourcesNode?.status || 'inactive'),
     label: sourcesNode ? `Default ${sourceThresholdHours}h threshold` : 'No source proof loaded',
+    staleCount: Number(overview?.live?.sources?.freshness?.staleCount || 0),
     warningCount: Number(overview?.live?.sources?.warningCount || 0),
   };
 
@@ -270,7 +271,7 @@ function regressionSignals(entry) {
   const stalePages = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
   const warnings = Array.isArray(entry?.warnings) ? entry.warnings.join(' ') : '';
   const staleSources = Math.max(
-    Number(entry?.sourceFreshness?.warningCount || 0),
+    Number(entry?.sourceFreshness?.staleCount || 0),
     parseTimelineCount(warnings, /([\d,]+)\s+sources?\s+exceeded/i),
   );
   const caveats = Number(entry?.metrics?.caveats || 0) || 0;
