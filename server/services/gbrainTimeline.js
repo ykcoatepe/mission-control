@@ -90,6 +90,7 @@ function normalizeSnapshot(overview, options = {}) {
     defaultThresholdHours: sourceThresholdHours,
     status: normalizeStatus(sourcesNode?.status || 'inactive'),
     label: sourcesNode ? `Default ${sourceThresholdHours}h threshold` : 'No source proof loaded',
+    staleCount: Number(overview?.live?.sources?.freshness?.staleCount || 0),
     warningCount: Number(overview?.live?.sources?.warningCount || 0),
   };
 
@@ -138,6 +139,11 @@ function fingerprintSnapshot(snapshot) {
     sourceFreshness: snapshot.sourceFreshness,
     warnings: snapshot.warnings,
   });
+}
+
+function snapshotAcknowledgementId(snapshot) {
+  if (!snapshot) return '';
+  return snapshot.fingerprint || fingerprintSnapshot(snapshot);
 }
 
 function timelinePathFor(projectRoot) {
@@ -259,6 +265,79 @@ function severityRank(status) {
   return { inactive: 0, healthy: 1, warning: 2, critical: 3 }[normalizeStatus(status)] || 0;
 }
 
+function parseTimelineCount(value, pattern) {
+  const match = String(value || '').match(pattern);
+  if (!match) return 0;
+  return Number(String(match[1] || '').replace(/,/g, '')) || 0;
+}
+
+function parseQueueBacklog(value) {
+  const numbers = String(value || '').match(/\d+/g) || [];
+  return numbers.reduce((sum, item) => sum + (Number(item) || 0), 0);
+}
+
+function regressionSignals(entry) {
+  const missingEmbeddings = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
+  const stalePages = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
+  const warnings = Array.isArray(entry?.warnings) ? entry.warnings.join(' ') : '';
+  const staleSources = Math.max(
+    Number(entry?.sourceFreshness?.staleCount || 0),
+    parseTimelineCount(warnings, /([\d,]+)\s+sources?\s+exceeded/i),
+  );
+  const caveats = Number(entry?.metrics?.caveats || 0) || 0;
+  const queueBacklog = parseQueueBacklog(entry?.metrics?.queue);
+  const trustSeverity = severityRank(entry?.trust?.status);
+  const sourceSeverity = severityRank(entry?.sourceFreshness?.status);
+  const score = (trustSeverity * 1000)
+    + (sourceSeverity * 500)
+    + (missingEmbeddings * 10)
+    + (stalePages * 5)
+    + (staleSources * 100)
+    + (caveats * 20)
+    + (queueBacklog * 50);
+  const details = [];
+  if (missingEmbeddings > 0) details.push(`${missingEmbeddings.toLocaleString()} missing embeddings`);
+  if (stalePages > 0) details.push(`${stalePages.toLocaleString()} stale pages`);
+  if (staleSources > 0) details.push(`${staleSources.toLocaleString()} stale source${staleSources === 1 ? '' : 's'}`);
+  if (caveats > 0) details.push(`${caveats.toLocaleString()} caveat${caveats === 1 ? '' : 's'}`);
+  if (queueBacklog > 0) details.push(`queue ${sanitizeTimelineText(entry?.metrics?.queue || queueBacklog)}`);
+  return { score, missingEmbeddings, stalePages, staleSources, caveats, queueBacklog, details };
+}
+
+function regressionBannerForEntry(entry, signals) {
+  return {
+    status: severityRank(entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
+    title: 'Worst recent regression still needs acknowledgement',
+    detail: `${signals.details.join(' / ')} at ${entry.capturedAt || 'unknown time'}.`,
+    snapshotId: snapshotAcknowledgementId(entry),
+    kind: 'recent-regression',
+  };
+}
+
+function buildRecentRegressionBanners(entries = []) {
+  return entries
+    .map((entry) => ({ entry, signals: regressionSignals(entry) }))
+    .filter((item) => item.signals.score > 0 && item.signals.details.length > 0)
+    .sort((a, b) => b.signals.score - a.signals.score)
+    .map((item) => regressionBannerForEntry(item.entry, item.signals));
+}
+
+function buildWorstRecentRegressionBanner(entries = []) {
+  return buildRecentRegressionBanners(entries)[0] || null;
+}
+
+function buildActiveRegressionBanner(entry) {
+  const signals = regressionSignals(entry);
+  if (!entry || signals.score <= 0 || !signals.details.length) return null;
+  return {
+    status: severityRank(entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
+    title: 'Current regression needs attention',
+    detail: `${signals.details.join(' / ')} at ${entry.capturedAt || 'unknown time'}.`,
+    snapshotId: snapshotAcknowledgementId(entry),
+    kind: 'active-regression',
+  };
+}
+
 function buildIncidentBanner(current, previous) {
   if (!current) return null;
   const reasons = [];
@@ -279,15 +358,32 @@ function buildIncidentBanner(current, previous) {
     status: current.trust?.status === 'critical' ? 'critical' : 'warning',
     title: 'Trust evidence changed',
     detail: reasons.join(' '),
-    snapshotId: current.id,
+    snapshotId: snapshotAcknowledgementId(current),
   };
+}
+
+function buildTimelineIncidentBanner(entries = []) {
+  return buildTimelineIncidentBanners(entries)[0] || null;
+}
+
+function buildTimelineIncidentBanners(entries = []) {
+  const current = entries[0];
+  const previous = entries[1];
+  const activeIncident = buildIncidentBanner(current, previous);
+  if (activeIncident) return [activeIncident];
+  const currentRegression = buildActiveRegressionBanner(current);
+  if (currentRegression && (current?.trust?.status !== 'healthy' || parseQueueBacklog(current?.metrics?.queue) > 0)) {
+    return [currentRegression];
+  }
+  return buildRecentRegressionBanners(entries.slice(1));
 }
 
 function summarizeTimeline(readResult, captureResult = {}) {
   const entries = readResult.entries || [];
   const [latest, previous] = entries;
   const diff = computeTrustDiff(latest, previous);
-  const incidentBanner = buildIncidentBanner(latest, previous);
+  const incidentBanners = buildTimelineIncidentBanners(entries);
+  const incidentBanner = incidentBanners[0] || null;
   const warning = captureResult.warning || readResult.warnings?.[0] || '';
   return {
     enabled: true,
@@ -300,6 +396,7 @@ function summarizeTimeline(readResult, captureResult = {}) {
     warning,
     diff,
     incidentBanner,
+    incidentBanners,
   };
 }
 
@@ -394,11 +491,12 @@ function createGBrainTimelineService(options = {}) {
             warning: '',
             diff: { kind: 'disabled', changes: [], summary: 'Evidence Timeline disabled.' },
             incidentBanner: null,
+            incidentBanners: [],
           },
         };
       }
       const capture = await captureSnapshotIfNeeded(overview, baseOptions);
-      const readResult = readTimeline({ ...baseOptions, limit: 2 });
+      const readResult = readTimeline({ ...baseOptions, limit: baseOptions.defaultLimit });
       return {
         overview,
         timelineSummary: summarizeTimeline(readResult, capture),
@@ -417,13 +515,16 @@ function createGBrainTimelineService(options = {}) {
           schemaVersion: SCHEMA_VERSION,
           diff: { kind: 'disabled', changes: [], summary: 'Evidence Timeline disabled.' },
           incidentBanner: null,
+          incidentBanners: [],
         };
       }
       const result = readTimeline({ ...baseOptions, limit: query.limit });
+      const incidentBanners = buildTimelineIncidentBanners(result.entries);
       return {
         ...result,
         diff: computeTrustDiff(result.entries[0], result.entries[1]),
-        incidentBanner: buildIncidentBanner(result.entries[0], result.entries[1]),
+        incidentBanner: incidentBanners[0] || null,
+        incidentBanners,
       };
     },
   };
@@ -442,6 +543,11 @@ module.exports = {
   pruneTimeline,
   computeTrustDiff,
   buildIncidentBanner,
+  buildActiveRegressionBanner,
+  buildRecentRegressionBanners,
+  buildWorstRecentRegressionBanner,
+  buildTimelineIncidentBanners,
+  buildTimelineIncidentBanner,
   createGBrainTimelineService,
   timelinePathFor,
 };

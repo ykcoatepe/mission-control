@@ -167,6 +167,7 @@ interface GBrainOverview {
   }
   timelineSummary?: TimelineSummary
   incidentBanner?: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface SourceFreshness {
@@ -212,6 +213,7 @@ interface IncidentBanner {
   title: string
   detail: string
   snapshotId?: string
+  kind?: string
 }
 
 interface TimelineSummary {
@@ -225,6 +227,7 @@ interface TimelineSummary {
   warning: string
   diff: TimelineDiff
   incidentBanner: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface TimelineEntry {
@@ -255,6 +258,7 @@ interface TimelineResponse {
   schemaVersion: number
   diff: TimelineDiff
   incidentBanner: IncidentBanner | null
+  incidentBanners?: IncidentBanner[]
 }
 
 interface GBrainActionResult {
@@ -429,6 +433,14 @@ export default function GBrain() {
   const [selectedId, setSelectedId] = useState('gbrain-core')
   const [runningAction, setRunningAction] = useState<string | null>(null)
   const [actionResult, setActionResult] = useState<GBrainActionResult | null>(null)
+  const [acknowledgedIncidents, setAcknowledgedIncidents] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set()
+    try {
+      return new Set(JSON.parse(window.localStorage.getItem('gbrain.acknowledgedIncidents') || '[]'))
+    } catch {
+      return new Set()
+    }
+  })
 
   const selectedNode = useMemo(() => {
     if (!data?.nodes?.length) return null
@@ -443,7 +455,19 @@ export default function GBrain() {
   }
 
   const timelineSummary = data?.timelineSummary
-  const incidentBanner = data?.incidentBanner || timeline?.incidentBanner || timelineSummary?.incidentBanner
+  const incidentCandidates = data?.incidentBanners?.length
+    ? data.incidentBanners
+    : timeline?.incidentBanners?.length
+      ? timeline.incidentBanners
+      : timelineSummary?.incidentBanners?.length
+        ? timelineSummary.incidentBanners
+        : [data?.incidentBanner || timeline?.incidentBanner || timelineSummary?.incidentBanner].filter(Boolean) as IncidentBanner[]
+  const incidentBanner = incidentCandidates.find((candidate) => {
+    const key = candidate.snapshotId || `${candidate.title}:${candidate.detail}`
+    return candidate.kind !== 'recent-regression' || !acknowledgedIncidents.has(key)
+  }) || null
+  const incidentKey = incidentBanner?.snapshotId || `${incidentBanner?.title || ''}:${incidentBanner?.detail || ''}`
+  const canAcknowledgeIncident = incidentBanner?.kind === 'recent-regression' && Boolean(incidentKey)
   const timelineEnabled = timeline?.enabled ?? timelineSummary?.enabled ?? true
   const timelineEntries = timeline?.entries || []
   const visibleTimelineEntries = timelineEntries.slice(0, 2)
@@ -537,6 +561,20 @@ export default function GBrain() {
     }
   }
 
+  const acknowledgeIncident = () => {
+    if (!incidentKey) return
+    setAcknowledgedIncidents((current) => {
+      const next = new Set(current)
+      next.add(incidentKey)
+      try {
+        window.localStorage.setItem('gbrain.acknowledgedIncidents', JSON.stringify([...next].slice(-50)))
+      } catch {
+        // Keep the in-session acknowledgement even if storage is unavailable.
+      }
+      return next
+    })
+  }
+
   return (
     <PageTransition>
       <div className={styles.page}>
@@ -600,6 +638,9 @@ export default function GBrain() {
               <strong>{incidentBanner.title}</strong>
               <span>{incidentBanner.detail}</span>
             </div>
+            {canAcknowledgeIncident ? (
+              <button type="button" onClick={acknowledgeIncident}>Acknowledge</button>
+            ) : null}
           </div>
         ) : null}
 
@@ -857,7 +898,7 @@ export default function GBrain() {
                         </div>
                         <div className={styles.proofPath}>{data.integrationHealth.thinkRuntime.detail}</div>
                         <div className={styles.proofPath}>
-                          Optional features: {data.integrationHealth.featureGaps.count
+                          Feature recommendations: {data.integrationHealth.featureGaps.count
                             ? data.integrationHealth.featureGaps.recommendations.map((item) => item.title).join(', ')
                             : 'none reported'}
                         </div>

@@ -144,7 +144,7 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
   const healthyCount = systems.filter((system) => system.status === 'healthy').length;
   const status = toolsUnavailable
     ? 'warning'
-    : missingTools.length > 0 || blockingFeatureGaps.length > 0 || thinkRuntime.status === 'critical' || thinkRuntime.status === 'warning' || healthyCount < systems.length
+    : missingTools.length > 0 || thinkRuntime.status === 'critical' || thinkRuntime.status === 'warning' || healthyCount < systems.length
     ? 'warning'
     : 'healthy';
 

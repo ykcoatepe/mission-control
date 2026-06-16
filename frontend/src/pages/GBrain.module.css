@@ -210,6 +210,8 @@
 .incidentBanner div {
   display: grid;
   gap: 3px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .incidentBanner strong {
@@ -220,6 +222,23 @@
   color: rgba(255, 255, 255, 0.62);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.incidentBanner button {
+  flex: 0 0 auto;
+  border: 1px solid color-mix(in srgb, var(--status-color) 44%, rgba(255, 255, 255, 0.16));
+  border-radius: 7px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--status-color) 10%, rgba(255, 255, 255, 0.04));
+  color: rgba(255, 255, 255, 0.78);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.incidentBanner button:hover {
+  background: color-mix(in srgb, var(--status-color) 18%, rgba(255, 255, 255, 0.06));
+  color: rgba(255, 255, 255, 0.92);
 }
 
 .layout {

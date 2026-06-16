@@ -8,6 +8,7 @@ const {
   computeTrustDiff,
   createGBrainTimelineService,
   fingerprintSnapshot,
+  buildTimelineIncidentBanners,
   normalizeSnapshot,
   pruneTimeline,
   readTimeline,
@@ -70,7 +71,7 @@ function overview(overrides = {}) {
     ],
     caveats: overrides.warnings || ['Official integrations doctor mismatch'],
     warnings: [],
-    live: { sources: { warningCount: overrides.sourceWarnings ?? 0 } },
+    live: { sources: { warningCount: overrides.sourceWarnings ?? 0, freshness: { staleCount: overrides.sourceStaleCount ?? 0 } } },
   };
 }
 
@@ -239,12 +240,203 @@ async function testServiceSummaryDiffAndIncident() {
   assert.match(timeline.incidentBanner.detail, /Trust changed/);
 }
 
+async function testWorstRecentRegressionSurvivesCleanSnapshot() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '1,084 missing',
+    caveats: 4,
+    warnings: ['8 sources exceeded freshness thresholds.'],
+    refreshedAt: '2026-06-10T08:29:31.341Z',
+  }));
+  const recovered = await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:30:47.445Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.entries[0].trust.status, 'healthy');
+  assert.equal(timeline.incidentBanner.title, 'Worst recent regression still needs acknowledgement');
+  assert.match(timeline.incidentBanner.detail, /1,084 missing embeddings/);
+  assert.match(timeline.incidentBanner.detail, /8 stale sources/);
+  assert.equal(timeline.incidentBanner.snapshotId, timeline.entries[1].fingerprint);
+  assert.equal(recovered.timelineSummary.incidentBanner.snapshotId, timeline.entries[1].fingerprint);
+}
+
+async function testSourceWarningsAreNotReportedAsStaleSources() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live source warning',
+    caveats: 1,
+    sourceWarnings: 7,
+    warnings: ['7 live sources reported a warning status.'],
+    refreshedAt: '2026-06-10T08:29:31.341Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    caveats: 0,
+    sourceWarnings: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:30:47.445Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.title, 'Worst recent regression still needs acknowledgement');
+  assert.match(timeline.incidentBanner.detail, /1 caveat/);
+  assert.doesNotMatch(timeline.incidentBanner.detail, /stale source/i);
+}
+
+async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 60 * 60 * 1000 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T09:01:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T09:02:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+  const regressionEntries = timeline.entries.filter((entry) => entry.trust.status === 'warning');
+
+  assert.equal(regressionEntries.length, 2);
+  assert.notEqual(regressionEntries[0].id, regressionEntries[1].id);
+  assert.equal(regressionEntries[0].fingerprint, regressionEntries[1].fingerprint);
+  assert.equal(timeline.incidentBanner.snapshotId, regressionEntries[0].fingerprint);
+}
+
+async function testCurrentRegressionIsNotAcknowledgeableHistory() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Still degraded',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.title, 'Current regression needs attention');
+  assert.equal(timeline.incidentBanner.kind, 'active-regression');
+  assert.match(timeline.incidentBanner.detail, /2 missing embeddings/);
+  assert.equal(timeline.incidentBanners.length, 1);
+}
+
+async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Older severe regression',
+    embeddingsDetail: '20 missing',
+    caveats: 5,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Recovered',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:01:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Newer smaller regression',
+    embeddingsDetail: '1 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T09:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Recovered again',
+    embeddingsDetail: '0 missing',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T09:01:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+  const banners = buildTimelineIncidentBanners(timeline.entries);
+
+  assert.equal(timeline.incidentBanners.length, 2);
+  assert.equal(banners.length, 2);
+  assert.match(timeline.incidentBanners[0].detail, /20 missing embeddings/);
+  assert.match(timeline.incidentBanners[1].detail, /1 missing embedding/);
+}
+
+async function testRecoveredQueueRegressionStaysAcknowledgeable() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Queue stalled',
+    queue: '0 / 0 / 1',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Queue recovered',
+    queue: '0 / 0 / 0',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:01:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.kind, 'recent-regression');
+  assert.match(timeline.incidentBanner.detail, /queue 0 \/ 0 \/ 1/);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
   await testCaptureFailureIsWarningNotThrow();
   await testServiceDisabledContract();
   await testServiceSummaryDiffAndIncident();
+  await testWorstRecentRegressionSurvivesCleanSnapshot();
+  await testSourceWarningsAreNotReportedAsStaleSources();
+  await testRegressionAcknowledgementKeySurvivesHeartbeat();
+  await testCurrentRegressionIsNotAcknowledgeableHistory();
+  await testRecoveredRegressionListKeepsLaterIncidentsVisible();
+  await testRecoveredQueueRegressionStaysAcknowledgeable();
 
   console.log('gbrainTimeline tests passed');
 })();
