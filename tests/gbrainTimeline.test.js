@@ -398,6 +398,33 @@ async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
   assert.match(timeline.incidentBanners[1].detail, /1 missing embedding/);
 }
 
+async function testRecoveredQueueRegressionStaysAcknowledgeable() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Queue stalled',
+    queue: '0 / 0 / 1',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+  await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Queue recovered',
+    queue: '0 / 0 / 0',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:01:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.kind, 'recent-regression');
+  assert.match(timeline.incidentBanner.detail, /queue 0 \/ 0 \/ 1/);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
@@ -409,6 +436,7 @@ async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
   await testRegressionAcknowledgementKeySurvivesHeartbeat();
   await testCurrentRegressionIsNotAcknowledgeableHistory();
   await testRecoveredRegressionListKeepsLaterIncidentsVisible();
+  await testRecoveredQueueRegressionStaysAcknowledgeable();
 
   console.log('gbrainTimeline tests passed');
 })();

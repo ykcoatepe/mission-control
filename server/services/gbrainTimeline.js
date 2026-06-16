@@ -271,6 +271,11 @@ function parseTimelineCount(value, pattern) {
   return Number(String(match[1] || '').replace(/,/g, '')) || 0;
 }
 
+function parseQueueBacklog(value) {
+  const numbers = String(value || '').match(/\d+/g) || [];
+  return numbers.reduce((sum, item) => sum + (Number(item) || 0), 0);
+}
+
 function regressionSignals(entry) {
   const missingEmbeddings = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
   const stalePages = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
@@ -280,6 +285,7 @@ function regressionSignals(entry) {
     parseTimelineCount(warnings, /([\d,]+)\s+sources?\s+exceeded/i),
   );
   const caveats = Number(entry?.metrics?.caveats || 0) || 0;
+  const queueBacklog = parseQueueBacklog(entry?.metrics?.queue);
   const trustSeverity = severityRank(entry?.trust?.status);
   const sourceSeverity = severityRank(entry?.sourceFreshness?.status);
   const score = (trustSeverity * 1000)
@@ -287,13 +293,15 @@ function regressionSignals(entry) {
     + (missingEmbeddings * 10)
     + (stalePages * 5)
     + (staleSources * 100)
-    + (caveats * 20);
+    + (caveats * 20)
+    + (queueBacklog * 50);
   const details = [];
   if (missingEmbeddings > 0) details.push(`${missingEmbeddings.toLocaleString()} missing embeddings`);
   if (stalePages > 0) details.push(`${stalePages.toLocaleString()} stale pages`);
   if (staleSources > 0) details.push(`${staleSources.toLocaleString()} stale source${staleSources === 1 ? '' : 's'}`);
   if (caveats > 0) details.push(`${caveats.toLocaleString()} caveat${caveats === 1 ? '' : 's'}`);
-  return { score, missingEmbeddings, stalePages, staleSources, caveats, details };
+  if (queueBacklog > 0) details.push(`queue ${sanitizeTimelineText(entry?.metrics?.queue || queueBacklog)}`);
+  return { score, missingEmbeddings, stalePages, staleSources, caveats, queueBacklog, details };
 }
 
 function regressionBannerForEntry(entry, signals) {
@@ -364,7 +372,9 @@ function buildTimelineIncidentBanners(entries = []) {
   const activeIncident = buildIncidentBanner(current, previous);
   if (activeIncident) return [activeIncident];
   const currentRegression = buildActiveRegressionBanner(current);
-  if (currentRegression && current?.trust?.status !== 'healthy') return [currentRegression];
+  if (currentRegression && (current?.trust?.status !== 'healthy' || parseQueueBacklog(current?.metrics?.queue) > 0)) {
+    return [currentRegression];
+  }
   return buildRecentRegressionBanners(entries.slice(1));
 }
 
