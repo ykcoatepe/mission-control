@@ -334,6 +334,26 @@ async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
   assert.equal(timeline.incidentBanner.snapshotId, regressionEntries[0].fingerprint);
 }
 
+async function testCurrentRegressionIsNotAcknowledgeableHistory() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Still degraded',
+    embeddingsDetail: '2 missing',
+    caveats: 1,
+    refreshedAt: '2026-06-10T08:00:00.000Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.incidentBanner.title, 'Current regression needs attention');
+  assert.equal(timeline.incidentBanner.kind, 'active-regression');
+  assert.match(timeline.incidentBanner.detail, /2 missing embeddings/);
+  assert.equal(timeline.incidentBanners.length, 1);
+}
+
 async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
   const dir = tempDir();
   const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
@@ -387,6 +407,7 @@ async function testRecoveredRegressionListKeepsLaterIncidentsVisible() {
   await testWorstRecentRegressionSurvivesCleanSnapshot();
   await testSourceWarningsAreNotReportedAsStaleSources();
   await testRegressionAcknowledgementKeySurvivesHeartbeat();
+  await testCurrentRegressionIsNotAcknowledgeableHistory();
   await testRecoveredRegressionListKeepsLaterIncidentsVisible();
 
   console.log('gbrainTimeline tests passed');

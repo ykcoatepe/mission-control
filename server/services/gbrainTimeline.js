@@ -318,6 +318,18 @@ function buildWorstRecentRegressionBanner(entries = []) {
   return buildRecentRegressionBanners(entries)[0] || null;
 }
 
+function buildActiveRegressionBanner(entry) {
+  const signals = regressionSignals(entry);
+  if (!entry || signals.score <= 0 || !signals.details.length) return null;
+  return {
+    status: severityRank(entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
+    title: 'Current regression needs attention',
+    detail: `${signals.details.join(' / ')} at ${entry.capturedAt || 'unknown time'}.`,
+    snapshotId: snapshotAcknowledgementId(entry),
+    kind: 'active-regression',
+  };
+}
+
 function buildIncidentBanner(current, previous) {
   if (!current) return null;
   const reasons = [];
@@ -351,7 +363,9 @@ function buildTimelineIncidentBanners(entries = []) {
   const previous = entries[1];
   const activeIncident = buildIncidentBanner(current, previous);
   if (activeIncident) return [activeIncident];
-  return buildRecentRegressionBanners(entries);
+  const currentRegression = buildActiveRegressionBanner(current);
+  if (currentRegression && current?.trust?.status !== 'healthy') return [currentRegression];
+  return buildRecentRegressionBanners(entries.slice(1));
 }
 
 function summarizeTimeline(readResult, captureResult = {}) {
@@ -519,6 +533,7 @@ module.exports = {
   pruneTimeline,
   computeTrustDiff,
   buildIncidentBanner,
+  buildActiveRegressionBanner,
   buildRecentRegressionBanners,
   buildWorstRecentRegressionBanner,
   buildTimelineIncidentBanners,
