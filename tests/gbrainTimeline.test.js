@@ -239,12 +239,43 @@ async function testServiceSummaryDiffAndIncident() {
   assert.match(timeline.incidentBanner.detail, /Trust changed/);
 }
 
+async function testWorstRecentRegressionSurvivesCleanSnapshot() {
+  const dir = tempDir();
+  const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 1 });
+
+  await service.captureOverview(overview({
+    trustStatus: 'warning',
+    trustLabel: 'Live data stale',
+    embeddingsDetail: '1,084 missing',
+    caveats: 4,
+    warnings: ['8 sources exceeded freshness thresholds.'],
+    refreshedAt: '2026-06-10T08:29:31.341Z',
+  }));
+  const recovered = await service.captureOverview(overview({
+    trustStatus: 'healthy',
+    trustLabel: 'Live trusted',
+    caveats: 0,
+    warnings: [],
+    refreshedAt: '2026-06-10T08:30:47.445Z',
+  }));
+
+  const timeline = service.readTimeline({ limit: 50 });
+
+  assert.equal(timeline.entries[0].trust.status, 'healthy');
+  assert.equal(timeline.incidentBanner.title, 'Worst recent regression still needs acknowledgement');
+  assert.match(timeline.incidentBanner.detail, /1,084 missing embeddings/);
+  assert.match(timeline.incidentBanner.detail, /8 stale sources/);
+  assert.equal(timeline.incidentBanner.snapshotId, timeline.entries[1].id);
+  assert.equal(recovered.timelineSummary.incidentBanner.snapshotId, timeline.entries[1].id);
+}
+
 (async () => {
   await testCaptureSkipsDuplicateAndWritesHeartbeat();
   testPruneTimelineKeepsNewestEntries();
   await testCaptureFailureIsWarningNotThrow();
   await testServiceDisabledContract();
   await testServiceSummaryDiffAndIncident();
+  await testWorstRecentRegressionSurvivesCleanSnapshot();
 
   console.log('gbrainTimeline tests passed');
 })();

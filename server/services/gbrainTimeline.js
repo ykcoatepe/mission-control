@@ -259,6 +259,53 @@ function severityRank(status) {
   return { inactive: 0, healthy: 1, warning: 2, critical: 3 }[normalizeStatus(status)] || 0;
 }
 
+function parseTimelineCount(value, pattern) {
+  const match = String(value || '').match(pattern);
+  if (!match) return 0;
+  return Number(String(match[1] || '').replace(/,/g, '')) || 0;
+}
+
+function regressionSignals(entry) {
+  const missingEmbeddings = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
+  const stalePages = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
+  const warnings = Array.isArray(entry?.warnings) ? entry.warnings.join(' ') : '';
+  const staleSources = Math.max(
+    Number(entry?.sourceFreshness?.warningCount || 0),
+    parseTimelineCount(warnings, /([\d,]+)\s+sources?\s+exceeded/i),
+  );
+  const caveats = Number(entry?.metrics?.caveats || 0) || 0;
+  const trustSeverity = severityRank(entry?.trust?.status);
+  const sourceSeverity = severityRank(entry?.sourceFreshness?.status);
+  const score = (trustSeverity * 1000)
+    + (sourceSeverity * 500)
+    + (missingEmbeddings * 10)
+    + (stalePages * 5)
+    + (staleSources * 100)
+    + (caveats * 20);
+  const details = [];
+  if (missingEmbeddings > 0) details.push(`${missingEmbeddings.toLocaleString()} missing embeddings`);
+  if (stalePages > 0) details.push(`${stalePages.toLocaleString()} stale pages`);
+  if (staleSources > 0) details.push(`${staleSources.toLocaleString()} stale source${staleSources === 1 ? '' : 's'}`);
+  if (caveats > 0) details.push(`${caveats.toLocaleString()} caveat${caveats === 1 ? '' : 's'}`);
+  return { score, missingEmbeddings, stalePages, staleSources, caveats, details };
+}
+
+function buildWorstRecentRegressionBanner(entries = []) {
+  const worst = entries
+    .map((entry) => ({ entry, signals: regressionSignals(entry) }))
+    .filter((item) => item.signals.score > 0 && item.signals.details.length > 0)
+    .sort((a, b) => b.signals.score - a.signals.score)[0];
+
+  if (!worst) return null;
+  return {
+    status: severityRank(worst.entry.trust?.status) >= severityRank('critical') ? 'critical' : 'warning',
+    title: 'Worst recent regression still needs acknowledgement',
+    detail: `${worst.signals.details.join(' / ')} at ${worst.entry.capturedAt || 'unknown time'}.`,
+    snapshotId: worst.entry.id,
+    kind: 'recent-regression',
+  };
+}
+
 function buildIncidentBanner(current, previous) {
   if (!current) return null;
   const reasons = [];
@@ -283,11 +330,17 @@ function buildIncidentBanner(current, previous) {
   };
 }
 
+function buildTimelineIncidentBanner(entries = []) {
+  const current = entries[0];
+  const previous = entries[1];
+  return buildIncidentBanner(current, previous) || buildWorstRecentRegressionBanner(entries);
+}
+
 function summarizeTimeline(readResult, captureResult = {}) {
   const entries = readResult.entries || [];
   const [latest, previous] = entries;
   const diff = computeTrustDiff(latest, previous);
-  const incidentBanner = buildIncidentBanner(latest, previous);
+  const incidentBanner = buildTimelineIncidentBanner(entries);
   const warning = captureResult.warning || readResult.warnings?.[0] || '';
   return {
     enabled: true,
@@ -398,7 +451,7 @@ function createGBrainTimelineService(options = {}) {
         };
       }
       const capture = await captureSnapshotIfNeeded(overview, baseOptions);
-      const readResult = readTimeline({ ...baseOptions, limit: 2 });
+      const readResult = readTimeline({ ...baseOptions, limit: baseOptions.defaultLimit });
       return {
         overview,
         timelineSummary: summarizeTimeline(readResult, capture),
@@ -423,7 +476,7 @@ function createGBrainTimelineService(options = {}) {
       return {
         ...result,
         diff: computeTrustDiff(result.entries[0], result.entries[1]),
-        incidentBanner: buildIncidentBanner(result.entries[0], result.entries[1]),
+        incidentBanner: buildTimelineIncidentBanner(result.entries),
       };
     },
   };
@@ -442,6 +495,8 @@ module.exports = {
   pruneTimeline,
   computeTrustDiff,
   buildIncidentBanner,
+  buildWorstRecentRegressionBanner,
+  buildTimelineIncidentBanner,
   createGBrainTimelineService,
   timelinePathFor,
 };

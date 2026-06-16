@@ -17,6 +17,15 @@ function statusLabelText(status) {
   return 'not probed';
 }
 
+function featureGapDetail(featureGaps = {}) {
+  const warningCount = Number(featureGaps.blockingCount || 0);
+  const optionalCount = Number(featureGaps.optionalCount || 0);
+  const parts = [];
+  if (warningCount > 0) parts.push(`${warningCount} maintenance warning${warningCount === 1 ? '' : 's'}`);
+  if (optionalCount > 0) parts.push(`${optionalCount} optional feature${optionalCount === 1 ? '' : 's'}`);
+  return parts.length ? parts.join('; ') : 'no feature gaps';
+}
+
 function buildGBrainOverview(live = {}, extra = {}) {
   const liveHealth = live.health?.ok ? live.health : null;
   const liveSources = live.sources?.ok ? live.sources : null;
@@ -344,7 +353,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
       integration: {
         label: 'Integration health',
         value: `${integrationHealth.connectedCount}/${integrationHealth.systemCount} connected`,
-        detail: `${integrationHealth.toolContract.basePresentCount}/${integrationHealth.toolContract.baseRequiredCount} base tools; think ${statusLabelText(integrationHealth.thinkRuntime.status)}; ${integrationHealth.featureGaps.optionalCount} optional feature${integrationHealth.featureGaps.optionalCount === 1 ? '' : 's'}`,
+        detail: `${integrationHealth.toolContract.basePresentCount}/${integrationHealth.toolContract.baseRequiredCount} base tools; think ${statusLabelText(integrationHealth.thinkRuntime.status)}; ${featureGapDetail(integrationHealth.featureGaps)}`,
         status: integrationHealth.status,
         proofNodeId: 'gbrain-core',
       },
