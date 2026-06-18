@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Server, Activity, Boxes, Cpu, Gauge, HardDrive, RefreshCw, CircleAlert, Clock3, Settings2, Save, Wand2, Copy, ChevronDown, ChevronUp } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import StatusBadge from '../components/StatusBadge'
-import { useApi } from '../lib/hooks'
+import { fetchJson, useApi } from '../lib/hooks'
 import styles from './OllamaMonitor.module.css'
 
 type OllamaModel = {
@@ -138,6 +139,9 @@ type TokenUsageResponse = {
     refreshing?: boolean
     stale?: boolean
     ageMs?: number
+    refreshStartedAt?: string
+    preservedPreviousOpenClaw?: boolean
+    preservedPreviousUsage?: boolean
   }
 }
 
@@ -210,6 +214,10 @@ const STATUS_GREEN = '#32D74B'
 const STATUS_AMBER = '#FFD60A'
 const STATUS_RED = '#FF453A'
 const STATUS_GRAY = '#8E8E93'
+const TOKEN_USAGE_RETRY_INTERVAL_MS = 2500
+const TOKEN_USAGE_RETRY_LIMIT = 60
+const TOKEN_USAGE_RETRY_TIMEOUT_MS = TOKEN_USAGE_RETRY_INTERVAL_MS * TOKEN_USAGE_RETRY_LIMIT
+const TOKEN_USAGE_STEADY_REFRESH_MS = 60000
 
 function formatBytes(bytes?: number | null) {
   if (!Number.isFinite(bytes || NaN) || (bytes || 0) <= 0) return '—'
@@ -336,6 +344,24 @@ function aggregateLocalTokenUsage(services: TokenServiceUsage[] = []) {
   return usage
 }
 
+function isPreservedTokenUsageCache(tokens?: TokenUsageResponse | null) {
+  return !!(
+    tokens?.meta?.stale &&
+    !tokens.meta.refreshing &&
+    (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousUsage)
+  )
+}
+
+function shouldRetryTokenUsageFast(tokens?: TokenUsageResponse | null) {
+  if (!tokens) return true
+  if (isPreservedTokenUsageCache(tokens)) return false
+  return (
+    tokens.source === 'sessions.fast_fallback' ||
+    !!tokens.meta?.refreshing ||
+    !!tokens.meta?.stale
+  )
+}
+
 function modelTelemetryLabels(estimated?: boolean) {
   if (!estimated) {
     return {
@@ -357,8 +383,8 @@ function modelTelemetryLabels(estimated?: boolean) {
     error: 'Status error pressure',
     errorShort: 'Err pressure',
     latency: 'Probe p95',
-    source: 'Estimated telemetry',
-    note: 'Estimated from monitor snapshots and Ollama health probes; this is not a real request log.',
+    source: 'Monitor samples',
+    note: 'Derived from Mission Control snapshots and Ollama health probes; this is not a request log.',
   }
 }
 
@@ -474,17 +500,55 @@ function OllamaLoadingState() {
 }
 
 export default function OllamaMonitor() {
-  const { data, loading, error, refetch } = useApi<OllamaTelemetry>('/api/ollama/telemetry', 2500)
-  const { data: historyData } = useApi<OllamaTelemetryHistoryResponse>('/api/ollama/telemetry/history', 5000)
-  const { data: modelTelemetryData } = useApi<OllamaModelTelemetryResponse>('/api/ollama/telemetry/models', 5000)
+  const { data, loading, error, refetch: refetchTelemetry } = useApi<OllamaTelemetry>('/api/ollama/telemetry', 2500)
+  const { data: historyData, refetch: refetchHistory } = useApi<OllamaTelemetryHistoryResponse>('/api/ollama/telemetry/history', 5000)
+  const { data: modelTelemetryData, refetch: refetchModelTelemetry } = useApi<OllamaModelTelemetryResponse>('/api/ollama/telemetry/models', 5000)
   const [usagePeriod, setUsagePeriod] = useState<'day' | '7d' | 'month'>('month')
-  const { data: tokenUsageData } = useApi<TokenUsageResponse>(`/api/costs?period=${usagePeriod}`, 60000)
+  const tokenUsageRetry = useRef<{ key: string; startedAt: number } | null>(null)
+  const tokenUsageUrl = `/api/costs?period=${usagePeriod}`
+  const tokenUsageQuery = useQuery<TokenUsageResponse, Error>({
+    queryKey: ['api', tokenUsageUrl],
+    queryFn: () => fetchJson<TokenUsageResponse>(tokenUsageUrl),
+    refetchInterval: (query) => {
+      const tokens = query.state.data as TokenUsageResponse | undefined
+      if (!shouldRetryTokenUsageFast(tokens)) {
+        tokenUsageRetry.current = null
+        return TOKEN_USAGE_STEADY_REFRESH_MS
+      }
+
+      const retryKey = [
+        usagePeriod,
+        tokens?.source || 'pending',
+        tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',
+      ].join(':')
+      const now = Date.now()
+      if (tokenUsageRetry.current?.key !== retryKey) {
+        tokenUsageRetry.current = { key: retryKey, startedAt: now }
+      }
+
+      return now - tokenUsageRetry.current.startedAt < TOKEN_USAGE_RETRY_TIMEOUT_MS
+        ? TOKEN_USAGE_RETRY_INTERVAL_MS
+        : TOKEN_USAGE_STEADY_REFRESH_MS
+    },
+    refetchOnWindowFocus: false,
+  })
   const [optimizationProfile, setOptimizationProfile] = useState<OllamaOptimizationProfile | null>(null)
   const [isSavingOptimization, setIsSavingOptimization] = useState(false)
   const [optimizationMessage, setOptimizationMessage] = useState('')
   const [optimizationDirty, setOptimizationDirty] = useState(false)
   const [isRollingBackOptimization, setIsRollingBackOptimization] = useState(false)
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({})
+
+  const tokenUsageData = tokenUsageQuery.data ?? null
+  const tokenUsageError = tokenUsageQuery.error ? String(tokenUsageQuery.error.message || 'Unknown error') : null
+  const tokenUsageFastRetrying = !tokenUsageError && shouldRetryTokenUsageFast(tokenUsageData)
+  const tokenUsageBadgeLabel = !tokenUsageData && tokenUsageQuery.isFetching
+    ? 'token usage loading'
+    : tokenUsageFastRetrying
+      ? 'token usage refreshing'
+      : tokenUsageQuery.isFetching
+        ? 'token usage updating'
+        : ''
 
   const models = useMemo(() => data?.models || [], [data?.models])
   const modelMetrics = useMemo(() => modelTelemetryData?.models || [], [modelTelemetryData?.models])
@@ -621,6 +685,15 @@ export default function OllamaMonitor() {
     setTimeout(() => setOptimizationMessage(''), 2500)
   }
 
+  const handleRefresh = async () => {
+    await Promise.all([
+      refetchTelemetry(),
+      refetchHistory(),
+      refetchModelTelemetry(),
+      tokenUsageQuery.refetch(),
+    ])
+  }
+
   const handleSaveOptimization = async () => {
     if (!activeOptimizationProfile) return
     setIsSavingOptimization(true)
@@ -660,7 +733,7 @@ export default function OllamaMonitor() {
       const verifyOk = applied?.verification?.ok ? 'OK' : 'FAIL'
       setOptimizationDirty(false)
       setOptimizationMessage(`Settings applied. Post-apply verify: ${verifyOk}${applied?.verification?.latencyMs ? ` (${applied.verification.latencyMs}ms)` : ''}.`)
-      await refetch()
+      await handleRefresh()
     } catch (err: unknown) {
       setOptimizationMessage(errorMessage(err, 'Save failed'))
     } finally {
@@ -690,7 +763,7 @@ export default function OllamaMonitor() {
       const rolled = await response.json()
       setOptimizationDirty(false)
       setOptimizationMessage(`Rollback complete. Verify: ${rolled?.verification?.ok ? 'OK' : 'FAIL'}`)
-      await refetch()
+      await handleRefresh()
     } catch (err: unknown) {
       setOptimizationMessage(errorMessage(err, 'Rollback failed'))
     } finally {
@@ -724,7 +797,7 @@ export default function OllamaMonitor() {
         <div className={styles.errorWrap}>
           <CircleAlert size={48} />
           <p>{error || 'Could not load Ollama telemetry'}</p>
-          <button className={styles.retryButton} onClick={() => refetch()}>
+          <button className={styles.retryButton} onClick={() => refetchTelemetry()}>
             Retry
           </button>
         </div>
@@ -797,7 +870,7 @@ export default function OllamaMonitor() {
             </div>
             <p className={styles.subtitle}>Local inference health, loaded models, and hardware headroom in one operational surface.</p>
           </div>
-          <button className={styles.refreshButton} onClick={() => refetch()}>
+          <button className={styles.refreshButton} onClick={handleRefresh}>
             <RefreshCw size={14} />
             Refresh
           </button>
@@ -1097,8 +1170,8 @@ export default function OllamaMonitor() {
           <div className={styles.panelHeader}>
             <div className={styles.panelTitle}>
               <Server size={15} /> Models
-              {modelTelemetryIsEstimated ? <span className={styles.modelBadge}>estimated telemetry</span> : null}
-              {tokenUsageData?.meta?.refreshing ? <span className={`${styles.modelBadge} ${styles.modelBadgeInfo}`}>token usage refreshing</span> : null}
+              {modelTelemetryIsEstimated ? <span className={styles.modelBadge}>monitor samples</span> : null}
+              {tokenUsageBadgeLabel ? <span className={`${styles.modelBadge} ${styles.modelBadgeInfo}`}>{tokenUsageBadgeLabel}</span> : null}
             </div>
             <div className={styles.modelControls}>
               <select
@@ -1146,11 +1219,29 @@ export default function OllamaMonitor() {
               </div>
             ) : null}
 
+            {tokenUsageError ? (
+              <div className={`${styles.infoStrip} ${styles.infoStripWarn}`}>
+                <CircleAlert size={13} />
+                <span>
+                  <strong>Token usage unavailable</strong> · {tokenUsageError}
+                </span>
+              </div>
+            ) : null}
+
+            {!tokenUsageData && tokenUsageQuery.isFetching && !tokenUsageError ? (
+              <div className={styles.infoStrip}>
+                <Clock3 size={13} />
+                <span>
+                  <strong>Token usage · {periodLabel}</strong> · loading current usage snapshot
+                </span>
+              </div>
+            ) : null}
+
             {tokenUsageData ? (
               <div className={`${styles.infoStrip} ${tokenUsageData.meta?.stale ? styles.infoStripWarn : ''}`}>
                 <Clock3 size={13} />
                 <span>
-                  <strong>Token usage · {periodLabel}</strong> · {tokenUsageData.source || 'unknown'} · updated {formatTime(tokenUsageData.meta?.updatedAt)}{tokenUsageData.meta?.stale ? ' · stale cache' : ''}
+                  <strong>Token usage · {periodLabel}</strong> · {tokenUsageData.source || 'unknown'} · updated {formatTime(tokenUsageData.meta?.updatedAt)}{tokenUsageData.meta?.refreshing ? ' · refreshing' : ''}{tokenUsageData.meta?.stale ? ' · stale cache' : ''}
                 </span>
               </div>
             ) : null}
