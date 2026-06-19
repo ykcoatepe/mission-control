@@ -56,4 +56,13 @@ assert.ok(
   'Ollama model telemetry endpoint should prime the telemetry cache before returning estimated model samples',
 );
 
+const modelTelemetryRoute = routeSource.match(/router\.get\('\/api\/ollama\/telemetry\/models'[\s\S]*?\n  \}\);/);
+assert.ok(
+  routeSource.includes("Object.defineProperty(payload, 'allowedOllamaModels'") &&
+    modelTelemetryRoute &&
+    modelTelemetryRoute[0].includes('telemetry?.allowedOllamaModels instanceof Set') &&
+    !modelTelemetryRoute[0].includes('await getAllowedOllamaModels()'),
+  'Ollama model telemetry endpoint should reuse the allowed-model result from the telemetry payload',
+);
+
 console.log('ollama monitor behavior guards passed');

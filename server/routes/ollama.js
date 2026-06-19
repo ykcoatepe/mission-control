@@ -455,6 +455,10 @@ function buildOllamaRouter({
         devices: [],
       },
     };
+    Object.defineProperty(payload, 'allowedOllamaModels', {
+      value: allowedOllamaModels,
+      enumerable: false,
+    });
 
     recordModelTelemetry(visibleModels, payload);
     appendOllamaHistory({
@@ -518,8 +522,8 @@ function buildOllamaRouter({
 
   router.get('/api/ollama/telemetry/models', async (req, res) => {
     try {
-      await getOllamaTelemetryPayload();
-      const allowed = await getAllowedOllamaModels();
+      const telemetry = await getOllamaTelemetryPayload();
+      const allowed = telemetry?.allowedOllamaModels instanceof Set ? telemetry.allowedOllamaModels : null;
       return res.json(getModelTelemetrySnapshot(allowed));
     } catch (error) {
       console.error('[Ollama model telemetry API]', error.message);
