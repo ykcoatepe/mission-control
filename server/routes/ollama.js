@@ -11,6 +11,7 @@ const OLLAMA_MODEL_WINDOW_POINTS = 360;
 
 let ollamaTelemetryCache = null;
 let ollamaTelemetryCacheAt = 0;
+let ollamaTelemetryRefresh = null;
 let ollamaHistory = [];
 const ollamaModelSeries = new Map();
 let ollamaOptimizationBackup = null;
@@ -323,15 +324,10 @@ function buildOllamaRouter({
     }
   }
 
-  router.get('/api/ollama/telemetry', async (req, res) => {
-    const now = Date.now();
-    if (ollamaTelemetryCache && now - ollamaTelemetryCacheAt <= OLLAMA_TELEMETRY_TTL_MS) {
-      return res.json(ollamaTelemetryCache);
-    }
-
+  async function buildOllamaTelemetryPayload() {
     const cfg = getOllamaConfig();
     if (!cfg.enabled) {
-      return res.json({
+      return {
         generatedAt: new Date().toISOString(),
         healthScore: 0,
         alerts: [{ code: 'OLLAMA_DISABLED', severity: 'warning', message: 'Ollama monitor disabled in config', triggeredAt: new Date().toISOString(), suppressed: false, cooldownUntil: new Date().toISOString() }],
@@ -340,7 +336,7 @@ function buildOllamaRouter({
         models: [],
         optimization: { enabled: cfg.optimization.enabled, current: cfg.optimization, recommendation: cfg.optimization, applyCommands: getApplyCommands(cfg.optimization), platform: process.platform },
         system: { cpu: { cores: 0, load1: 0, load5: 0, load15: 0, usagePercent: 0 }, memory: { totalBytes: 0, freeBytes: 0, usedBytes: 0, usedPercent: 0 }, node: { uptimeSeconds: process.uptime() }, measuredAt: new Date().toISOString() },
-      });
+      };
     }
 
     const [psResult, tagsResult, versionResult] = await Promise.all([
@@ -459,6 +455,10 @@ function buildOllamaRouter({
         devices: [],
       },
     };
+    Object.defineProperty(payload, 'allowedOllamaModels', {
+      value: allowedOllamaModels,
+      enumerable: false,
+    });
 
     recordModelTelemetry(visibleModels, payload);
     appendOllamaHistory({
@@ -481,9 +481,39 @@ function buildOllamaRouter({
       alerts: payload.alerts,
     });
 
-    ollamaTelemetryCache = payload;
-    ollamaTelemetryCacheAt = Date.now();
-    return res.json(payload);
+    return payload;
+  }
+
+  async function getOllamaTelemetryPayload({ allowCache = true } = {}) {
+    const now = Date.now();
+    if (allowCache && ollamaTelemetryCache && now - ollamaTelemetryCacheAt <= OLLAMA_TELEMETRY_TTL_MS) {
+      return ollamaTelemetryCache;
+    }
+
+    if (ollamaTelemetryRefresh) {
+      return ollamaTelemetryRefresh;
+    }
+
+    ollamaTelemetryRefresh = buildOllamaTelemetryPayload()
+      .then((payload) => {
+        ollamaTelemetryCache = payload;
+        ollamaTelemetryCacheAt = Date.now();
+        return payload;
+      })
+      .finally(() => {
+        ollamaTelemetryRefresh = null;
+      });
+
+    return ollamaTelemetryRefresh;
+  }
+
+  router.get('/api/ollama/telemetry', async (req, res) => {
+    try {
+      return res.json(await getOllamaTelemetryPayload());
+    } catch (error) {
+      console.error('[Ollama telemetry API]', error.message);
+      return res.status(500).json({ error: error.message || 'Failed to load Ollama telemetry' });
+    }
   });
 
   router.get('/api/ollama/telemetry/history', (req, res) => {
@@ -491,8 +521,14 @@ function buildOllamaRouter({
   });
 
   router.get('/api/ollama/telemetry/models', async (req, res) => {
-    const allowed = await getAllowedOllamaModels();
-    return res.json(getModelTelemetrySnapshot(allowed));
+    try {
+      const telemetry = await getOllamaTelemetryPayload();
+      const allowed = telemetry?.allowedOllamaModels instanceof Set ? telemetry.allowedOllamaModels : null;
+      return res.json(getModelTelemetrySnapshot(allowed));
+    } catch (error) {
+      console.error('[Ollama model telemetry API]', error.message);
+      return res.status(500).json({ error: error.message || 'Failed to load Ollama model telemetry' });
+    }
   });
 
   router.post('/api/ollama/optimization', async (req, res) => {
