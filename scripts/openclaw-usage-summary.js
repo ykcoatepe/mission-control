@@ -14,6 +14,20 @@ const readline = require('node:readline');
 const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
+const SESSION_BUCKETS = [
+  {
+    key: 'openclaw',
+    label: 'OpenClaw',
+    accent: '#5E5CE6',
+    source: 'openclaw.direct_sessions',
+  },
+  {
+    key: 'codex_app',
+    label: 'Codex App Sessions',
+    accent: '#64D2FF',
+    source: 'openclaw.codex_app_sessions',
+  },
+];
 
 function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
@@ -60,6 +74,13 @@ function modelName(provider, model) {
   if (!p) return m;
   if (!m) return p;
   return `${p}/${m}`;
+}
+
+function sessionBucketForKey(sessionKey) {
+  const normalized = String(sessionKey || '').split(path.sep).join('/');
+  return normalized.includes('/agent/codex-home/sessions/')
+    ? SESSION_BUCKETS[1]
+    : SESSION_BUCKETS[0];
 }
 
 function usageCostTotal(cost) {
@@ -226,55 +247,67 @@ function createTotalsBucket(name) {
   return { name, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, sessionKeys: new Set() };
 }
 
-async function buildForPeriod(period) {
-  const r = rangeForPeriod(period);
-  const { records, filesScanned, filesAvailable } = await scanUsageRecords(r);
-  const dailyMap = new Map(r.keys.map((date) => [date, {
-    date,
-    cost: 0,
-    totalCost: 0,
-    tokens: 0,
-    totalTokens: 0,
-    input: 0,
-    output: 0,
-    cacheRead: 0,
-    cacheWrite: 0,
-  }]));
-  const modelTotals = new Map();
-  const modelDailyTotals = new Map();
+function createAccumulator(keys) {
+  return {
+    recordsScanned: 0,
+    dailyMap: new Map(keys.map((date) => [date, {
+      date,
+      cost: 0,
+      totalCost: 0,
+      tokens: 0,
+      totalTokens: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+    }])),
+    modelTotals: new Map(),
+    modelDailyTotals: new Map(),
+  };
+}
 
-  for (const record of records) {
-    const daily = dailyMap.get(record.date);
-    if (!daily) continue;
-    daily.cost += record.totalCost;
-    daily.totalCost = daily.cost;
-    daily.tokens += record.totalTokens;
-    daily.totalTokens = daily.tokens;
-    daily.input += record.input;
-    daily.output += record.output;
-    daily.cacheRead += record.cacheRead;
-    daily.cacheWrite += record.cacheWrite;
+function addRecord(accumulator, record) {
+  const daily = accumulator.dailyMap.get(record.date);
+  if (!daily) return;
+  accumulator.recordsScanned += 1;
+  daily.cost += record.totalCost;
+  daily.totalCost = daily.cost;
+  daily.tokens += record.totalTokens;
+  daily.totalTokens = daily.tokens;
+  daily.input += record.input;
+  daily.output += record.output;
+  daily.cacheRead += record.cacheRead;
+  daily.cacheWrite += record.cacheWrite;
 
-    const name = modelName(record.provider, record.model);
-    const model = modelTotals.get(name) || createTotalsBucket(name);
-    model.cost += record.totalCost;
-    model.tokens += record.totalTokens;
-    model.input += record.input;
-    model.output += record.output;
-    model.cacheRead += record.cacheRead;
-    model.cacheWrite += record.cacheWrite;
-    if (record.sessionKey) model.sessionKeys.add(record.sessionKey);
-    modelTotals.set(name, model);
+  const name = modelName(record.provider, record.model);
+  const model = accumulator.modelTotals.get(name) || createTotalsBucket(name);
+  model.cost += record.totalCost;
+  model.tokens += record.totalTokens;
+  model.input += record.input;
+  model.output += record.output;
+  model.cacheRead += record.cacheRead;
+  model.cacheWrite += record.cacheWrite;
+  if (record.sessionKey) model.sessionKeys.add(record.sessionKey);
+  accumulator.modelTotals.set(name, model);
 
-    const dailyKey = `${record.date}::${name}`;
-    const dailyModel = modelDailyTotals.get(dailyKey) || { date: record.date, name, cost: 0, tokens: 0 };
-    dailyModel.cost += record.totalCost;
-    dailyModel.tokens += record.totalTokens;
-    modelDailyTotals.set(dailyKey, dailyModel);
-  }
+  const dailyKey = `${record.date}::${name}`;
+  const dailyModel = accumulator.modelDailyTotals.get(dailyKey) || { date: record.date, name, cost: 0, tokens: 0 };
+  dailyModel.cost += record.totalCost;
+  dailyModel.tokens += record.totalTokens;
+  accumulator.modelDailyTotals.set(dailyKey, dailyModel);
+}
 
-  const daily = r.keys.map((date) => dailyMap.get(date));
-  let byServiceList = Array.from(modelTotals.values())
+function buildUsageFromAccumulator({
+  accumulator,
+  period,
+  range,
+  source,
+  note,
+  filesScanned,
+  filesAvailable,
+}) {
+  const daily = range.keys.map((date) => accumulator.dailyMap.get(date));
+  let byServiceList = Array.from(accumulator.modelTotals.values())
     .filter((item) => item.tokens > 0 || item.cost > 0)
     .sort((a, b) => b.tokens - a.tokens)
     .map((item) => {
@@ -298,7 +331,7 @@ async function buildForPeriod(period) {
     const out = { date: row.date, totalCost: row.cost, totalTokens: row.tokens };
     for (const svc of byServiceList) {
       const key = `${row.date}::${svc.name}`;
-      const b = modelDailyTotals.get(key) || { cost: 0, tokens: 0 };
+      const b = accumulator.modelDailyTotals.get(key) || { cost: 0, tokens: 0 };
       out[svc.name] = Number(b.cost || 0);
       out[`${svc.name}_tokens`] = Number(b.tokens || 0);
       out[`${svc.name}_costSource`] = svc.costSource || (b.cost > 0 ? 'api' : 'unknown');
@@ -317,9 +350,9 @@ async function buildForPeriod(period) {
   const thisWeekRows = daily.slice(-7);
 
   return costSanity.normalizeUsageCosts({
-    source: 'openclaw.session_jsonl_fast_scan',
+    source,
     period,
-    periodRange: { start: r.startKey, end: r.endKey },
+    periodRange: { start: range.startKey, end: range.endKey },
     summary: {
       periodUsd: daily.reduce((sum, d) => sum + Number(d.cost || 0), 0),
       previousPeriodUsd: 0,
@@ -333,8 +366,8 @@ async function buildForPeriod(period) {
       thisWeekTokens: thisWeekRows.reduce((sum, d) => sum + Number(d.tokens || 0), 0),
       thisMonthTokens: thisMonthRows.reduce((sum, d) => sum + Number(d.tokens || 0), 0),
       totalTokens: thisMonthRows.reduce((sum, d) => sum + Number(d.tokens || 0), 0),
-      note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files)`,
-      recordsScanned: records.length,
+      note,
+      recordsScanned: accumulator.recordsScanned,
       filesScanned,
       filesAvailable,
     },
@@ -343,6 +376,56 @@ async function buildForPeriod(period) {
     modelKeys: byServiceList.map((item) => item.name),
     byService: byServiceList,
   });
+}
+
+async function buildForPeriod(period) {
+  const r = rangeForPeriod(period);
+  const { records, filesScanned, filesAvailable } = await scanUsageRecords(r);
+  const combinedAccumulator = createAccumulator(r.keys);
+  const bucketAccumulators = new Map(SESSION_BUCKETS.map((bucket) => [bucket.key, createAccumulator(r.keys)]));
+
+  for (const record of records) {
+    addRecord(combinedAccumulator, record);
+    const bucket = sessionBucketForKey(record.sessionKey);
+    addRecord(bucketAccumulators.get(bucket.key), record);
+  }
+
+  const combined = buildUsageFromAccumulator({
+    accumulator: combinedAccumulator,
+    period,
+    range: r,
+    source: 'openclaw.session_jsonl_fast_scan',
+    note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files)`,
+    filesScanned,
+    filesAvailable,
+  });
+
+  combined.agents = SESSION_BUCKETS.map((bucket) => {
+    const usage = buildUsageFromAccumulator({
+      accumulator: bucketAccumulators.get(bucket.key),
+      period,
+      range: r,
+      source: bucket.source,
+      note: `Source: ${bucket.label} JSONL fast scan (${bucketAccumulators.get(bucket.key).recordsScanned} usage records)`,
+      filesScanned,
+      filesAvailable,
+    });
+
+    return {
+      key: bucket.key,
+      label: bucket.label,
+      accent: bucket.accent,
+      source: bucket.source,
+      status: 'ready',
+      summary: usage.summary,
+      daily: usage.daily,
+      dailyByModel: usage.dailyByModel,
+      modelKeys: usage.modelKeys,
+      byService: usage.byService,
+    };
+  });
+
+  return combined;
 }
 
 async function main() {
@@ -362,4 +445,5 @@ module.exports = {
   buildForPeriod,
   extractUsageRecord,
   listSessionFiles,
+  sessionBucketForKey,
 };

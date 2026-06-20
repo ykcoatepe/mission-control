@@ -263,8 +263,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     }
   }
 
-  function namespaceUsage(data, label) {
+  function namespaceUsage(data, agent) {
     if (!data) return null;
+    const label = agent.label;
     const prefix = `${label} / `;
     const byService = (data.byService || []).map((item) => ({ ...item, name: `${prefix}${item.name}`, agent: label }));
     const modelKeys = byService.map((item) => item.name);
@@ -278,7 +279,43 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       });
       return out;
     });
-    return { ...data, byService, modelKeys, dailyByModel };
+    return {
+      ...data,
+      byService,
+      modelKeys,
+      dailyByModel,
+      agent: {
+        key: agent.key,
+        label,
+        accent: agent.accent,
+        source: agent.source || data.source,
+        status: agent.status || 'ready',
+        summary: data.summary || {},
+        byService,
+      },
+    };
+  }
+
+  function sourceEntriesFromUsage(data, fallbackAgent) {
+    if (!data) return [];
+    if (Array.isArray(data.agents) && data.agents.length > 0) {
+      return data.agents.map((agent) => namespaceUsage({
+        source: agent.source || data.source,
+        period: data.period,
+        periodRange: data.periodRange,
+        summary: agent.summary || {},
+        daily: agent.daily || [],
+        dailyByModel: agent.dailyByModel || [],
+        modelKeys: agent.modelKeys || (agent.byService || []).map((item) => item.name),
+        byService: agent.byService || [],
+      }, {
+        ...fallbackAgent,
+        ...agent,
+        source: agent.source || data.source || fallbackAgent.source,
+        status: agent.status || fallbackAgent.status || 'ready',
+      }));
+    }
+    return [namespaceUsage(data, fallbackAgent)];
   }
 
   function emptyUsage(period, source) {
@@ -315,8 +352,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     if (!openclawData && !hermesData) return null;
 
     const sources = [
-      openclawData ? namespaceUsage(openclawData, 'OpenClaw') : null,
-      hermesData ? namespaceUsage(hermesData, 'Hermes') : null,
+      ...sourceEntriesFromUsage(openclawData, { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: 'openclaw.usage', status: 'ready' }),
+      ...sourceEntriesFromUsage(hermesData, { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: 'hermes.state.db', status: 'ready' }),
     ].filter(Boolean);
     if (!sources.length) return null;
 
@@ -357,10 +394,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     });
 
     const sumSummary = (field) => sources.reduce((sum, src) => sum + Number(src.summary?.[field] || 0), 0);
-    const agents = [
-      openclawData ? { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: openclawData.source || 'openclaw.usage', status: 'ready', summary: openclawData.summary || {}, byService: namespaceUsage(openclawData, 'OpenClaw')?.byService || [] } : null,
-      hermesData ? { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: hermesData.source || 'hermes.state.db', status: 'ready', summary: hermesData.summary || {}, byService: namespaceUsage(hermesData, 'Hermes')?.byService || [] } : null,
-    ].filter(Boolean);
+    const agents = sources.map((src) => src.agent).filter(Boolean);
 
     return {
       source: 'combined.agent_usage',
@@ -468,12 +502,17 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
-  function cachedOpenClawUsage(previous, period) {
-    const openclawAgent = previous?.agents?.find((agent) => agent.key === 'openclaw');
-    if (!openclawAgent) return null;
+  function isOpenClawDerivedAgent(agent) {
+    const key = String(agent?.key || '').toLowerCase();
+    const source = String(agent?.source || '').toLowerCase();
+    return key === 'openclaw' || key === 'codex_app' || source.startsWith('openclaw.');
+  }
 
-    const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith('OpenClaw / '));
-    const modelKeys = prefixedModelKeys.map((key) => key.replace(/^OpenClaw \/ /, ''));
+  function cachedUsageAgent(previous, agent) {
+    if (!agent?.label) return null;
+    const prefix = `${agent.label} / `;
+    const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith(prefix));
+    const modelKeys = prefixedModelKeys.map((key) => key.replace(prefix, ''));
     const dailyByModel = (previous.dailyByModel || []).map((row) => {
       const out = { date: row.date, totalCost: 0, totalTokens: 0 };
       prefixedModelKeys.forEach((prefixedKey, index) => {
@@ -500,21 +539,63 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       cacheWrite: 0,
     }));
     const byService = (previous.byService || [])
-      .filter((item) => item.agent === 'OpenClaw' || String(item.name || '').startsWith('OpenClaw / '))
-      .map((item) => ({ ...item, name: String(item.name || '').replace(/^OpenClaw \/ /, '') }));
+      .filter((item) => item.agent === agent.label || String(item.name || '').startsWith(prefix))
+      .map((item) => ({ ...item, name: String(item.name || '').replace(prefix, '') }));
 
     return {
-      source: `${openclawAgent.source || 'openclaw.usage'}.cached`,
-      period,
-      periodRange: {
-        start: previous.period?.start || daily[0]?.date || null,
-        end: previous.period?.end || daily[daily.length - 1]?.date || null,
-      },
-      summary: openclawAgent.summary || {},
+      key: agent.key,
+      label: agent.label,
+      accent: agent.accent,
+      source: `${agent.source || 'openclaw.usage'}.cached`,
+      status: 'ready',
+      summary: agent.summary || {},
       daily,
       dailyByModel,
       modelKeys,
       byService,
+    };
+  }
+
+  function cachedOpenClawUsage(previous, period) {
+    const agents = (previous?.agents || [])
+      .filter(isOpenClawDerivedAgent)
+      .map((agent) => cachedUsageAgent(previous, agent))
+      .filter(Boolean);
+    if (!agents.length) return null;
+
+    const dailyByDate = new Map();
+    agents.forEach((agent) => {
+      (agent.daily || []).forEach((row) => {
+        const current = dailyByDate.get(row.date) || { date: row.date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0 };
+        current.cost += Number(row.cost || row.totalCost || 0);
+        current.totalCost = current.cost;
+        current.tokens += Number(row.tokens || row.totalTokens || 0);
+        current.totalTokens = current.tokens;
+        dailyByDate.set(row.date, current);
+      });
+    });
+    const daily = Array.from(dailyByDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const summary = {
+      periodTokens: agents.reduce((sum, agent) => sum + Number(agent.summary?.periodTokens || 0), 0),
+      totalTokens: agents.reduce((sum, agent) => sum + Number(agent.summary?.totalTokens || 0), 0),
+      periodUsd: agents.reduce((sum, agent) => sum + Number(agent.summary?.periodUsd || 0), 0),
+      totalUsd: agents.reduce((sum, agent) => sum + Number(agent.summary?.totalUsd || 0), 0),
+      note: 'Cached OpenClaw-derived usage split from previous detailed result',
+    };
+
+    return {
+      source: 'openclaw.usage.cached',
+      period,
+      periodRange: {
+        start: previous?.period?.start || daily[0]?.date || null,
+        end: previous?.period?.end || daily[daily.length - 1]?.date || null,
+      },
+      summary,
+      daily,
+      dailyByModel: [],
+      modelKeys: [],
+      byService: [],
+      agents,
     };
   }
 
@@ -556,7 +637,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           const combinedUsage = mergeUsage(openclawData, hermesData, period);
           if (combinedUsage) {
             const previous = costsCache.get(cacheKey)?.value;
-            const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => agent.key === 'openclaw' && Number(agent.summary?.periodTokens || 0) > 0);
+            const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
             if (!openclawData && hasPreviousOpenClaw) {
               const cachedOpenClawData = cachedOpenClawUsage(previous, period);
               const usageWithCachedOpenClaw = mergeUsage(cachedOpenClawData, hermesData, period);
