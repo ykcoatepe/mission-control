@@ -42,7 +42,7 @@ export default function AgentSplitCard({
             <div className={styles.subtitle}>
               {agentSplitPending
                 ? `Refreshing Agent Split for the selected ${activePeriodLabel.toLowerCase()} period…`
-                : `Showing OpenClaw vs Hermes for the loaded ${agentSplitPeriodLabel.toLowerCase()} period.`}
+                : `Showing agent/session split for the loaded ${agentSplitPeriodLabel.toLowerCase()} period.`}
             </div>
           </div>
           {!agentSplitPending && (
@@ -67,7 +67,7 @@ export default function AgentSplitCard({
                     Loading {activePeriodLabel} split
                   </div>
                   <div className={styles.pendingSubtitle}>
-                    Fetching fresh OpenClaw vs Hermes usage — old {agentSplitPeriodLabel.toLowerCase()} values are hidden.
+                    Fetching fresh agent/session usage — old {agentSplitPeriodLabel.toLowerCase()} values are hidden.
                   </div>
                 </div>
               </div>
@@ -76,9 +76,9 @@ export default function AgentSplitCard({
 
             <div
               className={styles.pendingGrid}
-              style={{ gridTemplateColumns: m ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}
+              style={{ gridTemplateColumns: m ? '1fr' : 'repeat(3, minmax(0, 1fr))' }}
             >
-              {['OpenClaw', 'Hermes'].map((label, index) => (
+              {['OpenClaw', 'Codex App Sessions', 'Hermes'].map((label, index) => (
                 <div
                   key={label}
                   className={m ? `${styles.pendingAgentCell} ${styles.pendingAgentCellMobile}` : styles.pendingAgentCell}

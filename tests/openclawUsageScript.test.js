@@ -92,6 +92,10 @@ async function runBehaviorTests() {
     assert.equal(summary.summary.recordsScanned, 3, 'usage records should come from both supported JSONL shapes');
     assert.equal(summary.summary.periodTokens, 41, 'message and token_count usage records should contribute to totals');
     assert.equal(summary.byService[0].sessions, 1, 'multiple usage records in one file should count as one session');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
+    assert.equal(codexAppAgent.summary.periodTokens, 41, 'nested codex-home sessions should be split into Codex App Sessions');
+    assert.equal(openclawAgent.summary.periodTokens, 0, 'nested codex-home sessions should not inflate direct OpenClaw usage');
   });
 
   await withTempHome(async (home) => {
@@ -117,6 +121,10 @@ async function runBehaviorTests() {
     assert.equal(summary.byService[0].name, 'openai/gpt-5.5', 'missing OpenClaw Codex model should land in the configured default model bucket');
     assert.equal(summary.byService[0].costSource, 'included', 'default GPT-5.5 bucket should be subscription-included, not unknown spend');
     assert.equal(summary.byService[0].tokens, 21, 'default model bucket should preserve token totals');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.equal(openclawAgent.summary.periodTokens, 21, 'direct OpenClaw sessions should stay in the OpenClaw split');
+    assert.equal(codexAppAgent.summary.periodTokens, 0, 'direct OpenClaw sessions should not be counted as Codex App Sessions');
   });
 }
 
