@@ -477,6 +477,8 @@ export default function GBrain() {
     return (data?.live?.sources?.sources || []).filter((source) => source.freshness?.status === 'warning')
   }, [data?.live?.sources?.sources])
   const actions = actionsData?.actions?.length ? actionsData.actions : fallbackActions
+  const systemCheckAction = actions.find((action) => action.id === 'doctor-fast')
+  const systemCheckRunning = runningAction === 'doctor-fast'
   const canRunActions = Boolean(data)
   const proofScope = proofScopeFor(data, loading)
   const selectedContractSystem = data?.integrationContract?.systems?.find((system) => system.id === selectedNode?.id)
@@ -559,6 +561,14 @@ export default function GBrain() {
     } finally {
       setRunningAction(null)
     }
+  }
+
+  const runSystemCheck = async () => {
+    if (systemCheckAction) {
+      await runAction(systemCheckAction.id)
+      return
+    }
+    await refetch()
   }
 
   const acknowledgeIncident = () => {
@@ -761,8 +771,13 @@ export default function GBrain() {
                   <span><i style={{ '--status-color': statusColor(degradedNodeCount ? 'warning' : 'healthy') } as CSSProperties} />{degradedNodeCount} degraded</span>
                   <span><i style={{ '--status-color': statusColor(disconnectedNodeCount ? 'critical' : 'healthy') } as CSSProperties} />{data ? `${data.trust.score}%` : '—'} operational</span>
                 </div>
-                <button type="button" onClick={() => refetch()} disabled={loading}>
-                  {loading ? 'Checking...' : 'Run System Check'}
+                <button
+                  type="button"
+                  onClick={runSystemCheck}
+                  disabled={loading || Boolean(runningAction)}
+                  title={systemCheckAction?.command || 'Refresh GBrain overview'}
+                >
+                  {systemCheckRunning ? 'Running check...' : loading ? 'Checking...' : 'Run System Check'}
                 </button>
               </div>
             </div>
