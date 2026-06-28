@@ -555,6 +555,7 @@ export default function CalendarPage() {
                     value={searchQuery}
                     onChange={(event) => setSearchQuery(event.target.value)}
                     placeholder="Search recurring jobs"
+                    aria-label="Search recurring jobs"
                     className={styles.searchInput}
                   />
                 </div>

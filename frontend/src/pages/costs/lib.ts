@@ -45,6 +45,18 @@ export function formatComparisonValue(value: number | null | undefined) {
     : formatCurrency(value)
 }
 
+export function parseMonthlyBudgetInput(input: string) {
+  const trimmed = input.trim()
+  if (!trimmed) return { monthly: null, error: null }
+
+  const monthly = Number(trimmed)
+  if (!Number.isFinite(monthly) || monthly < 0) {
+    return { monthly: null, error: 'Budget must be zero or positive.' }
+  }
+
+  return { monthly, error: null }
+}
+
 export function formatSessionName(key: string, displayName?: string): string {
   if (key.includes('#')) {
     const channelName = key.split('#')[1]

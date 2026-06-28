@@ -9,6 +9,8 @@ interface BudgetCardProps {
   setBudgetInput: (v: string) => void
   saveBudget: () => void
   savingBudget: boolean
+  canSaveBudget: boolean
+  budgetError: string | null
   budgetUsagePct: number
   budgetUsage: number
   budgetRemaining: number
@@ -23,6 +25,8 @@ export default function BudgetCard({
   setBudgetInput,
   saveBudget,
   savingBudget,
+  canSaveBudget,
+  budgetError,
   budgetUsagePct,
   budgetUsage,
   budgetRemaining,
@@ -53,20 +57,29 @@ export default function BudgetCard({
             </label>
             <input
               type="number"
+              min="0"
+              step="0.01"
               value={budgetInput}
               onChange={e => setBudgetInput(e.target.value)}
               placeholder="Enter budget amount"
+              aria-invalid={!!budgetError}
+              aria-describedby={budgetError ? 'monthly-budget-error' : undefined}
               className={`macos-input ${styles.inputField}`}
             />
+            {budgetError && (
+              <div id="monthly-budget-error" className={styles.inputError}>
+                {budgetError}
+              </div>
+            )}
           </div>
 
           <button
             onClick={saveBudget}
-            disabled={savingBudget || !budgetInput.trim()}
-            className={`macos-button ${!savingBudget && budgetInput.trim() ? 'macos-button-primary' : ''} ${styles.saveBtn}`}
+            disabled={!canSaveBudget}
+            className={`macos-button ${canSaveBudget ? 'macos-button-primary' : ''} ${styles.saveBtn}`}
             style={{
-              cursor: savingBudget || !budgetInput.trim() ? 'not-allowed' : 'pointer',
-              opacity: savingBudget || !budgetInput.trim() ? 0.5 : 1,
+              cursor: canSaveBudget ? 'pointer' : 'not-allowed',
+              opacity: canSaveBudget ? 1 : 0.5,
             }}
           >
             {savingBudget ? 'Saving...' : 'Save'}

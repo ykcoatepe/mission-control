@@ -564,5 +564,15 @@
 
 .rechartsWrap {
   width: 100%;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
   /* height + min-height set inline (responsive) */
+}
+
+.chartSizingPlaceholder {
+  width: 100%;
+  height: 100%;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.025);
 }

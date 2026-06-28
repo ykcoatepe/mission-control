@@ -326,7 +326,7 @@ export default function HermesKanban() {
             <div className={`macos-panel ${styles.filterBar} ${m ? styles.filterBarMobile : styles.filterBarDesktop}`}>
               <label className={styles.searchLabel}>
                 <Search size={14} className={styles.searchIcon} />
-                <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search cards, workspace, tenant, skills" className={styles.searchInput} />
+                <input value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search cards, workspace, tenant, skills" aria-label="Search cards, workspace, tenant, or skills" className={styles.searchInput} />
               </label>
               <label className={styles.assigneeLabel}>
                 <UsersRound size={14} className={styles.assigneeIcon} />

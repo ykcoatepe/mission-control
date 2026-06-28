@@ -70,6 +70,18 @@
   padding: 10px 14px;
 }
 
+.inputField[aria-invalid='true'] {
+  border-color: rgba(255, 69, 58, 0.72);
+  box-shadow: 0 0 0 1px rgba(255, 69, 58, 0.18);
+}
+
+.inputError {
+  margin-top: 7px;
+  color: #ff8a80;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
 /* ── Save button — dynamic opacity+cursor handled inline ──────── */
 
 .saveBtn {

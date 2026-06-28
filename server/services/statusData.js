@@ -17,10 +17,14 @@ function heartbeatValueToSeconds(value) {
 function normalizeHeartbeatPayload(heartbeat = {}) {
   if (!heartbeat || typeof heartbeat !== 'object' || Array.isArray(heartbeat)) return heartbeat || {};
   const normalized = { ...heartbeat };
-  if (normalized.lastHeartbeat == null) {
-    const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeatAt || normalized.lastChecks?.heartbeat);
-    if (lastHeartbeat != null) normalized.lastHeartbeat = lastHeartbeat;
+  const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeat);
+  if (lastHeartbeat != null) {
+    normalized.lastHeartbeat = lastHeartbeat;
+    return normalized;
   }
+
+  const fallbackHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeatAt || normalized.lastChecks?.heartbeat);
+  if (fallbackHeartbeat != null) normalized.lastHeartbeat = fallbackHeartbeat;
   return normalized;
 }
 

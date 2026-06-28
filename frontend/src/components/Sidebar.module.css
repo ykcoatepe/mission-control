@@ -82,11 +82,20 @@
 }
 
 .statusCard {
+  display: block;
   margin-top: 14px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 8px;
   padding: 10px;
   background: rgba(255, 255, 255, 0.045);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.statusCard:hover {
+  border-color: var(--sidebar-state-color, rgba(255, 255, 255, 0.2));
+  background: rgba(255, 255, 255, 0.065);
 }
 
 .statusTop {

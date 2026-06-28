@@ -498,6 +498,7 @@ export default function Chat() {
             <input
               type="text"
               placeholder="Search sessions..."
+              aria-label="Search sessions"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               className={styles.searchInput}

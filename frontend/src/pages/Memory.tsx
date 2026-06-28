@@ -162,6 +162,7 @@ export default function Memory() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Search memories..."
+                aria-label="Search memories"
                 className={`macos-input ${styles.searchInput}`}
               />
             </div>

@@ -116,6 +116,19 @@ function testHeartbeatTimestampNormalization() {
 
   assert.deepEqual(
     normalizeHeartbeatPayload({
+      lastHeartbeat: 1781605620123,
+      lastHeartbeatAt: '2026-06-16T10:27:00Z',
+      lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
+    }),
+    {
+      lastHeartbeat: 1781605620,
+      lastHeartbeatAt: '2026-06-16T10:27:00Z',
+      lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
+    },
+  );
+
+  assert.deepEqual(
+    normalizeHeartbeatPayload({
       lastHeartbeatAt: '2026-06-16T10:27:00Z',
       lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
     }),

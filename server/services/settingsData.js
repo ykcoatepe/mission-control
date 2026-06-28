@@ -3,6 +3,16 @@ const path = require('path');
 const os = require('os');
 const { execFile } = require('child_process');
 
+function normalizeMonthlyBudget(monthly) {
+  const normalized = Number(monthly ?? 0);
+  if (!Number.isFinite(normalized) || normalized < 0) {
+    const error = new Error('monthly budget must be zero or positive');
+    error.statusCode = 400;
+    throw error;
+  }
+  return normalized;
+}
+
 function createSettingsService({
   mcConfig,
   missionControlConfigPath,
@@ -135,7 +145,7 @@ function createSettingsService({
   }
 
   function updateBudget(monthly) {
-    mcConfig.budget = { monthly: monthly || 0 };
+    mcConfig.budget = { monthly: normalizeMonthlyBudget(monthly) };
     fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2));
     return { status: 'saved', budget: mcConfig.budget };
   }
@@ -282,4 +292,5 @@ function createSettingsService({
 
 module.exports = {
   createSettingsService,
+  normalizeMonthlyBudget,
 };

@@ -5,6 +5,7 @@ import {
   formatTokens,
   formatCompactTokenValue,
   formatComparisonValue,
+  parseMonthlyBudgetInput,
   canonicalModelName,
   formatSessionName,
   hashColor,
@@ -120,6 +121,26 @@ describe('formatComparisonValue', () => {
   })
   it('formats zero as currency', () => {
     expect(formatComparisonValue(0)).toBe('$0.00')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// parseMonthlyBudgetInput
+// ---------------------------------------------------------------------------
+
+describe('parseMonthlyBudgetInput', () => {
+  it('parses positive and zero values', () => {
+    expect(parseMonthlyBudgetInput('42.25')).toEqual({ monthly: 42.25, error: null })
+    expect(parseMonthlyBudgetInput('0')).toEqual({ monthly: 0, error: null })
+  })
+
+  it('treats blank input as not ready to save', () => {
+    expect(parseMonthlyBudgetInput('   ')).toEqual({ monthly: null, error: null })
+  })
+
+  it('rejects negative and invalid values', () => {
+    expect(parseMonthlyBudgetInput('-10')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
+    expect(parseMonthlyBudgetInput('nope')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
   })
 })
 

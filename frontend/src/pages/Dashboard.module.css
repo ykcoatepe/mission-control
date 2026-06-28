@@ -192,21 +192,16 @@
 }
 
 .actionCopy strong {
-  overflow: hidden;
   color: rgba(255, 255, 255, 0.92);
   font-size: 12px;
   line-height: 1.2;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .actionCopy span {
-  overflow: hidden;
   color: rgba(255, 255, 255, 0.48);
   font-size: 11px;
-  line-height: 1.25;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  white-space: normal;
 }
 
 .actionResult {

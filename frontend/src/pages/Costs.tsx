@@ -39,6 +39,7 @@ import {
   comparisonLabels,
   readNumericField,
   hasUsableAgentSplitData,
+  parseMonthlyBudgetInput,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -158,10 +159,13 @@ export default function Costs() {
   })
 
   const savingBudget = saveBudgetMutation.isPending
+  const budgetValidation = parseMonthlyBudgetInput(budgetInput)
+  const budgetError = budgetValidation.error
+  const canSaveBudget = !savingBudget && !!budgetInput.trim() && !budgetError
 
   const saveBudget = () => {
-    if (!budgetInput.trim()) return
-    saveBudgetMutation.mutate(parseFloat(budgetInput) || 0)
+    if (budgetValidation.monthly === null) return
+    saveBudgetMutation.mutate(budgetValidation.monthly)
   }
 
   const labels = {
@@ -719,6 +723,8 @@ export default function Costs() {
           setBudgetInput={setBudgetInput}
           saveBudget={saveBudget}
           savingBudget={savingBudget}
+          canSaveBudget={canSaveBudget}
+          budgetError={budgetError}
           budgetUsagePct={budgetUsagePct}
           budgetUsage={budgetUsage}
           budgetRemaining={budgetRemaining}

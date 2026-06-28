@@ -330,7 +330,7 @@ export default function Councils() {
                 <div className={styles.archiveFilterRow}>
                   <div className={styles.searchBox}>
                     <Search size={13} className={styles.searchIcon} />
-                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" className={styles.searchInput} />
+                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" aria-label="Search decision archive" className={styles.searchInput} />
                   </div>
                   <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as CouncilFilter)} className={styles.archiveSelect}>
                     {Object.entries(councilLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
