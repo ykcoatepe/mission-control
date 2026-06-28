@@ -38,6 +38,14 @@
   margin-top: 4px;
 }
 
+.sourceNote {
+  font-size: 11px;
+  line-height: 1.35;
+  color: rgba(255,255,255,0.58);
+  margin-top: 5px;
+  max-width: 640px;
+}
+
 .badgeGroup {
   display: flex;
   gap: 8px;
@@ -241,6 +249,20 @@
   font-size: 14px;
   color: rgba(255,255,255,0.9);
   font-weight: 800;
+}
+
+.agentNameStack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.agentScope {
+  font-size: 11px;
+  line-height: 1.2;
+  color: rgba(255,255,255,0.5);
+  font-weight: 600;
 }
 
 .agentShare {
