@@ -407,6 +407,7 @@ export default function AWS() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search models..."
+                  aria-label="Search Bedrock models"
                   className={styles.searchInput}
                 />
               </div>

@@ -22,6 +22,21 @@ interface AgentSplitCardProps {
   tokenDataRefreshing: boolean
 }
 
+const AGENT_BUCKET_DETAILS: Record<string, { scope: string; title: string }> = {
+  openclaw: {
+    scope: 'Direct native sessions',
+    title: 'Direct OpenClaw native sessions only. Nested app-launched Codex runs are counted in Codex App Sessions.',
+  },
+  codex_app: {
+    scope: 'Nested app-launched runs',
+    title: 'OpenClaw agent/codex-home/sessions runs launched from the Codex app; split out so they no longer inflate OpenClaw.',
+  },
+  hermes: {
+    scope: 'Hermes profile usage',
+    title: 'Hermes profile usage from the local Hermes state database.',
+  },
+}
+
 export default function AgentSplitCard({
   m,
   agentSplit,
@@ -44,6 +59,11 @@ export default function AgentSplitCard({
                 ? `Refreshing Agent Split for the selected ${activePeriodLabel.toLowerCase()} period…`
                 : `Showing agent/session split for the loaded ${agentSplitPeriodLabel.toLowerCase()} period.`}
             </div>
+            {!agentSplitPending && (
+              <div className={styles.sourceNote}>
+                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs split out of OpenClaw totals.
+              </div>
+            )}
           </div>
           {!agentSplitPending && (
             <div className={styles.badgeGroup}>
@@ -131,6 +151,7 @@ export default function AgentSplitCard({
             {agentSplit.map(agent => {
               const share = totalAgentTokens > 0 ? (agent.tokens / totalAgentTokens) * 100 : 0
               const accent = agent.accent || (agent.key === 'hermes' ? '#00C7BE' : '#5E5CE6')
+              const bucketDetails = AGENT_BUCKET_DETAILS[agent.key]
               return (
                 <div
                   key={agent.key}
@@ -142,12 +163,17 @@ export default function AgentSplitCard({
                   }}
                 >
                   <div className={styles.agentCardTop}>
-                    <div className={styles.agentCardLabel}>
+                    <div className={styles.agentCardLabel} title={bucketDetails?.title}>
                       <span
                         className={styles.agentDot}
                         style={{ background: accent, boxShadow: `0 0 18px ${accent}` }}
                       />
-                      <span className={styles.agentName}>{agent.label}</span>
+                      <span className={styles.agentNameStack}>
+                        <span className={styles.agentName}>{agent.label}</span>
+                        {bucketDetails && (
+                          <span className={styles.agentScope}>{bucketDetails.scope}</span>
+                        )}
+                      </span>
                     </div>
                     <span className={styles.agentShare}>{share.toFixed(1)}%</span>
                   </div>

@@ -1,11 +1,10 @@
-import type { CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   Bar,
   BarChart,
   CartesianGrid,
   Cell,
   Legend,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -362,6 +361,47 @@ export default function DailySpendSection({
   tokenBasedCost,
   blendedCostBreakdown,
 }: DailySpendSectionProps) {
+  const chartFrameRef = useRef<HTMLDivElement | null>(null)
+  const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
+  const chartHeight = m ? 300 : 360
+
+  useEffect(() => {
+    if (useMobileDailyChart || !hasChartBars) {
+      return
+    }
+
+    const node = chartFrameRef.current
+    if (!node) return
+
+    let animationFrame = 0
+    const updateChartReady = () => {
+      window.cancelAnimationFrame(animationFrame)
+      animationFrame = window.requestAnimationFrame(() => {
+        const rect = node.getBoundingClientRect()
+        const width = Math.floor(rect.width)
+        const height = Math.floor(rect.height)
+        setChartSize(current => (
+          current.width === width && current.height === height
+            ? current
+            : { width, height }
+        ))
+      })
+    }
+
+    updateChartReady()
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const observer = new ResizeObserver(updateChartReady)
+    observer.observe(node)
+
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      observer.disconnect()
+    }
+  }, [chartData.length, hasChartBars, useMobileDailyChart])
+
   return (
     <div className={m ? `${styles.outerGrid} ${styles.outerGridMobile}` : styles.outerGrid}>
       <GlassCard delay={0.2} noPad>
@@ -391,11 +431,17 @@ export default function DailySpendSection({
               />
             ) : hasChartBars ? (
               <div
+                ref={chartFrameRef}
                 className={styles.rechartsWrap}
-                style={{ height: m ? 300 : 360, minHeight: m ? 300 : 360 }}
+                style={{ height: chartHeight, minHeight: chartHeight }}
               >
-                <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={m ? 300 : 360}>
-                  <BarChart data={chartData} margin={{ top: 8, right: 8, left: m ? -24 : -8, bottom: m ? 28 : 12 }}>
+                {chartSize.width > 0 && chartSize.height > 0 ? (
+                  <BarChart
+                    width={chartSize.width}
+                    height={chartSize.height}
+                    data={chartData}
+                    margin={{ top: 8, right: 8, left: m ? -24 : -8, bottom: m ? 28 : 12 }}
+                  >
                     <CartesianGrid stroke="rgba(255,255,255,0.08)" vertical={false} />
                     <XAxis dataKey="fullDate" tickFormatter={val => { const d = new Date(val); return `${d.getMonth()+1}/${d.getDate()}` }} tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: m ? 10 : 11 }} axisLine={false} tickLine={false} />
                     <YAxis tickFormatter={value => formatPreciseCurrency(Number(value || 0))} tick={{ fill: 'rgba(255,255,255,0.5)', fontSize: m ? 10 : 11 }} axisLine={false} tickLine={false} width={m ? 52 : 70} />
@@ -425,7 +471,9 @@ export default function DailySpendSection({
                       </Bar>
                     ))}
                   </BarChart>
-                </ResponsiveContainer>
+                ) : (
+                  <div className={styles.chartSizingPlaceholder} aria-hidden="true" />
+                )}
               </div>
             ) : (
               <div className={styles.fallbackWrap}>

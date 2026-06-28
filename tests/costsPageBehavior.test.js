@@ -8,6 +8,7 @@ const pagesDir = path.join(__dirname, '..', 'frontend', 'src', 'pages');
 const costsDir = path.join(pagesDir, 'costs');
 const filesToCheck = [
   path.join(pagesDir, 'Costs.tsx'),
+  path.join(costsDir, 'AgentSplitCard.tsx'),
   path.join(costsDir, 'lib.ts'),
   path.join(costsDir, 'types.ts'),
 ].filter(f => fs.existsSync(f));
@@ -41,6 +42,13 @@ assert.ok(
 assert.ok(
   source.includes("return { period: 'vs previous 30 days', daily: 'vs previous 30d avg' }"),
   'CodexBar month labels should describe the actual rolling baseline',
+);
+
+assert.ok(
+  source.includes('OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs split out of OpenClaw totals.') &&
+  source.includes('Direct OpenClaw native sessions only. Nested app-launched Codex runs are counted in Codex App Sessions.') &&
+  source.includes('agent/codex-home/sessions runs launched from the Codex app'),
+  'Agent Split should explain why nested Codex App Sessions moved out of direct OpenClaw usage',
 );
 
 console.log('costs page behavior guards passed');

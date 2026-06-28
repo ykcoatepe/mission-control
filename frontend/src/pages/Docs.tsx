@@ -173,6 +173,7 @@ export default function Docs() {
           <input
             type="text"
             placeholder="Search documents..."
+            aria-label="Search documents"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className={`macos-input ${styles.searchInput}`}

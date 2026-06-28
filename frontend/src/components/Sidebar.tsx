@@ -84,7 +84,8 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const heartbeatMs = normalizeHeartbeatMs(heartbeatValue)
   const heartbeatAge = heartbeatMs ? timeAgo(new Date(heartbeatMs).toISOString()) : 'No heartbeat'
   const heartbeatHours = heartbeatMs ? (now - heartbeatMs) / 36e5 : Infinity
-  const stateColor = heartbeatHours > 2 ? '#ff9500' : '#32d74b'
+  const heartbeatStale = heartbeatHours > 2
+  const stateColor = heartbeatStale ? '#ff9500' : '#32d74b'
 
   return (
     <aside className={`macos-sidebar ${styles.sidebar} ${isOpen ? 'open' : ''}`}>
@@ -99,18 +100,18 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         </div>
 
-        <div className={styles.statusCard} style={{ '--sidebar-state-color': stateColor } as CSSProperties}>
+        <NavLink to="/" className={styles.statusCard} style={{ '--sidebar-state-color': stateColor } as CSSProperties}>
           <div className={styles.statusTop}>
             <div>
               <p className={styles.statusLabel}>Runtime state</p>
-              <div className={styles.statusValue}>{heartbeatHours > 2 ? 'Watch heartbeat' : 'Live'}</div>
+              <div className={styles.statusValue}>{heartbeatStale ? 'Warning: heartbeat stale' : 'Live'}</div>
             </div>
             <span className={styles.statusDot} />
           </div>
           <p className={styles.statusMeta}>
             {heartbeatAge} · {statusData?.agent?.model || 'model unknown'}
           </p>
-        </div>
+        </NavLink>
       </div>
 
       <div className={styles.divider} />

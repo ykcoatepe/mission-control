@@ -12,10 +12,11 @@ function buildSettingsRouter({ settingsService, projectRoot }) {
 
   router.post('/api/settings/budget', (req, res) => {
     try {
-      return res.json(settingsService.updateBudget(req.body?.monthly || 0));
+      return res.json(settingsService.updateBudget(req.body?.monthly ?? 0));
     } catch (error) {
-      console.error('[Budget API]', error.message);
-      return res.status(500).json({ status: 'error', error: error.message });
+      const status = error.statusCode || 500;
+      if (status >= 500) console.error('[Budget API]', error.message);
+      return res.status(status).json({ status: 'error', error: error.message });
     }
   });
 

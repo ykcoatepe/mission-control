@@ -45,6 +45,7 @@ export default function Cron() {
   const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
+  const [runTarget, setRunTarget] = useState<CronJob | null>(null)
   const [jobSearch, setJobSearch] = useState('')
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<CronStatusFilter>('all')
@@ -191,8 +192,14 @@ export default function Cron() {
     }
   }
 
-  const handleRun = async (job: CronJob) => {
+  const requestRun = (job: CronJob) => {
     if (job.actions?.run === false) return
+    setRunTarget(job)
+  }
+
+  const confirmRun = async () => {
+    const job = runTarget
+    if (!job) return
     setPendingAction(`run-${job.id}`)
     try {
       await runMutation.mutateAsync(job)
@@ -201,6 +208,7 @@ export default function Cron() {
     } catch (err) {
       showToast('error', `Run failed: ${errorMessage(err)}`)
     } finally {
+      setRunTarget(null)
       setPendingAction(null)
     }
   }
@@ -400,7 +408,7 @@ export default function Cron() {
               displayModel={displayModel}
               pendingAction={pendingAction}
               onToggle={handleToggle}
-              onRun={handleRun}
+              onRun={requestRun}
               onDelete={requestDelete}
               onModelChange={handleModelChange}
             />
@@ -412,7 +420,7 @@ export default function Cron() {
               displayModel={displayModel}
               pendingAction={pendingAction}
               onToggle={handleToggle}
-              onRun={handleRun}
+              onRun={requestRun}
               onDelete={requestDelete}
               onModelChange={handleModelChange}
             />
@@ -437,6 +445,16 @@ export default function Cron() {
             busy={pendingAction === `delete-${deleteTarget.id}`}
             onCancel={() => setDeleteTarget(null)}
             onConfirm={confirmDelete}
+          />
+        )}
+        {runTarget && (
+          <ConfirmDialog
+            title="Run cron job now?"
+            message={`"${runTarget.name}" will be queued for an immediate ${getCronSchedulerLabel(runTarget)} run. The normal schedule stays unchanged.`}
+            confirmLabel="Run now"
+            busy={pendingAction === `run-${runTarget.id}`}
+            onCancel={() => setRunTarget(null)}
+            onConfirm={confirmRun}
           />
         )}
       </AnimatePresence>
