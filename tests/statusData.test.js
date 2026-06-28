@@ -3,7 +3,11 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { createStatusService } = require('../server/services/statusData');
+const {
+  createStatusService,
+  heartbeatValueToSeconds,
+  normalizeHeartbeatPayload,
+} = require('../server/services/statusData');
 
 function makeService(overrides = {}) {
   let snapshot = null;
@@ -25,7 +29,7 @@ function makeService(overrides = {}) {
     processEnv: { HOME: memoryPath },
     ...overrides,
   });
-  return { service, readSnapshot: () => snapshot };
+  return { service, readSnapshot: () => snapshot, memoryPath };
 }
 
 async function testGatewayHealthDoesNotReplaceFullStatusParserInput() {
@@ -104,7 +108,48 @@ async function testGatewayHealthIsFallbackWhenFullStatusFails() {
   }
 }
 
+function testHeartbeatTimestampNormalization() {
+  assert.equal(heartbeatValueToSeconds('2026-06-16T10:27:00Z'), 1781605620);
+  assert.equal(heartbeatValueToSeconds(1781605620123), 1781605620);
+  assert.equal(heartbeatValueToSeconds(1781605620), 1781605620);
+  assert.equal(heartbeatValueToSeconds('not-a-date'), null);
+
+  assert.deepEqual(
+    normalizeHeartbeatPayload({
+      lastHeartbeatAt: '2026-06-16T10:27:00Z',
+      lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
+    }),
+    {
+      lastHeartbeatAt: '2026-06-16T10:27:00Z',
+      lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
+      lastHeartbeat: 1781605620,
+    },
+  );
+}
+
+async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
+  const snapshot = {
+    agent: { name: 'Mission Control' },
+    heartbeat: {
+      lastHeartbeatAt: '2026-06-16T10:27:00Z',
+      lastChecks: { heartbeat: '2026-06-16T10:27:00Z' },
+    },
+    recentActivity: [],
+    tokenUsage: { used: 0 },
+  };
+  const { service } = makeService({
+    readRuntimeSnapshot: () => snapshot,
+  });
+
+  const status = await service.getStatusResponse();
+
+  assert.equal(status.heartbeat.lastHeartbeat, 1781605620);
+  assert.equal(status.heartbeat.lastHeartbeatAt, '2026-06-16T10:27:00Z');
+}
+
 (async () => {
+  testHeartbeatTimestampNormalization();
+  await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
   await testGatewayHealthIsFallbackWhenFullStatusFails();
   console.log('statusData tests passed');

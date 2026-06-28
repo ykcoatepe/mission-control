@@ -1,3 +1,29 @@
+function heartbeatValueToSeconds(value) {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value > 1e12 ? Math.floor(value / 1000) : value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric)) return numeric > 1e12 ? Math.floor(numeric / 1000) : numeric;
+
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return Math.floor(parsed / 1000);
+  }
+
+  return null;
+}
+
+function normalizeHeartbeatPayload(heartbeat = {}) {
+  if (!heartbeat || typeof heartbeat !== 'object' || Array.isArray(heartbeat)) return heartbeat || {};
+  const normalized = { ...heartbeat };
+  if (normalized.lastHeartbeat == null) {
+    const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeatAt || normalized.lastChecks?.heartbeat);
+    if (lastHeartbeat != null) normalized.lastHeartbeat = lastHeartbeat;
+  }
+  return normalized;
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -53,7 +79,7 @@ function createStatusService({
       recentActivity,
       heartbeat,
     } = cache || {};
-    const hb = heartbeatOverride || heartbeat || {};
+    const hb = normalizeHeartbeatPayload(heartbeatOverride || heartbeat || {});
 
     return {
       agent: {
@@ -223,7 +249,12 @@ function createStatusService({
 
   async function getStatusResponse() {
     const snapshot = readRuntimeSnapshot('status', runtimeSnapshotTtl.status);
-    if (snapshot) return snapshot;
+    if (snapshot) {
+      return {
+        ...snapshot,
+        heartbeat: normalizeHeartbeatPayload(snapshot.heartbeat || {}),
+      };
+    }
 
     if (Date.now() - statusCacheTime > statusCacheTtl) {
       refreshStatusCache();
@@ -251,4 +282,6 @@ function createStatusService({
 
 module.exports = {
   createStatusService,
+  heartbeatValueToSeconds,
+  normalizeHeartbeatPayload,
 };
