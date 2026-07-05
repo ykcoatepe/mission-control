@@ -80,7 +80,6 @@ function buildGBrainOverview(live = {}, extra = {}) {
     system.mcp?.status,
     system.runtimeContract?.status,
     system.readSmoke?.status,
-    system.writeSmoke?.status,
   ].some((status) => status === 'warning' || status === 'critical'));
   const activeCaveats = [
     ...(healthUnavailable ? ['Live health probe unavailable.'] : []),

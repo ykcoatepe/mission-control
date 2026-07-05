@@ -87,6 +87,40 @@ function detectGBrainThinkConfig(homeDir = os.homedir(), processEnv = process.en
   };
 }
 
+function hasManagedGBrainContract(text) {
+  return String(text || '').includes(`${GBRAIN_RUNTIME_CONTRACT_MARKER}:start`);
+}
+
+function hasHermesSemanticGBrainContract(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ');
+  return /GBrain shared-brain(?: tool)? contract/i.test(normalized)
+    && /keep (private|local) memory local/i.test(normalized)
+    && /curated/i.test(normalized)
+    && /(cross-agent|handoffs?|playbooks?|verified outcomes?)/i.test(normalized)
+    && /never (store|put)[^.]*raw transcripts/i.test(normalized)
+    && /secrets/i.test(normalized)
+    && /(bridge scripts|hermes_hmudur_memory_bridge\.py)/i.test(normalized);
+}
+
+function detectHermesRuntimeContract(text) {
+  if (hasManagedGBrainContract(text)) {
+    return {
+      installed: true,
+      proof: 'Hermes hmudur MEMORY.md managed block',
+    };
+  }
+  if (hasHermesSemanticGBrainContract(text)) {
+    return {
+      installed: true,
+      proof: 'Hermes hmudur MEMORY.md semantic contract',
+    };
+  }
+  return {
+    installed: false,
+    proof: 'Hermes hmudur MEMORY.md has no managed or semantic GBrain contract block',
+  };
+}
+
 function buildLocalGBrainIntegrationRuntime(options = {}) {
   const homeDir = options.homeDir || os.homedir();
   const clawdRoot = resolveClawdRoot(options, homeDir);
@@ -107,8 +141,8 @@ function buildLocalGBrainIntegrationRuntime(options = {}) {
   const hermesMemoryText = readTextFile(hermesMemory);
   const openclawBridgeLinked = syncWrapper.includes('main_memory_to_gbrain_bridge.py');
   const openclawBridgeBlockPresent = handoffsText.includes('main-memory-gbrain-bridge:start');
-  const openclawContractInstalled = openclawAgentsText.includes(`${GBRAIN_RUNTIME_CONTRACT_MARKER}:start`);
-  const hermesContractInstalled = hermesMemoryText.includes(`${GBRAIN_RUNTIME_CONTRACT_MARKER}:start`);
+  const openclawContractInstalled = hasManagedGBrainContract(openclawAgentsText);
+  const hermesContract = detectHermesRuntimeContract(hermesMemoryText);
   const openclawBridgeReady = fileExists(openclawBridgeScript) && openclawBridgeLinked && openclawBridgeBlockPresent;
 
   return {
@@ -119,9 +153,9 @@ function buildLocalGBrainIntegrationRuntime(options = {}) {
         mcpConfigured: hermesConfig.configured,
         mcpProof: hermesConfig.source,
         runtimeContract: {
-          status: hermesContractInstalled ? 'healthy' : 'warning',
-          label: hermesContractInstalled ? 'GBrain shared-brain contract installed' : 'GBrain shared-brain contract missing',
-          proof: hermesContractInstalled ? 'Hermes hmudur MEMORY.md managed block' : 'Hermes hmudur MEMORY.md has no managed GBrain contract block',
+          status: hermesContract.installed ? 'healthy' : 'warning',
+          label: hermesContract.installed ? 'GBrain shared-brain contract installed' : 'GBrain shared-brain contract missing',
+          proof: hermesContract.proof,
         },
         durablePipeline: {
           status: fileExists(hermesBridgeScript) && fileExists(sharedMemorySyncScript) ? 'healthy' : 'warning',
@@ -162,5 +196,6 @@ module.exports = {
   detectHermesGBrainConfig,
   detectOpenClawGBrainConfig,
   detectGBrainThinkConfig,
+  hasHermesSemanticGBrainContract,
   buildLocalGBrainIntegrationRuntime,
 };

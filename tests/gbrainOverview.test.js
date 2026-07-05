@@ -245,13 +245,19 @@ async function testLiveToolsFeaturesAndIntegrationHealth() {
   assert.equal(integrationHealth.featureGaps.count, 1);
   assert.equal(integrationHealth.featureGaps.optionalCount, 1);
   assert.equal(integrationHealth.featureGaps.blockingCount, 0);
-  assert.equal(integrationHealth.status, 'warning');
+  assert.equal(integrationHealth.status, 'healthy');
   assert.equal(integrationHealth.thinkRuntime.status, 'healthy');
   assert.equal(integrationHealth.systems.find((system) => system.id === 'hermes')?.status, 'healthy');
+  assert.equal(integrationHealth.systems.find((system) => system.id === 'openclaw')?.status, 'healthy');
   assert.equal(integrationHealth.systems.find((system) => system.id === 'openclaw')?.writeSmoke.status, 'warning');
   assert.equal(overview.cockpit.integration.value, '2/2 connected');
+  assert.equal(overview.cockpit.integration.status, 'healthy');
   assert.match(overview.cockpit.integration.detail, /6\/6 base tools; think ready; 1 optional feature/i);
   assert.equal(overview.integrationHealth.systems.length, 2);
+  assert.equal(overview.trust.label, 'Live trusted');
+  assert.equal(overview.cockpit.caveats.value, '0');
+  assert.equal(overview.cockpit.caveats.status, 'healthy');
+  assert.deepEqual(overview.caveats, []);
 }
 
 function testFeatureMaintenanceWarningsDoNotDowngradeConnectedSystems() {
@@ -528,6 +534,34 @@ function testLocalRuntimeDetectorVerifiesManagedContractsAndBridges() {
   assert.equal(runtime.systems.openclaw.mcpConfigured, true);
   assert.equal(runtime.systems.openclaw.runtimeContract.status, 'healthy');
   assert.equal(runtime.systems.openclaw.durablePipeline.status, 'healthy');
+}
+
+function testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-runtime-semantic-'));
+  const homeDir = path.join(root, 'home');
+  const clawdRoot = path.join(root, 'clawd');
+  fs.mkdirSync(path.join(homeDir, '.hermes/profiles/hmudur/scripts'), { recursive: true });
+  fs.mkdirSync(path.join(homeDir, '.hermes/profiles/hmudur/memories'), { recursive: true });
+  fs.mkdirSync(path.join(clawdRoot, 'scripts'), { recursive: true });
+
+  fs.writeFileSync(path.join(homeDir, '.hermes/profiles/hmudur/config.yaml'), [
+    'mcp_servers:',
+    '  gbrain:',
+    '    command: /x/gbrain',
+    '    args: [serve]',
+  ].join('\n'));
+  fs.writeFileSync(path.join(homeDir, '.hermes/profiles/hmudur/scripts/hermes_hmudur_memory_bridge.py'), '# bridge');
+  fs.writeFileSync(path.join(homeDir, '.hermes/profiles/hmudur/memories/MEMORY.md'), [
+    '## GBrain Shared-Brain Tool Contract',
+    'Keep private memory local; use GBrain/MCP only for curated cross-agent recall, decisions, handoffs, playbooks, and verified outcomes.',
+    'Never store raw transcripts/secrets; promotions flow through bridge scripts + sync/embed.',
+  ].join('\n'));
+  fs.writeFileSync(path.join(clawdRoot, 'scripts/gbrain_sync_and_embed.sh'), '# sync');
+
+  const runtime = buildLocalGBrainIntegrationRuntime({ homeDir, clawdRoot });
+
+  assert.equal(runtime.systems.hermes.runtimeContract.status, 'healthy');
+  assert.equal(runtime.systems.hermes.runtimeContract.proof, 'Hermes hmudur MEMORY.md semantic contract');
 }
 
 function testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent() {
@@ -1133,6 +1167,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   await testMissingThinkDoesNotFailBaseReadSmoke();
   testIntegrationWarningsAppearAsTopLevelCaveats();
   testLocalRuntimeDetectorVerifiesManagedContractsAndBridges();
+  testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned();
   testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent();
   await testLiveSourcesDoNotExposeLocalPaths();
   await testDefaultSourceWithoutPathIsNotFreshnessStale();
