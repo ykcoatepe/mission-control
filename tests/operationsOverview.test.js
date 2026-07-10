@@ -320,3 +320,71 @@ test('keeps session-conflict attention detail stable when cron also fails', () =
   assert.equal(conflict.detail, 'Status reports 0 active sessions while the session reader reports 3.');
   assert.doesNotMatch(conflict.detail, /scheduling/i);
 });
+
+test('rejects non-numeric and non-positive capability timeouts', () => {
+  const capabilities = buildOperationsCapabilities({
+    gbrainActions: [
+      {
+        id: 'string-timeout',
+        timeoutMs: 'gbrain doctor --config /Users/example/private Bearer secret',
+      },
+      {
+        id: 'object-timeout',
+        timeoutMs: { command: 'gbrain repair', token: 'Bearer secret', path: '/Users/example/private' },
+      },
+      { id: 'zero-timeout', timeoutMs: 0 },
+      { id: 'negative-timeout', timeoutMs: -1 },
+      { id: 'valid-timeout', timeoutMs: 15_000 },
+    ],
+  });
+
+  assert.deepEqual(capabilities.map((item) => item.timeoutMs), [null, null, null, null, 15_000]);
+  assert.doesNotMatch(JSON.stringify(capabilities), /gbrain doctor|gbrain repair|Bearer|\/Users\//);
+});
+
+test('does not consume metrics or timestamps from fulfilled unavailable source payloads', () => {
+  const failedStatus = buildOperationsOverview(healthyInput({
+    status: {
+      ok: false,
+      generatedAt: '2099-01-01T00:00:00.000Z',
+      agent: { activeSessions: 999, channels: ['secret-channel'] },
+      heartbeat: { lastHeartbeat: Date.parse('2099-01-01T00:00:00.000Z') },
+    },
+  }), { generatedAt });
+
+  assert.equal(failedStatus.systems.openclaw.metrics.activeSessions, 3);
+  assert.equal(failedStatus.systems.openclaw.metrics.channels, 0);
+  assert.equal(failedStatus.systems.openclaw.observedAt, generatedAt);
+  assert.equal(failedStatus.systems.openclaw.evidence.find((item) => item.id === 'openclaw:heartbeat').observedAt, null);
+  assert.doesNotMatch(JSON.stringify(failedStatus), /2099-01-01|secret-channel|999 active/);
+
+  const failedSessions = buildOperationsOverview(healthyInput({
+    sessions: {
+      ok: false,
+      generatedAt: '2099-01-01T00:00:00.000Z',
+      count: 999,
+      sessions: [{ key: 'secret', isActive: true }, { key: 'secret-2', isActive: true }],
+    },
+  }), { generatedAt });
+
+  assert.equal(failedSessions.systems.openclaw.metrics.activeSessions, 0);
+  assert.equal(failedSessions.systems.openclaw.observedAt, generatedAt);
+  assert.equal(failedSessions.attention.some((item) => item.reasonCode === 'openclaw_session_count_conflict'), false);
+  assert.doesNotMatch(JSON.stringify(failedSessions), /2099-01-01|secret-2|999/);
+});
+
+test('turns out-of-range heartbeat epochs into stale evidence without throwing', () => {
+  const input = healthyInput();
+  input.status.agent.activeSessions = 3;
+  input.status.heartbeat.lastHeartbeat = 9e15;
+
+  let overview;
+  assert.doesNotThrow(() => {
+    overview = buildOperationsOverview(input, { generatedAt });
+  });
+
+  assert.equal(overview.systems.openclaw.state, 'warning');
+  assert.equal(overview.systems.openclaw.freshness, 'stale');
+  assert.equal(overview.systems.openclaw.evidence.find((item) => item.id === 'openclaw:heartbeat').observedAt, null);
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_heartbeat_stale'));
+});

@@ -30,7 +30,11 @@ function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
     kind: cleanText(action?.kind),
     safetyClass: cleanText(action?.safetyClass),
     requiresConfirmation: Boolean(action?.requiresConfirmation),
-    timeoutMs: action?.timeoutMs || null,
+    timeoutMs: typeof action?.timeoutMs === 'number'
+      && Number.isFinite(action.timeoutMs)
+      && action.timeoutMs > 0
+      ? action.timeoutMs
+      : null,
     refreshAfter: Boolean(action?.refreshAfter),
     enabled: true,
     disabledReason: '',
@@ -41,6 +45,20 @@ function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
 function observedAt(value, fallback) {
   const parsed = value && Date.parse(value);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
+}
+
+function epochObservedAt(value) {
+  let numeric;
+  try {
+    numeric = Number(value);
+  } catch {
+    return null;
+  }
+  if (!Number.isFinite(numeric) || numeric <= 0) return null;
+  const milliseconds = numeric > 1e12 ? numeric : numeric * 1000;
+  if (!Number.isFinite(milliseconds)) return null;
+  const date = new Date(milliseconds);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
 }
 
 function evidence(id, system, kind, status, at, summary, sourceRef, detailHref) {
@@ -109,14 +127,16 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   }
 
   const at = observedAt(
-    status?.generatedAt || sessions?.generatedAt || cron?.generatedAt,
+    (!statusUnavailable && status?.generatedAt)
+      || (!sessionsUnavailable && sessions?.generatedAt)
+      || (!cronUnavailable && cron?.generatedAt),
     generatedAt,
   );
-  const statusSessions = Number(status?.agent?.activeSessions || 0);
-  const activeSessions = Array.isArray(sessions?.sessions)
-    ? sessions.sessions.filter((session) => session?.isActive).length
-    : sessionsUnavailable
-      ? statusSessions
+  const statusSessions = statusUnavailable ? 0 : Number(status?.agent?.activeSessions || 0);
+  const activeSessions = sessionsUnavailable
+    ? statusSessions
+    : Array.isArray(sessions?.sessions)
+      ? sessions.sessions.filter((session) => session?.isActive).length
       : Number(sessions?.count || 0);
   const sessionConflict = !statusUnavailable
     && !sessionsUnavailable
@@ -124,10 +144,9 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const sessionConflictDetail = sessionConflict
     ? `Status reports ${statusSessions} active sessions while the session reader reports ${activeSessions}.`
     : '';
-  const heartbeatValue = Number(status?.heartbeat?.lastHeartbeat || 0);
-  const heartbeatAt = heartbeatValue > 0
-    ? new Date(heartbeatValue > 1e12 ? heartbeatValue : heartbeatValue * 1000).toISOString()
-    : null;
+  const heartbeatAt = statusUnavailable
+    ? null
+    : epochObservedAt(status?.heartbeat?.lastHeartbeat);
   const heartbeatStale = !heartbeatAt
     || (Date.parse(generatedAt) - Date.parse(heartbeatAt)) > 2 * 60 * 60 * 1000;
   const caveats = [
@@ -245,7 +264,9 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       caveats,
       metrics: {
         activeSessions,
-        channels: Array.isArray(status?.agent?.channels) ? status.agent.channels.length : 0,
+        channels: !statusUnavailable && Array.isArray(status?.agent?.channels)
+          ? status.agent.channels.length
+          : 0,
         cronJobs: !cronUnavailable && Array.isArray(cron?.jobs)
           ? cron.jobs.filter((job) => job?.scheduler !== 'hermes').length
           : null,
