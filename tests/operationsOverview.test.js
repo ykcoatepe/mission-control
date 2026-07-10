@@ -233,6 +233,8 @@ test('projects a shared cron reader failure into visible system evidence', async
   assert.equal(overview.systems.hermes.metrics.cronJobs, null);
   assert.ok(overview.evidence.some((item) => item.id === 'openclaw:cron' && item.status === 'unavailable'));
   assert.ok(overview.evidence.some((item) => item.id === 'hermes:cron' && item.status === 'unavailable'));
+  assert.equal(overview.evidence.find((item) => item.id === 'openclaw:cron').observedAt, null);
+  assert.equal(overview.evidence.find((item) => item.id === 'hermes:cron').observedAt, null);
   assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_cron_unavailable'));
   assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
   assert.doesNotMatch(JSON.stringify(overview), /\/Users\//);
@@ -387,4 +389,125 @@ test('turns out-of-range heartbeat epochs into stale evidence without throwing',
   assert.equal(overview.systems.openclaw.freshness, 'stale');
   assert.equal(overview.systems.openclaw.evidence.find((item) => item.id === 'openclaw:heartbeat').observedAt, null);
   assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_heartbeat_stale'));
+});
+
+test('rejects JavaScript-valid heartbeats beyond the future-skew allowance', () => {
+  const input = healthyInput();
+  input.status.agent.activeSessions = 3;
+  input.status.heartbeat.lastHeartbeat = 1e15;
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+  const heartbeat = overview.systems.openclaw.evidence.find((item) => item.id === 'openclaw:heartbeat');
+
+  assert.equal(heartbeat.observedAt, null);
+  assert.equal(heartbeat.status, 'warning');
+  assert.equal(overview.systems.openclaw.freshness, 'stale');
+});
+
+test('marks shape-deficient fulfilled sources unavailable instead of fabricating healthy zeros', () => {
+  const deficientOpenClaw = buildOperationsOverview(healthyInput({
+    status: { ok: true, generatedAt, agent: {} },
+    sessions: { ok: true },
+    cron: { ok: true, jobs: [] },
+  }), { generatedAt });
+  assert.equal(deficientOpenClaw.systems.openclaw.state, 'unavailable');
+  assert.equal(deficientOpenClaw.systems.openclaw.observedAt, null);
+  assert.deepEqual(deficientOpenClaw.systems.openclaw.metrics, {});
+
+  const numericStatusTime = buildOperationsOverview(healthyInput({
+    status: { ok: true, generatedAt: 0, agent: { activeSessions: 0, channels: [] }, heartbeat: {} },
+    sessions: { ok: true },
+  }), { generatedAt });
+  assert.equal(numericStatusTime.systems.openclaw.state, 'unavailable');
+  assert.equal(numericStatusTime.systems.openclaw.observedAt, null);
+
+  const deficientSessions = buildOperationsOverview(healthyInput({
+    sessions: { ok: true, count: '0' },
+  }), { generatedAt });
+  assert.equal(deficientSessions.systems.openclaw.state, 'warning');
+  assert.equal(deficientSessions.systems.openclaw.metrics.activeSessions, 0);
+  assert.ok(deficientSessions.attention.some((item) => item.reasonCode === 'openclaw_sessions_unavailable'));
+
+  const fractionalSessions = buildOperationsOverview(healthyInput({
+    sessions: { ok: true, count: 0.5 },
+  }), { generatedAt });
+  assert.ok(fractionalSessions.attention.some((item) => item.reasonCode === 'openclaw_sessions_unavailable'));
+
+  const deficientHermes = buildOperationsOverview(healthyInput({
+    hermes: { ok: true, refreshedAt: generatedAt },
+  }), { generatedAt });
+  assert.equal(deficientHermes.systems.hermes.state, 'unavailable');
+  assert.equal(deficientHermes.systems.hermes.observedAt, null);
+  assert.deepEqual(deficientHermes.systems.hermes.metrics, {});
+
+  const unobservedHermes = buildOperationsOverview(healthyInput({
+    hermes: { ok: true, summary: { total: 0, active: 0, running: 0, blocked: 0 } },
+  }), { generatedAt });
+  assert.equal(unobservedHermes.systems.hermes.state, 'unavailable');
+  assert.equal(unobservedHermes.systems.hermes.observedAt, null);
+
+  const numericHermesTime = buildOperationsOverview(healthyInput({
+    hermes: { ok: true, refreshedAt: 0, summary: { total: 0, active: 0, running: 0, blocked: 0 } },
+  }), { generatedAt });
+  assert.equal(numericHermesTime.systems.hermes.state, 'unavailable');
+
+  const fractionalHermesSummary = buildOperationsOverview(healthyInput({
+    hermes: { ok: true, refreshedAt: generatedAt, summary: { total: 0, active: 0.5, running: 0, blocked: 0 } },
+  }), { generatedAt });
+  assert.equal(fractionalHermesSummary.systems.hermes.state, 'unavailable');
+
+  const deficientGBrain = buildOperationsOverview(healthyInput({
+    gbrain: { ok: true, refreshedAt: generatedAt, trust: { status: 'healthy', score: 100, label: 'Trusted' } },
+  }), { generatedAt });
+  assert.equal(deficientGBrain.systems.gbrain.state, 'unavailable');
+  assert.equal(deficientGBrain.systems.gbrain.observedAt, null);
+  assert.deepEqual(deficientGBrain.systems.gbrain.metrics, {});
+
+  const numericGBrainTime = buildOperationsOverview(healthyInput({
+    gbrain: { ok: true, trust: { status: 'healthy', score: 100, label: 'Trusted', lastVerifiedAt: 0 } },
+  }), { generatedAt });
+  assert.equal(numericGBrainTime.systems.gbrain.state, 'unavailable');
+
+  const coercibleGBrainTime = buildOperationsOverview(healthyInput({
+    gbrain: { ok: true, trust: { status: 'healthy', score: 100, label: 'Trusted', lastVerifiedAt: '0' } },
+  }), { generatedAt });
+  assert.equal(coercibleGBrainTime.systems.gbrain.state, 'unavailable');
+});
+
+test('uses status-session and session-list evidence for session conflicts', () => {
+  const overview = buildOperationsOverview(healthyInput(), { generatedAt });
+  const conflict = overview.attention.find((item) => item.reasonCode === 'openclaw_session_count_conflict');
+  const statusProof = overview.evidence.find((item) => item.id === 'openclaw:status-sessions');
+  const sessionsProof = overview.evidence.find((item) => item.id === 'openclaw:sessions');
+
+  assert.ok(conflict);
+  assert.deepEqual(conflict.evidenceRefs, ['openclaw:status-sessions', 'openclaw:sessions']);
+  assert.equal(statusProof.sourceRef, '/api/status');
+  assert.match(statusProof.summary, /0 active sessions/i);
+  assert.equal(sessionsProof.sourceRef, '/api/sessions');
+  assert.match(sessionsProof.summary, /3 active sessions/i);
+});
+
+test('sorts valid evidence timestamps descending and null evidence last', () => {
+  const input = healthyInput();
+  input.status.generatedAt = '2026-07-10T11:00:00.000Z';
+  input.status.agent.activeSessions = 3;
+  input.status.heartbeat.lastHeartbeat = null;
+  input.sessions.generatedAt = '2026-07-10T11:30:00.000Z';
+  input.hermes.refreshedAt = '2026-07-10T10:00:00.000Z';
+  input.gbrain.refreshedAt = '2026-07-10T11:45:00.000Z';
+  input.gbrain.trust.lastVerifiedAt = '2026-07-10T11:45:00.000Z';
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+  const firstNull = overview.evidence.findIndex((item) => item.observedAt === null);
+
+  assert.ok(firstNull > 0);
+  assert.ok(overview.evidence.slice(0, firstNull).every((item) => Number.isFinite(Date.parse(item.observedAt))));
+  assert.ok(overview.evidence.slice(firstNull).every((item) => item.observedAt === null));
+  for (let index = 1; index < firstNull; index += 1) {
+    assert.ok(
+      Date.parse(overview.evidence[index - 1].observedAt) >= Date.parse(overview.evidence[index].observedAt),
+      `${overview.evidence[index - 1].id} should not sort before newer ${overview.evidence[index].id}`,
+    );
+  }
 });

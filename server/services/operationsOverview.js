@@ -5,6 +5,8 @@ const STATE_RANK = {
   inactive: 2,
   healthy: 1,
 };
+const FUTURE_SKEW_MS = 5 * 60 * 1000;
+const RFC3339_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 function deriveOverallStatus(systems) {
   return Object.values(systems).reduce((worst, system) => (
@@ -42,12 +44,75 @@ function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
   }));
 }
 
-function observedAt(value, fallback) {
-  const parsed = value && Date.parse(value);
-  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : fallback;
+function observedAt(value, referenceAt) {
+  if (typeof value !== 'string' || !RFC3339_TIMESTAMP.test(value.trim())) return null;
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed)) return null;
+  const referenceTime = Date.parse(referenceAt);
+  if (Number.isFinite(referenceTime) && parsed > referenceTime + FUTURE_SKEW_MS) return null;
+  return new Date(parsed).toISOString();
 }
 
-function epochObservedAt(value) {
+function isRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCount(value) {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+function hasStatusProof(status, generatedAt) {
+  return isRecord(status)
+    && !status.unavailable
+    && status.ok !== false
+    && Boolean(observedAt(status.generatedAt, generatedAt))
+    && isRecord(status.agent)
+    && isCount(status.agent.activeSessions)
+    && Array.isArray(status.agent.channels);
+}
+
+function hasSessionsProof(sessions) {
+  return isRecord(sessions)
+    && !sessions.unavailable
+    && sessions.ok !== false
+    && (Array.isArray(sessions.sessions) || isCount(sessions.count));
+}
+
+function hasCronProof(cron, generatedAt) {
+  return isRecord(cron)
+    && !cron.unavailable
+    && cron.ok !== false
+    && Boolean(observedAt(cron.generatedAt, generatedAt))
+    && Array.isArray(cron.jobs);
+}
+
+function hasHermesProof(board, generatedAt) {
+  const summary = board?.summary;
+  return isRecord(board)
+    && !board.unavailable
+    && board.ok !== false
+    && Boolean(observedAt(board.refreshedAt, generatedAt))
+    && isRecord(summary)
+    && ['total', 'active', 'running', 'blocked'].every((key) => isCount(summary[key]));
+}
+
+function hasGBrainProof(overview, generatedAt) {
+  const trust = overview?.trust;
+  return isRecord(overview)
+    && !overview.unavailable
+    && overview.ok !== false
+    && isRecord(trust)
+    && ['healthy', 'warning', 'critical', 'inactive'].includes(trust.status)
+    && typeof trust.score === 'number'
+    && Number.isFinite(trust.score)
+    && trust.score >= 0
+    && trust.score <= 100
+    && typeof trust.label === 'string'
+    && trust.label.trim().length > 0
+    && Boolean(observedAt(trust.lastVerifiedAt, generatedAt));
+}
+
+function epochObservedAt(value, referenceAt) {
   let numeric;
   try {
     numeric = Number(value);
@@ -58,7 +123,11 @@ function epochObservedAt(value) {
   const milliseconds = numeric > 1e12 ? numeric : numeric * 1000;
   if (!Number.isFinite(milliseconds)) return null;
   const date = new Date(milliseconds);
-  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+  const time = date.getTime();
+  if (!Number.isFinite(time)) return null;
+  const referenceTime = Date.parse(referenceAt);
+  if (Number.isFinite(referenceTime) && time > referenceTime + FUTURE_SKEW_MS) return null;
+  return date.toISOString();
 }
 
 function evidence(id, system, kind, status, at, summary, sourceRef, detailHref) {
@@ -72,6 +141,17 @@ function evidence(id, system, kind, status, at, summary, sourceRef, detailHref) 
     sourceRef,
     detailHref,
   };
+}
+
+function compareEvidenceByObservedAt(a, b) {
+  const aTime = Date.parse(a?.observedAt);
+  const bTime = Date.parse(b?.observedAt);
+  const aValid = Number.isFinite(aTime);
+  const bValid = Number.isFinite(bTime);
+  if (aValid && bValid) return bTime - aTime || String(a?.id).localeCompare(String(b?.id));
+  if (aValid) return -1;
+  if (bValid) return 1;
+  return String(a?.id).localeCompare(String(b?.id));
 }
 
 function unavailableSystem(id, label, detailHref, at, message) {
@@ -113,9 +193,9 @@ function unavailableSystem(id, label, detailHref, at, message) {
 }
 
 function adaptOpenClaw(status, sessions, cron, generatedAt) {
-  const statusUnavailable = !status || status?.unavailable || status?.ok === false;
-  const sessionsUnavailable = !sessions || sessions?.unavailable || sessions?.ok === false;
-  const cronUnavailable = !cron || cron?.unavailable || cron?.ok === false;
+  const statusUnavailable = !hasStatusProof(status, generatedAt);
+  const sessionsUnavailable = !hasSessionsProof(sessions);
+  const cronUnavailable = !hasCronProof(cron, generatedAt);
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -126,12 +206,10 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     );
   }
 
-  const at = observedAt(
-    (!statusUnavailable && status?.generatedAt)
-      || (!sessionsUnavailable && sessions?.generatedAt)
-      || (!cronUnavailable && cron?.generatedAt),
-    generatedAt,
-  );
+  const statusAt = statusUnavailable ? null : observedAt(status.generatedAt, generatedAt);
+  const sessionsAt = sessionsUnavailable ? null : observedAt(sessions.generatedAt, generatedAt);
+  const cronAt = cronUnavailable ? null : observedAt(cron.generatedAt, generatedAt);
+  const at = statusAt || sessionsAt;
   const statusSessions = statusUnavailable ? 0 : Number(status?.agent?.activeSessions || 0);
   const activeSessions = sessionsUnavailable
     ? statusSessions
@@ -146,7 +224,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     : '';
   const heartbeatAt = statusUnavailable
     ? null
-    : epochObservedAt(status?.heartbeat?.lastHeartbeat);
+    : epochObservedAt(status?.heartbeat?.lastHeartbeat, generatedAt);
   const heartbeatStale = !heartbeatAt
     || (Date.parse(generatedAt) - Date.parse(heartbeatAt)) > 2 * 60 * 60 * 1000;
   const caveats = [
@@ -158,11 +236,23 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   ];
   const openclawEvidence = [
     evidence(
+      'openclaw:status-sessions',
+      'openclaw',
+      'status-sessions',
+      statusUnavailable ? 'unavailable' : sessionConflict ? 'warning' : 'healthy',
+      statusAt,
+      statusUnavailable
+        ? 'Status session evidence unavailable'
+        : `${statusSessions} active sessions reported by status`,
+      '/api/status',
+      '/systems',
+    ),
+    evidence(
       'openclaw:sessions',
       'openclaw',
       'sessions',
       sessionsUnavailable ? 'unavailable' : sessionConflict ? 'warning' : 'healthy',
-      at,
+      sessionsAt,
       sessionsUnavailable
         ? `Session evidence unavailable; status reports ${activeSessions} active sessions`
         : `${activeSessions} active sessions`,
@@ -186,7 +276,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       'openclaw',
       'scheduling',
       'unavailable',
-      at,
+      cronAt,
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
       '/automations',
@@ -202,7 +292,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       title: 'OpenClaw status evidence unavailable',
       detail: 'The status reader did not return evidence; session evidence remains available.',
       detailHref: '/systems',
-      evidenceRefs: ['openclaw:heartbeat'],
+      evidenceRefs: ['openclaw:status-sessions', 'openclaw:heartbeat'],
     });
   }
   if (sessionsUnavailable) {
@@ -238,7 +328,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       title: 'OpenClaw session evidence conflicts',
       detail: sessionConflictDetail,
       detailHref: '/sessions',
-      evidenceRefs: ['openclaw:sessions', 'openclaw:heartbeat'],
+      evidenceRefs: ['openclaw:status-sessions', 'openclaw:sessions'],
     });
   }
   if (heartbeatStale) {
@@ -279,7 +369,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
 }
 
 function adaptHermes(board, cron, generatedAt) {
-  if (!board || board?.unavailable || board?.ok === false) {
+  if (!hasHermesProof(board, generatedAt)) {
     return unavailableSystem(
       'hermes',
       'Hermes',
@@ -289,10 +379,10 @@ function adaptHermes(board, cron, generatedAt) {
     );
   }
 
-  const at = observedAt(board?.refreshedAt, generatedAt);
+  const at = observedAt(board.refreshedAt, generatedAt);
   const blocked = Number(board?.summary?.blocked || 0);
   const running = Number(board?.summary?.running || 0);
-  const cronUnavailable = !cron || cron?.unavailable || cron?.ok === false;
+  const cronUnavailable = !hasCronProof(cron, generatedAt);
   const kanbanState = blocked > 0 ? 'critical' : 'healthy';
   const state = blocked > 0 ? 'critical' : cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
@@ -312,7 +402,7 @@ function adaptHermes(board, cron, generatedAt) {
       'hermes',
       'scheduling',
       'unavailable',
-      at,
+      null,
       'Hermes scheduling evidence unavailable',
       '/api/cron',
       '/automations',
@@ -371,7 +461,7 @@ function adaptHermes(board, cron, generatedAt) {
 }
 
 function adaptGBrain(overview, generatedAt) {
-  if (!overview || overview?.unavailable || overview?.ok === false) {
+  if (!hasGBrainProof(overview, generatedAt)) {
     return unavailableSystem(
       'gbrain',
       'GBrain',
@@ -381,13 +471,8 @@ function adaptGBrain(overview, generatedAt) {
     );
   }
 
-  const at = observedAt(
-    overview?.trust?.lastVerifiedAt || overview?.refreshedAt,
-    generatedAt,
-  );
-  const trustState = ['healthy', 'warning', 'critical', 'inactive'].includes(overview?.trust?.status)
-    ? overview.trust.status
-    : 'unavailable';
+  const at = observedAt(overview.trust.lastVerifiedAt, generatedAt);
+  const trustState = overview.trust.status;
   const caveats = Array.isArray(overview?.caveats)
     ? overview.caveats.map((item) => cleanText(String(item)))
     : [];
@@ -444,7 +529,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
   );
   const evidenceItems = Object.values(systems)
     .flatMap((system) => system.evidence)
-    .sort((a, b) => String(b.observedAt).localeCompare(String(a.observedAt)));
+    .sort(compareEvidenceByObservedAt);
   const attention = Object.values(adapted)
     .flatMap((value) => value.attention)
     .sort((a, b) => (
