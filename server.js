@@ -8,6 +8,9 @@ const { createRuntimeSnapshotStore } = require('./server/services/runtimeSnapsho
 const { createOpenclawExec } = require('./server/services/openclawClient');
 const { createCronService, parseFirstJson } = require('./server/services/cronData');
 const { createStatusService } = require('./server/services/statusData');
+const { createHermesKanbanService } = require('./server/services/hermesKanbanData');
+const { createGBrainOverviewService } = require('./server/services/gbrainOverviewData');
+const { createOperationsOverviewService } = require('./server/services/operationsOverview');
 const { readJsonFileSafe, writeJsonFileAtomic } = require('./server/services/jsonFiles');
 const { createSettingsService } = require('./server/services/settingsData');
 const { buildAgentsRouter } = require('./server/routes/agents');
@@ -18,11 +21,12 @@ const { buildCostsRouter } = require('./server/routes/costs');
 const { buildCouncilsRouter } = require('./server/routes/councils');
 const { buildCronRouter } = require('./server/routes/cron');
 const { buildDocsRouter } = require('./server/routes/docs');
-const { buildGBrainRouter } = require('./server/routes/gbrain');
+const { buildGBrainRouter, listGBrainActions } = require('./server/routes/gbrain');
 const { buildHermesKanbanRouter } = require('./server/routes/hermesKanban');
 const { buildMemoryRouter } = require('./server/routes/memory');
 const { buildModelsRouter } = require('./server/routes/models');
 const { buildOllamaRouter } = require('./server/routes/ollama');
+const { buildOperationsRouter } = require('./server/routes/operations');
 const { buildOpsRouter } = require('./server/routes/ops');
 const { buildQuickRouter } = require('./server/routes/quick');
 const { buildScoutRouter } = require('./server/routes/scout');
@@ -492,8 +496,10 @@ function healthPayload() {
 
 app.get('/api/health', (req, res) => res.json(healthPayload()));
 app.get('/healthz', (req, res) => res.json(healthPayload()));
-app.use(buildGBrainRouter({ projectRoot: __dirname, mcConfig }));
-app.use(buildHermesKanbanRouter({ mcConfig }));
+const gbrainOverviewService = createGBrainOverviewService({ projectRoot: __dirname, mcConfig });
+const hermesKanbanService = createHermesKanbanService({ mcConfig });
+app.use(buildGBrainRouter({ projectRoot: __dirname, mcConfig, gbrainOverviewService }));
+app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
 
 const settingsService = createSettingsService({
   mcConfig,
@@ -546,12 +552,30 @@ const cronService = createCronService({
 });
 
 const sessionsService = createSessionsService();
+const operationsOverviewService = createOperationsOverviewService({
+  readers: {
+    status: () => statusService.getStatusResponse(),
+    sessions: () => sessionsService.listVisibleSessions(25),
+    cron: async () => {
+      const parsed = await cronService.fetchCronJobsLive();
+      const jobs = Array.isArray(parsed) ? parsed : parsed?.jobs || [];
+      return {
+        generatedAt: new Date().toISOString(),
+        jobs: jobs.map(cronService.mapCronJobForApi),
+      };
+    },
+    hermes: () => hermesKanbanService.getBoard(),
+    gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
+  },
+  listCapabilities: () => listGBrainActions(),
+});
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
 const OPS_EVENTS_PATH = path.join(__dirname, 'data/ops-events.json');
 const AGENT_REGISTRY_PATH = path.join(__dirname, 'data/agent-registry.json');
 
 app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN, openclawBin: OPENCLAW_BIN }));
+app.use(buildOperationsRouter({ operationsOverviewService }));
 app.use(buildStatusRouter({ statusService }));
 app.use(buildCronRouter({
   readRuntimeSnapshot,
