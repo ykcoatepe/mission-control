@@ -7,7 +7,8 @@
 .statusCard,
 .inbox,
 .mapPanel,
-.timeline {
+.timeline,
+.triggerShelf {
   border: 1px solid var(--obs-border, rgba(255, 255, 255, 0.1));
   background: var(--obs-panel, rgba(15, 21, 29, 0.88));
   border-radius: 12px;
@@ -94,7 +95,8 @@
 
 .inbox,
 .mapPanel,
-.timeline {
+.timeline,
+.triggerShelf {
   min-width: 0;
   overflow: hidden;
 }
@@ -354,6 +356,296 @@
   font-size: 10px;
 }
 
+.triggerGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  padding: 14px;
+}
+
+.triggerGrid button {
+  min-width: 0;
+  min-height: 148px;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--obs-border, rgba(255, 255, 255, 0.1));
+  border-radius: 10px;
+  background: var(--obs-node, rgba(17, 25, 35, 0.96));
+  color: var(--obs-text, var(--text-primary));
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+
+.triggerGrid button:hover:not(:disabled) {
+  border-color: var(--obs-focus-border, rgba(86, 158, 207, 0.58));
+  background: var(--obs-panel-raised, rgba(23, 31, 42, 0.98));
+}
+
+.triggerGrid button[data-safety='W1'] {
+  border-color: color-mix(in srgb, var(--state-warning, #d6a85f) 42%, var(--obs-border, rgba(255, 255, 255, 0.1)));
+}
+
+.triggerGrid button:disabled {
+  opacity: 0.52;
+  cursor: not-allowed;
+}
+
+.triggerGrid button > span,
+.confirmIdentity {
+  color: var(--obs-text-subtle, var(--text-tertiary));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.triggerGrid button[data-safety='W1'] > span {
+  color: var(--state-warning-text, #e8bd72);
+}
+
+.triggerGrid strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.triggerGrid p,
+.triggerGrid small {
+  margin: 0;
+  color: var(--obs-text-muted, var(--text-secondary));
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.triggerGrid small {
+  align-self: end;
+  color: var(--obs-text-subtle, var(--text-tertiary));
+}
+
+.drawer {
+  position: fixed;
+  inset: 0 0 0 auto;
+  z-index: 220;
+  width: min(460px, 100vw);
+  overflow: auto;
+  border-left: 1px solid var(--obs-border, rgba(255, 255, 255, 0.1));
+  background: var(--obs-elevated, #121a24);
+  color: var(--obs-text, var(--text-primary));
+  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.42);
+}
+
+.drawerHeader {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 20px;
+  border-bottom: 1px solid var(--obs-border, rgba(255, 255, 255, 0.1));
+  background: var(--obs-elevated, #121a24);
+}
+
+.drawerHeader span {
+  color: var(--obs-text-subtle, var(--text-tertiary));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.drawerHeader h2 {
+  margin: 4px 0 0;
+  font-size: 17px;
+  line-height: 1.3;
+}
+
+.drawerHeader button {
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  border: 1px solid var(--obs-border, rgba(255, 255, 255, 0.1));
+  border-radius: 9px;
+  color: var(--obs-text-muted, var(--text-secondary));
+  cursor: pointer;
+}
+
+.drawerBody {
+  display: grid;
+  gap: 24px;
+  padding: 22px 20px 30px;
+}
+
+.drawerBody section {
+  display: grid;
+  gap: 10px;
+}
+
+.drawerBody h3 {
+  margin: 0;
+  color: var(--obs-text-subtle, var(--text-tertiary));
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.drawerBody p,
+.drawerBody li {
+  margin: 0;
+  color: var(--obs-text-muted, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.drawerBody ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.drawerEvidence {
+  display: grid;
+  gap: 8px;
+}
+
+.drawerEvidence article {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--obs-border-soft, rgba(255, 255, 255, 0.06));
+  border-radius: 9px;
+  background: var(--obs-node, rgba(17, 25, 35, 0.96));
+}
+
+.drawerEvidence strong {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.drawerEvidence span,
+.drawerEvidence time,
+.drawerEmpty {
+  color: var(--obs-text-subtle, var(--text-tertiary));
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.drawerDetailLink {
+  display: inline-flex;
+  justify-content: center;
+  padding: 11px 14px;
+  border: 1px solid var(--obs-border-strong, rgba(255, 255, 255, 0.18));
+  border-radius: 9px;
+  color: var(--obs-text, var(--text-primary));
+  font-size: 12px;
+  font-weight: 650;
+  text-decoration: none;
+}
+
+.confirmBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 230;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(2, 7, 12, 0.72);
+}
+
+.confirmDialog {
+  width: min(520px, calc(100vw - 32px));
+  padding: 22px;
+  border: 1px solid var(--obs-border-strong, rgba(255, 255, 255, 0.18));
+  border-radius: 14px;
+  background: var(--obs-elevated, #121a24);
+  color: var(--obs-text, var(--text-primary));
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.48);
+}
+
+.confirmDialog h2 {
+  margin: 7px 0 6px;
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.confirmDialog > p {
+  margin: 0;
+  color: var(--obs-text-muted, var(--text-secondary));
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.confirmDialog dl {
+  display: grid;
+  gap: 0;
+  margin: 20px 0;
+  border: 1px solid var(--obs-border-soft, rgba(255, 255, 255, 0.06));
+  border-radius: 9px;
+}
+
+.confirmDialog dl > div {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--obs-border-soft, rgba(255, 255, 255, 0.06));
+}
+
+.confirmDialog dl > div:first-child {
+  border-top: 0;
+}
+
+.confirmDialog dt,
+.confirmDialog dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.confirmDialog dt {
+  color: var(--obs-text-subtle, var(--text-tertiary));
+}
+
+.confirmCaveat {
+  color: var(--state-warning-text, #e8bd72) !important;
+}
+
+.confirmActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.confirmActions button {
+  padding: 10px 14px;
+  border: 1px solid var(--obs-border-strong, rgba(255, 255, 255, 0.18));
+  border-radius: 9px;
+  color: var(--obs-text, var(--text-primary));
+  cursor: pointer;
+}
+
+.confirmActions button:last-child {
+  border-color: color-mix(in srgb, var(--state-warning, #d6a85f) 52%, var(--obs-border, rgba(255, 255, 255, 0.1)));
+  background: color-mix(in srgb, var(--state-warning, #d6a85f) 12%, transparent);
+}
+
+.statusCard:focus-visible,
+.inboxItem:focus-visible,
+.timelineList button:focus-visible,
+.mapNode:focus-visible,
+.domainNode:focus-visible,
+.triggerGrid button:focus-visible,
+.drawerHeader button:focus-visible,
+.drawerDetailLink:focus-visible,
+.confirmActions button:focus-visible {
+  outline: 2px solid var(--obs-focus-ring, #72b9e6);
+  outline-offset: 3px;
+}
+
 @media (max-width: 900px) {
   .statusRail {
     grid-template-columns: 1fr;
@@ -377,6 +669,10 @@
   .domainNode {
     min-width: 96px;
     padding: 8px 10px;
+  }
+
+  .triggerGrid {
+    grid-template-columns: 1fr 1fr;
   }
 }
 
@@ -402,6 +698,25 @@
   .domainNode {
     top: 78%;
   }
+
+  .triggerGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .drawer {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .confirmDialog dl > div {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .confirmActions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -409,7 +724,8 @@
   .inboxItem,
   .timelineList button,
   .mapNode,
-  .domainNode {
+  .domainNode,
+  .triggerGrid button {
     transition: none;
     animation: none;
   }
