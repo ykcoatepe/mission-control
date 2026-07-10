@@ -499,7 +499,9 @@ function adaptGBrain(overview, generatedAt) {
   const caveats = overview.caveats.map((item) => cleanText(String(item)));
   const staleSources = overview.live.sources.freshness.staleCount;
   const sourceStale = staleSources > 0;
-  const state = trustState === 'healthy' && caveats.length ? 'warning' : trustState;
+  const state = trustState === 'healthy' && (caveats.length || sourceStale)
+    ? 'warning'
+    : trustState;
   const proof = evidence(
     'gbrain:trust',
     'gbrain',
@@ -510,6 +512,38 @@ function adaptGBrain(overview, generatedAt) {
     '/api/gbrain/overview',
     '/gbrain',
   );
+  const staleProof = sourceStale ? evidence(
+    'gbrain:source-freshness',
+    'gbrain',
+    'source-freshness',
+    'warning',
+    at,
+    `${staleSources} stale GBrain sources`,
+    '/api/gbrain/overview',
+    '/gbrain',
+  ) : null;
+  const attention = caveats.map((detail, index) => ({
+    id: `gbrain:caveat:${index}`,
+    system: 'gbrain',
+    severity: state === 'critical' ? 'critical' : 'warning',
+    reasonCode: 'gbrain_active_caveat',
+    title: 'GBrain has an active caveat',
+    detail,
+    detailHref: '/gbrain',
+    evidenceRefs: [proof.id],
+  }));
+  if (staleProof) {
+    attention.push({
+      id: 'gbrain:stale-sources',
+      system: 'gbrain',
+      severity: 'warning',
+      reasonCode: 'gbrain_stale_sources',
+      title: 'GBrain source evidence is stale',
+      detail: `${staleSources} sources require a fresh verification signal.`,
+      detailHref: '/gbrain',
+      evidenceRefs: [staleProof.id],
+    });
+  }
   return {
     system: {
       id: 'gbrain',
@@ -523,19 +557,10 @@ function adaptGBrain(overview, generatedAt) {
         staleSources,
         caveats: caveats.length,
       },
-      evidence: [proof],
+      evidence: staleProof ? [proof, staleProof] : [proof],
       detailHref: '/gbrain',
     },
-    attention: caveats.map((detail, index) => ({
-      id: `gbrain:caveat:${index}`,
-      system: 'gbrain',
-      severity: state === 'critical' ? 'critical' : 'warning',
-      reasonCode: 'gbrain_active_caveat',
-      title: 'GBrain has an active caveat',
-      detail,
-      detailHref: '/gbrain',
-      evidenceRefs: [proof.id],
-    })),
+    attention,
   };
 }
 

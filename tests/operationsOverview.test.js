@@ -611,3 +611,26 @@ test('isolates synchronous capability enumeration failure from the reader snapsh
   assert.ok(overview.evidence.some((item) => item.id === 'gbrain:capabilities-unavailable'));
   assert.doesNotMatch(JSON.stringify(overview), /Bearer|\/Users\//);
 });
+
+test('promotes caveatless stale GBrain sources to warning with explicit proof', () => {
+  const input = healthyInput();
+  input.status.agent.activeSessions = 3;
+  input.gbrain.caveats = [];
+  input.gbrain.live.sources.freshness.staleCount = 3;
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+  const staleAttention = overview.attention.find((item) => item.reasonCode === 'gbrain_stale_sources');
+  const staleEvidence = overview.evidence.find((item) => item.id === 'gbrain:source-freshness');
+
+  assert.equal(overview.systems.gbrain.state, 'warning');
+  assert.equal(overview.systems.gbrain.freshness, 'stale');
+  assert.equal(overview.overall.state, 'warning');
+  assert.deepEqual(overview.systems.gbrain.caveats, []);
+  assert.ok(staleAttention);
+  assert.equal(staleAttention.detailHref, '/gbrain');
+  assert.deepEqual(staleAttention.evidenceRefs, ['gbrain:source-freshness']);
+  assert.ok(staleEvidence);
+  assert.equal(staleEvidence.status, 'warning');
+  assert.equal(staleEvidence.detailHref, '/gbrain');
+  assert.match(staleEvidence.summary, /3 stale/i);
+});
