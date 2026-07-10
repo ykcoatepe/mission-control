@@ -20,3 +20,5 @@ documents/
 .gstack/
 .gbrain-source
 .playwright-mcp/
+.superpowers/
+.worktrees/
