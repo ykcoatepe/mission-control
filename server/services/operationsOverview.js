@@ -6,7 +6,7 @@ const STATE_RANK = {
   healthy: 1,
 };
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
-const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
+const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
 function deriveOverallStatus(systems) {
   return Object.values(systems).reduce((worst, system) => (

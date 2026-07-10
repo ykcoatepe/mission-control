@@ -578,6 +578,12 @@ test('rejects normalized but semantically invalid RFC3339 calendar timestamps', 
   const validOffsetOverview = buildOperationsOverview(validOffset, { generatedAt });
   assert.notEqual(validOffsetOverview.systems.hermes.state, 'unavailable');
   assert.equal(validOffsetOverview.systems.hermes.observedAt, '2026-07-10T11:00:00.000Z');
+
+  const validMicroseconds = healthyInput();
+  validMicroseconds.hermes.refreshedAt = '2026-07-10T11:00:00.123456Z';
+  const validMicrosecondsOverview = buildOperationsOverview(validMicroseconds, { generatedAt });
+  assert.notEqual(validMicrosecondsOverview.systems.hermes.state, 'unavailable');
+  assert.equal(validMicrosecondsOverview.systems.hermes.observedAt, '2026-07-10T11:00:00.123Z');
 });
 
 test('isolates synchronous capability enumeration failure from the reader snapshot', async () => {
