@@ -48,6 +48,7 @@ function healthyInput(overrides = {}) {
         lastVerifiedAt: generatedAt,
       },
       caveats: [],
+      live: { sources: { freshness: { staleCount: 0 } } },
     },
     capabilities: buildOperationsCapabilities({
       gbrainActions: [{
@@ -510,4 +511,97 @@ test('sorts valid evidence timestamps descending and null evidence last', () => 
       `${overview.evidence[index - 1].id} should not sort before newer ${overview.evidence[index].id}`,
     );
   }
+});
+
+test('requires explicit GBrain caveats and trustworthy source freshness evidence', () => {
+  const cases = [
+    {
+      name: 'missing caveats',
+      mutate(value) { delete value.caveats; },
+    },
+    {
+      name: 'object caveats',
+      mutate(value) { value.caveats = { active: false }; },
+    },
+    {
+      name: 'missing stale count',
+      mutate(value) { value.live.sources.freshness = {}; },
+    },
+    {
+      name: 'negative stale count',
+      mutate(value) { value.live.sources.freshness.staleCount = -1; },
+    },
+    {
+      name: 'fractional stale count',
+      mutate(value) { value.live.sources.freshness.staleCount = 0.5; },
+    },
+  ];
+
+  for (const entry of cases) {
+    const input = healthyInput();
+    entry.mutate(input.gbrain);
+    const overview = buildOperationsOverview(input, { generatedAt });
+    assert.equal(overview.systems.gbrain.state, 'unavailable', entry.name);
+    assert.equal(overview.systems.gbrain.freshness, 'unavailable', entry.name);
+    assert.equal(overview.systems.gbrain.metrics.staleSources, undefined, entry.name);
+    assert.ok(overview.attention.some((item) => item.reasonCode === 'gbrain_unavailable'), entry.name);
+  }
+});
+
+test('rejects normalized but semantically invalid RFC3339 calendar timestamps', () => {
+  const invalidStatus = buildOperationsOverview(healthyInput({
+    status: {
+      generatedAt: '2026-02-30T12:00:00.000Z',
+      agent: { activeSessions: 0, channels: [] },
+      heartbeat: {},
+    },
+    sessions: { ok: true },
+  }), { generatedAt });
+  assert.equal(invalidStatus.systems.openclaw.state, 'unavailable');
+
+  const invalidHermes = buildOperationsOverview(healthyInput({
+    hermes: {
+      ok: true,
+      refreshedAt: '2026-07-10T24:00:00.000Z',
+      summary: { total: 0, active: 0, running: 0, blocked: 0 },
+    },
+  }), { generatedAt });
+  assert.equal(invalidHermes.systems.hermes.state, 'unavailable');
+
+  const invalidGBrain = healthyInput();
+  invalidGBrain.gbrain.trust.lastVerifiedAt = '2026-02-30T12:00:00.000Z';
+  const invalidGBrainOverview = buildOperationsOverview(invalidGBrain, { generatedAt });
+  assert.equal(invalidGBrainOverview.systems.gbrain.state, 'unavailable');
+
+  const validOffset = healthyInput();
+  validOffset.hermes.refreshedAt = '2026-07-10T14:00:00.000+03:00';
+  const validOffsetOverview = buildOperationsOverview(validOffset, { generatedAt });
+  assert.notEqual(validOffsetOverview.systems.hermes.state, 'unavailable');
+  assert.equal(validOffsetOverview.systems.hermes.observedAt, '2026-07-10T11:00:00.000Z');
+});
+
+test('isolates synchronous capability enumeration failure from the reader snapshot', async () => {
+  const input = healthyInput();
+  const service = createOperationsOverviewService({
+    readers: {
+      status: async () => input.status,
+      sessions: async () => input.sessions,
+      cron: async () => input.cron,
+      hermes: async () => input.hermes,
+      gbrain: async () => input.gbrain,
+    },
+    listCapabilities: () => {
+      throw new Error('Bearer secret /Users/example/private');
+    },
+    now: () => new Date(generatedAt),
+  });
+
+  let overview;
+  await assert.doesNotReject(async () => {
+    overview = await service.getOverview();
+  });
+  assert.deepEqual(overview.capabilities, []);
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'gbrain_capabilities_unavailable'));
+  assert.ok(overview.evidence.some((item) => item.id === 'gbrain:capabilities-unavailable'));
+  assert.doesNotMatch(JSON.stringify(overview), /Bearer|\/Users\//);
 });

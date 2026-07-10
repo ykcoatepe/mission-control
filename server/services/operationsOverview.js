@@ -6,7 +6,7 @@ const STATE_RANK = {
   healthy: 1,
 };
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
-const RFC3339_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/i;
+const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,3})?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
 function deriveOverallStatus(systems) {
   return Object.values(systems).reduce((worst, system) => (
@@ -45,8 +45,27 @@ function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
 }
 
 function observedAt(value, referenceAt) {
-  if (typeof value !== 'string' || !RFC3339_TIMESTAMP.test(value.trim())) return null;
-  const parsed = Date.parse(value);
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  const match = trimmed.match(RFC3339_TIMESTAMP);
+  if (!match) return null;
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText,
+    , offsetHourText, offsetMinuteText] = match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText == null ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText == null ? 0 : Number(offsetMinuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (month < 1 || month > 12
+    || day < 1 || day > daysInMonth[month - 1]
+    || hour > 23 || minute > 59 || second > 59
+    || offsetHour > 23 || offsetMinute > 59) return null;
+  const parsed = Date.parse(trimmed);
   if (!Number.isFinite(parsed)) return null;
   const referenceTime = Date.parse(referenceAt);
   if (Number.isFinite(referenceTime) && parsed > referenceTime + FUTURE_SKEW_MS) return null;
@@ -98,6 +117,7 @@ function hasHermesProof(board, generatedAt) {
 
 function hasGBrainProof(overview, generatedAt) {
   const trust = overview?.trust;
+  const sourceFreshness = overview?.live?.sources?.freshness;
   return isRecord(overview)
     && !overview.unavailable
     && overview.ok !== false
@@ -109,7 +129,10 @@ function hasGBrainProof(overview, generatedAt) {
     && trust.score <= 100
     && typeof trust.label === 'string'
     && trust.label.trim().length > 0
-    && Boolean(observedAt(trust.lastVerifiedAt, generatedAt));
+    && Boolean(observedAt(trust.lastVerifiedAt, generatedAt))
+    && Array.isArray(overview.caveats)
+    && isRecord(sourceFreshness)
+    && isCount(sourceFreshness.staleCount);
 }
 
 function epochObservedAt(value, referenceAt) {
@@ -473,10 +496,8 @@ function adaptGBrain(overview, generatedAt) {
 
   const at = observedAt(overview.trust.lastVerifiedAt, generatedAt);
   const trustState = overview.trust.status;
-  const caveats = Array.isArray(overview?.caveats)
-    ? overview.caveats.map((item) => cleanText(String(item)))
-    : [];
-  const staleSources = Number(overview?.live?.sources?.freshness?.staleCount || 0);
+  const caveats = overview.caveats.map((item) => cleanText(String(item)));
+  const staleSources = overview.live.sources.freshness.staleCount;
   const sourceStale = staleSources > 0;
   const state = trustState === 'healthy' && caveats.length ? 'warning' : trustState;
   const proof = evidence(
@@ -524,6 +545,29 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
     hermes: adaptHermes(input.hermes, input.cron, generatedAt),
     gbrain: adaptGBrain(input.gbrain, generatedAt),
   };
+  if (input.capabilitiesUnavailable) {
+    const capabilityProof = evidence(
+      'gbrain:capabilities-unavailable',
+      'gbrain',
+      'capabilities',
+      'unavailable',
+      generatedAt,
+      'GBrain capability metadata unavailable',
+      'GBrain capability registry',
+      '/gbrain',
+    );
+    adapted.gbrain.system.evidence.push(capabilityProof);
+    adapted.gbrain.attention.push({
+      id: 'gbrain:capabilities-unavailable',
+      system: 'gbrain',
+      severity: 'unavailable',
+      reasonCode: 'gbrain_capabilities_unavailable',
+      title: 'GBrain capability metadata unavailable',
+      detail: 'Read evidence remains available, but the safe action catalog could not be read.',
+      detailHref: '/gbrain',
+      evidenceRefs: [capabilityProof.id],
+    });
+  }
   const systems = Object.fromEntries(
     Object.entries(adapted).map(([id, value]) => [id, value.system]),
   );
@@ -595,9 +639,14 @@ function createOperationsOverviewService({
           error: result.reason?.message || `${names[index]} unavailable`,
         },
     ]));
-    input.capabilities = buildOperationsCapabilities({
-      gbrainActions: listCapabilities(),
-    });
+    try {
+      input.capabilities = buildOperationsCapabilities({
+        gbrainActions: listCapabilities(),
+      });
+    } catch {
+      input.capabilities = [];
+      input.capabilitiesUnavailable = true;
+    }
     return buildOperationsOverview(input, { generatedAt: now().toISOString() });
   }
 
