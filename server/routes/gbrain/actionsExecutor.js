@@ -16,6 +16,8 @@ function listGBrainActions() {
     label: definition.label,
     description: definition.description,
     kind: definition.kind,
+    safetyClass: definition.safetyClass,
+    requiresConfirmation: definition.requiresConfirmation,
     timeoutMs: definition.timeoutMs,
     refreshAfter: definition.refreshAfter,
     command: [`gbrain ${definition.args.join(' ')}`, definition.afterSuccessArgs ? `gbrain ${definition.afterSuccessArgs.join(' ')}` : '']

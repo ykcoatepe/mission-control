@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { createGBrainTimelineService } = require('../../services/gbrainTimeline');
+const { createGBrainOverviewService } = require('../../services/gbrainOverviewData');
 const {
   buildLiveGBrainHealth,
   buildLiveGBrainSources,
@@ -14,35 +14,14 @@ const {
 const { buildLocalGBrainIntegrationRuntime } = require('./integrationRuntime');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
-const { buildGBrainOverview } = require('./overview');
 
 function buildGBrainRouter(options = {}) {
   const router = express.Router();
-  const timelineService = options.timelineService || createGBrainTimelineService({
-    projectRoot: options.projectRoot,
-    enabled: options.mcConfig?.modules?.gbrainTimeline !== false,
-    ledgerPath: options.timelineLedgerPath,
-  });
+  const overviewService = options.gbrainOverviewService || createGBrainOverviewService(options);
+  const timelineService = overviewService.timelineService;
 
-  router.get('/api/gbrain/overview', async (req, res) => {
-    const [health, sources, version, tools, features, providers, hermesProxy] = await Promise.all([
-      buildLiveGBrainHealth(options),
-      buildLiveGBrainSources(options),
-      buildLiveGBrainVersion(options),
-      buildLiveGBrainTools(options),
-      buildLiveGBrainFeatures(options),
-      buildLiveGBrainProviders(options),
-      buildLiveHermesProxyStatus(options),
-    ]);
-    const integrationRuntime = buildLocalGBrainIntegrationRuntime(options);
-    const overview = buildGBrainOverview({ health, sources, version, tools, features, providers, hermesProxy }, { integrationRuntime });
-    const result = await timelineService.captureOverview(overview);
-    res.json(buildGBrainOverview({ health, sources, version, tools, features, providers, hermesProxy }, {
-      integrationRuntime,
-      timelineSummary: result.timelineSummary,
-      incidentBanner: result.timelineSummary?.incidentBanner || null,
-      incidentBanners: result.timelineSummary?.incidentBanners || [],
-    }));
+  router.get('/api/gbrain/overview', async (_req, res) => {
+    res.json(await overviewService.getOverview());
   });
 
   router.get('/api/gbrain/health', async (req, res) => {

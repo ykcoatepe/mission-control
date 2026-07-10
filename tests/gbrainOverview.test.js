@@ -13,10 +13,49 @@ const {
   buildLiveGBrainProviders,
   buildGBrainIntegrationHealth,
   buildLocalGBrainIntegrationRuntime,
+  createGBrainOverviewService,
   listGBrainActions,
   runGBrainAction,
   sanitizeMessage,
 } = require('../server/routes/gbrain');
+
+async function testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture() {
+  const checkedAt = '2026-07-10T12:00:00.000Z';
+  const counts = {};
+  let captureCount = 0;
+  const counted = (name, value) => async () => {
+    counts[name] = (counts[name] || 0) + 1;
+    return value;
+  };
+  const service = createGBrainOverviewService({
+    probes: {
+      health: counted('health', { ok: true, status: 'healthy', checkedAt }),
+      sources: counted('sources', { ok: true, freshness: { status: 'healthy', staleCount: 0 } }),
+      version: counted('version', { ok: true, version: '0.42.58.0' }),
+      tools: counted('tools', { ok: true, tools: [] }),
+      features: counted('features', { ok: true, recommendations: [] }),
+      providers: counted('providers', { ok: true, providers: [] }),
+      hermesProxy: counted('hermesProxy', { ok: true }),
+    },
+    buildIntegrationRuntime: () => ({ checkedAt, systems: {} }),
+    timelineService: {
+      captureOverview: async () => {
+        captureCount += 1;
+        return { timelineSummary: { enabled: true } };
+      },
+    },
+  });
+
+  const snapshot = await service.readSnapshot();
+
+  assert.equal(captureCount, 0);
+  assert.equal(snapshot.overview.ok, true);
+  assert.deepEqual(Object.values(counts), [1, 1, 1, 1, 1, 1, 1]);
+
+  await service.getOverview();
+
+  assert.equal(captureCount, 1);
+}
 
 (function testOverviewIsReadOnlyAndEvidenceBacked() {
   const overview = buildGBrainOverview();
@@ -1156,6 +1195,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 }
 
 (async () => {
+  await testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture();
   await testLiveHealthNormalizesReadOnlyProbe();
   await testLiveHealthBackfillsInventoryFromStatsText();
   await testLiveVersionAppearsInOverview();
