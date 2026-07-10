@@ -8,6 +8,10 @@ import {
   ActionStatusBanner,
   BrainHomeError,
   BrainHomeSkeleton,
+  canStartAction,
+  hasFreshProofAdvanced,
+  resolveCurrentConfirmedW1,
+  type ActionStartMode,
 } from './brain/BrainHomeState'
 import { DecisionInbox } from './brain/DecisionInbox'
 import { EvidenceDrawer } from './brain/EvidenceDrawer'
@@ -22,7 +26,6 @@ import type {
   ActionStatus,
   DrawerSelection,
   OperationCapability,
-  OperationSystem,
   OperationsOverview,
 } from './brain/types'
 
@@ -33,19 +36,6 @@ type ActionRun = {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : 'GBrain action failed'
-}
-
-function hasFreshProofAdvanced(
-  previousObservedAt: string | null,
-  nextProof: Pick<OperationSystem, 'observedAt' | 'freshness'> | null | undefined,
-) {
-  if (!nextProof?.observedAt || nextProof.freshness !== 'fresh') return false
-  if (!previousObservedAt) return true
-  if (nextProof.observedAt === previousObservedAt) return false
-
-  const previousTime = Date.parse(previousObservedAt)
-  const nextTime = Date.parse(nextProof.observedAt)
-  return Number.isFinite(previousTime) && Number.isFinite(nextTime) && nextTime > previousTime
 }
 
 export default function BrainHome() {
@@ -109,9 +99,8 @@ export default function BrainHome() {
 
   const closePendingAction = useCallback(() => setPendingAction(null), [])
 
-  const beginAction = (capability: OperationCapability) => {
-    if (!data || executionRef.current || !capability.enabled) return
-    if (capability.safetyClass === 'W2') return
+  const beginAction = (capability: OperationCapability, mode: ActionStartMode) => {
+    if (!data || !canStartAction(capability, mode, executionRef.current)) return
 
     executionRef.current = capability.id
     setPendingAction(null)
@@ -122,20 +111,47 @@ export default function BrainHome() {
   }
 
   const requestAction = (capability: OperationCapability, trigger: HTMLButtonElement) => {
-    if (executionRef.current || actionMutation.isPending || !capability.enabled) return
-    if (capability.safetyClass === 'W2') return
+    if (executionRef.current || actionMutation.isPending) return
 
     returnFocusRef.current = trigger
     if (capability.safetyClass === 'W1') {
+      if (!canStartAction(capability, 'confirmed', null)) {
+        setActionStatus({
+          state: 'failed',
+          message: 'Action was not started because its confirmation policy is unavailable',
+        })
+        return
+      }
       setPendingAction(capability)
       return
     }
-    if (capability.safetyClass === 'R0') beginAction(capability)
+    if (capability.safetyClass === 'R0') beginAction(capability, 'direct')
   }
 
   const confirmAction = () => {
-    if (!pendingAction || pendingAction.safetyClass !== 'W1') return
-    beginAction(pendingAction)
+    if (!pendingAction || executionRef.current || actionMutation.isPending) return
+    if (!data) {
+      setPendingAction(null)
+      setActionStatus({
+        state: 'failed',
+        message: 'Action was not started because current capability evidence is unavailable',
+      })
+      return
+    }
+
+    const currentCapability = resolveCurrentConfirmedW1(
+      data.capabilities,
+      pendingAction.id,
+    )
+    if (!currentCapability) {
+      setPendingAction(null)
+      setActionStatus({
+        state: 'failed',
+        message: 'Action was not started because its current capability policy changed',
+      })
+      return
+    }
+    beginAction(currentCapability, 'confirmed')
   }
 
   if (loading) return <BrainHomeSkeleton />
