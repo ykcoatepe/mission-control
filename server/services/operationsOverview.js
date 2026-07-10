@@ -95,9 +95,9 @@ function unavailableSystem(id, label, detailHref, at, message) {
 }
 
 function adaptOpenClaw(status, sessions, cron, generatedAt) {
-  const statusUnavailable = !status || status?.unavailable;
-  const sessionsUnavailable = !sessions || sessions?.unavailable;
-  const cronUnavailable = !cron || cron?.unavailable;
+  const statusUnavailable = !status || status?.unavailable || status?.ok === false;
+  const sessionsUnavailable = !sessions || sessions?.unavailable || sessions?.ok === false;
+  const cronUnavailable = !cron || cron?.unavailable || cron?.ok === false;
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -121,6 +121,9 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const sessionConflict = !statusUnavailable
     && !sessionsUnavailable
     && statusSessions !== activeSessions;
+  const sessionConflictDetail = sessionConflict
+    ? `Status reports ${statusSessions} active sessions while the session reader reports ${activeSessions}.`
+    : '';
   const heartbeatValue = Number(status?.heartbeat?.lastHeartbeat || 0);
   const heartbeatAt = heartbeatValue > 0
     ? new Date(heartbeatValue > 1e12 ? heartbeatValue : heartbeatValue * 1000).toISOString()
@@ -131,9 +134,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
     ...(cronUnavailable ? ['OpenClaw scheduling evidence is unavailable.'] : []),
-    ...(sessionConflict
-      ? [`Status reports ${statusSessions} active sessions while the session reader reports ${activeSessions}.`]
-      : []),
+    ...(sessionConflict ? [sessionConflictDetail] : []),
     ...(heartbeatStale ? ['Heartbeat proof is stale or unavailable.'] : []),
   ];
   const openclawEvidence = [
@@ -216,7 +217,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       severity: 'warning',
       reasonCode: 'openclaw_session_count_conflict',
       title: 'OpenClaw session evidence conflicts',
-      detail: caveats[0],
+      detail: sessionConflictDetail,
       detailHref: '/sessions',
       evidenceRefs: ['openclaw:sessions', 'openclaw:heartbeat'],
     });
@@ -245,7 +246,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       metrics: {
         activeSessions,
         channels: Array.isArray(status?.agent?.channels) ? status.agent.channels.length : 0,
-        cronJobs: Array.isArray(cron?.jobs)
+        cronJobs: !cronUnavailable && Array.isArray(cron?.jobs)
           ? cron.jobs.filter((job) => job?.scheduler !== 'hermes').length
           : null,
       },
@@ -270,7 +271,7 @@ function adaptHermes(board, cron, generatedAt) {
   const at = observedAt(board?.refreshedAt, generatedAt);
   const blocked = Number(board?.summary?.blocked || 0);
   const running = Number(board?.summary?.running || 0);
-  const cronUnavailable = !cron || cron?.unavailable;
+  const cronUnavailable = !cron || cron?.unavailable || cron?.ok === false;
   const kanbanState = blocked > 0 ? 'critical' : 'healthy';
   const state = blocked > 0 ? 'critical' : cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
@@ -337,7 +338,7 @@ function adaptHermes(board, cron, generatedAt) {
         active: Number(board?.summary?.active || 0),
         running,
         blocked,
-        cronJobs: Array.isArray(cron?.jobs)
+        cronJobs: !cronUnavailable && Array.isArray(cron?.jobs)
           ? cron.jobs.filter((job) => job?.scheduler === 'hermes').length
           : null,
       },
@@ -488,7 +489,9 @@ function createOperationsOverviewService({
           error: result.reason?.message || `${names[index]} unavailable`,
         },
     ]));
-    input.capabilities = listCapabilities();
+    input.capabilities = buildOperationsCapabilities({
+      gbrainActions: listCapabilities(),
+    });
     return buildOperationsOverview(input, { generatedAt: now().toISOString() });
   }
 

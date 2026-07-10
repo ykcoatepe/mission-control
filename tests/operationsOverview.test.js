@@ -237,3 +237,86 @@ test('projects a shared cron reader failure into visible system evidence', async
   assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
   assert.doesNotMatch(JSON.stringify(overview), /\/Users\//);
 });
+
+test('treats fulfilled ok-false status, sessions, and cron results as unavailable evidence', () => {
+  const failedStatus = buildOperationsOverview(healthyInput({
+    status: { ok: false, generatedAt, agent: { activeSessions: 3 }, heartbeat: { lastHeartbeat: Date.parse(generatedAt) } },
+  }), { generatedAt });
+  assert.equal(failedStatus.systems.openclaw.state, 'warning');
+  assert.equal(failedStatus.systems.openclaw.freshness, 'unavailable');
+  assert.ok(failedStatus.attention.some((item) => item.reasonCode === 'openclaw_status_unavailable'));
+
+  const failedSessions = buildOperationsOverview(healthyInput({
+    sessions: { ok: false, count: 3, sessions: [{ key: 'a', isActive: true }] },
+  }), { generatedAt });
+  assert.equal(failedSessions.systems.openclaw.state, 'warning');
+  assert.ok(failedSessions.attention.some((item) => item.reasonCode === 'openclaw_sessions_unavailable'));
+  assert.ok(failedSessions.evidence.some((item) => item.id === 'openclaw:sessions' && item.status === 'unavailable'));
+
+  const failedCron = buildOperationsOverview(healthyInput({
+    cron: { ok: false, generatedAt, jobs: [{ id: 'unsafe', scheduler: 'openclaw' }] },
+  }), { generatedAt });
+  assert.equal(failedCron.systems.openclaw.state, 'warning');
+  assert.equal(failedCron.systems.hermes.state, 'warning');
+  assert.equal(failedCron.systems.openclaw.metrics.cronJobs, null);
+  assert.equal(failedCron.systems.hermes.metrics.cronJobs, null);
+  assert.ok(failedCron.attention.some((item) => item.reasonCode === 'openclaw_cron_unavailable'));
+  assert.ok(failedCron.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
+});
+
+test('projects raw action definitions through the capability allowlist at the service boundary', async () => {
+  const input = healthyInput();
+  const service = createOperationsOverviewService({
+    readers: {
+      status: async () => input.status,
+      sessions: async () => input.sessions,
+      cron: async () => input.cron,
+      hermes: async () => input.hermes,
+      gbrain: async () => input.gbrain,
+    },
+    listCapabilities: () => [{
+      id: 'doctor-fast',
+      label: 'Run system check',
+      description: 'Read-only diagnostic',
+      kind: 'diagnostic',
+      safetyClass: 'R0',
+      requiresConfirmation: false,
+      timeoutMs: 15_000,
+      refreshAfter: true,
+      command: 'gbrain doctor --fast --config /Users/example/private',
+      token: 'Bearer super-secret',
+      homePath: '/Users/example/.gbrain',
+    }],
+    now: () => new Date(generatedAt),
+  });
+
+  const overview = await service.getOverview();
+
+  assert.deepEqual(Object.keys(overview.capabilities[0]).sort(), [
+    'actionEndpoint',
+    'description',
+    'disabledReason',
+    'enabled',
+    'id',
+    'kind',
+    'label',
+    'refreshAfter',
+    'requiresConfirmation',
+    'safetyClass',
+    'system',
+    'timeoutMs',
+  ].sort());
+  assert.equal(overview.capabilities[0].id, 'doctor-fast');
+  assert.doesNotMatch(JSON.stringify(overview), /gbrain doctor|super-secret|\/Users\//);
+});
+
+test('keeps session-conflict attention detail stable when cron also fails', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    cron: { ok: false, generatedAt, jobs: [] },
+  }), { generatedAt });
+  const conflict = overview.attention.find((item) => item.reasonCode === 'openclaw_session_count_conflict');
+
+  assert.ok(conflict);
+  assert.equal(conflict.detail, 'Status reports 0 active sessions while the session reader reports 3.');
+  assert.doesNotMatch(conflict.detail, /scheduling/i);
+});
