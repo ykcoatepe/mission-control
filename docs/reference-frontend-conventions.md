@@ -16,11 +16,26 @@ All routes live in `frontend/src/appRoutes.tsx` as `AppRouteDefinition` entries:
 | `component` | lazy component | Page component, loaded via `React.lazy` |
 | `icon` | LucideIcon | Sidebar icon; routes without one are hidden from nav |
 | `nav` | boolean | `false` keeps the route reachable but out of the sidebar |
-| `section` | string | Sidebar group: `operate`, `intelligence`, `system`, `audit` |
+| `navPlacement` | string | `primary` or `utility`; omitted routes stay out of navigation |
+| `section` | string | Route grouping metadata such as `core`, `intelligence`, or `system` |
 | `description` | string | Secondary line under the sidebar label |
 
-The sidebar (`components/Sidebar.tsx`) renders these groups and filters out any
-route whose `module` flag is `false` in the active config.
+The sidebar (`components/Sidebar.tsx`) renders exactly seven primary routes and
+two utility routes when their module flags are enabled:
+
+| Surface | Route | Purpose |
+| --- | --- | --- |
+| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
+| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
+| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
+| Sessions | `/sessions` | OpenClaw sessions and handoffs |
+| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
+| Usage | `/usage` | Spend and model mix |
+| Systems | `/systems` | Live agents and system inventory |
+
+The utility routes are `/settings` and `/councils`. The sidebar also reads
+`/api/operations/overview` to show independent GBrain, Hermes, and OpenClaw
+state and freshness; it must not collapse them into one averaged status.
 
 Diagnostics is the one grouped route. `/diagnostics` is visible when at least
 one diagnostic module (`docs`, `scout`, `aws`, or `skills`) is not explicitly
@@ -34,7 +49,12 @@ routes stay reachable as redirect shims:
 | `/aws` | `/diagnostics?tab=aws` |
 | `/skills` | `/diagnostics?tab=skills` |
 
-Those legacy routes stay out of the sidebar with `nav: false`.
+Those legacy routes stay out of the sidebar with `nav: false`. Phase 1 also
+keeps `/workshop`, `/calendar`, `/office`, `/team`, `/ollama`, and
+`/diagnostics` directly reachable for Phase 2 work while hiding them from
+navigation. Compatibility aliases redirect `/kanban`, `/cron`,
+`/conversations`, `/costs`, and `/agents` to `/work`, `/automations`,
+`/sessions`, `/usage`, and `/systems` respectively.
 
 ## Data layer
 
@@ -53,6 +73,14 @@ Current scope:
   Hermes Kanban, Digital Office, Agents, AWS, Scout, Docs, Memory, Skills,
   Settings, Setup, Team Structure, Workshop, Councils, Ollama Monitor, GBrain,
   Costs, and Diagnostics.
+- `pages/BrainHome.tsx` composes the Shared Brain from the typed
+  `pages/brain/` components. Reads use `/api/operations/overview`; GBrain writes
+  continue through the existing allowlisted `/api/gbrain/actions` endpoint.
+- Brain treats system state and evidence freshness as separate fields. It keeps
+  GBrain caveats and stale-source warnings visible even when trust is `100/100`.
+- Capability metadata drives action safety: R0 runs directly, W1 requires
+  scoped confirmation, and W2 is not rendered. A completed action becomes
+  `verified` only when refreshed GBrain proof is newer and fresh.
 - `pages/Chat.tsx` still carries some local inline layout while using
   `Chat.module.css`; treat it as the remaining exception, not the template.
 - `pages/costs/` and `pages/cron/` use section-level CSS Modules because those

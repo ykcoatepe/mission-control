@@ -11,10 +11,11 @@ needs attention, what changed recently, and which action is safe to take next.
 
 ## Current Version
 
-The current release is an operator-focused overhaul:
+The current release is a shared-brain operations center:
 
-- **Dashboard / Operator Briefing** - active calls, live session counts, channel
-  heartbeat, evidence feed, quick actions, and "needs attention" signals.
+- **Brain / Shared Brain** - independent GBrain, Hermes, and OpenClaw state,
+  evidence freshness, decision inbox, evidence drawer, local search, and safe
+  GBrain triggers from one read-first home surface.
 - **Cost Tracker** - OpenClaw + Hermes usage, budget posture, model/service
   breakdowns, and fast cached responses that preserve stale-but-useful data when
   a background usage refresh fails.
@@ -37,23 +38,23 @@ The current release is an operator-focused overhaul:
 
 ## Pages
 
-| Route | Page | Purpose |
+The sidebar has seven primary destinations:
+
+| Surface | Route | Purpose |
 | --- | --- | --- |
-| `/` | Dashboard | Operator briefing, live health, active sessions, heartbeat, evidence feed |
-| `/conversations` | Conversations | Session browser and transcript review |
-| `/workshop` | Workshop | Task board and execution queue |
-| `/kanban` | Hermes Kanban | Hermes profile task board, card detail, and bounded task actions |
-| `/costs` | Cost Tracker | OpenClaw/Hermes usage, budgets, daily/model breakdowns |
-| `/cron` | Cron Jobs | Cron health, toggles, manual runs, model visibility |
-| `/calendar` | Calendar | Schedule-first view of recurring work |
-| `/gbrain` | GBrain | Shared memory trust, source, queue, and bridge proof |
-| `/ollama` | Ollama Monitor | Local model and runtime readiness |
-| `/councils` | Governance Archive | Read-only governance/council history and state |
-| `/team` | Team Structure | Team registry and role/ownership view |
-| `/office` | Digital Office | Desk telemetry, attention queue, office session state |
-| `/diagnostics` | Diagnostics | Supporting diagnostics: memory, docs, scout, AWS, skills — old routes redirect here |
-| `/agents` | Agent Hub | Active agents, sessions, and runtime inventory |
-| `/settings` | Settings | Mission Control configuration |
+| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
+| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
+| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
+| Sessions | `/sessions` | OpenClaw sessions and handoffs |
+| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
+| Usage | `/usage` | Spend and model mix |
+| Systems | `/systems` | Live agents and system inventory |
+
+`/settings` and `/councils` remain utility destinations. Phase 2 source pages
+such as `/workshop`, `/calendar`, `/office`, `/team`, `/ollama`, and
+`/diagnostics` remain directly reachable without crowding primary navigation.
+Compatibility routes `/kanban`, `/cron`, `/conversations`, `/costs`, and
+`/agents` redirect to their new primary destinations.
 
 ## Quick Start
 
@@ -185,13 +186,16 @@ CI lives in `.github/workflows/ci.yml` (backend tests + frontend lint/build)
 and `.github/workflows/supply-chain.yml` (npm incident IOC gate, frozen
 lockfiles, registry signatures).
 
-For UI changes, verify the running app at `http://127.0.0.1:3333` and inspect
-the relevant API endpoint directly with `curl`.
+For shared-brain UI changes, verify the running app at
+`http://127.0.0.1:3333` and inspect the read-only
+`/api/operations/overview` endpoint directly with `curl`. A GBrain trust score
+of `100/100` never suppresses active caveats or stale source evidence.
 
 ## Feature Notes
 
-- Dashboard should remain compact and decision-first. Avoid decorative surfaces
-  that make runtime state harder to scan.
+- Brain should remain compact and decision-first. GBrain, Hermes, and OpenClaw
+  retain independent state and freshness; do not average them into a false
+  global green state.
 - Cost Tracker should continue to return a usable fallback quickly, then refresh
   richer OpenClaw/Hermes usage in the background. If one source fails, keep the
   fresh source data and mark any cached source data as stale.

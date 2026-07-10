@@ -1,6 +1,7 @@
 # How to Verify Operator Surfaces
 
-Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chain surfaces after a change.
+Use this guide to verify the shared Brain, Operations overview, GBrain, Hermes
+Kanban, cron, costs, and supply-chain surfaces after a change.
 
 ## Prerequisites
 
@@ -20,30 +21,35 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    ```
 
    This runs every file in `tests/` via `node --test` — GBrain normalization,
-   cost sanity, cron data, OpenClaw usage parsing, and the supply-chain
-   advisory parser. To iterate on a single area, run one file directly:
+   Operations aggregation, cost sanity, cron data, OpenClaw usage parsing, and
+   the supply-chain advisory parser. For a focused shared-brain backend pass:
 
    ```bash
-   node --test tests/gbrainOverview.test.js
+   node --test \
+     tests/operationsOverview.test.js \
+     tests/operationsRoute.test.js \
+     tests/hermesKanbanData.test.js \
+     tests/gbrainOverview.test.js \
+     tests/gbrainRuntimeContractInstaller.test.js \
+     tests/gbrainTimeline.test.js \
+     tests/gbrainOperatorActions.regression-1.test.js \
+     tests/statusData.test.js \
+     tests/cronData.test.js \
+     tests/cronRoute.test.js
    ```
 
-2. Lint and type-check the frontend if your change touches it.
+2. Test, lint, and type-check the frontend if your change touches it.
 
    ```bash
-   cd frontend
-   npm run lint
-   cd ..
+   npm --prefix frontend test -- \
+     src/appRoutes.test.ts \
+     src/pages/brain/lib.test.ts \
+     src/pages/brain/components.test.ts
+   npm --prefix frontend run lint
+   npm --prefix frontend run build
    ```
 
-3. Build the frontend.
-
-   ```bash
-   cd frontend
-   npm run build
-   cd ..
-   ```
-
-4. Start the server.
+3. Start the server.
 
    ```bash
    npm start
@@ -64,7 +70,7 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    export MC_BASE_URL=http://127.0.0.1:3499
    ```
 
-5. Verify the server health endpoint.
+4. Verify the server health endpoint.
 
    ```bash
    curl -fsS "$MC_BASE_URL/api/health"
@@ -75,6 +81,19 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
    ```json
    {"ok":true,"status":"ok","service":"mission-control","generatedAt":"..."}
    ```
+
+5. Verify the read-only Operations overview.
+
+   ```bash
+   curl -fsS "$MC_BASE_URL/api/operations/overview" | jq \
+     '{schemaVersion,generatedAt,overall,systems,attentionCount:(.attention|length),capabilities:(.capabilities|map({id,safetyClass,requiresConfirmation}))}'
+   ```
+
+   Confirm `schemaVersion` is `"1"`, all three systems are present, and exactly
+   eight GBrain capabilities are listed. System state and evidence freshness
+   are independent: a `100/100` GBrain score must still show active caveats or
+   stale-source warnings. The response must not contain raw messages, task
+   bodies, tokens, or absolute home paths.
 
 6. Verify GBrain endpoints.
 
@@ -114,16 +133,19 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
    Check the `meta` object. It should make source availability visible with fields such as `openclawStatus`, `hermesStatus`, `stale`, and `refreshing`.
 
-10. Verify the Diagnostics route and legacy redirects.
+10. Verify primary routes and compatibility redirects.
 
    ```bash
+   curl -Ls "$MC_BASE_URL/" | head
    curl -Ls "$MC_BASE_URL/diagnostics" | head
    ```
 
-   This confirms the SPA fallback serves the Diagnostics route. In the browser,
-   `/diagnostics` should show Memory, Docs, Scout, AWS, and Skills as tabs when
-   those modules are enabled. `/memory`, `/scout`, `/aws`, and `/skills` should
-   redirect into the matching diagnostics tab after React Router loads.
+   This confirms the SPA fallback serves Brain and the hidden Diagnostics
+   route. In the browser, exactly seven primary destinations and two utility
+   links should render. `/kanban`, `/cron`, `/conversations`, `/costs`, and
+   `/agents` redirect to `/work`, `/automations`, `/sessions`, `/usage`, and
+   `/systems`. The older `/memory`, `/scout`, `/aws`, and `/skills` redirects
+   still land on the matching Diagnostics tab.
 
 11. Verify the supply-chain gate.
 
@@ -135,10 +157,13 @@ Use this guide to verify the GBrain, Hermes Kanban, cron, costs, and supply-chai
 
 ## Verification
 
-The minimum local verification before pushing is:
+The minimum repository verification before review is:
 
 ```bash
 npm test
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
 git diff --check
 ```
 
@@ -146,6 +171,12 @@ CI repeats these on every PR (`.github/workflows/ci.yml` runs the backend
 suite plus frontend lint and build; `supply-chain.yml` runs the advisory
 gate). Use the frontend build and local `curl` checks when the change affects
 browser behavior or live runtime data.
+
+Do not invoke `POST /api/gbrain/actions` during a read-only smoke. For UI action
+QA, R0 actions are direct, W1 actions require scoped confirmation, and W2 is
+absent. Use mocks or preview-only behavior for confirmation and cancel checks.
+After an allowed action, success is `verified` only when the refreshed
+Operations payload advances GBrain `observedAt` and reports `fresh` evidence.
 
 ## Troubleshooting
 
