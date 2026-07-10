@@ -97,6 +97,7 @@ function unavailableSystem(id, label, detailHref, at, message) {
 function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const statusUnavailable = !status || status?.unavailable;
   const sessionsUnavailable = !sessions || sessions?.unavailable;
+  const cronUnavailable = !cron || cron?.unavailable;
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -129,6 +130,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const caveats = [
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
+    ...(cronUnavailable ? ['OpenClaw scheduling evidence is unavailable.'] : []),
     ...(sessionConflict
       ? [`Status reports ${statusSessions} active sessions while the session reader reports ${activeSessions}.`]
       : []),
@@ -158,6 +160,18 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       '/systems',
     ),
   ];
+  if (cronUnavailable) {
+    openclawEvidence.push(evidence(
+      'openclaw:cron',
+      'openclaw',
+      'scheduling',
+      'unavailable',
+      at,
+      'OpenClaw scheduling evidence unavailable',
+      '/api/cron',
+      '/automations',
+    ));
+  }
   const attention = [];
   if (statusUnavailable) {
     attention.push({
@@ -181,6 +195,18 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       detail: 'The session reader did not return evidence; status evidence remains available.',
       detailHref: '/sessions',
       evidenceRefs: ['openclaw:sessions'],
+    });
+  }
+  if (cronUnavailable) {
+    attention.push({
+      id: 'openclaw:cron-unavailable',
+      system: 'openclaw',
+      severity: 'unavailable',
+      reasonCode: 'openclaw_cron_unavailable',
+      title: 'OpenClaw scheduling evidence unavailable',
+      detail: 'The cron reader did not return OpenClaw scheduling evidence.',
+      detailHref: '/automations',
+      evidenceRefs: ['openclaw:cron'],
     });
   }
   if (sessionConflict) {
@@ -244,17 +270,57 @@ function adaptHermes(board, cron, generatedAt) {
   const at = observedAt(board?.refreshedAt, generatedAt);
   const blocked = Number(board?.summary?.blocked || 0);
   const running = Number(board?.summary?.running || 0);
-  const state = blocked > 0 ? 'critical' : 'healthy';
+  const cronUnavailable = !cron || cron?.unavailable;
+  const kanbanState = blocked > 0 ? 'critical' : 'healthy';
+  const state = blocked > 0 ? 'critical' : cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
     'hermes:kanban',
     'hermes',
     'work',
-    state,
+    kanbanState,
     at,
     `${running} running, ${blocked} blocked`,
     '/api/hermes-kanban',
     '/work',
   );
+  const hermesEvidence = [proof];
+  if (cronUnavailable) {
+    hermesEvidence.push(evidence(
+      'hermes:cron',
+      'hermes',
+      'scheduling',
+      'unavailable',
+      at,
+      'Hermes scheduling evidence unavailable',
+      '/api/cron',
+      '/automations',
+    ));
+  }
+  const attention = [];
+  if (blocked > 0) {
+    attention.push({
+      id: 'hermes:blocked',
+      system: 'hermes',
+      severity: 'critical',
+      reasonCode: 'hermes_tasks_blocked',
+      title: 'Hermes work is blocked',
+      detail: `${blocked} tasks require operator review.`,
+      detailHref: '/work',
+      evidenceRefs: [proof.id],
+    });
+  }
+  if (cronUnavailable) {
+    attention.push({
+      id: 'hermes:cron-unavailable',
+      system: 'hermes',
+      severity: 'unavailable',
+      reasonCode: 'hermes_cron_unavailable',
+      title: 'Hermes scheduling evidence unavailable',
+      detail: 'The cron reader did not return Hermes scheduling evidence.',
+      detailHref: '/automations',
+      evidenceRefs: ['hermes:cron'],
+    });
+  }
   return {
     system: {
       id: 'hermes',
@@ -262,7 +328,10 @@ function adaptHermes(board, cron, generatedAt) {
       state,
       observedAt: at,
       freshness: 'fresh',
-      caveats: blocked > 0 ? [`${blocked} Hermes tasks are blocked.`] : [],
+      caveats: [
+        ...(blocked > 0 ? [`${blocked} Hermes tasks are blocked.`] : []),
+        ...(cronUnavailable ? ['Hermes scheduling evidence is unavailable.'] : []),
+      ],
       metrics: {
         total: Number(board?.summary?.total || 0),
         active: Number(board?.summary?.active || 0),
@@ -272,19 +341,10 @@ function adaptHermes(board, cron, generatedAt) {
           ? cron.jobs.filter((job) => job?.scheduler === 'hermes').length
           : null,
       },
-      evidence: [proof],
+      evidence: hermesEvidence,
       detailHref: '/work',
     },
-    attention: blocked > 0 ? [{
-      id: 'hermes:blocked',
-      system: 'hermes',
-      severity: 'critical',
-      reasonCode: 'hermes_tasks_blocked',
-      title: 'Hermes work is blocked',
-      detail: `${blocked} tasks require operator review.`,
-      detailHref: '/work',
-      evidenceRefs: [proof.id],
-    }] : [],
+    attention,
   };
 }
 

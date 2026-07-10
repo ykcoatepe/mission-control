@@ -208,3 +208,32 @@ test('times out only the stalled source and preserves the remaining snapshot', a
   assert.equal(overview.systems.hermes.state, 'healthy');
   assert.equal(overview.systems.gbrain.state, 'healthy');
 });
+
+test('projects a shared cron reader failure into visible system evidence', async () => {
+  const input = healthyInput();
+  const service = createOperationsOverviewService({
+    readers: {
+      status: async () => input.status,
+      sessions: async () => input.sessions,
+      cron: async () => {
+        throw new Error('scheduler output included /Users/example/private');
+      },
+      hermes: async () => input.hermes,
+      gbrain: async () => input.gbrain,
+    },
+    listCapabilities: () => [],
+    now: () => new Date(generatedAt),
+  });
+
+  const overview = await service.getOverview();
+
+  assert.equal(overview.systems.openclaw.state, 'warning');
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.equal(overview.systems.openclaw.metrics.cronJobs, null);
+  assert.equal(overview.systems.hermes.metrics.cronJobs, null);
+  assert.ok(overview.evidence.some((item) => item.id === 'openclaw:cron' && item.status === 'unavailable'));
+  assert.ok(overview.evidence.some((item) => item.id === 'hermes:cron' && item.status === 'unavailable'));
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_cron_unavailable'));
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
+  assert.doesNotMatch(JSON.stringify(overview), /\/Users\//);
+});
