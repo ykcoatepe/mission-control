@@ -18,6 +18,8 @@ import {
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import { formatDate, timeAgo, useApi } from '../lib/hooks'
+import { postGBrainAction } from './gbrain/api'
+import type { GBrainActionResult } from './gbrain/types'
 import styles from './GBrain.module.css'
 
 type EvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
@@ -261,15 +263,7 @@ interface TimelineResponse {
   incidentBanners?: IncidentBanner[]
 }
 
-interface GBrainActionResult {
-  ok: boolean
-  action: string
-  label: string
-  status: string
-  summary: string
-  error?: string
-  checkedAt: string
-  refreshAfter?: boolean
+type PageGBrainActionResult = GBrainActionResult & {
   pending?: boolean
 }
 
@@ -428,11 +422,16 @@ function lineFor(edge: GBrainEdge) {
 
 export default function GBrain() {
   const { data, loading, error, refetch } = useApi<GBrainOverview>('/api/gbrain/overview', 30000)
-  const { data: timeline, loading: timelineLoading, error: timelineError } = useApi<TimelineResponse>('/api/gbrain/timeline?limit=50', 60000)
+  const {
+    data: timeline,
+    loading: timelineLoading,
+    error: timelineError,
+    refetch: refetchTimeline,
+  } = useApi<TimelineResponse>('/api/gbrain/timeline?limit=50', 60000)
   const { data: actionsData, error: actionsError } = useApi<GBrainActionsResponse>('/api/gbrain/actions')
   const [selectedId, setSelectedId] = useState('gbrain-core')
   const [runningAction, setRunningAction] = useState<string | null>(null)
-  const [actionResult, setActionResult] = useState<GBrainActionResult | null>(null)
+  const [actionResult, setActionResult] = useState<PageGBrainActionResult | null>(null)
   const [acknowledgedIncidents, setAcknowledgedIncidents] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set()
     try {
@@ -541,23 +540,21 @@ export default function GBrain() {
     setRunningAction(action)
     setActionResult(null)
     try {
-      const response = await fetch('/api/gbrain/actions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      })
-      const result = await response.json()
+      const result = (await postGBrainAction(action)) as PageGBrainActionResult
       setActionResult(result)
-      if (result.refreshAfter) await refetch()
+      if (result.refreshAfter) await Promise.all([refetch(), refetchTimeline()])
     } catch (err) {
-      setActionResult({
-        ok: false,
-        action,
-        label: action,
-        status: 'failed',
-        summary: err instanceof Error ? err.message : 'Action failed',
-        checkedAt: new Date().toISOString(),
-      })
+      const payload = (err as Error & { payload?: PageGBrainActionResult })?.payload
+      setActionResult(
+        payload || {
+          ok: false,
+          action,
+          label: action,
+          status: 'failed',
+          summary: err instanceof Error ? err.message : 'Action failed',
+          checkedAt: new Date().toISOString(),
+        },
+      )
     } finally {
       setRunningAction(null)
     }
