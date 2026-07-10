@@ -1,9 +1,14 @@
 import { NavLink } from 'react-router-dom'
-import { type CSSProperties, useMemo, useState, useEffect } from 'react'
-import { Bot } from 'lucide-react'
-import { isRouteEnabled, sidebarRoutes, type AppRouteDefinition } from '../appRoutes'
+import { useMemo } from 'react'
+import {
+  isRouteEnabled,
+  primarySidebarRoutes,
+  utilitySidebarRoutes,
+  type AppRouteDefinition,
+} from '../appRoutes'
 import { MissionControlMark } from './MissionControlMark'
-import { timeAgo, useApi } from '../lib/hooks'
+import { useApi } from '../lib/hooks'
+import type { OperationsOverview, OperationSystemId } from '../pages/brain/types'
 import styles from './Sidebar.module.css'
 
 const EMPTY_CONFIG: McConfig = { name: 'Mission Control', subtitle: 'Mission Control', modules: {} }
@@ -14,78 +19,41 @@ interface McConfig {
   modules?: Record<string, boolean>
 }
 
-type StatusPayload = {
-  agent?: {
-    model?: string
-    activeSessions?: number
-  }
-  heartbeat?: {
-    lastHeartbeat?: number | string
-    lastHeartbeatAt?: number | string
-  }
-}
-
-function normalizeHeartbeatMs(value: number | string | undefined): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value > 1e12 ? value : value * 1000
-  }
-
-  if (typeof value === 'string' && value.trim()) {
-    const numeric = Number(value)
-    if (Number.isFinite(numeric)) return numeric > 1e12 ? numeric : numeric * 1000
-
-    const parsed = Date.parse(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-
-  return null
-}
-
 interface SidebarProps {
   isOpen?: boolean
   onClose?: () => void
 }
 
 const navSections: Array<{ key: NonNullable<AppRouteDefinition['section']>, label: string }> = [
-  { key: 'operate', label: 'Operate' },
+  { key: 'core', label: 'Core' },
   { key: 'intelligence', label: 'Intelligence' },
   { key: 'system', label: 'System' },
-  { key: 'audit', label: 'Audit' },
 ]
 
+const systemIds: OperationSystemId[] = ['gbrain', 'hermes', 'openclaw']
+
 export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
-  const [now, setNow] = useState(() => Date.now())
-  const { data: statusData } = useApi<StatusPayload>('/api/status', 30000)
+  const { data: overview } = useApi<OperationsOverview>('/api/operations/overview', 30000)
   const { data: configData, error: configError } = useApi<McConfig>('/api/config')
   const config = configData ?? (configError ? EMPTY_CONFIG : null)
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 30000)
-    return () => window.clearInterval(timer)
-  }, [])
-
-  // Filter nav items based on enabled modules
-  const navItems = config?.modules
-    ? sidebarRoutes.filter(item => isRouteEnabled(item, config.modules!))
-    : sidebarRoutes
+  const primaryItems = config?.modules
+    ? primarySidebarRoutes.filter((item) => isRouteEnabled(item, config.modules!))
+    : primarySidebarRoutes
+  const utilityItems = config?.modules
+    ? utilitySidebarRoutes.filter((item) => isRouteEnabled(item, config.modules!))
+    : utilitySidebarRoutes
 
   const groupedItems = useMemo(() => {
     return navSections
       .map((section) => ({
         ...section,
-        items: navItems.filter((item) => (item.section || 'system') === section.key),
+        items: primaryItems.filter((item) => (item.section || 'system') === section.key),
       }))
       .filter((section) => section.items.length > 0)
-  }, [navItems])
+  }, [primaryItems])
 
-  const displayName = config?.name || 'Mission Control'
   const subtitle = config?.subtitle || 'Mission Control'
-  const heartbeatValue = statusData?.heartbeat?.lastHeartbeat || statusData?.heartbeat?.lastHeartbeatAt
-  const heartbeatMs = normalizeHeartbeatMs(heartbeatValue)
-  const heartbeatAge = heartbeatMs ? timeAgo(new Date(heartbeatMs).toISOString()) : 'No heartbeat'
-  const heartbeatHours = heartbeatMs ? (now - heartbeatMs) / 36e5 : Infinity
-  const heartbeatStale = heartbeatHours > 2
-  const stateColor = heartbeatStale ? '#ff9500' : '#32d74b'
 
   return (
     <aside className={`macos-sidebar ${styles.sidebar} ${isOpen ? 'open' : ''}`}>
@@ -100,17 +68,34 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
           </div>
         </div>
 
-        <NavLink to="/" className={styles.statusCard} style={{ '--sidebar-state-color': stateColor } as CSSProperties}>
-          <div className={styles.statusTop}>
-            <div>
-              <p className={styles.statusLabel}>Runtime state</p>
-              <div className={styles.statusValue}>{heartbeatStale ? 'Warning: heartbeat stale' : 'Live'}</div>
-            </div>
-            <span className={styles.statusDot} />
-          </div>
-          <p className={styles.statusMeta}>
-            {heartbeatAge} · {statusData?.agent?.model || 'model unknown'}
-          </p>
+        <NavLink
+          to="/"
+          className={styles.systemStack}
+          aria-label="Open shared brain status"
+          onClick={onClose}
+        >
+          {systemIds.map((id) => {
+            const system = overview?.systems[id]
+            const state = system?.state || 'unavailable'
+            const freshness = system?.freshness || 'unavailable'
+            return (
+              <span
+                key={id}
+                className={styles.systemRow}
+                data-state={state}
+                aria-label={`${system?.label || id}: ${state}; freshness ${freshness}`}
+              >
+                <span className={styles.systemName}>
+                  <i className={styles.systemDot} aria-hidden="true" />
+                  {system?.label || id}
+                </span>
+                <span className={styles.systemMeta}>
+                  <strong>{state}</strong>
+                  <small>{freshness}</small>
+                </span>
+              </span>
+            )
+          })}
         </NavLink>
       </div>
 
@@ -145,20 +130,28 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
         ))}
       </nav>
 
-      <div className={styles.divider} />
-
-      <div className={styles.footer}>
-        <div className={styles.footerRow}>
-          <div className={styles.footerIcon}>
-            <Bot size={16} />
-            <span className={styles.footerLiveDot} />
-          </div>
-          <div className={styles.footerText}>
-            <p className={styles.footerTitle}>{displayName}</p>
-            <p className={styles.footerMeta}>{statusData?.agent?.activeSessions || 0} active sessions</p>
-          </div>
+      {utilityItems.length > 0 ? (
+        <div className={styles.utilityNav}>
+          <div className={styles.divider} />
+          <nav aria-label="Utility navigation" className={styles.utilityItems}>
+            {utilityItems.map((item) => item.icon ? (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                className={({ isActive }) =>
+                  `${styles.item} ${isActive ? styles.itemActive : ''}`
+                }
+                onClick={onClose}
+              >
+                <item.icon className={styles.itemIcon} size={16} strokeWidth={2} />
+                <span className={styles.itemCopy}>
+                  <span className={styles.itemLabel}>{item.label}</span>
+                </span>
+              </NavLink>
+            ) : null)}
+          </nav>
         </div>
-      </div>
+      ) : null}
     </aside>
   )
 }

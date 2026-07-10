@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { appRoutes, isRouteEnabled } from './appRoutes'
+import {
+  appRoutes,
+  isRouteEnabled,
+  primarySidebarRoutes,
+  utilitySidebarRoutes,
+} from './appRoutes'
 
 const diagnosticsRoute = appRoutes.find((route) => route.path === '/diagnostics')
 
@@ -35,5 +40,54 @@ describe('isRouteEnabled', () => {
       aws: false,
       skills: false,
     })).toBe(false)
+  })
+
+  it('keeps GBrain enabled when the legacy docs module is disabled and no explicit gbrain flag exists', () => {
+    const gbrainRoute = appRoutes.find((route) => route.path === '/gbrain')
+
+    expect(gbrainRoute).toBeDefined()
+    expect(gbrainRoute?.module).toBe('gbrain')
+    expect(isRouteEnabled(gbrainRoute!, { docs: false })).toBe(true)
+  })
+})
+
+describe('navigation hierarchy', () => {
+  it('exposes exactly seven primary destinations in the approved order', () => {
+    expect(primarySidebarRoutes.map((route) => route.path)).toEqual([
+      '/',
+      '/work',
+      '/automations',
+      '/sessions',
+      '/gbrain',
+      '/usage',
+      '/systems',
+    ])
+  })
+
+  it('keeps settings and governance in utility navigation', () => {
+    expect(utilitySidebarRoutes.map((route) => route.path)).toEqual(['/settings', '/councils'])
+  })
+
+  it('keeps source-specific Phase 2 pages hidden but reachable', () => {
+    for (const path of ['/workshop', '/calendar', '/office', '/team', '/ollama']) {
+      expect(appRoutes.find((route) => route.path === path)?.nav).toBe(false)
+    }
+  })
+
+  it('defines every route path only once', () => {
+    const paths = appRoutes.map((route) => route.path)
+    expect(new Set(paths).size).toBe(paths.length)
+  })
+
+  it('keeps only the approved compatibility redirects hidden from navigation', () => {
+    for (const [path, module] of [
+      ['/kanban', 'workshop'],
+      ['/cron', 'cron'],
+      ['/conversations', 'chat'],
+      ['/costs', 'costs'],
+      ['/agents', 'agents'],
+    ] as const) {
+      expect(appRoutes.find((route) => route.path === path)).toMatchObject({ module, nav: false })
+    }
   })
 })
