@@ -13,7 +13,9 @@ const {
 } = require('./liveProbes');
 const { buildLocalGBrainIntegrationRuntime } = require('./integrationRuntime');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
+const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
+const { requiresExplicitConfirmation } = require('./actionPolicy');
 
 function buildGBrainRouter(options = {}) {
   const router = express.Router();
@@ -57,6 +59,16 @@ function buildGBrainRouter(options = {}) {
   });
 
   router.post('/api/gbrain/actions', async (req, res) => {
+    const action = req.body?.action;
+    if (requiresExplicitConfirmation(GBrainActionDefinitions[action], req.body)) {
+      return res.status(400).json({
+        ok: false,
+        action,
+        status: 'confirmation-required',
+        checkedAt: new Date().toISOString(),
+        error: 'Explicit confirmation is required for this action.',
+      });
+    }
     const result = await runGBrainAction(req.body?.action, options);
     const statusCode = result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
     res.status(statusCode).json(result);

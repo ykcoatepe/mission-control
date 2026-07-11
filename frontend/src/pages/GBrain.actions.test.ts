@@ -140,7 +140,7 @@ describe('GBrain Explore action controls', () => {
       r0?.click()
     })
     expect(mocks.postGBrainAction).toHaveBeenCalledOnce()
-    expect(mocks.postGBrainAction).toHaveBeenCalledWith('doctor-fast')
+    expect(mocks.postGBrainAction).toHaveBeenCalledWith('doctor-fast', false)
 
     mocks.postGBrainAction.mockClear()
     const w1 = buttonByText(host, 'Sync local sources')
@@ -167,7 +167,7 @@ describe('GBrain Explore action controls', () => {
     })
     await act(async () => buttonByText(host, 'Run Sync local sources')?.click())
     expect(mocks.postGBrainAction).toHaveBeenCalledOnce()
-    expect(mocks.postGBrainAction).toHaveBeenCalledWith('sync-sources')
+    expect(mocks.postGBrainAction).toHaveBeenCalledWith('sync-sources', true)
 
     await act(async () => root.unmount())
   })

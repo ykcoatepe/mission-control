@@ -80,7 +80,7 @@ export default function BrainHome() {
   }
 
   const actionMutation = useMutation({
-    mutationFn: ({ capability }: ActionRun) => postGBrainAction(capability.id),
+    mutationFn: ({ capability }: ActionRun) => postGBrainAction(capability.id, capability.requiresConfirmation),
     onMutate: ({ capability }) => {
       setRunningAction(capability.id)
       setActionStatus({ state: 'running', message: `${capability.label} is running` })

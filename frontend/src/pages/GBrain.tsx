@@ -584,13 +584,13 @@ export default function GBrain() {
       ? 'Critical proof requires operator review'
       : 'Live proof has caveats; review evidence before action'
 
-  const runAction = async (action: string) => {
+  const runAction = async (action: string, confirmed = false) => {
     if (runningActionRef.current) return
     runningActionRef.current = action
     setRunningAction(action)
     setActionResult(null)
     try {
-      const result = (await postGBrainAction(action)) as PageGBrainActionResult
+      const result = (await postGBrainAction(action, confirmed)) as PageGBrainActionResult
       setActionResult(result)
       if (result.refreshAfter) await Promise.all([refetch(), refetchTimeline()])
     } catch (err) {
@@ -628,7 +628,7 @@ export default function GBrain() {
     if (!confirmationActionId) return
     const currentAction = resolveGBrainAction(actions, confirmationActionId, 'confirmed', runningAction)
     setConfirmationActionId(null)
-    if (currentAction) void runAction(currentAction.id)
+    if (currentAction) void runAction(currentAction.id, true)
   }
 
   const runSystemCheck = async () => {

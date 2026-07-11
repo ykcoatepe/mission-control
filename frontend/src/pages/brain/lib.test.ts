@@ -105,4 +105,22 @@ describe('postGBrainAction', () => {
     expect(error).toBeInstanceOf(Error)
     expect(error).toMatchObject({ message: payload.error, payload })
   })
+
+  it('sends explicit confirmation evidence for confirmed actions', async () => {
+    const payload = {
+      ok: true,
+      action: 'sync-sources',
+      status: 'completed',
+      checkedAt: '2026-07-10T12:00:00.000Z',
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => payload })
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(postGBrainAction('sync-sources', true)).resolves.toEqual(payload)
+    expect(fetchMock).toHaveBeenCalledWith('/api/gbrain/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'sync-sources', confirmed: true }),
+    })
+  })
 })

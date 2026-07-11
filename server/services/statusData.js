@@ -97,6 +97,7 @@ function createStatusService({
   execSync,
   fs,
   path,
+  sessionRefreshBudgetMs = 1500,
   processEnv = process.env,
 }) {
   let statusCache = null;
@@ -199,6 +200,24 @@ function createStatusService({
 
   async function doRefreshStatusCache() {
     try {
+      const sessionRead = new Promise((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          settled = true;
+          resolve({ count: 0, sessions: [] });
+        }, sessionRefreshBudgetMs);
+        Promise.resolve(fetchSessions(50)).then((value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        }).catch(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ count: 0, sessions: [] });
+        });
+      });
       const [openclawStatus, notionActivity, sessionData, heartbeatEvent] = await Promise.allSettled([
         new Promise(async (resolve) => {
           let gatewayHealth = '';
@@ -227,7 +246,7 @@ function createStatusService({
           }
         }),
         fetchNotionActivity(8).catch(() => null),
-        fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
+        sessionRead,
         Promise.resolve().then(() => {
           try {
             return heartbeatEventToPayload(execSync('openclaw system heartbeat last --json', {
