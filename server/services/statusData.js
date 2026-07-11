@@ -28,6 +28,61 @@ function normalizeHeartbeatPayload(heartbeat = {}) {
   return normalized;
 }
 
+const HEARTBEAT_EVENT_KEYS = ['lastEventStatus', 'lastEventReason', 'lastEventDurationMs'];
+
+function heartbeatEventToPayload(value, {
+  now = () => Date.now(),
+  maxFutureSkewMs = 5 * 60 * 1000,
+} = {}) {
+  let event = value;
+  if (typeof value === 'string') {
+    try {
+      event = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return {};
+
+  const lastHeartbeat = heartbeatValueToSeconds(event.ts);
+  if (lastHeartbeat == null) return {};
+  const observed = new Date(lastHeartbeat * 1000);
+  const observedMs = observed.getTime();
+  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+
+  const payload = {
+    lastHeartbeat,
+    lastHeartbeatAt: observed.toISOString(),
+  };
+  if (typeof event.status === 'string' && event.status.trim()) {
+    payload.lastEventStatus = event.status.trim().slice(0, 64);
+  }
+  if (typeof event.reason === 'string' && event.reason.trim()) {
+    payload.lastEventReason = event.reason.trim().slice(0, 160);
+  }
+  if (typeof event.durationMs === 'number' && Number.isFinite(event.durationMs) && event.durationMs >= 0) {
+    payload.lastEventDurationMs = event.durationMs;
+  }
+  return payload;
+}
+
+function mergeHeartbeatPayloads(primary = {}, fallback = {}) {
+  const normalizedPrimary = normalizeHeartbeatPayload(primary || {});
+  const normalizedFallback = normalizeHeartbeatPayload(fallback || {});
+  const primaryAt = heartbeatValueToSeconds(normalizedPrimary.lastHeartbeat);
+  const fallbackAt = heartbeatValueToSeconds(normalizedFallback.lastHeartbeat);
+
+  const primaryWins = primaryAt != null && (fallbackAt == null || primaryAt >= fallbackAt);
+  const winner = primaryWins ? normalizedPrimary : normalizedFallback;
+  const loser = primaryWins ? normalizedFallback : normalizedPrimary;
+  const merged = { ...loser, ...winner };
+
+  for (const key of HEARTBEAT_EVENT_KEYS) {
+    if (!Object.hasOwn(winner, key)) delete merged[key];
+  }
+  return merged;
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -144,7 +199,7 @@ function createStatusService({
 
   async function doRefreshStatusCache() {
     try {
-      const [openclawStatus, notionActivity, sessionData] = await Promise.allSettled([
+      const [openclawStatus, notionActivity, sessionData, heartbeatEvent] = await Promise.allSettled([
         new Promise(async (resolve) => {
           let gatewayHealth = '';
           const controller = new AbortController();
@@ -173,6 +228,16 @@ function createStatusService({
         }),
         fetchNotionActivity(8).catch(() => null),
         fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
+        Promise.resolve().then(() => {
+          try {
+            return heartbeatEventToPayload(execSync('openclaw system heartbeat last --json', {
+              timeout: 8000,
+              encoding: 'utf8',
+            }));
+          } catch {
+            return {};
+          }
+        }),
       ]);
 
       const statusResult = openclawStatus.status === 'fulfilled'
@@ -231,6 +296,8 @@ function createStatusService({
       } catch {
         heartbeat = { lastHeartbeat: null, lastChecks: {} };
       }
+      const liveHeartbeat = heartbeatEvent.status === 'fulfilled' ? heartbeatEvent.value : {};
+      heartbeat = mergeHeartbeatPayloads(liveHeartbeat, heartbeat);
 
       statusCache = {
         generatedAt: new Date().toISOString(),
@@ -291,7 +358,8 @@ function createStatusService({
 
     let heartbeat = statusCache.heartbeat || {};
     try {
-      heartbeat = JSON.parse(fs.readFileSync(path.join(memoryPath, 'heartbeat-state.json'), 'utf8'));
+      const fileHeartbeat = JSON.parse(fs.readFileSync(path.join(memoryPath, 'heartbeat-state.json'), 'utf8'));
+      heartbeat = mergeHeartbeatPayloads(fileHeartbeat, heartbeat);
     } catch {}
 
     const response = buildStatusResponseFromCache(statusCache, heartbeat);
@@ -323,6 +391,8 @@ function createStatusService({
 
 module.exports = {
   createStatusService,
+  heartbeatEventToPayload,
   heartbeatValueToSeconds,
+  mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
 };

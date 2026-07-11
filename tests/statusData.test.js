@@ -5,7 +5,9 @@ const path = require('node:path');
 
 const {
   createStatusService,
+  heartbeatEventToPayload,
   heartbeatValueToSeconds,
+  mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
 } = require('../server/services/statusData');
 
@@ -140,6 +142,39 @@ function testHeartbeatTimestampNormalization() {
   );
 }
 
+function testHeartbeatEventRejectsFutureClockSkew() {
+  const nowMs = Date.parse('2026-07-11T02:10:00Z');
+  assert.deepEqual(
+    heartbeatEventToPayload({ ts: nowMs + 365 * 24 * 60 * 60 * 1000, status: 'sent' }, {
+      now: () => nowMs,
+    }),
+    {},
+  );
+  assert.equal(
+    heartbeatEventToPayload({ ts: nowMs + 4 * 60 * 1000, status: 'sent' }, {
+      now: () => nowMs,
+    }).lastHeartbeat,
+    Math.floor((nowMs + 4 * 60 * 1000) / 1000),
+  );
+}
+
+function testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp() {
+  const olderEvent = {
+    lastHeartbeat: 100,
+    lastEventStatus: 'skipped',
+    lastEventReason: 'empty-heartbeat-file',
+    lastEventDurationMs: 4,
+  };
+  const newerLegacy = { lastHeartbeat: 200, lastChecks: { email: 150 } };
+  assert.deepEqual(mergeHeartbeatPayloads(newerLegacy, olderEvent), newerLegacy);
+
+  const newerEvent = { ...olderEvent, lastHeartbeat: 300 };
+  assert.deepEqual(mergeHeartbeatPayloads(newerEvent, newerLegacy), {
+    ...newerLegacy,
+    ...newerEvent,
+  });
+}
+
 async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
   const snapshot = {
     agent: { name: 'Mission Control' },
@@ -192,11 +227,40 @@ async function testOperationsStatusRequiresObservedCliEvidence() {
   }
 }
 
+async function testLiveHeartbeatEventBackfillsLegacyState() {
+  const eventTs = Date.parse('2026-07-11T02:10:00Z');
+  const { service, readSnapshot } = makeService({
+    execSync: (command) => {
+      if (String(command).includes('system heartbeat last')) {
+        return JSON.stringify({
+          ts: eventTs,
+          status: 'skipped',
+          reason: 'empty-heartbeat-file',
+          durationMs: 4,
+        });
+      }
+      return '1 active sessions\nHeartbeat │ 1h\nAgents │ 31\n';
+    },
+  });
+
+  await service.refreshStatusCache();
+  const status = readSnapshot();
+
+  assert.equal(status.heartbeat.lastHeartbeat, Math.floor(eventTs / 1000));
+  assert.equal(status.heartbeat.lastHeartbeatAt, '2026-07-11T02:10:00.000Z');
+  assert.equal(status.heartbeat.lastEventStatus, 'skipped');
+  assert.equal(status.heartbeat.lastEventReason, 'empty-heartbeat-file');
+  assert.equal(status.heartbeat.lastEventDurationMs, 4);
+}
+
 (async () => {
   testHeartbeatTimestampNormalization();
+  testHeartbeatEventRejectsFutureClockSkew();
+  testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp();
   await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
   await testGatewayHealthIsFallbackWhenFullStatusFails();
   await testOperationsStatusRequiresObservedCliEvidence();
+  await testLiveHeartbeatEventBackfillsLegacyState();
   console.log('statusData tests passed');
 })();
