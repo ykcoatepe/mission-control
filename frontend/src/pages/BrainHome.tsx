@@ -10,6 +10,7 @@ import {
   BrainHomeSkeleton,
   canStartAction,
   hasFreshProofAdvanced,
+  resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
   type ActionStartMode,
 } from './brain/BrainHomeState'
@@ -58,10 +59,9 @@ export default function BrainHome() {
       setActionStatus({ state: 'running', message: `${capability.label} is running` })
     },
     onSuccess: async (result, run) => {
-      setActionStatus({
-        state: 'verifying',
-        message: `${result.summary || 'Action completed'} · loading fresh Operations proof`,
-      })
+      const successPolicy = resolveActionSuccessPolicy(result)
+      setActionStatus(successPolicy.status)
+      if (!successPolicy.shouldRefreshProof) return
 
       try {
         await queryClient.invalidateQueries({ queryKey: ['api', '/api/gbrain/overview'] })

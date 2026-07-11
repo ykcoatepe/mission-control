@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canStartAction,
   hasFreshProofAdvanced,
+  resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
 } from './BrainHomeState'
 import type { OperationCapability } from './types'
@@ -88,5 +89,33 @@ describe('GBrain action start policy', () => {
     expect(canStartAction(r0, 'confirmed', null)).toBe(false)
     expect(canStartAction(r0, 'direct', 'another-action')).toBe(false)
     expect(canStartAction(capability({ safetyClass: 'W2' }), 'confirmed', null)).toBe(false)
+  })
+})
+
+describe('GBrain action success policy', () => {
+  it('completes non-refresh diagnostics with the returned summary and no proof refresh', () => {
+    expect(resolveActionSuccessPolicy({
+      refreshAfter: false,
+      summary: 'Storage is reachable',
+    })).toEqual({
+      shouldRefreshProof: false,
+      status: {
+        state: 'complete',
+        message: 'Storage is reachable',
+      },
+    })
+  })
+
+  it('keeps refresh-required actions in proof verification', () => {
+    expect(resolveActionSuccessPolicy({
+      refreshAfter: true,
+      summary: 'Sources synchronized',
+    })).toEqual({
+      shouldRefreshProof: true,
+      status: {
+        state: 'verifying',
+        message: 'Sources synchronized · loading fresh Operations proof',
+      },
+    })
   })
 })

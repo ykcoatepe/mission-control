@@ -4,6 +4,32 @@ import type { ActionStatus, OperationCapability, OperationSystem } from './types
 
 export type ActionStartMode = 'direct' | 'confirmed'
 
+type ActionSuccessResult = {
+  refreshAfter?: boolean
+  summary?: string
+}
+
+export function resolveActionSuccessPolicy(result: ActionSuccessResult): {
+  shouldRefreshProof: boolean
+  status: ActionStatus
+} {
+  const summary = result.summary || 'Action completed'
+  if (result.refreshAfter !== true) {
+    return {
+      shouldRefreshProof: false,
+      status: { state: 'complete', message: summary },
+    }
+  }
+
+  return {
+    shouldRefreshProof: true,
+    status: {
+      state: 'verifying',
+      message: `${summary} · loading fresh Operations proof`,
+    },
+  }
+}
+
 export function hasFreshProofAdvanced(
   previousObservedAt: string | null,
   nextProof: Pick<OperationSystem, 'observedAt' | 'freshness'> | null | undefined,
