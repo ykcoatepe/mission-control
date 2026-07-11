@@ -625,11 +625,15 @@ html, body, #root {
     height: 100dvh !important;
     transform: translateX(-100%) !important;
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
     will-change: transform !important;
   }
 
   .macos-sidebar.open {
     transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
   }
 
   /* Dark overlay behind sidebar */

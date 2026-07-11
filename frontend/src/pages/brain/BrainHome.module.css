@@ -962,25 +962,41 @@
   }
 
   .mapCanvas {
-    min-height: 430px;
+    min-height: 0;
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    background: none;
   }
 
-  .mapNode[data-system='hermes'] {
-    left: 27%;
-    top: 24%;
+  .mapConnections {
+    display: none;
   }
 
-  .mapNode[data-system='openclaw'] {
-    left: 73%;
-    top: 24%;
+  .mapNode,
+  .mapNode[data-system='gbrain'],
+  .domainNode {
+    position: static;
+    width: 100%;
+    min-width: 0;
+    min-height: 0;
+    transform: none;
   }
 
   .mapNode[data-system='gbrain'] {
-    top: 51%;
+    order: 1;
+  }
+
+  .mapNode[data-system='hermes'] {
+    order: 2;
+  }
+
+  .mapNode[data-system='openclaw'] {
+    order: 3;
   }
 
   .domainNode {
-    top: 78%;
+    order: 4;
   }
 
   .triggerGrid {

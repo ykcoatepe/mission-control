@@ -56,7 +56,7 @@ export default function Sidebar({ isOpen = false, onClose }: SidebarProps) {
   const subtitle = config?.subtitle || 'Mission Control'
 
   return (
-    <aside className={`macos-sidebar ${styles.sidebar} ${isOpen ? 'open' : ''}`}>
+    <aside id="mission-control-sidebar" className={`macos-sidebar ${styles.sidebar} ${isOpen ? 'open' : ''}`}>
       <div className={styles.brand}>
         <div className={styles.brandRow}>
           <div className={styles.brandIcon}>
