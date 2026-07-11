@@ -706,7 +706,7 @@ setTimeout(async () => {
 // SPA catch-all: serve index.html for all non-API routes.
 // Express 5 uses path-to-regexp v8 and no longer accepts bare `*`.
 app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
+  res.sendFile('index.html', { root: path.join(__dirname, 'frontend/dist') });
 });
 
 app.listen(PORT, HOST, async () => {
