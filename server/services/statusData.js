@@ -387,7 +387,9 @@ function createStatusService({
   }
 
   async function getOperationsStatusResponse() {
-    await refreshStatusCache();
+    if (!statusCache || Date.now() - statusCacheTime > statusCacheTtl) {
+      await refreshStatusCache();
+    }
     const response = statusCache
       ? buildStatusResponseFromCache(statusCache, statusCache.heartbeat || {})
       : buildMinimalStatusResponse();

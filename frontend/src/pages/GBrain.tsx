@@ -605,6 +605,7 @@ export default function GBrain() {
           checkedAt: new Date().toISOString(),
         },
       )
+      if (payload?.refreshAfter) await Promise.all([refetch(), refetchTimeline()])
     } finally {
       runningActionRef.current = null
       setRunningAction(null)

@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   postGBrainAction: vi.fn(),
+  refetchOverview: vi.fn(),
+  refetchTimeline: vi.fn(),
 }))
 
 vi.mock('../lib/hooks', () => ({
@@ -53,7 +55,7 @@ vi.mock('../lib/hooks', () => ({
         },
         loading: false,
         error: null,
-        refetch: vi.fn(),
+        refetch: mocks.refetchOverview,
       }
     }
     if (url.startsWith('/api/gbrain/timeline')) {
@@ -61,7 +63,7 @@ vi.mock('../lib/hooks', () => ({
         data: { enabled: true, entries: [], retainedEntryCount: 0, malformedLineCount: 0 },
         loading: false,
         error: null,
-        refetch: vi.fn(),
+        refetch: mocks.refetchTimeline,
       }
     }
     return {
@@ -94,7 +96,7 @@ vi.mock('../lib/hooks', () => ({
       },
       loading: false,
       error: null,
-      refetch: vi.fn(),
+      refetch: mocks.refetchOverview,
     }
   },
 }))
@@ -113,6 +115,8 @@ function buttonByText(host: HTMLElement, text: string) {
 
 afterEach(() => {
   mocks.postGBrainAction.mockReset()
+  mocks.refetchOverview.mockReset()
+  mocks.refetchTimeline.mockReset()
   document.body.innerHTML = ''
 })
 
@@ -169,6 +173,38 @@ describe('GBrain Explore action controls', () => {
     expect(mocks.postGBrainAction).toHaveBeenCalledOnce()
     expect(mocks.postGBrainAction).toHaveBeenCalledWith('sync-sources', true)
 
+    await act(async () => root.unmount())
+  })
+
+  it('refreshes overview and timeline when a pending action payload is rejected', async () => {
+    mocks.refetchOverview.mockResolvedValue(undefined)
+    mocks.refetchTimeline.mockResolvedValue(undefined)
+    mocks.postGBrainAction.mockRejectedValue({
+      payload: {
+        ok: false,
+        action: 'sync-sources',
+        label: 'Sync local sources',
+        status: 'timed-out',
+        pending: true,
+        refreshAfter: true,
+        summary: 'Cleanup is still running',
+        checkedAt: '2026-07-11T09:00:03Z',
+      },
+    })
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () => root.render(createElement(GBrain)))
+
+    const w1 = buttonByText(host, 'Sync local sources')
+    await act(async () => w1?.click())
+    await act(async () => buttonByText(host, 'Run Sync local sources')?.click())
+
+    expect(mocks.postGBrainAction).toHaveBeenCalledWith('sync-sources', true)
+    expect(host.textContent).toContain('Cleanup is still running')
+    expect(mocks.refetchOverview).toHaveBeenCalledOnce()
+    expect(mocks.refetchTimeline).toHaveBeenCalledOnce()
     await act(async () => root.unmount())
   })
 })

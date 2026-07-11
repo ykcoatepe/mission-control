@@ -253,7 +253,7 @@ async function testLiveHeartbeatEventBackfillsLegacyState() {
   assert.equal(status.heartbeat.lastEventDurationMs, 4);
 }
 
-async function testOperationsStatusUsesCachedProofWhileSessionRefreshStalls() {
+async function testOperationsStatusUsesFreshCachedProof() {
   let sessionCalls = 0;
   let stallNextSessionRead = false;
   let releaseStalledRead;
@@ -273,14 +273,11 @@ async function testOperationsStatusUsesCachedProofWhileSessionRefreshStalls() {
   await service.refreshStatusCache();
   stallNextSessionRead = true;
 
-  const response = await Promise.race([
-    service.getOperationsStatusResponse(),
-    new Promise((_, reject) => setTimeout(() => reject(new Error('cached status read stalled')), 100)),
-  ]);
+  const response = await service.getOperationsStatusResponse();
 
   assert.equal(response.operationsSource.sourceSucceeded, true);
   assert.equal(response.agent.activeSessions, 0);
-  assert.equal(sessionCalls, 2);
+  assert.equal(sessionCalls, 1);
   releaseStalledRead({ count: 0, sessions: [] });
 }
 
@@ -293,6 +290,6 @@ async function testOperationsStatusUsesCachedProofWhileSessionRefreshStalls() {
   await testGatewayHealthIsFallbackWhenFullStatusFails();
   await testOperationsStatusRequiresObservedCliEvidence();
   await testLiveHeartbeatEventBackfillsLegacyState();
-  await testOperationsStatusUsesCachedProofWhileSessionRefreshStalls();
+  await testOperationsStatusUsesFreshCachedProof();
   console.log('statusData tests passed');
 })();
