@@ -16,6 +16,10 @@ const {
 } = require('./server/services/operationsOverview');
 const { readJsonFileSafe, writeJsonFileAtomic } = require('./server/services/jsonFiles');
 const { createSettingsService } = require('./server/services/settingsData');
+const {
+  attachRawSessions,
+  buildOperationsSessionsPayload,
+} = require('./server/services/sessionOperationsView');
 const { buildAgentsRouter } = require('./server/routes/agents');
 const { buildAwsRouter } = require('./server/routes/aws');
 const { buildCalendarRouter } = require('./server/routes/calendar');
@@ -184,11 +188,11 @@ async function fetchSessions(limit = 50) {
   const normalizeSessionPayload = (payload, { allowEmpty = false } = {}) => {
     const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
     if (!sessions.length && !allowEmpty) return null;
-    return {
+    return attachRawSessions({
       ...payload,
       count: Math.min(Number(payload?.count || sessions.length), limit),
       sessions: sessions.slice(0, limit),
-    };
+    }, sessions);
   };
 
   try {
@@ -386,14 +390,11 @@ function createSessionsService() {
     fetchSessionsRaw: fetchSessions,
     async getOperationsSessions(limit = 25) {
       const payload = await fetchSessions(Math.max(limit * 4, 100));
-      return {
-        ...normalizeVisibleSessionsPayload(payload, limit),
-        operationsSource: payload?.[OPERATIONS_SOURCE] || {
-          sourceSucceeded: false,
-          provenance: 'openclaw-sessions-unavailable',
-          observedAt: null,
-        },
-      };
+      return buildOperationsSessionsPayload(payload, payload?.[OPERATIONS_SOURCE] || {
+        sourceSucceeded: false,
+        provenance: 'openclaw-sessions-unavailable',
+        observedAt: null,
+      });
     },
     async listVisibleSessions(limit = 25) {
       if (visibleSessionsCache && Date.now() - visibleSessionsCacheTime < visibleSessionsCacheTtl) {
