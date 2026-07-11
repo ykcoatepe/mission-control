@@ -175,6 +175,22 @@ function testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp() {
   });
 }
 
+function testHeartbeatMergeIgnoresFutureDatedEvidence() {
+  const nowMs = Date.parse('2026-07-11T02:10:00Z');
+  const current = {
+    lastHeartbeat: Math.floor(nowMs / 1000),
+    lastHeartbeatAt: '2026-07-11T02:10:00.000Z',
+    lastEventStatus: 'sent',
+  };
+  const future = {
+    lastHeartbeat: Math.floor((nowMs + 60 * 60 * 1000) / 1000),
+    lastChecks: { heartbeat: '2026-07-11T03:10:00.000Z' },
+  };
+
+  assert.deepEqual(mergeHeartbeatPayloads(current, future, { now: () => nowMs }), current);
+  assert.deepEqual(mergeHeartbeatPayloads(future, current, { now: () => nowMs }), current);
+}
+
 async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
   const snapshot = {
     agent: { name: 'Mission Control' },
@@ -285,6 +301,7 @@ async function testOperationsStatusUsesFreshCachedProof() {
   testHeartbeatTimestampNormalization();
   testHeartbeatEventRejectsFutureClockSkew();
   testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp();
+  testHeartbeatMergeIgnoresFutureDatedEvidence();
   await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
   await testGatewayHealthIsFallbackWhenFullStatusFails();

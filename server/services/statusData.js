@@ -29,10 +29,11 @@ function normalizeHeartbeatPayload(heartbeat = {}) {
 }
 
 const HEARTBEAT_EVENT_KEYS = ['lastEventStatus', 'lastEventReason', 'lastEventDurationMs'];
+const MAX_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 function heartbeatEventToPayload(value, {
   now = () => Date.now(),
-  maxFutureSkewMs = 5 * 60 * 1000,
+  maxFutureSkewMs = MAX_HEARTBEAT_FUTURE_SKEW_MS,
 } = {}) {
   let event = value;
   if (typeof value === 'string') {
@@ -66,9 +67,21 @@ function heartbeatEventToPayload(value, {
   return payload;
 }
 
-function mergeHeartbeatPayloads(primary = {}, fallback = {}) {
-  const normalizedPrimary = normalizeHeartbeatPayload(primary || {});
-  const normalizedFallback = normalizeHeartbeatPayload(fallback || {});
+function boundHeartbeatPayload(heartbeat, {
+  now = () => Date.now(),
+  maxFutureSkewMs = MAX_HEARTBEAT_FUTURE_SKEW_MS,
+} = {}) {
+  const normalized = normalizeHeartbeatPayload(heartbeat || {});
+  const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeat);
+  if (lastHeartbeat == null) return normalized;
+  const observedMs = lastHeartbeat * 1000;
+  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  return normalized;
+}
+
+function mergeHeartbeatPayloads(primary = {}, fallback = {}, options = {}) {
+  const normalizedPrimary = boundHeartbeatPayload(primary, options);
+  const normalizedFallback = boundHeartbeatPayload(fallback, options);
   const primaryAt = heartbeatValueToSeconds(normalizedPrimary.lastHeartbeat);
   const fallbackAt = heartbeatValueToSeconds(normalizedFallback.lastHeartbeat);
 
