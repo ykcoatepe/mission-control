@@ -1,7 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { createGBrainTimelineService } = require('../../services/gbrainTimeline');
+const { createGBrainOverviewService } = require('../../services/gbrainOverviewData');
 const {
   buildLiveGBrainHealth,
   buildLiveGBrainSources,
@@ -13,36 +13,17 @@ const {
 } = require('./liveProbes');
 const { buildLocalGBrainIntegrationRuntime } = require('./integrationRuntime');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
+const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
-const { buildGBrainOverview } = require('./overview');
+const { requiresExplicitConfirmation } = require('./actionPolicy');
 
 function buildGBrainRouter(options = {}) {
   const router = express.Router();
-  const timelineService = options.timelineService || createGBrainTimelineService({
-    projectRoot: options.projectRoot,
-    enabled: options.mcConfig?.modules?.gbrainTimeline !== false,
-    ledgerPath: options.timelineLedgerPath,
-  });
+  const overviewService = options.gbrainOverviewService || createGBrainOverviewService(options);
+  const timelineService = overviewService.timelineService;
 
-  router.get('/api/gbrain/overview', async (req, res) => {
-    const [health, sources, version, tools, features, providers, hermesProxy] = await Promise.all([
-      buildLiveGBrainHealth(options),
-      buildLiveGBrainSources(options),
-      buildLiveGBrainVersion(options),
-      buildLiveGBrainTools(options),
-      buildLiveGBrainFeatures(options),
-      buildLiveGBrainProviders(options),
-      buildLiveHermesProxyStatus(options),
-    ]);
-    const integrationRuntime = buildLocalGBrainIntegrationRuntime(options);
-    const overview = buildGBrainOverview({ health, sources, version, tools, features, providers, hermesProxy }, { integrationRuntime });
-    const result = await timelineService.captureOverview(overview);
-    res.json(buildGBrainOverview({ health, sources, version, tools, features, providers, hermesProxy }, {
-      integrationRuntime,
-      timelineSummary: result.timelineSummary,
-      incidentBanner: result.timelineSummary?.incidentBanner || null,
-      incidentBanners: result.timelineSummary?.incidentBanners || [],
-    }));
+  router.get('/api/gbrain/overview', async (_req, res) => {
+    res.json(await overviewService.getOverview());
   });
 
   router.get('/api/gbrain/health', async (req, res) => {
@@ -78,6 +59,19 @@ function buildGBrainRouter(options = {}) {
   });
 
   router.post('/api/gbrain/actions', async (req, res) => {
+    const action = req.body?.action;
+    const definition = Object.hasOwn(GBrainActionDefinitions, action)
+      ? GBrainActionDefinitions[action]
+      : null;
+    if (requiresExplicitConfirmation(definition, req.body)) {
+      return res.status(400).json({
+        ok: false,
+        action,
+        status: 'confirmation-required',
+        checkedAt: new Date().toISOString(),
+        error: 'Explicit confirmation is required for this action.',
+      });
+    }
     const result = await runGBrainAction(req.body?.action, options);
     const statusCode = result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
     res.status(statusCode).json(result);

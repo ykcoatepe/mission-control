@@ -30,6 +30,9 @@ export default function App() {
       {isMobile && !isSetupPage && (
         <button
           onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label={sidebarOpen ? 'Close navigation' : 'Open navigation'}
+          aria-controls="mission-control-sidebar"
+          aria-expanded={sidebarOpen}
           className={`${styles.mobileMenuButton} ${
             sidebarOpen ? styles.mobileMenuButtonOpen : styles.mobileMenuButtonClosed
           }`}

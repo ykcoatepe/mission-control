@@ -15,15 +15,13 @@
   padding: 18px 16px 14px;
 }
 
-.brandRow,
-.footerRow {
+.brandRow {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.brandIcon,
-.footerIcon {
+.brandIcon {
   width: 34px;
   height: 34px;
   flex: 0 0 34px;
@@ -52,13 +50,11 @@
   pointer-events: none;
 }
 
-.brandText,
-.footerText {
+.brandText {
   min-width: 0;
 }
 
-.brandTitle,
-.footerTitle {
+.brandTitle {
   overflow: hidden;
   margin: 0;
   color: rgba(255, 255, 255, 0.94);
@@ -69,8 +65,7 @@
   white-space: nowrap;
 }
 
-.brandSubtitle,
-.footerMeta {
+.brandSubtitle {
   overflow: hidden;
   margin: 3px 0 0;
   color: rgba(255, 255, 255, 0.48);
@@ -81,61 +76,79 @@
   white-space: nowrap;
 }
 
-.statusCard {
-  display: block;
+.systemStack {
+  display: grid;
+  gap: 7px;
   margin-top: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 8px;
+  border: 1px solid var(--obs-border, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.045);
+  background: var(--obs-panel, rgba(255, 255, 255, 0.045));
   color: inherit;
   text-decoration: none;
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.statusCard:hover {
-  border-color: var(--sidebar-state-color, rgba(255, 255, 255, 0.2));
-  background: rgba(255, 255, 255, 0.065);
+.systemStack:hover {
+  border-color: var(--obs-border-strong, rgba(255, 255, 255, 0.2));
+  background: var(--obs-panel-raised, rgba(255, 255, 255, 0.065));
 }
 
-.statusTop {
+.systemStack:focus-visible {
+  outline: 2px solid var(--obs-blue, #58b5f5);
+  outline-offset: 2px;
+}
+
+.systemRow {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-}
-
-.statusLabel {
-  margin: 0;
-  color: rgba(255, 255, 255, 0.48);
+  gap: 8px;
+  color: var(--obs-text-muted, rgba(255, 255, 255, 0.62));
   font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
-.statusValue {
-  margin-top: 4px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
+.systemName {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.systemMeta {
+  display: grid;
+  flex: 0 0 auto;
+  justify-items: end;
+  line-height: 1.15;
+  text-transform: capitalize;
+}
+
+.systemMeta strong {
+  color: var(--obs-text, rgba(255, 255, 255, 0.9));
+  font-size: 10px;
   font-weight: 720;
 }
 
-.statusDot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
-  border-radius: 999px;
-  background: var(--sidebar-state-color, #8e8e93);
-  box-shadow: 0 0 14px var(--sidebar-state-color, rgba(142, 142, 147, 0.8));
+.systemMeta small {
+  color: var(--obs-text-subtle, rgba(255, 255, 255, 0.44));
+  font-size: 9px;
 }
 
-.statusMeta {
-  margin: 8px 0 0;
-  color: rgba(255, 255, 255, 0.44);
-  font-size: 10px;
-  line-height: 1.35;
+.systemDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 999px;
+  background: var(--state-unavailable, #697381);
 }
+
+.systemRow[data-state='healthy'] .systemDot { background: var(--state-healthy, #58b890); }
+.systemRow[data-state='warning'] .systemDot { background: var(--state-warning, #d6a85f); }
+.systemRow[data-state='critical'] .systemDot { background: var(--state-critical, #df746f); }
+.systemRow[data-state='inactive'] .systemDot { background: var(--state-inactive, #7d8795); }
 
 .divider {
   height: 1px;
@@ -222,25 +235,14 @@
   white-space: nowrap;
 }
 
-.footer {
-  padding: 14px 16px 16px;
+.utilityNav {
+  padding-bottom: 10px;
 }
 
-.footerIcon {
-  position: relative;
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.footerLiveDot {
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  width: 8px;
-  height: 8px;
-  border: 2px solid #101620;
-  border-radius: 999px;
-  background: #32d74b;
+.utilityItems {
+  display: grid;
+  gap: 4px;
+  padding: 10px 10px 0;
 }
 
 @media (max-width: 768px) {

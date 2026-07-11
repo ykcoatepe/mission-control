@@ -4,28 +4,32 @@ This reference describes the public routes, API endpoints, local commands, and s
 
 ## Browser Routes
 
-| Route | Page | Data source | Purpose |
-| --- | --- | --- | --- |
-| `/` | Dashboard | `/api/status`, `/api/activity`, `/api/sessions`, `/api/costs` | Operator briefing, active sessions, heartbeat, attention signals, and evidence feed |
-| `/office` | Digital Office | `/api/office/telemetry` | Desk telemetry, priority lane, attention queue, and office session state |
-| `/cron` | Cron Jobs | `/api/cron`, `/api/models` | OpenClaw and Hermes cron visibility with scheduler-specific actions |
-| `/conversations` | Conversations | `/api/sessions/*`, `/api/chat/*` | Session browser and transcript review |
-| `/workshop` | Workshop | `/api/tasks/*`, `/api/quick/*` | Local task board and execution queue |
-| `/kanban` | Hermes Kanban | `/api/hermes-kanban` | Hermes task board with detail drawer and bounded write actions |
-| `/costs` | Cost Tracker | `/api/costs`, `/api/costs/codexbar` | OpenClaw, Hermes, and CodexBar usage with source reliability metadata |
-| `/calendar` | Calendar | `/api/calendar`, `/api/cron` | Schedule-first view of recurring work and calendar entries |
-| `/gbrain` | GBrain | `/api/gbrain/overview` | Proof-backed view of GBrain trust, sources, queues, and bridge caveats |
-| `/diagnostics` | Diagnostics | `/api/config` plus selected tab endpoints | Tabbed support surface for Memory, Docs, Scout, AWS, and Skills |
-| `/ollama` | Ollama Monitor | `/api/ollama/*`, `/api/costs` | Local model telemetry plus model token usage context |
-| `/team` | Team Structure | `/api/team/structure`, `/api/models` | Team registry, role grouping, bootstrap state, and model ownership view |
-| `/agents` | Agent Hub | `/api/agents/*`, `/api/sessions` | Active agents, runtime inventory, and session detail |
-| `/settings` | Settings | `/api/config`, `/api/settings/*`, `/api/models` | Gateway configuration, model routing, and local preferences |
-| `/councils` | Governance Archive | `/api/councils/*` | Read-only governance and council history |
+Primary navigation:
+
+| Surface | Route | Purpose |
+| --- | --- | --- |
+| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
+| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
+| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
+| Sessions | `/sessions` | OpenClaw sessions and handoffs |
+| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
+| Usage | `/usage` | Spend and model mix |
+| Systems | `/systems` | Live agents and system inventory |
+
+Utility navigation contains `/settings` (configuration) and `/councils`
+(read-only governance audit). The following Phase 2 source pages remain
+directly reachable but hidden from the sidebar: `/workshop`, `/calendar`,
+`/office`, `/team`, `/ollama`, and `/diagnostics`.
 
 Legacy routes:
 
 | Route | Behavior |
 | --- | --- |
+| `/kanban` | Redirects to `/work` |
+| `/cron` | Redirects to `/automations` |
+| `/conversations` | Redirects to `/sessions` |
+| `/costs` | Redirects to `/usage` |
+| `/agents` | Redirects to `/systems` |
 | `/memory` | Redirects to `/diagnostics?tab=memory` |
 | `/scout` | Redirects to `/diagnostics?tab=scout` |
 | `/aws` | Redirects to `/diagnostics?tab=aws` |
@@ -62,6 +66,30 @@ Request guardrails:
 - Non-API browser routes fall through to `frontend/dist/index.html` so React
   Router can handle deep links.
 
+## Operations Overview API
+
+`GET /api/operations/overview` is the read-only contract behind Brain and the
+sidebar status rail. It runs bounded readers for OpenClaw status and sessions,
+cron, Hermes Kanban, and GBrain, then returns a redacted evidence model. The
+endpoint does not run maintenance actions and does not expose raw messages,
+task bodies, tokens, or absolute home paths.
+
+| Field | Meaning |
+| --- | --- |
+| `schemaVersion` | Contract version; currently the string `"1"` |
+| `generatedAt` | Time the aggregate was built |
+| `overall` | Worst independently derived system state plus reason codes |
+| `systems` | Independent `gbrain`, `hermes`, and `openclaw` state, freshness, metrics, caveats, and evidence |
+| `attention` | Warning, critical, and unavailable items requiring operator review |
+| `evidence` | Redacted evidence ordered by observation time |
+| `capabilities` | Safe GBrain action metadata; execution remains on `/api/gbrain/actions` |
+
+System state (`healthy`, `warning`, `critical`, `inactive`, or `unavailable`)
+and evidence freshness (`fresh`, `stale`, `unknown`, or `unavailable`) are
+independent signals. Mission Control never averages the three systems into a
+false green. A GBrain trust score of `100/100` does not hide active caveats,
+and stale source evidence keeps a visible warning and attention item.
+
 ## GBrain API
 
 GBrain probe endpoints are read-only. `GET /api/gbrain/actions` exposes the
@@ -90,16 +118,30 @@ Runtime details:
 
 Supported action payloads for `POST /api/gbrain/actions`:
 
-| Action | CLI effect |
-| --- | --- |
-| `doctor-fast` | `gbrain doctor --json --fast` |
-| `preview-sync` | `gbrain sync --all --no-pull --parallel 1 --dry-run --json --yes` |
-| `sync-sources` | `gbrain sync --all --no-pull --parallel 1 --timeout 105 --json --yes && gbrain embed --stale` |
-| `retry-failed-sync` | `gbrain sync --all --retry-failed --serial --timeout 105 --no-pull --json --yes && gbrain embed --stale` |
-| `embed-stale` | `gbrain embed --stale` |
-| `embed-missing` | `gbrain embed --stale --priority recent --batch-size 1000` |
-| `check-resolvable` | `gbrain check-resolvable --json` |
-| `storage-status` | `gbrain storage status --json` |
+| Action id | Class | Confirmation | Effect |
+| --- | --- | --- | --- |
+| `doctor-fast` | R0 | No | Fast read-only doctor check (`Run System Check` in Brain) |
+| `preview-sync` | R0 | No | Dry-run all registered local sources |
+| `sync-sources` | W1 | Yes | Sync local sources without remote pulls, then embed stale chunks |
+| `retry-failed-sync` | W1 | Yes | Retry failed source files, then embed stale chunks |
+| `embed-stale` | W1 | Yes | Refresh chunks already marked stale |
+| `embed-missing` | W1 | Yes | Backfill missing embeddings with the recent-priority fast path |
+| `check-resolvable` | R0 | No | Check skill-tree routing without fixes |
+| `storage-status` | R0 | No | Inspect local GBrain storage tier status |
+
+Safety policy:
+
+| Class | Brain behavior | Scope |
+| --- | --- | --- |
+| R0 | Runs directly | Diagnostic or preview-only local reads |
+| W1 | Requires a scoped confirmation dialog | Allowlisted local maintenance or repair |
+| W2 | Not rendered and cannot start | Destructive or materially broader writes |
+
+There are exactly eight supported action ids. Brain treats `Run System Check`
+as a UI label for `doctor-fast`, not a ninth action. An action response alone
+is not proof of repair: Brain reports `verified` only after a refreshed
+Operations overview has a newer GBrain `observedAt` and `fresh` freshness.
+Otherwise it reports that fresh proof is pending or unavailable.
 
 Action safety constraints:
 

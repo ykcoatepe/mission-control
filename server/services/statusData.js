@@ -28,6 +28,74 @@ function normalizeHeartbeatPayload(heartbeat = {}) {
   return normalized;
 }
 
+const HEARTBEAT_EVENT_KEYS = ['lastEventStatus', 'lastEventReason', 'lastEventDurationMs'];
+const MAX_HEARTBEAT_FUTURE_SKEW_MS = 5 * 60 * 1000;
+
+function heartbeatEventToPayload(value, {
+  now = () => Date.now(),
+  maxFutureSkewMs = MAX_HEARTBEAT_FUTURE_SKEW_MS,
+} = {}) {
+  let event = value;
+  if (typeof value === 'string') {
+    try {
+      event = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  if (!event || typeof event !== 'object' || Array.isArray(event)) return {};
+
+  const lastHeartbeat = heartbeatValueToSeconds(event.ts);
+  if (lastHeartbeat == null) return {};
+  const observed = new Date(lastHeartbeat * 1000);
+  const observedMs = observed.getTime();
+  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+
+  const payload = {
+    lastHeartbeat,
+    lastHeartbeatAt: observed.toISOString(),
+  };
+  if (typeof event.status === 'string' && event.status.trim()) {
+    payload.lastEventStatus = event.status.trim().slice(0, 64);
+  }
+  if (typeof event.reason === 'string' && event.reason.trim()) {
+    payload.lastEventReason = event.reason.trim().slice(0, 160);
+  }
+  if (typeof event.durationMs === 'number' && Number.isFinite(event.durationMs) && event.durationMs >= 0) {
+    payload.lastEventDurationMs = event.durationMs;
+  }
+  return payload;
+}
+
+function boundHeartbeatPayload(heartbeat, {
+  now = () => Date.now(),
+  maxFutureSkewMs = MAX_HEARTBEAT_FUTURE_SKEW_MS,
+} = {}) {
+  const normalized = normalizeHeartbeatPayload(heartbeat || {});
+  const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeat);
+  if (lastHeartbeat == null) return normalized;
+  const observedMs = lastHeartbeat * 1000;
+  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  return normalized;
+}
+
+function mergeHeartbeatPayloads(primary = {}, fallback = {}, options = {}) {
+  const normalizedPrimary = boundHeartbeatPayload(primary, options);
+  const normalizedFallback = boundHeartbeatPayload(fallback, options);
+  const primaryAt = heartbeatValueToSeconds(normalizedPrimary.lastHeartbeat);
+  const fallbackAt = heartbeatValueToSeconds(normalizedFallback.lastHeartbeat);
+
+  const primaryWins = primaryAt != null && (fallbackAt == null || primaryAt >= fallbackAt);
+  const winner = primaryWins ? normalizedPrimary : normalizedFallback;
+  const loser = primaryWins ? normalizedFallback : normalizedPrimary;
+  const merged = { ...loser, ...winner };
+
+  for (const key of HEARTBEAT_EVENT_KEYS) {
+    if (!Object.hasOwn(winner, key)) delete merged[key];
+  }
+  return merged;
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -42,6 +110,7 @@ function createStatusService({
   execSync,
   fs,
   path,
+  sessionRefreshBudgetMs = 1500,
   processEnv = process.env,
 }) {
   let statusCache = null;
@@ -144,7 +213,25 @@ function createStatusService({
 
   async function doRefreshStatusCache() {
     try {
-      const [openclawStatus, notionActivity, sessionData] = await Promise.allSettled([
+      const sessionRead = new Promise((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => {
+          settled = true;
+          resolve({ count: 0, sessions: [] });
+        }, sessionRefreshBudgetMs);
+        Promise.resolve(fetchSessions(50)).then((value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve(value);
+        }).catch(() => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          resolve({ count: 0, sessions: [] });
+        });
+      });
+      const [openclawStatus, notionActivity, sessionData, heartbeatEvent] = await Promise.allSettled([
         new Promise(async (resolve) => {
           let gatewayHealth = '';
           const controller = new AbortController();
@@ -160,16 +247,35 @@ function createStatusService({
           }
 
           try {
-            resolve(execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }));
+            resolve({
+              output: execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }),
+              commandSucceeded: true,
+            });
           } catch (error) {
-            resolve(error.stdout || gatewayHealth);
+            resolve({
+              output: error.stdout || gatewayHealth,
+              commandSucceeded: false,
+            });
           }
         }),
         fetchNotionActivity(8).catch(() => null),
-        fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
+        sessionRead,
+        Promise.resolve().then(() => {
+          try {
+            return heartbeatEventToPayload(execSync('openclaw system heartbeat last --json', {
+              timeout: 8000,
+              encoding: 'utf8',
+            }));
+          } catch {
+            return {};
+          }
+        }),
       ]);
 
-      const ocStatus = openclawStatus.status === 'fulfilled' ? openclawStatus.value : '';
+      const statusResult = openclawStatus.status === 'fulfilled'
+        ? openclawStatus.value
+        : { output: '', commandSucceeded: false };
+      const ocStatus = statusResult.output || '';
       const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
       const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
 
@@ -196,6 +302,13 @@ function createStatusService({
         channels.push({ name: match[1], enabled: match[2], state: match[3], detail: match[4].trim() });
       }
 
+      const statusShapeObserved = Boolean(
+        sessionsMatch || modelMatch || memoryMatch || heartbeatInterval || agentsMatch || channels.length,
+      );
+      const statusObservedAt = statusResult.commandSucceeded && statusShapeObserved
+        ? new Date().toISOString()
+        : null;
+
       const sessionList = sessions.sessions || [];
       const totalTokens = sessionList.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
       const tokenUsage = {
@@ -215,9 +328,16 @@ function createStatusService({
       } catch {
         heartbeat = { lastHeartbeat: null, lastChecks: {} };
       }
+      const liveHeartbeat = heartbeatEvent.status === 'fulfilled' ? heartbeatEvent.value : {};
+      heartbeat = mergeHeartbeatPayloads(liveHeartbeat, heartbeat);
 
       statusCache = {
         generatedAt: new Date().toISOString(),
+        operationsSource: {
+          sourceSucceeded: Boolean(statusObservedAt),
+          provenance: statusObservedAt ? 'openclaw-status-cli' : 'openclaw-status-unavailable',
+          observedAt: statusObservedAt,
+        },
         sessionsMatch,
         modelMatch,
         defaultModelKey,
@@ -270,7 +390,8 @@ function createStatusService({
 
     let heartbeat = statusCache.heartbeat || {};
     try {
-      heartbeat = JSON.parse(fs.readFileSync(path.join(memoryPath, 'heartbeat-state.json'), 'utf8'));
+      const fileHeartbeat = JSON.parse(fs.readFileSync(path.join(memoryPath, 'heartbeat-state.json'), 'utf8'));
+      heartbeat = mergeHeartbeatPayloads(fileHeartbeat, heartbeat);
     } catch {}
 
     const response = buildStatusResponseFromCache(statusCache, heartbeat);
@@ -278,14 +399,34 @@ function createStatusService({
     return response;
   }
 
+  async function getOperationsStatusResponse() {
+    if (!statusCache || Date.now() - statusCacheTime > statusCacheTtl) {
+      await refreshStatusCache();
+    }
+    const response = statusCache
+      ? buildStatusResponseFromCache(statusCache, statusCache.heartbeat || {})
+      : buildMinimalStatusResponse();
+    return {
+      ...response,
+      operationsSource: statusCache?.operationsSource || {
+        sourceSucceeded: false,
+        provenance: 'openclaw-status-unavailable',
+        observedAt: null,
+      },
+    };
+  }
+
   return {
     refreshStatusCache,
     getStatusResponse,
+    getOperationsStatusResponse,
   };
 }
 
 module.exports = {
   createStatusService,
+  heartbeatEventToPayload,
   heartbeatValueToSeconds,
+  mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
 };

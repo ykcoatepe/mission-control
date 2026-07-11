@@ -22,7 +22,7 @@ function makeCronServiceWithJobs(initialJobs) {
     hermesProfile: 'hmudur',
   });
 
-  return { service, jobsFile };
+  return { service, jobsFile, homeDir };
 }
 
 (function testHermesCodexModelRefKeepsOpenAiNamespace() {
@@ -99,5 +99,52 @@ function makeCronServiceWithJobs(initialJobs) {
     else process.env.MC_USER_HOME = previousHome;
   }
 })();
+
+(async function testOperationsCronEvidenceTracksSchedulersIndependently() {
+  const { service } = makeCronServiceWithJobs([{ id: 'hermes-job', enabled: true }]);
+  const result = await service.fetchCronJobsForOperations();
+
+  assert.equal(result.operationsSource.schedulers.openclaw.sourceSucceeded, true);
+  assert.equal(result.operationsSource.schedulers.openclaw.provenance, 'openclaw-cron-cli-json');
+  assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, true);
+  assert.equal(result.operationsSource.schedulers.hermes.provenance, 'hermes-cron-disk');
+  assert.ok(Number.isFinite(Date.parse(result.operationsSource.schedulers.openclaw.observedAt)));
+  assert.ok(Number.isFinite(Date.parse(result.operationsSource.schedulers.hermes.observedAt)));
+  assert.equal(result.jobs.filter((job) => job.scheduler === 'hermes').length, 1);
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
+
+(async function testFallbackEmptyCronResultsHaveNoSyntheticObservation() {
+  const originalFetch = global.fetch;
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cron-unavailable-'));
+  global.fetch = async () => ({ ok: false, json: async () => ({}) });
+  try {
+    const service = createCronService({
+      openclawExec: async () => { throw new Error('openclaw unavailable'); },
+      gatewayPort: 18789,
+      gatewayToken: '',
+      getOpenclawDefaultModelKey: () => '',
+      calendarFile: path.join(homeDir, 'calendar.json'),
+      homeDir,
+      hermesProfile: 'hmudur',
+    });
+    const result = await service.fetchCronJobsForOperations();
+
+    assert.deepEqual(result.jobs, []);
+    assert.equal(result.operationsSource.sourceSucceeded, false);
+    assert.equal(result.operationsSource.observedAt, null);
+    assert.equal(result.operationsSource.schedulers.openclaw.sourceSucceeded, false);
+    assert.equal(result.operationsSource.schedulers.openclaw.observedAt, null);
+    assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, false);
+    assert.equal(result.operationsSource.schedulers.hermes.observedAt, null);
+  } finally {
+    global.fetch = originalFetch;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
 
 console.log('cronData tests passed');

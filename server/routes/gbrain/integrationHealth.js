@@ -97,7 +97,12 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
     const contractStatus = runtimeSystem.runtimeContract?.status || 'warning';
     const durableStatus = runtimeSystem.durablePipeline?.status || (system.id === 'hermes' ? 'warning' : 'warning');
     const sourceStatus = sourceStatusFor(source, sourcesUnavailable);
-    const statusInputs = [mcpStatus, contractStatus, durableStatus, sourceStatus, readSmokeStatus, thinkRuntime.status].filter((item) => item !== 'inactive');
+    // Runtime readiness is about the live read/runtime path: MCP config,
+    // shared-brain contract, source visibility, read smoke, and think readiness.
+    // The curated write/export pipeline is deliberately surfaced as writeSmoke,
+    // but an incomplete optional exporter must not keep the whole dashboard in
+    // "Live with caveats" when the runtime path is otherwise healthy.
+    const statusInputs = [mcpStatus, contractStatus, sourceStatus, readSmokeStatus, thinkRuntime.status].filter((item) => item !== 'inactive');
     const status = statusInputs.includes('critical')
       ? 'critical'
       : statusInputs.includes('warning')

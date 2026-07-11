@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import {
   AlertTriangle,
@@ -18,6 +18,14 @@ import {
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import { formatDate, timeAgo, useApi } from '../lib/hooks'
+import { postGBrainAction } from './gbrain/api'
+import {
+  resolveGBrainAction,
+  visibleGBrainActions,
+} from './gbrain/actionPolicy'
+import type { GBrainActionResult } from './gbrain/types'
+import { ActionConfirmDialog } from './brain/ActionConfirmDialog'
+import type { OperationCapability, OperationSystem, SafetyClass } from './brain/types'
 import styles from './GBrain.module.css'
 
 type EvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
@@ -261,15 +269,7 @@ interface TimelineResponse {
   incidentBanners?: IncidentBanner[]
 }
 
-interface GBrainActionResult {
-  ok: boolean
-  action: string
-  label: string
-  status: string
-  summary: string
-  error?: string
-  checkedAt: string
-  refreshAfter?: boolean
+type PageGBrainActionResult = GBrainActionResult & {
   pending?: boolean
 }
 
@@ -281,6 +281,10 @@ interface GBrainActionDefinition {
   command: string
   refreshAfter: boolean
   timeoutMs?: number
+  safetyClass: SafetyClass
+  requiresConfirmation: boolean
+  enabled?: boolean
+  disabledReason?: string
 }
 
 interface GBrainActionsResponse {
@@ -297,6 +301,8 @@ const fallbackActions: GBrainActionDefinition[] = [
     command: 'gbrain sync --all --no-pull --parallel 1 --timeout 105 --json --yes && gbrain embed --stale',
     refreshAfter: true,
     timeoutMs: 120000,
+    safetyClass: 'W1',
+    requiresConfirmation: true,
   },
   {
     id: 'embed-stale',
@@ -306,6 +312,8 @@ const fallbackActions: GBrainActionDefinition[] = [
     command: 'gbrain embed --stale',
     refreshAfter: true,
     timeoutMs: 120000,
+    safetyClass: 'W1',
+    requiresConfirmation: true,
   },
   {
     id: 'embed-missing',
@@ -315,6 +323,8 @@ const fallbackActions: GBrainActionDefinition[] = [
     command: 'gbrain embed --stale --priority recent --batch-size 1000',
     refreshAfter: true,
     timeoutMs: 1800000,
+    safetyClass: 'W1',
+    requiresConfirmation: true,
   },
 ]
 
@@ -428,11 +438,19 @@ function lineFor(edge: GBrainEdge) {
 
 export default function GBrain() {
   const { data, loading, error, refetch } = useApi<GBrainOverview>('/api/gbrain/overview', 30000)
-  const { data: timeline, loading: timelineLoading, error: timelineError } = useApi<TimelineResponse>('/api/gbrain/timeline?limit=50', 60000)
+  const {
+    data: timeline,
+    loading: timelineLoading,
+    error: timelineError,
+    refetch: refetchTimeline,
+  } = useApi<TimelineResponse>('/api/gbrain/timeline?limit=50', 60000)
   const { data: actionsData, error: actionsError } = useApi<GBrainActionsResponse>('/api/gbrain/actions')
   const [selectedId, setSelectedId] = useState('gbrain-core')
   const [runningAction, setRunningAction] = useState<string | null>(null)
-  const [actionResult, setActionResult] = useState<GBrainActionResult | null>(null)
+  const runningActionRef = useRef<string | null>(null)
+  const [actionResult, setActionResult] = useState<PageGBrainActionResult | null>(null)
+  const [confirmationActionId, setConfirmationActionId] = useState<string | null>(null)
+  const confirmationTriggerRef = useRef<HTMLButtonElement | null>(null)
   const [acknowledgedIncidents, setAcknowledgedIncidents] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set()
     try {
@@ -477,10 +495,39 @@ export default function GBrain() {
     return (data?.live?.sources?.sources || []).filter((source) => source.freshness?.status === 'warning')
   }, [data?.live?.sources?.sources])
   const actions = actionsData?.actions?.length ? actionsData.actions : fallbackActions
-  const systemCheckAction = actions.find((action) => action.id === 'doctor-fast')
+  const visibleActions = visibleGBrainActions(actions)
+  const systemCheckAction = visibleActions.find((action) => action.id === 'doctor-fast')
   const systemCheckRunning = runningAction === 'doctor-fast'
   const canRunActions = Boolean(data)
   const proofScope = proofScopeFor(data, loading)
+  const confirmationAction = confirmationActionId
+    ? resolveGBrainAction(actions, confirmationActionId, 'confirmed', runningAction)
+    : null
+  const confirmationCapability = confirmationAction
+    ? {
+        ...confirmationAction,
+        system: 'gbrain',
+        timeoutMs: confirmationAction.timeoutMs ?? null,
+        enabled: confirmationAction.enabled !== false,
+        disabledReason: confirmationAction.disabledReason || '',
+        actionEndpoint: '/api/gbrain/actions',
+      } satisfies OperationCapability
+    : null
+  const confirmationProof: OperationSystem = {
+    id: 'gbrain',
+    label: 'GBrain',
+    state: data?.trust.status || 'unavailable',
+    observedAt: data?.trust.lastVerifiedAt || null,
+    freshness: data?.live?.sources?.freshness?.status === 'healthy'
+      ? 'fresh'
+      : data?.live?.sources?.freshness?.status === 'warning'
+        ? 'stale'
+        : 'unknown',
+    caveats: [...(data?.caveats || []), ...(data?.warnings || [])],
+    metrics: {},
+    evidence: [],
+    detailHref: '/gbrain',
+  }
   const selectedContractSystem = data?.integrationContract?.systems?.find((system) => system.id === selectedNode?.id)
   const selectedIntegrationSystem = data?.integrationHealth?.systems?.find((system) => system.id === selectedNode?.id)
   const missingIntegrationTools = data?.integrationHealth?.toolContract?.tools?.filter((tool) => !tool.present) || []
@@ -537,35 +584,57 @@ export default function GBrain() {
       ? 'Critical proof requires operator review'
       : 'Live proof has caveats; review evidence before action'
 
-  const runAction = async (action: string) => {
+  const runAction = async (action: string, confirmed = false) => {
+    if (runningActionRef.current) return
+    runningActionRef.current = action
     setRunningAction(action)
     setActionResult(null)
     try {
-      const response = await fetch('/api/gbrain/actions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action }),
-      })
-      const result = await response.json()
+      const result = (await postGBrainAction(action, confirmed)) as PageGBrainActionResult
       setActionResult(result)
-      if (result.refreshAfter) await refetch()
+      if (result.refreshAfter) await Promise.all([refetch(), refetchTimeline()])
     } catch (err) {
-      setActionResult({
-        ok: false,
-        action,
-        label: action,
-        status: 'failed',
-        summary: err instanceof Error ? err.message : 'Action failed',
-        checkedAt: new Date().toISOString(),
-      })
+      const payload = (err as Error & { payload?: PageGBrainActionResult })?.payload
+      setActionResult(
+        payload || {
+          ok: false,
+          action,
+          label: action,
+          status: 'failed',
+          summary: err instanceof Error ? err.message : 'Action failed',
+          checkedAt: new Date().toISOString(),
+        },
+      )
+      if (payload?.refreshAfter) await Promise.all([refetch(), refetchTimeline()])
     } finally {
+      runningActionRef.current = null
       setRunningAction(null)
     }
   }
 
+  const requestAction = (actionId: string, trigger?: HTMLButtonElement | null) => {
+    const directAction = resolveGBrainAction(actions, actionId, 'direct', runningAction)
+    if (directAction) {
+      void runAction(directAction.id)
+      return
+    }
+
+    const confirmableAction = resolveGBrainAction(actions, actionId, 'confirmed', runningAction)
+    if (!confirmableAction) return
+    confirmationTriggerRef.current = trigger || null
+    setConfirmationActionId(confirmableAction.id)
+  }
+
+  const confirmAction = () => {
+    if (!confirmationActionId) return
+    const currentAction = resolveGBrainAction(actions, confirmationActionId, 'confirmed', runningAction)
+    setConfirmationActionId(null)
+    if (currentAction) void runAction(currentAction.id, true)
+  }
+
   const runSystemCheck = async () => {
     if (systemCheckAction) {
-      await runAction(systemCheckAction.id)
+      requestAction(systemCheckAction.id)
       return
     }
     await refetch()
@@ -773,7 +842,10 @@ export default function GBrain() {
                 </div>
                 <button
                   type="button"
-                  onClick={runSystemCheck}
+                  onClick={(event) => {
+                    if (systemCheckAction) requestAction(systemCheckAction.id, event.currentTarget)
+                    else void runSystemCheck()
+                  }}
                   disabled={loading || Boolean(runningAction)}
                   title={systemCheckAction?.command || 'Refresh GBrain overview'}
                 >
@@ -784,20 +856,20 @@ export default function GBrain() {
             <div className={styles.actionsDock}>
               <div className={styles.actionHeader}>
                 <span>Allowlisted actions</span>
-                <small>{runningAction ? 'running' : `${actions.length} local · probes stay read-only`}</small>
+                <small>{runningAction ? 'running' : `${visibleActions.length} local · probes stay read-only`}</small>
               </div>
               <div className={styles.actionGrid}>
-                {actions.map((action) => {
+                {visibleActions.map((action) => {
                   const timeoutLabel = formatActionTimeout(action.timeoutMs)
                   return (
                     <button
                       key={action.id}
                       className={styles.actionButton}
                       type="button"
-                      disabled={!canRunActions || Boolean(runningAction)}
+                      disabled={!canRunActions || Boolean(runningAction) || action.enabled === false}
                       title={`${action.command}${timeoutLabel ? ` · timeout ${timeoutLabel}` : ''}`}
                       style={{ '--action-color': actionKindColor(action.kind) } as CSSProperties}
-                      onClick={() => runAction(action.id)}
+                      onClick={(event) => requestAction(action.id, event.currentTarget)}
                     >
                       <span className={styles.actionIconTile}>
                         {action.kind === 'diagnostic' || action.kind === 'preview' ? <RefreshCw size={13} /> : <Play size={13} />}
@@ -805,7 +877,12 @@ export default function GBrain() {
                       <span>
                         <span className={styles.actionTitleRow}>
                           <strong>{runningAction === action.id ? `${action.label}...` : action.label}</strong>
-                          <em>{[actionKindLabel(action.kind), timeoutLabel].filter(Boolean).join(' · ')}</em>
+                          <em>{[
+                            actionKindLabel(action.kind),
+                            action.safetyClass,
+                            action.requiresConfirmation ? 'confirm' : 'direct',
+                            timeoutLabel,
+                          ].filter(Boolean).join(' · ')}</em>
                         </span>
                         <small className={styles.actionDescription}>{action.description}</small>
                       </span>
@@ -830,6 +907,13 @@ export default function GBrain() {
               ) : null}
               {actionsError ? <div className={styles.actionHint}>{actionsError}</div> : null}
             </div>
+            <ActionConfirmDialog
+              action={confirmationCapability}
+              proof={confirmationProof}
+              onCancel={() => setConfirmationActionId(null)}
+              onConfirm={confirmAction}
+              returnFocusRef={confirmationTriggerRef}
+            />
             <div className={styles.warningStrip}>
               <AlertTriangle size={15} style={{ color: '#FFD60A', flex: '0 0 auto', marginTop: 1 }} />
               <span>{data?.handoff.recommendedNextSlice || 'Static fixture first; live health endpoints come after the UI model is clear.'}</span>

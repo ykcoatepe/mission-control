@@ -5,7 +5,9 @@ const path = require('node:path');
 
 const {
   createStatusService,
+  heartbeatEventToPayload,
   heartbeatValueToSeconds,
+  mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
 } = require('../server/services/statusData');
 
@@ -140,6 +142,55 @@ function testHeartbeatTimestampNormalization() {
   );
 }
 
+function testHeartbeatEventRejectsFutureClockSkew() {
+  const nowMs = Date.parse('2026-07-11T02:10:00Z');
+  assert.deepEqual(
+    heartbeatEventToPayload({ ts: nowMs + 365 * 24 * 60 * 60 * 1000, status: 'sent' }, {
+      now: () => nowMs,
+    }),
+    {},
+  );
+  assert.equal(
+    heartbeatEventToPayload({ ts: nowMs + 4 * 60 * 1000, status: 'sent' }, {
+      now: () => nowMs,
+    }).lastHeartbeat,
+    Math.floor((nowMs + 4 * 60 * 1000) / 1000),
+  );
+}
+
+function testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp() {
+  const olderEvent = {
+    lastHeartbeat: 100,
+    lastEventStatus: 'skipped',
+    lastEventReason: 'empty-heartbeat-file',
+    lastEventDurationMs: 4,
+  };
+  const newerLegacy = { lastHeartbeat: 200, lastChecks: { email: 150 } };
+  assert.deepEqual(mergeHeartbeatPayloads(newerLegacy, olderEvent), newerLegacy);
+
+  const newerEvent = { ...olderEvent, lastHeartbeat: 300 };
+  assert.deepEqual(mergeHeartbeatPayloads(newerEvent, newerLegacy), {
+    ...newerLegacy,
+    ...newerEvent,
+  });
+}
+
+function testHeartbeatMergeIgnoresFutureDatedEvidence() {
+  const nowMs = Date.parse('2026-07-11T02:10:00Z');
+  const current = {
+    lastHeartbeat: Math.floor(nowMs / 1000),
+    lastHeartbeatAt: '2026-07-11T02:10:00.000Z',
+    lastEventStatus: 'sent',
+  };
+  const future = {
+    lastHeartbeat: Math.floor((nowMs + 60 * 60 * 1000) / 1000),
+    lastChecks: { heartbeat: '2026-07-11T03:10:00.000Z' },
+  };
+
+  assert.deepEqual(mergeHeartbeatPayloads(current, future, { now: () => nowMs }), current);
+  assert.deepEqual(mergeHeartbeatPayloads(future, current, { now: () => nowMs }), current);
+}
+
 async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
   const snapshot = {
     agent: { name: 'Mission Control' },
@@ -160,10 +211,102 @@ async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
   assert.equal(status.heartbeat.lastHeartbeatAt, '2026-06-16T10:27:00Z');
 }
 
+async function testOperationsStatusRequiresObservedCliEvidence() {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, text: async () => '{"ok":true}' });
+  try {
+    const successful = makeService({
+      execSync: () => '0 active sessions\nAgents │ 1\n',
+    });
+    const observed = await successful.service.getOperationsStatusResponse();
+    assert.equal(observed.operationsSource.sourceSucceeded, true);
+    assert.equal(observed.operationsSource.provenance, 'openclaw-status-cli');
+    assert.ok(Number.isFinite(Date.parse(observed.operationsSource.observedAt)));
+    assert.equal(Object.hasOwn(successful.readSnapshot(), 'operationsSource'), false);
+
+    const fallback = makeService({
+      execSync: () => {
+        const error = new Error('openclaw unavailable');
+        error.stdout = '';
+        throw error;
+      },
+    });
+    const unavailable = await fallback.service.getOperationsStatusResponse();
+    assert.deepEqual(unavailable.operationsSource, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-status-unavailable',
+      observedAt: null,
+    });
+    assert.equal(Object.hasOwn(fallback.readSnapshot(), 'operationsSource'), false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+async function testLiveHeartbeatEventBackfillsLegacyState() {
+  const eventTs = Date.parse('2026-07-11T02:10:00Z');
+  const { service, readSnapshot } = makeService({
+    execSync: (command) => {
+      if (String(command).includes('system heartbeat last')) {
+        return JSON.stringify({
+          ts: eventTs,
+          status: 'skipped',
+          reason: 'empty-heartbeat-file',
+          durationMs: 4,
+        });
+      }
+      return '1 active sessions\nHeartbeat │ 1h\nAgents │ 31\n';
+    },
+  });
+
+  await service.refreshStatusCache();
+  const status = readSnapshot();
+
+  assert.equal(status.heartbeat.lastHeartbeat, Math.floor(eventTs / 1000));
+  assert.equal(status.heartbeat.lastHeartbeatAt, '2026-07-11T02:10:00.000Z');
+  assert.equal(status.heartbeat.lastEventStatus, 'skipped');
+  assert.equal(status.heartbeat.lastEventReason, 'empty-heartbeat-file');
+  assert.equal(status.heartbeat.lastEventDurationMs, 4);
+}
+
+async function testOperationsStatusUsesFreshCachedProof() {
+  let sessionCalls = 0;
+  let stallNextSessionRead = false;
+  let releaseStalledRead;
+  const stalledRead = new Promise((resolve) => {
+    releaseStalledRead = resolve;
+  });
+  const { service } = makeService({
+    fetchSessions: async () => {
+      sessionCalls += 1;
+      if (stallNextSessionRead) return stalledRead;
+      return { count: 0, sessions: [] };
+    },
+    execSync: () => '0 active sessions\nHeartbeat │ 1h\nAgents │ 1\n',
+    sessionRefreshBudgetMs: 25,
+  });
+
+  await service.refreshStatusCache();
+  stallNextSessionRead = true;
+
+  const response = await service.getOperationsStatusResponse();
+
+  assert.equal(response.operationsSource.sourceSucceeded, true);
+  assert.equal(response.agent.activeSessions, 0);
+  assert.equal(sessionCalls, 1);
+  releaseStalledRead({ count: 0, sessions: [] });
+}
+
 (async () => {
   testHeartbeatTimestampNormalization();
+  testHeartbeatEventRejectsFutureClockSkew();
+  testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp();
+  testHeartbeatMergeIgnoresFutureDatedEvidence();
   await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
   await testGatewayHealthIsFallbackWhenFullStatusFails();
+  await testOperationsStatusRequiresObservedCliEvidence();
+  await testLiveHeartbeatEventBackfillsLegacyState();
+  await testOperationsStatusUsesFreshCachedProof();
   console.log('statusData tests passed');
 })();

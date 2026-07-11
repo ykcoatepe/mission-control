@@ -8,8 +8,18 @@ const { createRuntimeSnapshotStore } = require('./server/services/runtimeSnapsho
 const { createOpenclawExec } = require('./server/services/openclawClient');
 const { createCronService, parseFirstJson } = require('./server/services/cronData');
 const { createStatusService } = require('./server/services/statusData');
+const { createHermesKanbanService } = require('./server/services/hermesKanbanData');
+const { createGBrainOverviewService } = require('./server/services/gbrainOverviewData');
+const {
+  createOperationsOverviewService,
+  createOperationsReaders,
+} = require('./server/services/operationsOverview');
 const { readJsonFileSafe, writeJsonFileAtomic } = require('./server/services/jsonFiles');
 const { createSettingsService } = require('./server/services/settingsData');
+const {
+  attachRawSessions,
+  buildOperationsSessionsPayload,
+} = require('./server/services/sessionOperationsView');
 const { buildAgentsRouter } = require('./server/routes/agents');
 const { buildAwsRouter } = require('./server/routes/aws');
 const { buildCalendarRouter } = require('./server/routes/calendar');
@@ -18,11 +28,12 @@ const { buildCostsRouter } = require('./server/routes/costs');
 const { buildCouncilsRouter } = require('./server/routes/councils');
 const { buildCronRouter } = require('./server/routes/cron');
 const { buildDocsRouter } = require('./server/routes/docs');
-const { buildGBrainRouter } = require('./server/routes/gbrain');
+const { buildGBrainRouter, listGBrainActions } = require('./server/routes/gbrain');
 const { buildHermesKanbanRouter } = require('./server/routes/hermesKanban');
 const { buildMemoryRouter } = require('./server/routes/memory');
 const { buildModelsRouter } = require('./server/routes/models');
 const { buildOllamaRouter } = require('./server/routes/ollama');
+const { buildOperationsRouter } = require('./server/routes/operations');
 const { buildOpsRouter } = require('./server/routes/ops');
 const { buildQuickRouter } = require('./server/routes/quick');
 const { buildScoutRouter } = require('./server/routes/scout');
@@ -161,25 +172,45 @@ const openclawExec = createOpenclawExec({
   bin: OPENCLAW_BIN,
   configPath: OPENCLAW_CONFIG_PATH,
 });
+const OPERATIONS_SOURCE = Symbol('operationsSource');
+
+function attachOperationsSource(payload, operationsSource) {
+  Object.defineProperty(payload, OPERATIONS_SOURCE, {
+    value: operationsSource,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return payload;
+}
 
 async function fetchSessions(limit = 50) {
-  const normalizeSessionPayload = (payload) => {
+  const normalizeSessionPayload = (payload, { allowEmpty = false } = {}) => {
     const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
-    if (!sessions.length) return null;
-    return {
+    if (!sessions.length && !allowEmpty) return null;
+    return attachRawSessions({
       ...payload,
       count: Math.min(Number(payload?.count || sessions.length), limit),
       sessions: sessions.slice(0, limit),
-    };
+    }, sessions);
   };
 
   try {
     const { stdout } = await openclawExec(['sessions', '--json'], 15000);
-    const normalized = normalizeSessionPayload(parseFirstJson(stdout, {}));
-    if (normalized) return normalized;
+    const parsed = parseFirstJson(stdout, {});
+    const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
+    if (normalized) return attachOperationsSource(normalized, {
+      sourceSucceeded: true,
+      provenance: 'openclaw-sessions-cli',
+      observedAt: new Date().toISOString(),
+    });
   } catch (error) {
     const normalized = normalizeSessionPayload(parseFirstJson(error?.stdout || '', {}));
-    if (normalized) return normalized;
+    if (normalized) return attachOperationsSource(normalized, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-cli-failed',
+      observedAt: null,
+    });
   }
 
   try {
@@ -198,18 +229,37 @@ async function fetchSessions(limit = 50) {
       }),
     });
     clearTimeout(timer);
+    if (!response.ok) throw new Error('OpenClaw sessions gateway unavailable');
     const data = await response.json();
-    const detailPayload = normalizeSessionPayload(data?.result?.details || {});
-    if (detailPayload) return detailPayload;
+    const details = data?.result?.details || {};
+    const detailPayload = normalizeSessionPayload(details, { allowEmpty: Array.isArray(details?.sessions) });
+    if (detailPayload) return attachOperationsSource(detailPayload, {
+      sourceSucceeded: true,
+      provenance: 'openclaw-sessions-gateway',
+      observedAt: new Date().toISOString(),
+    });
     const textResult = data?.result?.content?.[0]?.text;
     if (textResult) {
-      const normalized = normalizeSessionPayload(JSON.parse(textResult));
-      if (normalized) return normalized;
+      const parsed = JSON.parse(textResult);
+      const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
+      if (normalized) return attachOperationsSource(normalized, {
+        sourceSucceeded: true,
+        provenance: 'openclaw-sessions-gateway',
+        observedAt: new Date().toISOString(),
+      });
     }
-    return { count: 0, sessions: [] };
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
+      observedAt: null,
+    });
   } catch (error) {
     console.error('[fetchSessions]', error.message);
-    return { count: 0, sessions: [] };
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
+      observedAt: null,
+    });
   }
 }
 
@@ -338,6 +388,14 @@ function createSessionsService() {
 
   return {
     fetchSessionsRaw: fetchSessions,
+    async getOperationsSessions(limit = 25) {
+      const payload = await fetchSessions(Math.max(limit * 4, 100));
+      return buildOperationsSessionsPayload(payload, payload?.[OPERATIONS_SOURCE] || {
+        sourceSucceeded: false,
+        provenance: 'openclaw-sessions-unavailable',
+        observedAt: null,
+      });
+    },
     async listVisibleSessions(limit = 25) {
       if (visibleSessionsCache && Date.now() - visibleSessionsCacheTime < visibleSessionsCacheTtl) {
         return visibleSessionsCache;
@@ -492,8 +550,10 @@ function healthPayload() {
 
 app.get('/api/health', (req, res) => res.json(healthPayload()));
 app.get('/healthz', (req, res) => res.json(healthPayload()));
-app.use(buildGBrainRouter({ projectRoot: __dirname, mcConfig }));
-app.use(buildHermesKanbanRouter({ mcConfig }));
+const gbrainOverviewService = createGBrainOverviewService({ projectRoot: __dirname, mcConfig });
+const hermesKanbanService = createHermesKanbanService({ mcConfig });
+app.use(buildGBrainRouter({ projectRoot: __dirname, mcConfig, gbrainOverviewService }));
+app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
 
 const settingsService = createSettingsService({
   mcConfig,
@@ -546,12 +606,23 @@ const cronService = createCronService({
 });
 
 const sessionsService = createSessionsService();
+const operationsOverviewService = createOperationsOverviewService({
+  readers: createOperationsReaders({
+    statusService,
+    sessionsService,
+    cronService,
+    hermesKanbanService,
+    gbrainOverviewService,
+  }),
+  listCapabilities: () => listGBrainActions(),
+});
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
 const OPS_EVENTS_PATH = path.join(__dirname, 'data/ops-events.json');
 const AGENT_REGISTRY_PATH = path.join(__dirname, 'data/agent-registry.json');
 
 app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN, openclawBin: OPENCLAW_BIN }));
+app.use(buildOperationsRouter({ operationsOverviewService }));
 app.use(buildStatusRouter({ statusService }));
 app.use(buildCronRouter({
   readRuntimeSnapshot,
@@ -636,7 +707,7 @@ setTimeout(async () => {
 // SPA catch-all: serve index.html for all non-API routes.
 // Express 5 uses path-to-regexp v8 and no longer accepts bare `*`.
 app.get(/^\/(?!api(?:\/|$)).*/, (req, res) => {
-  res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
+  res.sendFile('index.html', { root: path.join(__dirname, 'frontend/dist') });
 });
 
 app.listen(PORT, HOST, async () => {

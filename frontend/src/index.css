@@ -37,6 +37,19 @@
   /* Vibrancy */
   --vibrancy-blur: 80px;
   --vibrancy-saturation: 180%;
+
+  /* Quiet Observatory */
+  --obs-bg: #081018;
+  --obs-sidebar: #0d1721;
+  --obs-panel: #101b26;
+  --obs-elevated: #111d29;
+  --obs-border: #263a4c;
+  --obs-border-strong: #356080;
+  --obs-blue: #58b5f5;
+  --state-healthy: #39d982;
+  --state-warning: #ffbd59;
+  --state-critical: #ff6969;
+  --state-unavailable: #8291a0;
 }
 
 /* Base reset — covers what Tailwind preflight used to provide: zero default
@@ -612,11 +625,15 @@ html, body, #root {
     height: 100dvh !important;
     transform: translateX(-100%) !important;
     transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
     will-change: transform !important;
   }
 
   .macos-sidebar.open {
     transform: translateX(0) !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
   }
 
   /* Dark overlay behind sidebar */
