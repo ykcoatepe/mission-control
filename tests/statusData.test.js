@@ -160,10 +160,43 @@ async function testSnapshotHeartbeatIsNormalizedForLegacyDashboard() {
   assert.equal(status.heartbeat.lastHeartbeatAt, '2026-06-16T10:27:00Z');
 }
 
+async function testOperationsStatusRequiresObservedCliEvidence() {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, text: async () => '{"ok":true}' });
+  try {
+    const successful = makeService({
+      execSync: () => '0 active sessions\nAgents │ 1\n',
+    });
+    const observed = await successful.service.getOperationsStatusResponse();
+    assert.equal(observed.operationsSource.sourceSucceeded, true);
+    assert.equal(observed.operationsSource.provenance, 'openclaw-status-cli');
+    assert.ok(Number.isFinite(Date.parse(observed.operationsSource.observedAt)));
+    assert.equal(Object.hasOwn(successful.readSnapshot(), 'operationsSource'), false);
+
+    const fallback = makeService({
+      execSync: () => {
+        const error = new Error('openclaw unavailable');
+        error.stdout = '';
+        throw error;
+      },
+    });
+    const unavailable = await fallback.service.getOperationsStatusResponse();
+    assert.deepEqual(unavailable.operationsSource, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-status-unavailable',
+      observedAt: null,
+    });
+    assert.equal(Object.hasOwn(fallback.readSnapshot(), 'operationsSource'), false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
 (async () => {
   testHeartbeatTimestampNormalization();
   await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
   await testGatewayHealthIsFallbackWhenFullStatusFails();
+  await testOperationsStatusRequiresObservedCliEvidence();
   console.log('statusData tests passed');
 })();

@@ -10,7 +10,10 @@ const { createCronService, parseFirstJson } = require('./server/services/cronDat
 const { createStatusService } = require('./server/services/statusData');
 const { createHermesKanbanService } = require('./server/services/hermesKanbanData');
 const { createGBrainOverviewService } = require('./server/services/gbrainOverviewData');
-const { createOperationsOverviewService } = require('./server/services/operationsOverview');
+const {
+  createOperationsOverviewService,
+  createOperationsReaders,
+} = require('./server/services/operationsOverview');
 const { readJsonFileSafe, writeJsonFileAtomic } = require('./server/services/jsonFiles');
 const { createSettingsService } = require('./server/services/settingsData');
 const { buildAgentsRouter } = require('./server/routes/agents');
@@ -165,11 +168,22 @@ const openclawExec = createOpenclawExec({
   bin: OPENCLAW_BIN,
   configPath: OPENCLAW_CONFIG_PATH,
 });
+const OPERATIONS_SOURCE = Symbol('operationsSource');
+
+function attachOperationsSource(payload, operationsSource) {
+  Object.defineProperty(payload, OPERATIONS_SOURCE, {
+    value: operationsSource,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return payload;
+}
 
 async function fetchSessions(limit = 50) {
-  const normalizeSessionPayload = (payload) => {
+  const normalizeSessionPayload = (payload, { allowEmpty = false } = {}) => {
     const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
-    if (!sessions.length) return null;
+    if (!sessions.length && !allowEmpty) return null;
     return {
       ...payload,
       count: Math.min(Number(payload?.count || sessions.length), limit),
@@ -179,11 +193,20 @@ async function fetchSessions(limit = 50) {
 
   try {
     const { stdout } = await openclawExec(['sessions', '--json'], 15000);
-    const normalized = normalizeSessionPayload(parseFirstJson(stdout, {}));
-    if (normalized) return normalized;
+    const parsed = parseFirstJson(stdout, {});
+    const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
+    if (normalized) return attachOperationsSource(normalized, {
+      sourceSucceeded: true,
+      provenance: 'openclaw-sessions-cli',
+      observedAt: new Date().toISOString(),
+    });
   } catch (error) {
     const normalized = normalizeSessionPayload(parseFirstJson(error?.stdout || '', {}));
-    if (normalized) return normalized;
+    if (normalized) return attachOperationsSource(normalized, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-cli-failed',
+      observedAt: null,
+    });
   }
 
   try {
@@ -202,18 +225,37 @@ async function fetchSessions(limit = 50) {
       }),
     });
     clearTimeout(timer);
+    if (!response.ok) throw new Error('OpenClaw sessions gateway unavailable');
     const data = await response.json();
-    const detailPayload = normalizeSessionPayload(data?.result?.details || {});
-    if (detailPayload) return detailPayload;
+    const details = data?.result?.details || {};
+    const detailPayload = normalizeSessionPayload(details, { allowEmpty: Array.isArray(details?.sessions) });
+    if (detailPayload) return attachOperationsSource(detailPayload, {
+      sourceSucceeded: true,
+      provenance: 'openclaw-sessions-gateway',
+      observedAt: new Date().toISOString(),
+    });
     const textResult = data?.result?.content?.[0]?.text;
     if (textResult) {
-      const normalized = normalizeSessionPayload(JSON.parse(textResult));
-      if (normalized) return normalized;
+      const parsed = JSON.parse(textResult);
+      const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
+      if (normalized) return attachOperationsSource(normalized, {
+        sourceSucceeded: true,
+        provenance: 'openclaw-sessions-gateway',
+        observedAt: new Date().toISOString(),
+      });
     }
-    return { count: 0, sessions: [] };
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
+      observedAt: null,
+    });
   } catch (error) {
     console.error('[fetchSessions]', error.message);
-    return { count: 0, sessions: [] };
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
+      observedAt: null,
+    });
   }
 }
 
@@ -342,6 +384,17 @@ function createSessionsService() {
 
   return {
     fetchSessionsRaw: fetchSessions,
+    async getOperationsSessions(limit = 25) {
+      const payload = await fetchSessions(Math.max(limit * 4, 100));
+      return {
+        ...normalizeVisibleSessionsPayload(payload, limit),
+        operationsSource: payload?.[OPERATIONS_SOURCE] || {
+          sourceSucceeded: false,
+          provenance: 'openclaw-sessions-unavailable',
+          observedAt: null,
+        },
+      };
+    },
     async listVisibleSessions(limit = 25) {
       if (visibleSessionsCache && Date.now() - visibleSessionsCacheTime < visibleSessionsCacheTtl) {
         return visibleSessionsCache;
@@ -553,20 +606,13 @@ const cronService = createCronService({
 
 const sessionsService = createSessionsService();
 const operationsOverviewService = createOperationsOverviewService({
-  readers: {
-    status: () => statusService.getStatusResponse(),
-    sessions: () => sessionsService.listVisibleSessions(25),
-    cron: async () => {
-      const parsed = await cronService.fetchCronJobsLive();
-      const jobs = Array.isArray(parsed) ? parsed : parsed?.jobs || [];
-      return {
-        generatedAt: new Date().toISOString(),
-        jobs: jobs.map(cronService.mapCronJobForApi),
-      };
-    },
-    hermes: () => hermesKanbanService.getBoard(),
-    gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
-  },
+  readers: createOperationsReaders({
+    statusService,
+    sessionsService,
+    cronService,
+    hermesKanbanService,
+    gbrainOverviewService,
+  }),
   listCapabilities: () => listGBrainActions(),
 });
 const TASKS_FILE = path.join(__dirname, 'tasks.json');

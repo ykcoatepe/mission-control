@@ -160,16 +160,25 @@ function createStatusService({
           }
 
           try {
-            resolve(execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }));
+            resolve({
+              output: execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }),
+              commandSucceeded: true,
+            });
           } catch (error) {
-            resolve(error.stdout || gatewayHealth);
+            resolve({
+              output: error.stdout || gatewayHealth,
+              commandSucceeded: false,
+            });
           }
         }),
         fetchNotionActivity(8).catch(() => null),
         fetchSessions(50).catch(() => ({ count: 0, sessions: [] })),
       ]);
 
-      const ocStatus = openclawStatus.status === 'fulfilled' ? openclawStatus.value : '';
+      const statusResult = openclawStatus.status === 'fulfilled'
+        ? openclawStatus.value
+        : { output: '', commandSucceeded: false };
+      const ocStatus = statusResult.output || '';
       const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
       const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
 
@@ -196,6 +205,13 @@ function createStatusService({
         channels.push({ name: match[1], enabled: match[2], state: match[3], detail: match[4].trim() });
       }
 
+      const statusShapeObserved = Boolean(
+        sessionsMatch || modelMatch || memoryMatch || heartbeatInterval || agentsMatch || channels.length,
+      );
+      const statusObservedAt = statusResult.commandSucceeded && statusShapeObserved
+        ? new Date().toISOString()
+        : null;
+
       const sessionList = sessions.sessions || [];
       const totalTokens = sessionList.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
       const tokenUsage = {
@@ -218,6 +234,11 @@ function createStatusService({
 
       statusCache = {
         generatedAt: new Date().toISOString(),
+        operationsSource: {
+          sourceSucceeded: Boolean(statusObservedAt),
+          provenance: statusObservedAt ? 'openclaw-status-cli' : 'openclaw-status-unavailable',
+          observedAt: statusObservedAt,
+        },
         sessionsMatch,
         modelMatch,
         defaultModelKey,
@@ -278,9 +299,25 @@ function createStatusService({
     return response;
   }
 
+  async function getOperationsStatusResponse() {
+    await refreshStatusCache();
+    const response = statusCache
+      ? buildStatusResponseFromCache(statusCache, statusCache.heartbeat || {})
+      : buildMinimalStatusResponse();
+    return {
+      ...response,
+      operationsSource: statusCache?.operationsSource || {
+        sourceSucceeded: false,
+        provenance: 'openclaw-status-unavailable',
+        observedAt: null,
+      },
+    };
+  }
+
   return {
     refreshStatusCache,
     getStatusResponse,
+    getOperationsStatusResponse,
   };
 }
 

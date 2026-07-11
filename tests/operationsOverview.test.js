@@ -4,6 +4,7 @@ const test = require('node:test');
 const {
   buildOperationsOverview,
   buildOperationsCapabilities,
+  createOperationsReaders,
   createOperationsOverviewService,
   deriveOverallStatus,
 } = require('../server/services/operationsOverview');
@@ -11,14 +12,21 @@ const {
 const generatedAt = '2026-07-10T12:00:00.000Z';
 
 function healthyInput(overrides = {}) {
+  const sourceProof = (provenance) => ({
+    sourceSucceeded: true,
+    provenance,
+    observedAt: generatedAt,
+  });
   return {
     status: {
       generatedAt,
+      operationsSource: sourceProof('openclaw-status-cli'),
       agent: { activeSessions: 0, channels: ['telegram'] },
       heartbeat: { lastHeartbeat: Date.parse(generatedAt) },
     },
     sessions: {
       generatedAt,
+      operationsSource: sourceProof('openclaw-sessions-cli'),
       count: 25,
       sessions: [
         { key: 'a', isActive: true },
@@ -28,6 +36,13 @@ function healthyInput(overrides = {}) {
     },
     cron: {
       generatedAt,
+      operationsSource: {
+        ...sourceProof('scheduler-readers'),
+        schedulers: {
+          openclaw: sourceProof('openclaw-cron-cli'),
+          hermes: sourceProof('hermes-cron-disk'),
+        },
+      },
       jobs: [
         { id: 'openclaw:a', scheduler: 'openclaw', enabled: true },
         { id: 'hermes:a', scheduler: 'hermes', enabled: true },
@@ -147,6 +162,81 @@ test('missing evidence and explicitly failed readers never become healthy', () =
   assert.equal(failed.systems.hermes.observedAt, null);
   assert.equal(failed.systems.hermes.freshness, 'unavailable');
   assert.doesNotMatch(JSON.stringify(failed), /Bearer|\/Users\//);
+});
+
+test('rejects shape-valid current fallback zeros without source provenance', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    status: {
+      generatedAt,
+      agent: { activeSessions: 0, channels: [] },
+      heartbeat: {},
+    },
+    sessions: {
+      generatedAt,
+      count: 0,
+      sessions: [],
+    },
+    cron: {
+      generatedAt,
+      jobs: [],
+    },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.openclaw.state, 'unavailable');
+  assert.equal(overview.systems.openclaw.observedAt, null);
+  assert.deepEqual(overview.systems.openclaw.metrics, {});
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.equal(overview.systems.hermes.metrics.cronJobs, null);
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_unavailable'));
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
+});
+
+test('keeps successful scheduler sibling evidence when the other scheduler is unavailable', () => {
+  const input = healthyInput();
+  input.cron.operationsSource.schedulers.openclaw = {
+    sourceSucceeded: false,
+    provenance: 'openclaw-cron-unavailable',
+    observedAt: null,
+  };
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+
+  assert.equal(overview.systems.openclaw.state, 'warning');
+  assert.equal(overview.systems.openclaw.metrics.cronJobs, null);
+  assert.equal(overview.systems.hermes.metrics.cronJobs, 1);
+  assert.ok(overview.evidence.some((item) => item.id === 'openclaw:cron' && item.status === 'unavailable'));
+  assert.ok(overview.evidence.some((item) => item.id === 'hermes:cron' && item.status === 'healthy'));
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'openclaw_cron_unavailable'));
+  assert.equal(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'), false);
+});
+
+test('production reader wiring preserves provenance and never timestamps fallback cron empties', async () => {
+  const schedulerProof = {
+    sourceSucceeded: false,
+    provenance: 'scheduler-readers',
+    observedAt: null,
+    schedulers: {
+      openclaw: { sourceSucceeded: false, provenance: 'openclaw-cron-unavailable', observedAt: null },
+      hermes: { sourceSucceeded: false, provenance: 'hermes-cron-unavailable', observedAt: null },
+    },
+  };
+  const readers = createOperationsReaders({
+    statusService: { getOperationsStatusResponse: async () => ({ marker: 'status' }) },
+    sessionsService: { getOperationsSessions: async (limit) => ({ marker: 'sessions', limit }) },
+    cronService: {
+      fetchCronJobsForOperations: async () => ({ jobs: [], operationsSource: schedulerProof }),
+      mapCronJobForApi: (job) => job,
+    },
+    hermesKanbanService: { getBoard: async () => ({ marker: 'hermes' }) },
+    gbrainOverviewService: { readSnapshot: async () => ({ overview: { marker: 'gbrain' } }) },
+  });
+
+  assert.deepEqual(await readers.status(), { marker: 'status' });
+  assert.deepEqual(await readers.sessions(), { marker: 'sessions', limit: 25 });
+  assert.deepEqual(await readers.cron(), { jobs: [], operationsSource: schedulerProof });
+  assert.equal(Object.hasOwn(await readers.cron(), 'generatedAt'), false);
+  assert.deepEqual(await readers.hermes(), { marker: 'hermes' });
+  assert.deepEqual(await readers.gbrain(), { marker: 'gbrain' });
 });
 
 test('derives the worst explicit state without averaging evidence', () => {

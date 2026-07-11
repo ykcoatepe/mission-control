@@ -80,29 +80,57 @@ function isCount(value) {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0;
 }
 
+function hasSourceProof(value, generatedAt) {
+  const proof = value?.operationsSource;
+  return isRecord(proof)
+    && proof.sourceSucceeded === true
+    && typeof proof.provenance === 'string'
+    && proof.provenance.trim().length > 0
+    && Boolean(observedAt(proof.observedAt, generatedAt));
+}
+
 function hasStatusProof(status, generatedAt) {
   return isRecord(status)
     && !status.unavailable
     && status.ok !== false
+    && hasSourceProof(status, generatedAt)
     && Boolean(observedAt(status.generatedAt, generatedAt))
     && isRecord(status.agent)
     && isCount(status.agent.activeSessions)
     && Array.isArray(status.agent.channels);
 }
 
-function hasSessionsProof(sessions) {
+function hasSessionsProof(sessions, generatedAt) {
   return isRecord(sessions)
     && !sessions.unavailable
     && sessions.ok !== false
+    && hasSourceProof(sessions, generatedAt)
     && (Array.isArray(sessions.sessions) || isCount(sessions.count));
 }
 
-function hasCronProof(cron, generatedAt) {
+function getSchedulerProof(cron, scheduler) {
+  return cron?.operationsSource?.schedulers?.[scheduler];
+}
+
+function hasCronProof(cron, generatedAt, scheduler) {
+  const proof = getSchedulerProof(cron, scheduler);
   return isRecord(cron)
     && !cron.unavailable
     && cron.ok !== false
-    && Boolean(observedAt(cron.generatedAt, generatedAt))
+    && isRecord(proof)
+    && proof.sourceSucceeded === true
+    && typeof proof.provenance === 'string'
+    && proof.provenance.trim().length > 0
+    && Boolean(observedAt(proof.observedAt, generatedAt))
     && Array.isArray(cron.jobs);
+}
+
+function sourceObservedAt(value, generatedAt) {
+  return observedAt(value?.operationsSource?.observedAt, generatedAt);
+}
+
+function schedulerObservedAt(cron, scheduler, generatedAt) {
+  return observedAt(getSchedulerProof(cron, scheduler)?.observedAt, generatedAt);
 }
 
 function hasHermesProof(board, generatedAt) {
@@ -217,8 +245,8 @@ function unavailableSystem(id, label, detailHref, at, message) {
 
 function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const statusUnavailable = !hasStatusProof(status, generatedAt);
-  const sessionsUnavailable = !hasSessionsProof(sessions);
-  const cronUnavailable = !hasCronProof(cron, generatedAt);
+  const sessionsUnavailable = !hasSessionsProof(sessions, generatedAt);
+  const cronUnavailable = !hasCronProof(cron, generatedAt, 'openclaw');
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -230,8 +258,8 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   }
 
   const statusAt = statusUnavailable ? null : observedAt(status.generatedAt, generatedAt);
-  const sessionsAt = sessionsUnavailable ? null : observedAt(sessions.generatedAt, generatedAt);
-  const cronAt = cronUnavailable ? null : observedAt(cron.generatedAt, generatedAt);
+  const sessionsAt = sessionsUnavailable ? null : sourceObservedAt(sessions, generatedAt);
+  const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'openclaw', generatedAt);
   const at = statusAt || sessionsAt;
   const statusSessions = statusUnavailable ? 0 : Number(status?.agent?.activeSessions || 0);
   const activeSessions = sessionsUnavailable
@@ -405,7 +433,8 @@ function adaptHermes(board, cron, generatedAt) {
   const at = observedAt(board.refreshedAt, generatedAt);
   const blocked = Number(board?.summary?.blocked || 0);
   const running = Number(board?.summary?.running || 0);
-  const cronUnavailable = !hasCronProof(cron, generatedAt);
+  const cronUnavailable = !hasCronProof(cron, generatedAt, 'hermes');
+  const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'hermes', generatedAt);
   const kanbanState = blocked > 0 ? 'critical' : 'healthy';
   const state = blocked > 0 ? 'critical' : cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
@@ -425,8 +454,19 @@ function adaptHermes(board, cron, generatedAt) {
       'hermes',
       'scheduling',
       'unavailable',
-      null,
+      cronAt,
       'Hermes scheduling evidence unavailable',
+      '/api/cron',
+      '/automations',
+    ));
+  } else {
+    hermesEvidence.push(evidence(
+      'hermes:cron',
+      'hermes',
+      'scheduling',
+      'healthy',
+      cronAt,
+      `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs`,
       '/api/cron',
       '/automations',
     ));
@@ -678,10 +718,39 @@ function createOperationsOverviewService({
   return { getOverview };
 }
 
+function createOperationsReaders({
+  statusService,
+  sessionsService,
+  cronService,
+  hermesKanbanService,
+  gbrainOverviewService,
+} = {}) {
+  return {
+    status: () => statusService.getOperationsStatusResponse(),
+    sessions: () => sessionsService.getOperationsSessions(25),
+    cron: async () => {
+      const parsed = await cronService.fetchCronJobsForOperations();
+      const jobs = Array.isArray(parsed) ? parsed : parsed?.jobs || [];
+      return {
+        jobs: jobs.map(cronService.mapCronJobForApi),
+        operationsSource: parsed?.operationsSource || {
+          sourceSucceeded: false,
+          provenance: 'scheduler-readers-unavailable',
+          observedAt: null,
+          schedulers: {},
+        },
+      };
+    },
+    hermes: () => hermesKanbanService.getBoard(),
+    gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
+  };
+}
+
 module.exports = {
   STATE_RANK,
   buildOperationsCapabilities,
   buildOperationsOverview,
   createOperationsOverviewService,
+  createOperationsReaders,
   deriveOverallStatus,
 };
