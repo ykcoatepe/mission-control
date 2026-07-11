@@ -1,8 +1,14 @@
 /* eslint-disable react-refresh/only-export-components */
 import styles from './BrainHome.module.css'
+import type { GBrainActionResult } from '../gbrain/types'
 import type { ActionStatus, OperationCapability, OperationSystem } from './types'
 
 export type ActionStartMode = 'direct' | 'confirmed'
+
+export function resolvePendingActionResult(error: unknown): GBrainActionResult | null {
+  const payload = (error as { payload?: GBrainActionResult } | null)?.payload
+  return payload?.pending === true ? payload : null
+}
 
 type ActionSuccessResult = {
   refreshAfter?: boolean

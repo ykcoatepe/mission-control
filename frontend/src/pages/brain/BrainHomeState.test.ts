@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   canStartAction,
   hasFreshProofAdvanced,
+  resolvePendingActionResult,
   resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
 } from './BrainHomeState'
@@ -93,6 +94,22 @@ describe('GBrain action start policy', () => {
 })
 
 describe('GBrain action success policy', () => {
+  it('keeps soft-timeout payloads pending instead of treating them as failed', () => {
+    const payload = {
+      ok: false,
+      action: 'sync-sources',
+      status: 'timed-out',
+      pending: true,
+      refreshAfter: true,
+      summary: 'Cleanup is still running',
+      checkedAt: '2026-07-11T12:00:00.000Z',
+    }
+    const error = Object.assign(new Error('command timed out'), { payload })
+
+    expect(resolvePendingActionResult(error)).toEqual(payload)
+    expect(resolvePendingActionResult(new Error('command failed'))).toBeNull()
+  })
+
   it('completes non-refresh diagnostics with the returned summary and no proof refresh', () => {
     expect(resolveActionSuccessPolicy({
       refreshAfter: false,

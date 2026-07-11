@@ -10,6 +10,7 @@ import {
   BrainHomeSkeleton,
   canStartAction,
   hasFreshProofAdvanced,
+  resolvePendingActionResult,
   resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
   type ActionStartMode,
@@ -52,6 +53,32 @@ export default function BrainHome() {
   const returnFocusRef = useRef<HTMLButtonElement | null>(null)
   const executionRef = useRef<string | null>(null)
 
+  const refreshActionProof = async (run: ActionRun) => {
+    try {
+      await queryClient.invalidateQueries({ queryKey: ['api', '/api/gbrain/overview'] })
+      await queryClient.invalidateQueries({
+        queryKey: ['api', '/api/operations/overview'],
+        refetchType: 'none',
+      })
+      const refreshed = await refetch()
+      const nextGBrain = refreshed.data?.systems.gbrain
+      const proofAdvanced = !refreshed.error
+        && hasFreshProofAdvanced(run.previousObservedAt, nextGBrain)
+
+      setActionStatus({
+        state: proofAdvanced ? 'verified' : 'pending-proof',
+        message: proofAdvanced
+          ? 'Action completed and newer fresh GBrain proof loaded'
+          : 'Action completed; newer fresh GBrain proof is pending or unavailable',
+      })
+    } catch {
+      setActionStatus({
+        state: 'pending-proof',
+        message: 'Action completed; Operations proof could not be refreshed',
+      })
+    }
+  }
+
   const actionMutation = useMutation({
     mutationFn: ({ capability }: ActionRun) => postGBrainAction(capability.id),
     onMutate: ({ capability }) => {
@@ -62,32 +89,18 @@ export default function BrainHome() {
       const successPolicy = resolveActionSuccessPolicy(result)
       setActionStatus(successPolicy.status)
       if (!successPolicy.shouldRefreshProof) return
-
-      try {
-        await queryClient.invalidateQueries({ queryKey: ['api', '/api/gbrain/overview'] })
-        await queryClient.invalidateQueries({
-          queryKey: ['api', '/api/operations/overview'],
-          refetchType: 'none',
-        })
-        const refreshed = await refetch()
-        const nextGBrain = refreshed.data?.systems.gbrain
-        const proofAdvanced = !refreshed.error
-          && hasFreshProofAdvanced(run.previousObservedAt, nextGBrain)
-
-        setActionStatus({
-          state: proofAdvanced ? 'verified' : 'pending-proof',
-          message: proofAdvanced
-            ? 'Action completed and newer fresh GBrain proof loaded'
-            : 'Action completed; newer fresh GBrain proof is pending or unavailable',
-        })
-      } catch {
+      await refreshActionProof(run)
+    },
+    onError: (mutationError, run) => {
+      const pendingResult = resolvePendingActionResult(mutationError)
+      if (pendingResult) {
         setActionStatus({
           state: 'pending-proof',
-          message: 'Action completed; Operations proof could not be refreshed',
+          message: pendingResult.summary || pendingResult.error || 'Action timed out; cleanup is still running',
         })
+        if (pendingResult.refreshAfter === true) void refreshActionProof(run)
+        return
       }
-    },
-    onError: (mutationError) => {
       setActionStatus({ state: 'failed', message: errorMessage(mutationError) })
     },
     onSettled: () => {

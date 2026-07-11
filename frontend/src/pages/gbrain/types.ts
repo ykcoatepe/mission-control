@@ -3,6 +3,7 @@ export interface GBrainActionResult {
   action?: string
   label?: string
   status: string
+  pending?: boolean
   summary?: string
   error?: string
   checkedAt: string
