@@ -27,7 +27,9 @@ function listGBrainActions() {
 }
 
 async function runGBrainAction(action, options = {}) {
-  const definition = GBrainActionDefinitions[action];
+  const definition = Object.hasOwn(GBrainActionDefinitions, action)
+    ? GBrainActionDefinitions[action]
+    : null;
   const checkedAt = new Date().toISOString();
 
   if (!definition) {

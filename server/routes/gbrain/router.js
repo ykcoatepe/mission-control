@@ -60,7 +60,10 @@ function buildGBrainRouter(options = {}) {
 
   router.post('/api/gbrain/actions', async (req, res) => {
     const action = req.body?.action;
-    if (requiresExplicitConfirmation(GBrainActionDefinitions[action], req.body)) {
+    const definition = Object.hasOwn(GBrainActionDefinitions, action)
+      ? GBrainActionDefinitions[action]
+      : null;
+    if (requiresExplicitConfirmation(definition, req.body)) {
       return res.status(400).json({
         ok: false,
         action,
