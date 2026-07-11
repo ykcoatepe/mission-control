@@ -64,6 +64,7 @@ async function testGatewayHealthDoesNotReplaceFullStatusParserInput() {
 
     assert.equal(requestedUrl, 'http://127.0.0.1:19999/health');
     assert.equal(status.agent.activeSessions, 2);
+    assert.equal(status.agent.activeSessionsObserved, true);
     assert.equal(status.agent.model, 'gpt-5.4-mini');
     assert.equal(status.agent.totalAgents, 7);
     assert.equal(status.agent.memoryFiles, 46);
@@ -72,6 +73,30 @@ async function testGatewayHealthDoesNotReplaceFullStatusParserInput() {
     assert.deepEqual(status.agent.channels, [
       { name: 'Telegram', enabled: 'ON', state: 'OK', detail: 'connected' },
     ]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+async function testModernStatusDoesNotTreatTaskCountAsActiveSessions() {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({ ok: true, text: async () => '{"ok":true}' });
+  try {
+    const { service, readSnapshot } = makeService({
+      execSync: (command) => String(command).includes('system heartbeat last')
+        ? '{}'
+        : [
+          'Tasks │ 0 active · 0 queued · 0 running',
+          'Agents │ 31 · sessions 642',
+          'Sessions │ 642 active · default gpt-5.6-sol',
+        ].join('\n'),
+    });
+
+    await service.refreshStatusCache();
+    const status = readSnapshot();
+
+    assert.equal(status.agent.activeSessions, 0);
+    assert.equal(status.agent.activeSessionsObserved, false);
   } finally {
     global.fetch = originalFetch;
   }
@@ -304,6 +329,7 @@ async function testOperationsStatusUsesFreshCachedProof() {
   testHeartbeatMergeIgnoresFutureDatedEvidence();
   await testSnapshotHeartbeatIsNormalizedForLegacyDashboard();
   await testGatewayHealthDoesNotReplaceFullStatusParserInput();
+  await testModernStatusDoesNotTreatTaskCountAsActiveSessions();
   await testGatewayHealthIsFallbackWhenFullStatusFails();
   await testOperationsStatusRequiresObservedCliEvidence();
   await testLiveHeartbeatEventBackfillsLegacyState();

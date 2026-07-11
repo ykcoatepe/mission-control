@@ -118,6 +118,25 @@ test('builds schema v1 from allowlisted evidence and surfaces source conflicts',
   assert.doesNotMatch(JSON.stringify(overview), /session message|task body|Bearer|cat \/Users|\/Users\//);
 });
 
+test('does not create a session conflict when status exposes no comparable active count', () => {
+  const input = healthyInput();
+  input.status.agent.activeSessionsObserved = false;
+  input.sessions.sessions = [
+    { key: 'a', isActive: true },
+    { key: 'b', isActive: true },
+  ];
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+
+  assert.equal(overview.systems.openclaw.metrics.activeSessions, 2);
+  assert.equal(overview.systems.openclaw.state, 'healthy');
+  assert.ok(!overview.attention.some((item) => item.reasonCode === 'openclaw_session_count_conflict'));
+  assert.equal(
+    overview.systems.openclaw.evidence.find((item) => item.id === 'openclaw:status-sessions').summary,
+    'Status does not expose a comparable active-session count',
+  );
+});
+
 test('keeps GBrain caveats visible when trust is 100 and freshness is independent', () => {
   const input = healthyInput();
   input.gbrain.caveats = ['Embedding worker persistence is not verified.'];

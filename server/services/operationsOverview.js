@@ -262,12 +262,13 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'openclaw', generatedAt);
   const at = statusAt || sessionsAt;
   const statusSessions = statusUnavailable ? 0 : Number(status?.agent?.activeSessions || 0);
+  const statusSessionsObserved = !statusUnavailable && status?.agent?.activeSessionsObserved !== false;
   const activeSessions = sessionsUnavailable
     ? statusSessions
     : Array.isArray(sessions?.sessions)
       ? sessions.sessions.filter((session) => session?.isActive).length
       : Number(sessions?.count || 0);
-  const sessionConflict = !statusUnavailable
+  const sessionConflict = statusSessionsObserved
     && !sessionsUnavailable
     && statusSessions !== activeSessions;
   const sessionConflictDetail = sessionConflict
@@ -294,6 +295,8 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       statusAt,
       statusUnavailable
         ? 'Status session evidence unavailable'
+        : !statusSessionsObserved
+          ? 'Status does not expose a comparable active-session count'
         : `${statusSessions} active sessions reported by status`,
       '/api/status',
       '/systems',

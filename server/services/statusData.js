@@ -127,6 +127,7 @@ function createStatusService({
         status: 'active',
         model: prettyModelName(modelKey),
         activeSessions: 0,
+        activeSessionsObserved: false,
         totalAgents: 0,
         memoryFiles: 0,
         memoryChunks: 0,
@@ -160,6 +161,7 @@ function createStatusService({
         status: 'active',
         model: prettyModelName(defaultModelKey || (modelMatch ? modelMatch[1] : '')),
         activeSessions: sessionsMatch ? Number.parseInt(sessionsMatch[1], 10) : 0,
+        activeSessionsObserved: Boolean(sessionsMatch),
         totalAgents: agentsMatch ? Number.parseInt(agentsMatch[1], 10) : 1,
         memoryFiles: memoryMatch ? Number.parseInt(memoryMatch[1], 10) : 46,
         memoryChunks: memoryMatch ? Number.parseInt(memoryMatch[2], 10) : 225,
@@ -289,7 +291,7 @@ function createStatusService({
           || '';
       } catch {}
 
-      const sessionsMatch = ocStatus.match(/(\d+) active/);
+      const sessionsMatch = ocStatus.match(/(?:^|\n)\s*(\d+)\s+active sessions\b/i);
       const modelMatch = ocStatus.match(/default\s+([^\s(]+)/);
       const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
       const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
