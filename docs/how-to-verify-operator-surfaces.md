@@ -97,11 +97,11 @@ curl -fsS "$MC_BASE_URL/api/hermes-kanban" | jq '{profile,summary,error}'
 curl -fsS "$MC_BASE_URL/api/cron" | jq '{count:(.jobs|length),error}'
 curl -fsS "$MC_BASE_URL/api/costs?period=7d" | jq \
   '{period,summary,meta,agents:(.agents|map({key,source,status}))}'
-if command -v codexbar >/dev/null 2>&1; then
-  curl -fsS "$MC_BASE_URL/api/costs/codexbar" | jq \
+if codexbar_payload=$(curl -fsS "$MC_BASE_URL/api/costs/codexbar"); then
+  printf '%s\n' "$codexbar_payload" | jq \
     '{source,provider,updatedAt,totals,dailyCount:(.daily|length)}'
 else
-  echo "SKIP: optional codexbar CLI is not installed"
+  echo "SKIP: optional CodexBar data is unavailable"
 fi
 ```
 
@@ -110,8 +110,9 @@ should identify scheduler ownership; Hermes job actions must keep `run` and
 `delete` disabled while allowing `toggle` and `model`. Usage metadata should
 expose OpenClaw, Hermes, and Claude Code source status plus `stale` and
 `refreshing` state. The direct CodexBar route returns HTTP 500 when its optional
-CLI is unavailable, so the guarded check above skips that endpoint instead of
-failing the entire smoke.
+CLI is missing, its command fails, or no Codex/Claude reports exist. The guarded
+request treats any of those non-success responses as an optional skip instead
+of failing the entire smoke.
 
 Do not call mutation endpoints during this read smoke. Some GET task endpoints
 perform reconciliation and may persist normalized task state, so omit them when
