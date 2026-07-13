@@ -32,6 +32,9 @@ export interface TokenServiceData {
   costStatus?: string
   billingModes?: string
   costNote?: string
+  apiEquivalentUsd?: number | null
+  apiEquivalentStatus?: 'estimated' | 'not_applicable' | 'unavailable' | string
+  apiEquivalentSource?: string
 }
 
 export interface AgentUsageData {
@@ -51,6 +54,9 @@ export interface AgentUsageData {
     thisMonthTokens?: number
     totalUsd?: number
     totalTokens?: number
+    periodApiEquivalentUsd?: number | null
+    apiEquivalentUsd?: number | null
+    apiEquivalentStatus?: 'estimated' | 'partial' | 'not_applicable' | 'unavailable' | 'no_usage' | string
   }
   byService?: TokenServiceData[]
 }
@@ -75,10 +81,13 @@ export interface TokenData {
     thisWeekTokens?: number
     thisMonthTokens?: number
     totalTokens?: number
+    periodApiEquivalentUsd?: number | null
+    apiEquivalentUsd?: number | null
     note?: string
     budget?: { monthly: number; warning?: number }
   }
   byService: TokenServiceData[]
+  apiEquivalentReliability?: 'estimated' | 'partial' | 'not_applicable' | 'unavailable' | 'no_usage' | string
   budget?: { monthly: number }
   meta?: {
     updatedAt?: string
@@ -155,6 +164,8 @@ export interface AggregatedBreakdownItem {
   rawNames: string[]
   tokens: number
   cost: number
+  apiEquivalentCost: number
+  apiEquivalentAvailable: boolean
   share: number
   local: boolean
   color: string

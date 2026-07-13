@@ -1,6 +1,6 @@
 import { Cpu, Zap } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
-import { formatCurrency, formatTokens, formatSessionTimestamp } from './lib'
+import { formatApiEquivalentValue, formatCurrency, formatTokens, formatSessionTimestamp } from './lib'
 import type { AWSSCostData, AggregatedBreakdownItem, CodexBarCostData } from './types'
 import styles from './CostDriversSection.module.css'
 
@@ -144,8 +144,12 @@ export default function CostDriversSection({
                       <div className={styles.modelStatValue}>{formatTokens(item.tokens)}</div>
                     </div>
                     <div className={styles.modelStatCell}>
-                      <div className={styles.modelStatLabel}>Estimated Cost</div>
+                      <div className={styles.modelStatLabel}>Tracked Cost</div>
                       <div className={styles.modelStatValue}>{item.local ? '$0.00' : formatCurrency(item.cost)}</div>
+                    </div>
+                    <div className={styles.modelStatCell}>
+                      <div className={styles.modelStatLabel}>API Equivalent</div>
+                      <div className={styles.modelStatValue}>{formatApiEquivalentValue(item.apiEquivalentCost, item.apiEquivalentAvailable)}</div>
                     </div>
                   </div>
                 </div>
@@ -352,9 +356,11 @@ export default function CostDriversSection({
                   Methodology
                 </div>
                 <div className={styles.methodologyBody}>
-                  {codexbarActive
-                    ? 'This view combines local Codex and Claude Code logs through CodexBar. Costs are API-equivalent estimates, not subscription invoices.'
-                    : hasAwsData
+                  {ledgerActive
+                    ? 'Tracked spend follows billing mode. API equivalent applies public rate cards across OpenClaw, Codex App, Hermes, and Claude Code without treating subscription usage as an invoice.'
+                    : codexbarActive
+                      ? 'This view combines local Codex and Claude Code logs through CodexBar. Costs are API-equivalent estimates, not subscription invoices.'
+                      : hasAwsData
                     ? 'This view is backed by AWS billing data.'
                     : ledgerActive
                       ? tokenDataSource === 'openclaw.usage'

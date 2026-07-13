@@ -27,6 +27,10 @@ interface CostPulseHeaderProps {
   currentPeriodCost: number
   dailyAvg: number
   projectedMonthly: number
+  apiEquivalentPeriodCost: number | null
+  apiEquivalentDailyAvg: number | null
+  apiEquivalentProjectedMonthly: number | null
+  apiEquivalentReliability: string
 }
 
 export default function CostPulseHeader({
@@ -44,7 +48,15 @@ export default function CostPulseHeader({
   currentPeriodCost,
   dailyAvg,
   projectedMonthly,
+  apiEquivalentPeriodCost,
+  apiEquivalentDailyAvg,
+  apiEquivalentProjectedMonthly,
+  apiEquivalentReliability,
 }: CostPulseHeaderProps) {
+  const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
+  const isPartialApiEquivalent = apiEquivalentReliability === 'partial'
+  const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
+  const hasNoApiEquivalentUsage = apiEquivalentReliability === 'no_usage'
   return (
     <GlassCard delay={0} noPad>
       <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
@@ -102,40 +114,56 @@ export default function CostPulseHeader({
         </div>
 
         <div className={styles.rightCol}>
-          {codexbarActive ? (
+          {ledgerActive || codexbarActive ? (
             <div className={m ? `${styles.codexbarCard} ${styles.codexbarCardMobile}` : styles.codexbarCard}>
               <div className={styles.codexbarTopRow}>
                 <div>
-                  <div className={styles.codexbarSubLabel}>CodexBar Cost Pulse</div>
+                  <div className={styles.codexbarSubLabel}>All-source API Equivalent</div>
                   <div className={m ? `${styles.codexbarAmount} ${styles.codexbarAmountMobile}` : styles.codexbarAmount}>
-                    {formatCurrency(currentPeriodCost)}
+                    {formatApiEquivalent(apiEquivalentPeriodCost)}
                   </div>
                   <div className={styles.codexbarDesc}>
-                    Codex + Claude API-equivalent usage cost
+                    {isPartialApiEquivalent
+                      ? 'Partial public-list-price estimate; some models are unpriced'
+                      : isNotApplicableApiEquivalent
+                        ? 'API comparison does not apply to local-only usage'
+                      : hasNoApiEquivalentUsage
+                        ? 'No model usage was recorded for this period'
+                      : apiEquivalentPeriodCost === null
+                        ? 'No public rate card is available for this usage mix'
+                        : 'Public-list-price estimate; not tracked subscription spend'}
                   </div>
                 </div>
                 <span className="macos-badge macos-badge-orange">
-                  LOCAL ESTIMATE
+                  {isPartialApiEquivalent
+                    ? 'PARTIAL ESTIMATE'
+                    : isNotApplicableApiEquivalent
+                      ? 'NOT APPLICABLE'
+                      : hasNoApiEquivalentUsage
+                        ? 'NO USAGE'
+                      : apiEquivalentPeriodCost === null
+                        ? 'UNAVAILABLE'
+                        : 'LOCAL ESTIMATE'}
                 </span>
               </div>
 
               <div className={styles.codexbarMiniGrid}>
                 <div className={styles.codexbarMiniCell}>
-                  <div className={styles.codexbarCellLabel}>Daily Pace</div>
+                  <div className={styles.codexbarCellLabel}>API Daily Pace</div>
                   <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
-                    {formatCurrency(dailyAvg)}
+                    {formatApiEquivalent(apiEquivalentDailyAvg)}
                   </div>
                 </div>
                 <div className={styles.codexbarMiniCell}>
-                  <div className={styles.codexbarCellLabel}>Projection</div>
+                  <div className={styles.codexbarCellLabel}>API Projection</div>
                   <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
-                    {formatCurrency(projectedMonthly)}
+                    {formatApiEquivalent(apiEquivalentProjectedMonthly)}
                   </div>
                 </div>
                 <div className={styles.codexbarMiniCell}>
-                  <div className={styles.codexbarCellLabel}>Session Today</div>
+                  <div className={styles.codexbarCellLabel}>Tracked Spend</div>
                   <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
-                    {formatCurrency(codexbarCosts?.sessionCostUSD || 0)}
+                    {formatCurrency(currentPeriodCost)}
                   </div>
                 </div>
                 <div title={`${formatTokens(codexbarPeriodTokens)} tokens`} className={styles.codexbarMiniCell}>

@@ -5,15 +5,205 @@ const {
   lookupFallbackPricing,
   isImplausibleCloudCost,
   displayCostLabel,
+  estimateApiEquivalentCost,
 } = require('../server/services/costSanity');
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+(function testApiEquivalentUsesOfficialTokenClassRates() {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-5.6-sol',
+    tokens: 1_100_000,
+    input: 1_000_000,
+    output: 100_000,
+    cacheRead: 800_000,
+    cacheWrite: 50_000,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.source, 'official_rate_card');
+  assert.equal(estimate.usd, 4.7125);
+})();
+
+(function testApiEquivalentPricesReasoningAtTheOutputRate() {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-5.6-sol',
+    tokens: 1_100_000,
+    input: 1_000_000,
+    output: 100_000,
+    reasoning: 100_000,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.usd, 8);
+})();
+
+(function testSubscriptionIncludedUsageKeepsApiEquivalentSeparateFromSpend() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 0, periodTokens: 1_100_000 },
+    daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 1_100_000, totalTokens: 1_100_000 }],
+    dailyByModel: [{
+      date: '2026-07-13',
+      totalCost: 0,
+      totalTokens: 1_100_000,
+      'openai/gpt-5.6-sol': 0,
+      'openai/gpt-5.6-sol_tokens': 1_100_000,
+      'openai/gpt-5.6-sol_input': 1_000_000,
+      'openai/gpt-5.6-sol_output': 100_000,
+      'openai/gpt-5.6-sol_cacheRead': 800_000,
+      'openai/gpt-5.6-sol_cacheWrite': 50_000,
+      'openai/gpt-5.6-sol_costSource': 'included',
+    }],
+    byService: [{
+      name: 'openai/gpt-5.6-sol',
+      cost: 0,
+      tokens: 1_100_000,
+      input: 1_000_000,
+      output: 100_000,
+      cacheRead: 800_000,
+      cacheWrite: 50_000,
+      costSource: 'included',
+      costStatus: 'included',
+      billingModes: 'subscription_included',
+    }],
+    agents: [{
+      key: 'openclaw',
+      label: 'OpenClaw',
+      summary: { periodUsd: 0, periodTokens: 1_100_000 },
+      byService: [{
+        name: 'OpenClaw / openai/gpt-5.6-sol',
+        cost: 0,
+        tokens: 1_100_000,
+        input: 1_000_000,
+        output: 100_000,
+        cacheRead: 800_000,
+        cacheWrite: 50_000,
+        costSource: 'included',
+        costStatus: 'included',
+        billingModes: 'subscription_included',
+      }],
+    }],
+  });
+
+  assert.equal(usage.byService[0].cost, 0);
+  assert.equal(usage.byService[0].apiEquivalentUsd, 4.7125);
+  assert.equal(usage.byService[0].apiEquivalentSource, 'official_rate_card');
+  assert.equal(usage.dailyByModel[0]['openai/gpt-5.6-sol_apiEquivalentUsd'], 4.7125);
+  assert.equal(usage.daily[0].apiEquivalentCost, 4.7125);
+  assert.equal(usage.summary.periodApiEquivalentUsd, 4.7125);
+  assert.equal(usage.agents[0].summary.periodApiEquivalentUsd, 4.7125);
+})();
+
+(function testLocalAndUnpricedModelsExposeExplicitApiEquivalentStatus() {
+  const local = estimateApiEquivalentCost({ name: 'ollama/qwen3.6', tokens: 1_000_000 });
+  const unknown = estimateApiEquivalentCost({ name: 'vendor/new-cloud-model', tokens: 1_000_000 });
+
+  assert.deepEqual(local, { usd: 0, status: 'not_applicable', source: 'local_model' });
+  assert.deepEqual(unknown, { usd: null, status: 'unavailable', source: 'unpriced_model' });
+})();
+
+(function testUnpricedOnlyUsageDoesNotFabricateZeroApiEquivalent() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 0, periodTokens: 1_000_000 },
+    daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [{ date: '2026-07-13', totalCost: 0, totalTokens: 1_000_000, 'vendor/new-cloud-model': 0, 'vendor/new-cloud-model_tokens': 1_000_000 }],
+    byService: [{ name: 'vendor/new-cloud-model', cost: 0, tokens: 1_000_000 }],
+  });
+
+  assert.equal(usage.summary.periodApiEquivalentUsd, null);
+  assert.equal(usage.apiEquivalentReliability, 'unavailable');
+})();
+
+(function testEmptyUsageHasDistinctNoUsageApiEquivalentState() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 0, periodTokens: 0 },
+    daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 0, totalTokens: 0 }],
+    dailyByModel: [{ date: '2026-07-13', totalCost: 0, totalTokens: 0 }],
+    byService: [],
+  });
+
+  assert.equal(usage.summary.periodApiEquivalentUsd, null);
+  assert.equal(usage.apiEquivalentReliability, 'no_usage');
+})();
+
+(function testMixedPricedAndUnpricedUsageMarksApiEquivalentPartial() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 0, periodTokens: 2_000_000 },
+    daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 2_000_000, totalTokens: 2_000_000 }],
+    dailyByModel: [{
+      date: '2026-07-13', totalCost: 0, totalTokens: 2_000_000,
+      'openai/gpt-5.6-sol': 0, 'openai/gpt-5.6-sol_tokens': 1_000_000,
+      'openai/gpt-5.6-sol_input': 1_000_000,
+      'vendor/new-cloud-model': 0, 'vendor/new-cloud-model_tokens': 1_000_000,
+    }],
+    byService: [
+      { name: 'openai/gpt-5.6-sol', cost: 0, tokens: 1_000_000, input: 1_000_000, costSource: 'included' },
+      { name: 'vendor/new-cloud-model', cost: 0, tokens: 1_000_000 },
+    ],
+  });
+
+  assert.equal(usage.summary.periodApiEquivalentUsd, 5);
+  assert.equal(usage.apiEquivalentReliability, 'partial');
+})();
+
 (function testGpt55IsSubscriptionIncludedNotFallbackPriced() {
   assert.equal(lookupFallbackPricing('openai-codex/gpt-5.5'), null);
   assert.equal(displayCostLabel({ costSource: 'included', costStatus: 'included' }), 'included');
+})();
+
+(function testPlausibleExplicitGpt55ApiSpendRemainsMetered() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 25, periodTokens: 1_000_000 },
+    daily: [{ date: '2026-07-13', cost: 25, totalCost: 25, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [{
+      date: '2026-07-13',
+      totalCost: 25,
+      totalTokens: 1_000_000,
+      'openai-codex/gpt-5.5': 25,
+      'openai-codex/gpt-5.5_tokens': 1_000_000,
+      'openai-codex/gpt-5.5_costSource': 'api',
+    }],
+    byService: [{
+      name: 'openai-codex/gpt-5.5',
+      cost: 25,
+      tokens: 1_000_000,
+      costSource: 'api',
+    }],
+  });
+
+  assert.equal(usage.byService[0].cost, 25);
+  assert.equal(usage.byService[0].costSource, 'api');
+  assert.equal(usage.byService[0].costStatus, 'metered');
+  assert.equal(usage.summary.periodUsd, 25);
+})();
+
+(function testZeroCostGpt55WithoutSubscriptionEvidenceRemainsUnknown() {
+  const usage = normalizeUsageCosts({
+    summary: { periodUsd: 0, periodTokens: 1_000_000 },
+    daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [{
+      date: '2026-07-13',
+      totalCost: 0,
+      totalTokens: 1_000_000,
+      'openai-codex/gpt-5.5': 0,
+      'openai-codex/gpt-5.5_tokens': 1_000_000,
+      'openai-codex/gpt-5.5_costSource': 'unknown',
+    }],
+    byService: [{
+      name: 'openai-codex/gpt-5.5',
+      cost: 0,
+      tokens: 1_000_000,
+      costSource: 'unknown',
+      costStatus: 'unknown',
+    }],
+  });
+
+  assert.equal(usage.byService[0].cost, 0);
+  assert.equal(usage.byService[0].costSource, 'unknown');
+  assert.equal(usage.byService[0].costStatus, 'unknown');
+  assert.equal(usage.summary.periodUsd, 0);
 })();
 
 (function testLocalIncludedCostKeepsLocalBillingMode() {

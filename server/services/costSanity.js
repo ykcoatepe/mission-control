@@ -17,6 +17,26 @@ const FALLBACK_PRICING = {
   'xiaomi/mimo-v2-flash': 0.29,
 };
 
+// Standard API list prices per 1M tokens. These are comparison rates only:
+// subscription-included and local usage remains $0 tracked spend.
+// Sources reviewed 2026-07-13: OpenAI and Anthropic public rate cards.
+const API_RATE_CARDS = [
+  { match: 'gpt-5.6-sol', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 6.25 },
+  { match: 'gpt-5.6-terra', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 3.125 },
+  { match: 'gpt-5.6-luna', input: 1, cachedInput: 0.1, output: 6, cacheWrite: 1.25 },
+  { match: 'gpt-5.6', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 6.25 },
+  { match: 'gpt-5.5', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 5 },
+  { match: 'gpt-5.4-mini', input: 0.75, cachedInput: 0.075, output: 4.5, cacheWrite: 0.75 },
+  { match: 'gpt-5.4-nano', input: 0.2, cachedInput: 0.02, output: 1.25, cacheWrite: 0.2 },
+  { match: 'gpt-5.4', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 2.5 },
+  { match: 'claude-fable-5', input: 10, cachedInput: 1, output: 50, cacheWrite: 12.5 },
+  { match: 'claude-opus-4-8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
+  { match: 'claude-opus-4.8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
+  { match: 'claude-opus-4-6', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
+  { match: 'claude-sonnet-5', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
+  { match: 'claude-sonnet-4-6', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
+];
+
 const SUMMARY_COST_FIELDS = ['periodUsd', 'todayUsd', 'yesterdayUsd', 'thisWeekUsd', 'thisMonthUsd', 'totalUsd'];
 
 function dayKey(date) {
@@ -47,7 +67,7 @@ function costSummaryFromDaily(daily = [], fallbackCost = 0) {
 }
 
 function modelKey(name) {
-  return String(name || '').replace(/^(OpenClaw|Hermes) \/ /, '').toLowerCase();
+  return String(name || '').replace(/^(OpenClaw|Codex App Sessions|Hermes|Claude Code) \/ /, '').toLowerCase();
 }
 
 function isLocalModel(name) {
@@ -75,6 +95,70 @@ function lookupFallbackPricing(name) {
   if (lower.includes('minimax-m2-her')) return FALLBACK_PRICING['minimax/minimax-m2-her'];
   if (lower.includes('minimax-m2')) return FALLBACK_PRICING['minimax/minimax-m2'];
   return null;
+}
+
+function lookupApiRateCard(name) {
+  const lower = modelKey(name);
+  return API_RATE_CARDS.find((rate) => lower.includes(rate.match)) || null;
+}
+
+function estimateApiEquivalentCost(item = {}) {
+  if (isLocalModel(item.name)) {
+    return { usd: 0, status: 'not_applicable', source: 'local_model' };
+  }
+
+  if (item.apiEquivalentUsd !== null && item.apiEquivalentUsd !== undefined && Number.isFinite(Number(item.apiEquivalentUsd))) {
+    return {
+      usd: Number(item.apiEquivalentUsd),
+      status: item.apiEquivalentStatus || 'estimated',
+      source: item.apiEquivalentSource || 'recorded_cost_estimate',
+    };
+  }
+
+  const rate = lookupApiRateCard(item.name);
+  const input = Math.max(Number(item.input || 0), 0);
+  const output = Math.max(Number(item.output || 0), 0);
+  const cacheRead = Math.max(Number(item.cacheRead || 0), 0);
+  const cacheWrite = Math.max(Number(item.cacheWrite || 0), 0);
+  const hasTokenClasses = input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0;
+
+  if (rate && hasTokenClasses) {
+    // CodexBar-style rows include cached tokens inside input, while OpenClaw
+    // native rows commonly expose uncached input and cache reads separately.
+    // Pick the interpretation that best reconciles with the recorded total.
+    const totalTokens = Math.max(Number(item.tokens || 0), 0);
+    // Reasoning tokens are metadata within output tokens, not an additional
+    // billable token class. Keep them visible without double-counting output.
+    const includedCacheDelta = Math.abs((input + output + cacheWrite) - totalTokens);
+    const separateCacheDelta = Math.abs((input + cacheRead + output + cacheWrite) - totalTokens);
+    const cacheIsSeparate = cacheRead > 0 && separateCacheDelta < includedCacheDelta;
+    const cachedInput = cacheIsSeparate ? cacheRead : Math.min(cacheRead, input);
+    const uncachedInput = cacheIsSeparate ? input : Math.max(input - cachedInput, 0);
+    const usd = (
+      uncachedInput * rate.input
+      + cachedInput * rate.cachedInput
+      + output * rate.output
+      + cacheWrite * rate.cacheWrite
+    ) / 1_000_000;
+    return { usd, status: 'estimated', source: 'official_rate_card' };
+  }
+
+  const currentCost = Number(item.cost || 0);
+  if (currentCost > 0 && Number.isFinite(currentCost)) {
+    return { usd: currentCost, status: 'estimated', source: 'recorded_cost_estimate' };
+  }
+
+  return { usd: null, status: 'unavailable', source: 'unpriced_model' };
+}
+
+function withApiEquivalent(item = {}) {
+  const estimate = estimateApiEquivalentCost(item);
+  return {
+    ...item,
+    apiEquivalentUsd: estimate.usd,
+    apiEquivalentStatus: estimate.status,
+    apiEquivalentSource: estimate.source,
+  };
 }
 
 function isImplausibleCloudCost({ name, tokens, cost }) {
@@ -114,7 +198,7 @@ function normalizeServiceCost(item = {}) {
   const tokens = Number(out.tokens || 0);
   const currentCost = Number(out.cost || 0);
 
-  if (isIncludedCost(out) || isSubscriptionIncludedModel(out.name) || isImplausibleCloudCost({ name: out.name, tokens, cost: currentCost })) {
+  if (isIncludedCost(out) || isImplausibleCloudCost({ name: out.name, tokens, cost: currentCost })) {
     out.cost = 0;
     out.costSource = 'included';
     out.costStatus = 'included';
@@ -125,7 +209,7 @@ function normalizeServiceCost(item = {}) {
       out.billingModes = 'subscription_included';
       out.costNote = 'Subscription-included or implausible micro-cost; not treated as billable spend';
     }
-    return out;
+    return withApiEquivalent(out);
   }
 
   if ((currentCost === 0 || !Number.isFinite(currentCost)) && tokens > 0) {
@@ -144,9 +228,11 @@ function normalizeServiceCost(item = {}) {
       out.costSource = 'unknown';
       out.costStatus = 'unknown';
     }
+  } else if (currentCost > 0 && String(out.costSource || '').toLowerCase().includes('api')) {
+    out.costStatus = out.costStatus || 'metered';
   }
 
-  return out;
+  return withApiEquivalent(out);
 }
 
 function normalizeUsageCosts(usage) {
@@ -157,7 +243,7 @@ function normalizeUsageCosts(usage) {
 
   const costsByName = new Map(byService.map((item) => [String(item.name || ''), item]));
   normalized.dailyByModel = (usage.dailyByModel || []).map((row) => {
-    const out = { ...row, totalCost: 0, totalTokens: Number(row.totalTokens || 0) };
+    const out = { ...row, totalCost: 0, apiEquivalentCost: 0, totalTokens: Number(row.totalTokens || 0) };
     for (const svc of byService) {
       const key = String(svc.name || '');
       if (!key || !(key in out)) continue;
@@ -185,14 +271,32 @@ function normalizeUsageCosts(usage) {
       out[key] = cost;
       out[`${key}_costSource`] = source;
       out.totalCost += Number(cost || 0);
+
+      const apiEquivalent = estimateApiEquivalentCost({
+        name: key,
+        cost,
+        tokens,
+        apiEquivalentUsd: out[`${key}_apiEquivalentUsd`],
+        apiEquivalentStatus: out[`${key}_apiEquivalentStatus`],
+        input: Number(out[`${key}_input`] || 0),
+        output: Number(out[`${key}_output`] || 0),
+        reasoning: Number(out[`${key}_reasoning`] || 0),
+        cacheRead: Number(out[`${key}_cacheRead`] || 0),
+        cacheWrite: Number(out[`${key}_cacheWrite`] || 0),
+      });
+      out[`${key}_apiEquivalentUsd`] = apiEquivalent.usd;
+      out[`${key}_apiEquivalentStatus`] = apiEquivalent.status;
+      if (apiEquivalent.usd !== null) out.apiEquivalentCost += Number(apiEquivalent.usd || 0);
     }
     return out;
   });
 
   const dailyCostByDate = new Map((normalized.dailyByModel || []).map((row) => [row.date, Number(row.totalCost || 0)]));
+  const dailyApiEquivalentByDate = new Map((normalized.dailyByModel || []).map((row) => [row.date, Number(row.apiEquivalentCost || 0)]));
   normalized.daily = (usage.daily || []).map((row) => {
     const cost = dailyCostByDate.has(row.date) ? dailyCostByDate.get(row.date) : Number(row.cost || row.totalCost || 0);
-    return { ...row, cost, totalCost: cost };
+    const apiEquivalentCost = dailyApiEquivalentByDate.get(row.date) || 0;
+    return { ...row, cost, totalCost: cost, apiEquivalentCost };
   });
 
   const fallbackServiceCost = byService.reduce((sum, item) => sum + Number(item.cost || 0), 0);
@@ -203,7 +307,24 @@ function normalizeUsageCosts(usage) {
   });
   if ('periodUsd' in normalized.summary || byService.length) normalized.summary.periodUsd = costSummary.periodUsd;
   if ('totalUsd' in normalized.summary || byService.length) normalized.summary.totalUsd = costSummary.totalUsd;
+  const apiEquivalentStatuses = byService
+    .filter((item) => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
+    .map((item) => item.apiEquivalentStatus);
+  const hasEstimatedApiEquivalent = apiEquivalentStatuses.includes('estimated');
+  const hasUnavailableApiEquivalent = apiEquivalentStatuses.includes('unavailable');
+  const apiEquivalentReliability = apiEquivalentStatuses.length === 0
+    ? 'no_usage'
+    : hasEstimatedApiEquivalent
+    ? (hasUnavailableApiEquivalent ? 'partial' : 'estimated')
+    : hasUnavailableApiEquivalent
+      ? 'unavailable'
+      : 'not_applicable';
+  const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
+  const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
+  normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
+  normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
   normalized.costReliability = byService.some((item) => item.costSource === 'unknown') ? 'partial_unknown' : 'normalized';
+  normalized.apiEquivalentReliability = apiEquivalentReliability;
 
   if (Array.isArray(usage.agents)) {
     normalized.agents = usage.agents.map((agent) => {
@@ -212,6 +333,23 @@ function normalizeUsageCosts(usage) {
       agentOut.summary = { ...(agent.summary || {}) };
       if ('periodUsd' in agentOut.summary || agentOut.byService.length) agentOut.summary.periodUsd = agentCost;
       if ('totalUsd' in agentOut.summary || agentOut.byService.length) agentOut.summary.totalUsd = agentCost;
+      const agentApiEquivalentStatuses = agentOut.byService
+        .filter((item) => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
+        .map((item) => item.apiEquivalentStatus);
+      const agentHasEstimated = agentApiEquivalentStatuses.includes('estimated');
+      const agentHasUnavailable = agentApiEquivalentStatuses.includes('unavailable');
+      const agentApiEquivalent = agentOut.byService.reduce((sum, item) => (
+        item.apiEquivalentUsd === null ? sum : sum + Number(item.apiEquivalentUsd || 0)
+      ), 0);
+      agentOut.summary.periodApiEquivalentUsd = agentHasEstimated ? agentApiEquivalent : null;
+      agentOut.summary.apiEquivalentUsd = agentHasEstimated ? agentApiEquivalent : null;
+      agentOut.summary.apiEquivalentStatus = agentApiEquivalentStatuses.length === 0
+        ? 'no_usage'
+        : agentHasEstimated
+        ? (agentHasUnavailable ? 'partial' : 'estimated')
+        : agentHasUnavailable
+          ? 'unavailable'
+          : 'not_applicable';
       return agentOut;
     });
   }
@@ -221,11 +359,14 @@ function normalizeUsageCosts(usage) {
 
 module.exports = {
   FALLBACK_PRICING,
+  API_RATE_CARDS,
   displayCostLabel,
+  estimateApiEquivalentCost,
   isImplausibleCloudCost,
   isLocalModel,
   isSubscriptionIncludedModel,
   lookupFallbackPricing,
+  lookupApiRateCard,
   normalizeServiceCost,
   normalizeUsageCosts,
 };

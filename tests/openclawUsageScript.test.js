@@ -114,7 +114,7 @@ async function runBehaviorTests() {
     const sessionFile = path.join(nestedDir, 'missing-model.jsonl');
     const timestamp = today.toISOString();
 
-    fs.appendFileSync(sessionFile, `${JSON.stringify({ type: 'session_meta', payload: { model_provider: 'openai' } })}\n`);
+    fs.appendFileSync(sessionFile, `${JSON.stringify({ type: 'session_meta', payload: { model_provider: 'openai', originator: 'openclaw', source: 'vscode' } })}\n`);
     writeTokenCountLine(sessionFile, timestamp, 21);
 
     const summary = await buildForPeriod('day');
@@ -125,6 +125,21 @@ async function runBehaviorTests() {
     const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
     assert.equal(openclawAgent.summary.periodTokens, 21, 'direct OpenClaw sessions should stay in the OpenClaw split');
     assert.equal(codexAppAgent.summary.periodTokens, 0, 'direct OpenClaw sessions should not be counted as Codex App Sessions');
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const sessionsDir = path.join(home, '.openclaw', 'agents', 'main', 'sessions');
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const sessionFile = path.join(sessionsDir, 'metered-openai.jsonl');
+    const timestamp = today.toISOString();
+
+    fs.appendFileSync(sessionFile, `${JSON.stringify({ type: 'session_meta', payload: { model_provider: 'openai', model: 'gpt-5.5', source: 'api' } })}\n`);
+    writeTokenCountLine(sessionFile, timestamp, 23);
+
+    const summary = await buildForPeriod('day');
+    assert.equal(summary.byService[0].costSource, 'unknown', 'zero persisted cost without subscription metadata must remain unknown');
+    assert.equal(summary.byService[0].costStatus, 'unknown', 'unknown metered billing must not be relabeled as included');
   });
 }
 

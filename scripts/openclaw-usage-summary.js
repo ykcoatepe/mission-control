@@ -76,6 +76,21 @@ function modelName(provider, model) {
   return `${p}/${m}`;
 }
 
+function sessionMetaBillingMode(payload = {}) {
+  const source = typeof payload.source === 'string'
+    ? payload.source
+    : payload.source && typeof payload.source === 'object'
+      ? Object.keys(payload.source)[0]
+      : '';
+  return payload.originator === 'openclaw' && (source === 'vscode' || source === 'subagent')
+    ? 'subscription_included'
+    : '';
+}
+
+function isSubscriptionIncludedRecord(record = {}) {
+  return record.provider === 'openai-codex' || record.billingMode === 'subscription_included';
+}
+
 function sessionBucketForKey(sessionKey) {
   const normalized = String(sessionKey || '').split(path.sep).join('/');
   return normalized.includes('/agent/codex-home/sessions/')
@@ -134,6 +149,7 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
     cacheWrite,
     totalTokens,
     totalCost,
+    billingMode: message?.billingMode || message?.billing_mode || usage.billingMode || usage.billing_mode || context.billingMode || '',
     sessionKey,
   };
 }
@@ -222,7 +238,7 @@ async function scanUsageRecords(range) {
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const context = { provider: '', model: '' };
+    const context = { provider: '', model: '', billingMode: '' };
     for await (const line of rl) {
       if (!line || line.charCodeAt(0) !== 123) continue;
       let obj;
@@ -234,6 +250,7 @@ async function scanUsageRecords(range) {
       if (obj.type === 'session_meta' && obj.payload && typeof obj.payload === 'object') {
         context.provider = obj.payload.model_provider || obj.payload.provider || context.provider;
         context.model = obj.payload.model || obj.payload.model_id || context.model;
+        context.billingMode = sessionMetaBillingMode(obj.payload) || context.billingMode;
       }
       const record = extractUsageRecord(obj, file.mtimeMs, file.sessionKey, context);
       if (!record || record.timestampMs < range.startMs || record.timestampMs > range.endMs) continue;
@@ -244,7 +261,7 @@ async function scanUsageRecords(range) {
 }
 
 function createTotalsBucket(name) {
-  return { name, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, sessionKeys: new Set() };
+  return { name, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, records: 0, includedRecords: 0, sessionKeys: new Set() };
 }
 
 function createAccumulator(keys) {
@@ -287,13 +304,32 @@ function addRecord(accumulator, record) {
   model.output += record.output;
   model.cacheRead += record.cacheRead;
   model.cacheWrite += record.cacheWrite;
+  model.records += 1;
+  if (isSubscriptionIncludedRecord(record)) model.includedRecords += 1;
   if (record.sessionKey) model.sessionKeys.add(record.sessionKey);
   accumulator.modelTotals.set(name, model);
 
   const dailyKey = `${record.date}::${name}`;
-  const dailyModel = accumulator.modelDailyTotals.get(dailyKey) || { date: record.date, name, cost: 0, tokens: 0 };
+  const dailyModel = accumulator.modelDailyTotals.get(dailyKey) || {
+    date: record.date,
+    name,
+    cost: 0,
+    tokens: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    records: 0,
+    includedRecords: 0,
+  };
   dailyModel.cost += record.totalCost;
   dailyModel.tokens += record.totalTokens;
+  dailyModel.input += record.input;
+  dailyModel.output += record.output;
+  dailyModel.cacheRead += record.cacheRead;
+  dailyModel.cacheWrite += record.cacheWrite;
+  dailyModel.records += 1;
+  if (isSubscriptionIncludedRecord(record)) dailyModel.includedRecords += 1;
   accumulator.modelDailyTotals.set(dailyKey, dailyModel);
 }
 
@@ -311,13 +347,20 @@ function buildUsageFromAccumulator({
     .filter((item) => item.tokens > 0 || item.cost > 0)
     .sort((a, b) => b.tokens - a.tokens)
     .map((item) => {
+      const subscriptionIncluded = item.cost <= 0 && item.records > 0 && item.includedRecords === item.records;
       const normalized = costSanity.normalizeServiceCost({
         name: item.name,
         cost: item.cost,
         tokens: item.tokens,
+        input: item.input,
+        output: item.output,
+        cacheRead: item.cacheRead,
+        cacheWrite: item.cacheWrite,
         sessions: item.sessionKeys.size,
         percentage: 0,
-        costSource: item.cost > 0 ? 'api' : 'unknown',
+        costSource: item.cost > 0 ? 'api' : (subscriptionIncluded ? 'included' : 'unknown'),
+        costStatus: subscriptionIncluded ? 'included' : undefined,
+        billingModes: subscriptionIncluded ? 'subscription_included' : undefined,
       });
       return normalized;
     });
@@ -331,10 +374,15 @@ function buildUsageFromAccumulator({
     const out = { date: row.date, totalCost: row.cost, totalTokens: row.tokens };
     for (const svc of byServiceList) {
       const key = `${row.date}::${svc.name}`;
-      const b = accumulator.modelDailyTotals.get(key) || { cost: 0, tokens: 0 };
+      const b = accumulator.modelDailyTotals.get(key) || { cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, records: 0, includedRecords: 0 };
+      const subscriptionIncluded = b.cost <= 0 && b.records > 0 && b.includedRecords === b.records;
       out[svc.name] = Number(b.cost || 0);
       out[`${svc.name}_tokens`] = Number(b.tokens || 0);
-      out[`${svc.name}_costSource`] = svc.costSource || (b.cost > 0 ? 'api' : 'unknown');
+      out[`${svc.name}_input`] = Number(b.input || 0);
+      out[`${svc.name}_output`] = Number(b.output || 0);
+      out[`${svc.name}_cacheRead`] = Number(b.cacheRead || 0);
+      out[`${svc.name}_cacheWrite`] = Number(b.cacheWrite || 0);
+      out[`${svc.name}_costSource`] = b.cost > 0 ? 'api' : (subscriptionIncluded ? 'included' : 'unknown');
     }
     return out;
   });
@@ -355,7 +403,7 @@ function buildUsageFromAccumulator({
     periodRange: { start: range.startKey, end: range.endKey },
     summary: {
       periodUsd: daily.reduce((sum, d) => sum + Number(d.cost || 0), 0),
-      previousPeriodUsd: 0,
+      previousPeriodUsd: null,
       periodTokens: daily.reduce((sum, d) => sum + Number(d.tokens || 0), 0),
       todayUsd: todayRow.cost || 0,
       yesterdayUsd: yesterdayRow.cost || 0,

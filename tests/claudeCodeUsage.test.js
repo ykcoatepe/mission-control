@@ -10,6 +10,42 @@ const {
   needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../server/services/claudeCodeUsage');
+const { cachedUsageAgent } = require('../server/routes/costs');
+
+test('stale source reconstruction preserves API-equivalent token classes', () => {
+  const previous = {
+    modelKeys: ['OpenClaw / openai/gpt-5.6-sol'],
+    dailyByModel: [{
+      date: '2026-07-13',
+      'OpenClaw / openai/gpt-5.6-sol': 0,
+      'OpenClaw / openai/gpt-5.6-sol_tokens': 1_100_000,
+      'OpenClaw / openai/gpt-5.6-sol_input': 1_000_000,
+      'OpenClaw / openai/gpt-5.6-sol_output': 100_000,
+      'OpenClaw / openai/gpt-5.6-sol_reasoning': 25_000,
+      'OpenClaw / openai/gpt-5.6-sol_cacheRead': 800_000,
+      'OpenClaw / openai/gpt-5.6-sol_cacheWrite': 50_000,
+      'OpenClaw / openai/gpt-5.6-sol_apiEquivalentUsd': 4.7125,
+      'OpenClaw / openai/gpt-5.6-sol_apiEquivalentStatus': 'estimated',
+      'OpenClaw / openai/gpt-5.6-sol_costSource': 'included',
+    }],
+    byService: [{ name: 'OpenClaw / openai/gpt-5.6-sol', agent: 'OpenClaw', apiEquivalentUsd: 4.7125 }],
+  };
+
+  const cached = cachedUsageAgent(previous, {
+    key: 'openclaw',
+    label: 'OpenClaw',
+    source: 'openclaw.direct_sessions',
+    summary: { periodUsd: 0 },
+  });
+  const row = cached.dailyByModel[0];
+
+  assert.equal(row['openai/gpt-5.6-sol_input'], 1_000_000);
+  assert.equal(row['openai/gpt-5.6-sol_cacheRead'], 800_000);
+  assert.equal(row['openai/gpt-5.6-sol_reasoning'], 25_000);
+  assert.equal(row['openai/gpt-5.6-sol_apiEquivalentUsd'], 4.7125);
+  assert.equal(row['openai/gpt-5.6-sol_apiEquivalentStatus'], 'estimated');
+  assert.equal(cached.daily[0].apiEquivalentCost, 4.7125);
+});
 
 test('builds a period-scoped Claude Code agent summary from CodexBar data', () => {
   const raw = [{
@@ -23,6 +59,7 @@ test('builds a period-scoped Claude Code agent summary from CodexBar data', () =
   }, {
     provider: 'claude',
     source: 'local',
+    billingMode: 'subscription_included',
     daily: [
       {
         date: '2026-07-06',
@@ -66,12 +103,55 @@ test('builds a period-scoped Claude Code agent summary from CodexBar data', () =
   assert.deepEqual(summary.periodRange, { start: '2026-07-07', end: '2026-07-13' });
   assert.equal(summary.daily.length, 7);
   assert.equal(summary.summary.periodTokens, 500);
-  assert.equal(summary.summary.periodUsd, 6.25);
-  assert.equal(summary.summary.previousPeriodUsd, 1.25);
+  assert.equal(summary.summary.periodUsd, 0);
+  assert.equal(summary.summary.periodApiEquivalentUsd, 6.25);
+  assert.equal(summary.summary.previousPeriodUsd, 0);
+  assert.equal(summary.summary.previousPeriodApiEquivalentUsd, 1.25);
   assert.equal(summary.byService[0].name, 'claude-opus-4-6');
   assert.equal(summary.byService[0].tokens, 450);
-  assert.equal(summary.byService[0].costSource, 'fallback_estimate');
+  assert.equal(summary.byService[0].costSource, 'included');
+  assert.equal(summary.byService[0].apiEquivalentUsd, 5.75);
   assert.equal(summary.dailyByModel.at(-1)['claude-haiku-4-5_tokens'], 50);
+});
+
+test('keeps Claude Code tracked spend unknown when CodexBar has no billing evidence', () => {
+  const summary = buildClaudeCodeUsageSummary([{
+    provider: 'claude',
+    daily: [{
+      date: '2026-07-13',
+      totalCost: 4,
+      totalTokens: 400,
+      modelBreakdowns: [{ modelName: 'claude-opus-4-6', totalTokens: 400, cost: 4 }],
+    }],
+  }], 'day', new Date('2026-07-13T12:00:00+03:00'));
+
+  assert.equal(summary.summary.periodUsd, 0);
+  assert.equal(summary.summary.periodApiEquivalentUsd, 4);
+  assert.equal(summary.summary.previousPeriodUsd, null);
+  assert.equal(summary.byService[0].cost, 0);
+  assert.equal(summary.byService[0].costSource, 'unknown');
+  assert.equal(summary.byService[0].costStatus, 'unknown');
+  assert.equal(summary.dailyByModel[0]['claude-opus-4-6'], 0);
+});
+
+test('preserves Claude Code tracked spend when CodexBar explicitly marks API billing', () => {
+  const summary = buildClaudeCodeUsageSummary([{
+    provider: 'claude',
+    billingMode: 'api_metered',
+    daily: [{
+      date: '2026-07-13',
+      totalCost: 4,
+      totalTokens: 400,
+      modelBreakdowns: [{ modelName: 'claude-opus-4-6', totalTokens: 400, cost: 4 }],
+    }],
+  }], 'day', new Date('2026-07-13T12:00:00+03:00'));
+
+  assert.equal(summary.summary.periodUsd, 4);
+  assert.equal(summary.summary.periodApiEquivalentUsd, 4);
+  assert.equal(summary.byService[0].cost, 4);
+  assert.equal(summary.byService[0].costSource, 'api');
+  assert.equal(summary.byService[0].costStatus, 'metered');
+  assert.equal(summary.dailyByModel[0]['claude-opus-4-6'], 4);
 });
 
 test('keeps the previous seven-day baseline correct across a month boundary', () => {
@@ -86,7 +166,8 @@ test('keeps the previous seven-day baseline correct across a month boundary', ()
   }], '7d', new Date('2026-07-03T12:00:00+03:00'));
 
   assert.equal(summary.periodRange.start, '2026-06-27');
-  assert.equal(summary.summary.previousPeriodUsd, 4);
+  assert.equal(summary.summary.previousPeriodUsd, null);
+  assert.equal(summary.summary.previousPeriodApiEquivalentUsd, 4);
 });
 
 test('allocates daily tokens when CodexBar model breakdowns omit token counts', () => {
@@ -216,6 +297,11 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
     /codexbar cost --format json --provider both --days 70', \{\s*timeout: 30000,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
   );
   assert.doesNotMatch(routeSource, /req\.query[^\n]*provider/);
+  assert.match(routeSource, /existing\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
+  assert.match(routeSource, /dayModel\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
+  assert.match(routeSource, /out\[`\$\{svc\.name\}_reasoning`\] = b\.reasoning \|\| 0/);
+  assert.match(routeSource, /out\[`\$\{key\}_reasoning`\] = Number\(row\[`\$\{key\}_reasoning`\] \|\| 0\)/);
+  assert.doesNotMatch(routeSource, /cache_write_tokens, 0\) \+ COALESCE\(reasoning_tokens, 0\)\) AS tokens/);
 });
 
 test('preserved source summaries keep every cost and token aggregate', () => {
@@ -238,6 +324,24 @@ test('preserved source summaries keep every cost and token aggregate', () => {
     thisMonthTokens: 100,
     totalTokens: 100,
   });
+});
+
+test('preserves an unavailable previous tracked-spend baseline as null', () => {
+  const summary = sumUsageSummaries([
+    { summary: { periodUsd: 0, previousPeriodUsd: null } },
+    { summary: { periodUsd: 0 } },
+  ]);
+
+  assert.equal(summary.previousPeriodUsd, null);
+});
+
+test('keeps a combined previous tracked-spend baseline unavailable when any source is missing it', () => {
+  const summary = sumUsageSummaries([
+    { summary: { periodUsd: 0, previousPeriodUsd: null } },
+    { summary: { periodUsd: 4, previousPeriodUsd: 4 } },
+  ]);
+
+  assert.equal(summary.previousPeriodUsd, null);
 });
 
 test('refreshes legacy disk caches that predate the Claude Code source', () => {

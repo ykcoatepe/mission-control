@@ -88,6 +88,9 @@ model changed, but cannot be run or deleted here.
 Open `/usage`. The page combines OpenClaw, Hermes, Claude Code, and CodexBar
 evidence. Read the source reliability metadata alongside totals: preserved
 stale detail is useful history, not current proof and not zero usage.
+`Included` is tracked subscription/local spend, while `API equivalent` is the
+separate public-list-price estimate for the same model usage. Local models and
+unpriced routing aliases report the comparison as not applicable or unavailable.
 
 ## 5. Recognize secondary surfaces
 

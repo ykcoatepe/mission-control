@@ -330,7 +330,6 @@ export interface DailySpendSectionProps {
   codexbarActive: boolean
   ledgerActive: boolean
   hasAwsData: boolean
-  activePeriodLabel: string
   awsCosts: AWSSCostData | null
   hasSessionEstimateChart: boolean
   sessionEstimateData: SessionEstimateDay[]
@@ -338,6 +337,7 @@ export interface DailySpendSectionProps {
   totalTokens: number
   tokenBasedCost: number
   blendedCostBreakdown: BlendedCostItem[]
+  apiEquivalentReliability: string
 }
 
 export default function DailySpendSection({
@@ -352,7 +352,6 @@ export default function DailySpendSection({
   codexbarActive,
   ledgerActive,
   hasAwsData,
-  activePeriodLabel,
   awsCosts,
   hasSessionEstimateChart,
   sessionEstimateData,
@@ -360,10 +359,16 @@ export default function DailySpendSection({
   totalTokens,
   tokenBasedCost,
   blendedCostBreakdown,
+  apiEquivalentReliability,
 }: DailySpendSectionProps) {
   const chartFrameRef = useRef<HTMLDivElement | null>(null)
   const [chartSize, setChartSize] = useState({ width: 0, height: 0 })
   const chartHeight = m ? 300 : 360
+  const apiEquivalentUnavailable = ledgerActive && (
+    apiEquivalentReliability === 'unavailable' ||
+    apiEquivalentReliability === 'not_applicable' ||
+    apiEquivalentReliability === 'no_usage'
+  )
 
   useEffect(() => {
     if (useMobileDailyChart || !hasChartBars) {
@@ -408,20 +413,50 @@ export default function DailySpendSection({
         <div className={m ? `${styles.cardInner} ${styles.cardInnerMobile}` : styles.cardInner}>
           <div className={m ? `${styles.cardTitleBlock} ${styles.cardTitleBlockMobile}` : styles.cardTitleBlock}>
             <h3 className={m ? `${styles.cardTitle} ${styles.cardTitleMobile}` : styles.cardTitle}>
-              Daily Spend
+              Daily API Equivalent
             </h3>
             <div className={styles.cardSubtitle}>
               {chartDayCount > 0
-                ? codexbarActive
-                  ? `${chartDayCount}-day CodexBar Codex + Claude estimate; bars reconcile with the ${activePeriodLabel.toLowerCase()} cards.`
-                  : hasSessionEstimateChart && !ledgerActive && !hasAwsData
+                ? ledgerActive
+                  ? apiEquivalentReliability === 'partial'
+                    ? `${chartDayCount}-day partial public-list-price estimate; unpriced models are excluded.`
+                    : apiEquivalentReliability === 'not_applicable'
+                      ? 'API comparison does not apply to the all-local usage in this period.'
+                      : apiEquivalentReliability === 'no_usage'
+                        ? 'No model usage was recorded for this period.'
+                      : apiEquivalentReliability === 'unavailable'
+                        ? 'API equivalent is unavailable because this period has no priced model usage.'
+                        : `${chartDayCount}-day all-source public-list-price estimate; included tracked spend remains separate.`
+                  : codexbarActive
+                    ? `${chartDayCount}-day CodexBar Codex + Claude estimate.`
+                    : hasSessionEstimateChart && !ledgerActive && !hasAwsData
                     ? `${chartDayCount}-day activity view estimated from session token flow.`
                     : `${chartDayCount}-day usage-ledger spend movement; unknown/included costs are excluded from billable bars.`
                 : 'Waiting for daily spend history.'}
             </div>
           </div>
 
-          {chartData.length > 0 ? (
+          {apiEquivalentUnavailable ? (
+            <div
+              className={styles.tokenFallbackWrap}
+              style={{ height: m ? '180px' : '240px' }}
+            >
+              <div className={styles.tokenFallbackTitle}>
+                {apiEquivalentReliability === 'not_applicable'
+                  ? 'API comparison not applicable'
+                  : apiEquivalentReliability === 'no_usage'
+                    ? 'No usage recorded'
+                    : 'API equivalent unavailable'}
+              </div>
+              <div className={styles.tokenFallbackSub}>
+                {apiEquivalentReliability === 'not_applicable'
+                  ? 'This period contains local-model usage only, so there is no public API price to compare.'
+                  : apiEquivalentReliability === 'no_usage'
+                    ? 'There is no model activity to price for the selected period.'
+                  : 'No public rate card is available for the models used in this period.'}
+              </div>
+            </div>
+          ) : chartData.length > 0 ? (
             useMobileDailyChart ? (
               <MobileDailySpendChartLocal
                 chartData={chartData}
@@ -600,7 +635,7 @@ export default function DailySpendSection({
               Spend Composition
             </h3>
             <div className={styles.cardSubtitle}>
-              {codexbarActive ? 'Ranked from the latest local CodexBar Codex + Claude snapshot.' : 'Ranked view of the biggest drivers in the current view.'}
+              {hasAwsData ? 'Ranked from live AWS billing for the selected period.' : ledgerActive ? 'Ranked by all-source API-equivalent estimate for the selected period.' : codexbarActive ? 'Ranked from the latest local CodexBar Codex + Claude snapshot.' : 'Ranked view of the biggest drivers in the current view.'}
             </div>
           </div>
           <div

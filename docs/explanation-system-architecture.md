@@ -55,7 +55,9 @@ Examples:
 - Operations readers have independent timeouts and preserve partial evidence.
 - Usage merges OpenClaw, Hermes, Claude Code, and CodexBar-derived data. A slow
   source can refresh in the background while its last detailed result remains
-  visible as stale.
+  visible as stale. Tracked spend stays separate from `apiEquivalentUsd`, which
+  estimates public API list price from input, cached-input, output, and cache-write
+  token classes when the model has a known rate card.
 - Runtime snapshots use atomic writes and TTLs.
 - GBrain errors redact credentials and absolute home paths before reaching the
   browser.

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Loader2 } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
-import { formatCompactTokenValue, formatAgentCostValue, formatTokens } from './lib'
+import { formatApiEquivalentValue, formatCompactTokenValue, formatAgentCostValue, formatTokens } from './lib'
 import type { AgentUsageData } from './types'
 import styles from './AgentSplitCard.module.css'
 
@@ -9,6 +9,8 @@ interface AgentSplitItem extends AgentUsageData {
   tokens: number
   cost: number
   costLabel: string
+  apiEquivalentCost: number
+  apiEquivalentAvailable: boolean
   topModel: string
 }
 
@@ -74,7 +76,7 @@ export default function AgentSplitCard({
             </div>
             {!agentSplitPending && (
               <div className={styles.sourceNote}>
-                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs.
+                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs. Tracked cost reflects billing mode; API equivalent applies public rate cards to the same usage across every priced source.
               </div>
             )}
           </div>
@@ -207,6 +209,13 @@ export default function AgentSplitCard({
                       >
                         {agent.costLabel}
                       </div>
+                    </div>
+                    <div>
+                      <div className={styles.agentMetricLabel}>API equivalent</div>
+                      <div className={m ? `${styles.agentMetricValue} ${styles.agentMetricValueMobile}` : styles.agentMetricValue}>
+                        {formatApiEquivalentValue(agent.apiEquivalentCost, agent.apiEquivalentAvailable)}
+                      </div>
+                      <div className={styles.agentEquivalentLabel}>Estimated list price</div>
                     </div>
                     <div title={`${formatTokens(agent.tokens)} tokens`}>
                       <div className={styles.agentMetricLabel}>Tokens</div>
