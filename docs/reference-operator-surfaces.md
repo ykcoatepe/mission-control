@@ -284,17 +284,19 @@ Hermes model aliases:
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/api/costs?period=day|7d|month` | Returns combined OpenClaw and Hermes usage |
-| `GET` | `/api/costs/codexbar` | Returns CodexBar usage when local data is available |
+| `GET` | `/api/costs?period=day|7d|month` | Returns combined OpenClaw, Hermes, and Claude Code usage |
+| `GET` | `/api/costs/codexbar` | Returns merged local Codex + Claude CodexBar usage when available |
 
 Cost collection behavior:
 
 - OpenClaw usage runs through `scripts/openclaw-usage-summary.js`.
 - Default OpenClaw timeout is `120000` ms and can be overridden with `MC_OPENCLAW_USAGE_TIMEOUT_MS`.
 - Hermes usage reads the active profile SQLite state database.
+- Claude Code usage is read from local logs through `codexbar cost --provider claude`; displayed costs are API-equivalent estimates, not subscription invoices.
 - Detailed results are cached in `MC_COSTS_CACHE_DIR` or the OS temp directory.
 - If a refresh is already running, the API returns the best cached result with `meta.refreshing: true`.
 - If OpenClaw is unavailable but previous detailed OpenClaw data exists, Mission Control preserves it and marks `meta.stale: true`.
+- If Claude Code collection is unavailable but previous detailed Claude Code data exists, Mission Control preserves that bucket and marks it stale.
 
 Cost normalization rules:
 

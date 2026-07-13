@@ -413,7 +413,7 @@ export default function DailySpendSection({
             <div className={styles.cardSubtitle}>
               {chartDayCount > 0
                 ? codexbarActive
-                  ? `${chartDayCount}-day CodexBar invoice spend; bars reconcile with the ${activePeriodLabel.toLowerCase()} cards.`
+                  ? `${chartDayCount}-day CodexBar Codex + Claude estimate; bars reconcile with the ${activePeriodLabel.toLowerCase()} cards.`
                   : hasSessionEstimateChart && !ledgerActive && !hasAwsData
                     ? `${chartDayCount}-day activity view estimated from session token flow.`
                     : `${chartDayCount}-day usage-ledger spend movement; unknown/included costs are excluded from billable bars.`
@@ -598,7 +598,7 @@ export default function DailySpendSection({
               Spend Composition
             </h3>
             <div className={styles.cardSubtitle}>
-              {codexbarActive ? 'Ranked from the latest CodexBar invoice snapshot.' : 'Ranked view of the biggest drivers in the current view.'}
+              {codexbarActive ? 'Ranked from the latest local CodexBar Codex + Claude snapshot.' : 'Ranked view of the biggest drivers in the current view.'}
             </div>
           </div>
           <div

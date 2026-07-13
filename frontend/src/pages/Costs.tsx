@@ -35,6 +35,7 @@ import {
   calculateTrend,
   costReliabilityLabel,
   sumCostRows,
+  codexbarRowsForPeriod,
   previousCodexbarRows,
   comparisonLabels,
   readNumericField,
@@ -57,6 +58,7 @@ const STALE_COSTS_RETRY_TIMEOUT_MS = STALE_COSTS_RETRY_INTERVAL_MS * STALE_COSTS
 type CostsTokenData = TokenData & {
   meta?: TokenData['meta'] & {
     preservedPreviousOpenClaw?: boolean
+    preservedPreviousClaudeCode?: boolean
     preservedPreviousUsage?: boolean
     refreshStartedAt?: string
   }
@@ -101,7 +103,7 @@ export default function Costs() {
       const preservedFreshCache =
         tokens?.meta?.stale &&
         !tokens.meta.refreshing &&
-        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousUsage)
+        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousUsage)
       if (preservedFreshCache) {
         staleCostsRetry.current = null
         return false
@@ -180,10 +182,12 @@ export default function Costs() {
   const codexbarLatest = codexbarCosts?.daily?.[codexbarCosts.daily.length - 1] || null
   const codexbarPeriodDays = useMemo(() => {
     if (!codexbarActive) return []
-    if (period === 'day') return codexbarCosts?.daily?.slice(-1) || []
-    if (period === '7d') return codexbarCosts?.daily?.slice(-7) || []
-    return codexbarCosts?.daily?.slice(-30) || []
-  }, [codexbarActive, codexbarCosts?.daily, period])
+    return codexbarRowsForPeriod(
+      codexbarCosts?.daily || [],
+      period,
+      new Date(fallbackSessionTimestamp * 1000),
+    )
+  }, [codexbarActive, codexbarCosts?.daily, fallbackSessionTimestamp, period])
 
   const chartSeries = useMemo<ChartSeriesItem[]>(() => {
     const totals = new Map<string, { totalCost: number; totalTokens: number }>()
@@ -435,7 +439,11 @@ export default function Costs() {
     ? periodLabels[loadedCostsPeriodKey as keyof typeof periodLabels]
     : activePeriodLabel
   const codexbarPeriodCost = sumCostRows(codexbarPeriodDays)
-  const codexbarPreviousDays = previousCodexbarRows(codexbarCosts?.daily || [], period)
+  const codexbarPreviousDays = previousCodexbarRows(
+    codexbarCosts?.daily || [],
+    period,
+    new Date(fallbackSessionTimestamp * 1000),
+  )
   const codexbarPreviousPeriodCost = codexbarPreviousDays.length ? sumCostRows(codexbarPreviousDays) : null
   const codexbarPreviousDailyAvg = codexbarPreviousPeriodCost !== null ? codexbarPreviousPeriodCost / codexbarPreviousDays.length : null
   const codexbarPeriodTokens = codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
@@ -471,9 +479,9 @@ export default function Costs() {
   const costSourceLabel = hasAwsData
     ? 'AWS live billing'
     : codexbarActive
-      ? 'CodexBar invoice'
+      ? 'CodexBar local estimate'
       : ledgerActive
-        ? (tokenData.source === 'combined.agent_usage' ? 'OpenClaw + Hermes Usage' : tokenData.source === 'openclaw.usage' ? 'OpenClaw Usage' : 'Token ledger')
+        ? (tokenData.source === 'combined.agent_usage' ? 'OpenClaw + Hermes + Claude Code Usage' : tokenData.source === 'openclaw.usage' ? 'OpenClaw Usage' : 'Token ledger')
         : 'Estimated from sessions'
   const chartDayCount = trackedDays.length
   const monthlyBudgetBase = ledgerActive ? tokenData?.summary?.thisMonthUsd || 0 : currentPeriodCost
@@ -618,7 +626,10 @@ export default function Costs() {
       tokens,
       cost,
       costLabel,
-      topModel: topModel?.name?.replace(/^OpenClaw \/ /, '').replace(/^Hermes \/ /, '') || 'No model data',
+      topModel: topModel?.name
+        ?.replace(/^OpenClaw \/ /, '')
+        .replace(/^Hermes \/ /, '')
+        .replace(/^Claude Code \/ /, '') || 'No model data',
     }
   })
   const totalAgentTokens = agentSplit.reduce((sum, agent) => sum + agent.tokens, 0)
@@ -681,6 +692,7 @@ export default function Costs() {
             agentSplitPeriodLabel={agentSplitPeriodLabel}
             totalAgentTokens={totalAgentTokens}
             tokenDataRefreshing={!!(tokenData?.meta?.refreshing)}
+            tokenDataStale={!!(tokenData?.meta?.stale)}
           />
         )}
 

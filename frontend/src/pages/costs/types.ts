@@ -87,6 +87,8 @@ export interface TokenData {
     ageMs?: number
     openclawStatus?: 'ready' | 'refreshing' | 'unavailable' | string
     hermesStatus?: 'ready' | 'refreshing' | 'unavailable' | string
+    claudeCodeStatus?: 'ready' | 'refreshing' | 'unavailable' | string
+    preservedPreviousClaudeCode?: boolean
   }
 }
 
@@ -101,7 +103,7 @@ export interface CodexBarDailyEntry {
 
 export interface CodexBarCostData {
   source: string
-  provider: string
+  provider: 'codex' | 'claude' | 'both' | string
   updatedAt: string | null
   last30DaysCostUSD: number
   last30DaysTokens: number

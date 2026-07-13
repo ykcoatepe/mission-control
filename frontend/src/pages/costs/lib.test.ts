@@ -9,6 +9,9 @@ import {
   canonicalModelName,
   formatSessionName,
   hashColor,
+  codexbarRowsForPeriod,
+  previousCodexbarRows,
+  sumCostRows,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -234,5 +237,40 @@ describe('hashColor', () => {
     const color = hashColor('')
     expect(typeof color).toBe('string')
     expect(color.length).toBeGreaterThan(0)
+  })
+})
+
+describe('CodexBar calendar periods', () => {
+  const rows = [
+    { date: '2026-06-11', totalCost: 1, totalTokens: 10, inputTokens: 0, outputTokens: 0, models: [] },
+    { date: '2026-07-01', totalCost: 2, totalTokens: 20, inputTokens: 0, outputTokens: 0, models: [] },
+    { date: '2026-07-13', totalCost: 3, totalTokens: 30, inputTokens: 0, outputTokens: 0, models: [] },
+  ]
+  const now = new Date('2026-07-13T12:00:00+03:00')
+
+  it('does not treat old sparse activity rows as current day or current week', () => {
+    expect(codexbarRowsForPeriod(rows, 'day', now).map(row => row.date)).toEqual(['2026-07-13'])
+    const week = codexbarRowsForPeriod(rows, '7d', now)
+    expect(week).toHaveLength(7)
+    expect(week[0].date).toBe('2026-07-07')
+    expect(week.at(-1)?.date).toBe('2026-07-13')
+    expect(sumCostRows(week) / week.length).toBeCloseTo(3 / 7)
+    const month = codexbarRowsForPeriod(rows, 'month', now)
+    expect(month).toHaveLength(30)
+    expect(month[0].date).toBe('2026-06-14')
+    expect(month.at(-1)?.date).toBe('2026-07-13')
+    expect(sumCostRows(month)).toBe(5)
+  })
+
+  it('selects previous baselines by date rather than array position', () => {
+    const day = previousCodexbarRows(rows, 'day', now)
+    expect(day).toHaveLength(1)
+    expect(day[0]).toMatchObject({ date: '2026-07-12', totalCost: 0 })
+    const week = previousCodexbarRows(rows, '7d', now)
+    expect(week).toHaveLength(7)
+    expect(sumCostRows(week)).toBe(2)
+    const month = previousCodexbarRows(rows, 'month', now)
+    expect(month).toHaveLength(30)
+    expect(sumCostRows(month)).toBe(1)
   })
 })

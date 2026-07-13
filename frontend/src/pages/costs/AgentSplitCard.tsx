@@ -20,6 +20,7 @@ interface AgentSplitCardProps {
   agentSplitPeriodLabel: string
   totalAgentTokens: number
   tokenDataRefreshing: boolean
+  tokenDataStale: boolean
 }
 
 const AGENT_BUCKET_DETAILS: Record<string, { scope: string; title: string }> = {
@@ -35,7 +36,18 @@ const AGENT_BUCKET_DETAILS: Record<string, { scope: string; title: string }> = {
     scope: 'Hermes profile usage',
     title: 'Hermes profile usage from the local Hermes state database.',
   },
+  claude_code: {
+    scope: 'Local Claude Code sessions',
+    title: 'Claude Code usage from local logs via CodexBar. Cost is an API-equivalent estimate, not a subscription invoice.',
+  },
 }
+
+const PENDING_AGENT_BUCKETS = [
+  { label: 'OpenClaw', accent: '#5E5CE6' },
+  { label: 'Codex App Sessions', accent: '#007AFF' },
+  { label: 'Hermes', accent: '#00C7BE' },
+  { label: 'Claude Code', accent: '#D97757' },
+]
 
 export default function AgentSplitCard({
   m,
@@ -45,6 +57,7 @@ export default function AgentSplitCard({
   agentSplitPeriodLabel,
   totalAgentTokens,
   tokenDataRefreshing,
+  tokenDataStale,
 }: AgentSplitCardProps) {
   return (
     <GlassCard delay={0.12} noPad>
@@ -61,13 +74,14 @@ export default function AgentSplitCard({
             </div>
             {!agentSplitPending && (
               <div className={styles.sourceNote}>
-                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs split out of OpenClaw totals.
+                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs.
               </div>
             )}
           </div>
           {!agentSplitPending && (
             <div className={styles.badgeGroup}>
               {tokenDataRefreshing && <span className="macos-badge">Refreshing</span>}
+              {tokenDataStale && <span className="macos-badge macos-badge-orange">Stale source</span>}
               <span className="macos-badge macos-badge-blue">
                 {formatCompactTokenValue(totalAgentTokens)} TOKENS
               </span>
@@ -96,9 +110,9 @@ export default function AgentSplitCard({
 
             <div
               className={styles.pendingGrid}
-              style={{ gridTemplateColumns: m ? '1fr' : 'repeat(3, minmax(0, 1fr))' }}
+              style={{ gridTemplateColumns: m ? '1fr' : `repeat(${PENDING_AGENT_BUCKETS.length}, minmax(0, 1fr))` }}
             >
-              {['OpenClaw', 'Codex App Sessions', 'Hermes'].map((label, index) => (
+              {PENDING_AGENT_BUCKETS.map(({ label, accent }) => (
                 <div
                   key={label}
                   className={m ? `${styles.pendingAgentCell} ${styles.pendingAgentCellMobile}` : styles.pendingAgentCell}
@@ -108,8 +122,8 @@ export default function AgentSplitCard({
                       <span
                         className={styles.pendingDot}
                         style={{
-                          background: index === 0 ? '#5E5CE6' : '#00C7BE',
-                          boxShadow: `0 0 18px ${index === 0 ? '#5E5CE6' : '#00C7BE'}`,
+                          background: accent,
+                          boxShadow: `0 0 18px ${accent}`,
                         }}
                       />
                       <span className={styles.pendingAgentName}>{label}</span>
@@ -134,8 +148,8 @@ export default function AgentSplitCard({
                     <div
                       className={styles.pendingProgressFill}
                       style={{
-                        width: index === 0 ? '58%' : '42%',
-                        background: `linear-gradient(90deg, ${index === 0 ? '#5E5CE6' : '#00C7BE'}, rgba(255,255,255,0.35))`,
+                        width: label === 'OpenClaw' ? '58%' : '42%',
+                        background: `linear-gradient(90deg, ${accent}, rgba(255,255,255,0.35))`,
                       }}
                     />
                   </div>
@@ -175,7 +189,10 @@ export default function AgentSplitCard({
                         )}
                       </span>
                     </div>
-                    <span className={styles.agentShare}>{share.toFixed(1)}%</span>
+                    <div className={styles.agentStateGroup}>
+                      {agent.status === 'stale' && <span className="macos-badge macos-badge-orange">STALE</span>}
+                      <span className={styles.agentShare}>{share.toFixed(1)}%</span>
+                    </div>
                   </div>
 
                   <div className={styles.agentMetricGrid}>

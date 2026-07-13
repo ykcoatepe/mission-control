@@ -297,10 +297,59 @@ export function sumCostRows(rows: Array<{ totalCost?: number; cost?: number }> =
   return rows.reduce((sum, row) => sum + Number(row.totalCost ?? row.cost ?? 0), 0)
 }
 
-export function previousCodexbarRows(days: CodexBarDailyEntry[] = [], period: 'day' | '7d' | 'month') {
-  if (period === 'day') return days.slice(-2, -1)
-  if (period === '7d') return days.slice(-14, -7)
-  return days.slice(-60, -30)
+function codexbarDateKey(date: Date) {
+  return date.toLocaleDateString('en-CA', {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  })
+}
+
+function codexbarPeriodBounds(period: 'day' | '7d' | 'month', now: Date, previous: boolean) {
+  const days = period === 'day' ? 1 : period === '7d' ? 7 : 30
+  const end = new Date(now)
+  end.setDate(end.getDate() - (previous ? days : 0))
+  const start = new Date(end)
+  start.setDate(start.getDate() - days + 1)
+  return { start: codexbarDateKey(start), end: codexbarDateKey(end) }
+}
+
+function codexbarRowsInBounds(days: CodexBarDailyEntry[], start: string, end: string) {
+  const rowsByDate = new Map(days.map(day => [day.date, day]))
+  const rows: CodexBarDailyEntry[] = []
+  const cursor = new Date(`${start}T12:00:00`)
+  const finalDate = new Date(`${end}T12:00:00`)
+
+  while (cursor <= finalDate) {
+    const date = codexbarDateKey(cursor)
+    rows.push(rowsByDate.get(date) || {
+      date,
+      totalCost: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      models: [],
+    })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return rows
+}
+
+export function codexbarRowsForPeriod(
+  days: CodexBarDailyEntry[] = [],
+  period: 'day' | '7d' | 'month',
+  now = new Date(),
+) {
+  const bounds = codexbarPeriodBounds(period, now, false)
+  return codexbarRowsInBounds(days, bounds.start, bounds.end)
+}
+
+export function previousCodexbarRows(
+  days: CodexBarDailyEntry[] = [],
+  period: 'day' | '7d' | 'month',
+  now = new Date(),
+) {
+  const bounds = codexbarPeriodBounds(period, now, true)
+  return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 
 export function comparisonLabels(period: 'day' | '7d' | 'month') {

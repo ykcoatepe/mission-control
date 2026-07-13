@@ -20,23 +20,13 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('STALE_COSTS_RETRY_LIMIT = 60') && source.includes('STALE_COSTS_RETRY_TIMEOUT_MS') && source.includes('preservedPreviousOpenClaw') && source.includes('preservedPreviousUsage'),
+  source.includes('STALE_COSTS_RETRY_LIMIT = 60') && source.includes('STALE_COSTS_RETRY_TIMEOUT_MS') && source.includes('preservedPreviousOpenClaw') && source.includes('preservedPreviousClaudeCode') && source.includes('preservedPreviousUsage'),
   'Costs page stale retry polling should be capped and stop on fresh preserved cache responses',
 );
 
 assert.ok(
-  source.includes("if (period === 'day') return days.slice(-2, -1)"),
-  'CodexBar day comparison should use the previous real day row',
-);
-
-assert.ok(
-  source.includes("if (period === '7d') return days.slice(-14, -7)"),
-  'CodexBar 7d comparison should use the previous real 7-day window',
-);
-
-assert.ok(
-  source.includes('return days.slice(-60, -30)') && source.includes("return codexbarCosts?.daily?.slice(-30) || []"),
-  'CodexBar month comparison should compare the current rolling 30 days against the previous rolling 30 days',
+  source.includes('codexbarRowsForPeriod') && source.includes('previousCodexbarRows'),
+  'Costs page should select sparse CodexBar rows with calendar-aware period helpers',
 );
 
 assert.ok(
@@ -45,10 +35,16 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs split out of OpenClaw totals.') &&
+  source.includes('OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs.') &&
   source.includes('Direct OpenClaw native sessions only. Nested app-launched Codex runs are counted in Codex App Sessions.') &&
-  source.includes('agent/codex-home/sessions runs launched from the Codex app'),
-  'Agent Split should explain why nested Codex App Sessions moved out of direct OpenClaw usage',
+  source.includes('agent/codex-home/sessions runs launched from the Codex app') &&
+  source.includes('Claude Code usage from local logs via CodexBar. Cost is an API-equivalent estimate, not a subscription invoice.'),
+  'Agent Split should explain direct OpenClaw, nested Codex App, and local Claude Code usage',
+);
+
+assert.ok(
+  source.includes("agent.status === 'stale'") && source.includes('Stale source'),
+  'Agent Split should visibly mark preserved Claude Code data as stale',
 );
 
 console.log('costs page behavior guards passed');

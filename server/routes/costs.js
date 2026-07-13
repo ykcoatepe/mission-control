@@ -5,6 +5,12 @@ const os = require('os');
 const util = require('util');
 const { exec } = require('child_process');
 const { normalizeUsageCosts } = require('../services/costSanity');
+const {
+  buildClaudeCodeUsageSummary,
+  mergeCodexBarReports,
+  needsClaudeCodeCacheRefresh,
+  sumUsageSummaries,
+} = require('../services/claudeCodeUsage');
 
 function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const router = express.Router();
@@ -79,6 +85,22 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       return result;
     } catch (error) {
       console.error('[OpenClaw Usage Summary]', error.message);
+      return null;
+    }
+  }
+
+  async function claudeCodeUsageSummary(period = 'month') {
+    try {
+      const { stdout } = await execPromise('codexbar cost --format json --provider claude --days 70', {
+        timeout: 30000,
+        maxBuffer: 20 * 1024 * 1024,
+        env: process.env,
+      });
+      const trimmed = String(stdout || '').trim();
+      if (!trimmed) return null;
+      return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period);
+    } catch (error) {
+      console.error('[Claude Code Usage Summary]', error.message);
       return null;
     }
   }
@@ -348,12 +370,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
-  function mergeUsage(openclawData, hermesData, period) {
-    if (!openclawData && !hermesData) return null;
+  function mergeUsage(openclawData, hermesData, claudeCodeData, period) {
+    if (!openclawData && !hermesData && !claudeCodeData) return null;
 
     const sources = [
       ...sourceEntriesFromUsage(openclawData, { key: 'openclaw', label: 'OpenClaw', accent: '#5E5CE6', source: 'openclaw.usage', status: 'ready' }),
       ...sourceEntriesFromUsage(hermesData, { key: 'hermes', label: 'Hermes', accent: '#00C7BE', source: 'hermes.state.db', status: 'ready' }),
+      ...sourceEntriesFromUsage(claudeCodeData, { key: 'claude_code', label: 'Claude Code', accent: '#D97757', source: 'claude-code.codexbar', status: 'ready' }),
     ].filter(Boolean);
     if (!sources.length) return null;
 
@@ -413,7 +436,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         thisWeekTokens: sumSummary('thisWeekTokens'),
         thisMonthTokens: sumSummary('thisMonthTokens'),
         totalTokens: sumSummary('totalTokens'),
-        note: 'Combined view: OpenClaw session-cost-usage + Hermes profile state.db',
+        note: 'Combined view: OpenClaw session-cost-usage + Hermes profile state.db + Claude Code local CodexBar scan',
       },
       daily,
       dailyByModel,
@@ -508,6 +531,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return key === 'openclaw' || key === 'codex_app' || source.startsWith('openclaw.');
   }
 
+  function isClaudeCodeAgent(agent) {
+    const key = String(agent?.key || '').toLowerCase();
+    const source = String(agent?.source || '').toLowerCase();
+    return key === 'claude_code' || source.startsWith('claude-code.');
+  }
+
   function cachedUsageAgent(previous, agent) {
     if (!agent?.label) return null;
     const prefix = `${agent.label} / `;
@@ -547,7 +576,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       label: agent.label,
       accent: agent.accent,
       source: `${agent.source || 'openclaw.usage'}.cached`,
-      status: 'ready',
+      status: 'stale',
       summary: agent.summary || {},
       daily,
       dailyByModel,
@@ -556,9 +585,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
-  function cachedOpenClawUsage(previous, period) {
+  function cachedFilteredUsage(previous, period, predicate, source, note) {
     const agents = (previous?.agents || [])
-      .filter(isOpenClawDerivedAgent)
+      .filter(predicate)
       .map((agent) => cachedUsageAgent(previous, agent))
       .filter(Boolean);
     if (!agents.length) return null;
@@ -576,15 +605,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     });
     const daily = Array.from(dailyByDate.values()).sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const summary = {
-      periodTokens: agents.reduce((sum, agent) => sum + Number(agent.summary?.periodTokens || 0), 0),
-      totalTokens: agents.reduce((sum, agent) => sum + Number(agent.summary?.totalTokens || 0), 0),
-      periodUsd: agents.reduce((sum, agent) => sum + Number(agent.summary?.periodUsd || 0), 0),
-      totalUsd: agents.reduce((sum, agent) => sum + Number(agent.summary?.totalUsd || 0), 0),
-      note: 'Cached OpenClaw-derived usage split from previous detailed result',
+      ...sumUsageSummaries(agents),
+      note,
     };
 
     return {
-      source: 'openclaw.usage.cached',
+      source,
       period,
       periodRange: {
         start: previous?.period?.start || daily[0]?.date || null,
@@ -597,6 +623,26 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       byService: [],
       agents,
     };
+  }
+
+  function cachedOpenClawUsage(previous, period) {
+    return cachedFilteredUsage(
+      previous,
+      period,
+      isOpenClawDerivedAgent,
+      'openclaw.usage.cached',
+      'Cached OpenClaw-derived usage split from previous detailed result',
+    );
+  }
+
+  function cachedClaudeCodeUsage(previous, period) {
+    return cachedFilteredUsage(
+      previous,
+      period,
+      isClaudeCodeAgent,
+      'claude-code.codexbar.cached',
+      'Cached Claude Code usage from previous detailed result',
+    );
   }
 
   function detailedCostsResult(period, combinedUsage, meta = {}) {
@@ -630,36 +676,29 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     const refresh = new Promise((resolve) => {
       setImmediate(async () => {
         try {
-          const [openclawData, hermesData] = await Promise.all([
+          const [openclawData, hermesData, claudeCodeData] = await Promise.all([
             openclawUsageSummary(period),
             hermesUsageSummary(period),
+            claudeCodeUsageSummary(period),
           ]);
-          const combinedUsage = mergeUsage(openclawData, hermesData, period);
+          const previous = costsCache.get(cacheKey)?.value;
+          const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
+          const hasPreviousClaudeCode = !!previous?.agents?.some((agent) => isClaudeCodeAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
+          const preservedPreviousOpenClaw = !openclawData && hasPreviousOpenClaw;
+          const preservedPreviousClaudeCode = !claudeCodeData && hasPreviousClaudeCode;
+          const effectiveOpenClawData = openclawData || (preservedPreviousOpenClaw ? cachedOpenClawUsage(previous, period) : null);
+          const effectiveClaudeCodeData = claudeCodeData || (preservedPreviousClaudeCode ? cachedClaudeCodeUsage(previous, period) : null);
+          const combinedUsage = mergeUsage(effectiveOpenClawData, hermesData, effectiveClaudeCodeData, period);
           if (combinedUsage) {
-            const previous = costsCache.get(cacheKey)?.value;
-            const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
-            if (!openclawData && hasPreviousOpenClaw) {
-              const cachedOpenClawData = cachedOpenClawUsage(previous, period);
-              const usageWithCachedOpenClaw = mergeUsage(cachedOpenClawData, hermesData, period);
-              const preserved = detailedCostsResult(period, usageWithCachedOpenClaw, {
-                refreshing: false,
-                stale: true,
-                refreshStartedAt: startedAt,
-                openclawStatus: 'unavailable',
-                hermesStatus: 'ready',
-                preservedPreviousOpenClaw: true,
-              });
-              setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
-              resolve(preserved);
-              return;
-            }
-
             const costsResult = detailedCostsResult(period, combinedUsage, {
               refreshing: false,
-              stale: false,
+              stale: preservedPreviousOpenClaw || preservedPreviousClaudeCode,
               refreshStartedAt: startedAt,
               openclawStatus: openclawData ? 'ready' : 'unavailable',
               hermesStatus: hermesData ? 'ready' : 'unavailable',
+              claudeCodeStatus: claudeCodeData ? 'ready' : 'unavailable',
+              preservedPreviousOpenClaw,
+              preservedPreviousClaudeCode,
             });
             setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
             resolve(costsResult);
@@ -672,6 +711,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               stale: false,
               openclawStatus: 'unavailable',
               hermesStatus: 'unavailable',
+              claudeCodeStatus: 'unavailable',
             });
             setCostsCache(cacheKey, { value: fallback, time: Date.now(), detailed: false });
             resolve(fallback);
@@ -686,6 +726,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               refreshStartedAt: startedAt,
               openclawStatus: 'unavailable',
               hermesStatus: 'unavailable',
+              claudeCodeStatus: 'unavailable',
               preservedPreviousUsage: true,
             });
             setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
@@ -716,7 +757,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       if (cached) {
         const ageMs = Date.now() - cached.time;
         const ttl = cached.detailed ? costsCacheTtl : costsFallbackCacheTtl;
-        const isFresh = ageMs < ttl;
+        const isFresh = ageMs < ttl && !needsClaudeCodeCacheRefresh(cached.value);
         if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period);
         const normalizedCachedValue = normalizeUsageCosts(cached.value);
         return res.json(attachCostsMeta(normalizedCachedValue, {
@@ -732,6 +773,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         stale: false,
         openclawStatus: 'refreshing',
         hermesStatus: 'refreshing',
+        claudeCodeStatus: 'refreshing',
       });
       setCostsCache(cacheKey, { value: fallback, time: Date.now(), detailed: false });
       return res.json(fallback);
@@ -744,9 +786,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
   router.get('/api/costs/codexbar', async (req, res) => {
     try {
-      const { stdout } = await execPromise('codexbar cost --format json --provider codex', { timeout: 30000 });
+      const { stdout } = await execPromise('codexbar cost --format json --provider both --days 70', { timeout: 30000 });
       const data = JSON.parse(stdout);
-      const raw = Array.isArray(data) ? data[0] : data;
+      const raw = mergeCodexBarReports(data);
+      if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
 
       const daily = (raw.daily || []).map((day) => ({
         date: day.date,
@@ -764,7 +807,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       const totals = raw.totals || {};
       return res.json({
         source: 'codexbar',
-        provider: 'codex',
+        provider: raw.provider,
         updatedAt: raw.updatedAt || null,
         last30DaysCostUSD: raw.last30DaysCostUSD || 0,
         last30DaysTokens: raw.last30DaysTokens || 0,

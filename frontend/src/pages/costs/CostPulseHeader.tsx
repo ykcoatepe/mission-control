@@ -111,11 +111,11 @@ export default function CostPulseHeader({
                     {formatCurrency(currentPeriodCost)}
                   </div>
                   <div className={styles.codexbarDesc}>
-                    Current month tracked spend
+                    Codex + Claude API-equivalent usage cost
                   </div>
                 </div>
                 <span className="macos-badge macos-badge-orange">
-                  INVOICE DATA
+                  LOCAL ESTIMATE
                 </span>
               </div>
 
@@ -175,17 +175,17 @@ export default function CostPulseHeader({
                 <div className={styles.inactiveTopRow}>
                   <div>
                     <div className={styles.inactiveSubLabel}>
-                      CodexBar Real Costs
+                      CodexBar Local Costs
                     </div>
                     <div className={m ? `${styles.inactiveAmount} ${styles.inactiveAmountMobile}` : styles.inactiveAmount}>
                       {formatCurrency(0)}
                     </div>
                     <div className={styles.inactiveDesc}>
-                      {period === 'month' ? 'Current month invoice data' : `${activePeriodLabel} invoice data`}
+                      {period === 'month' ? 'Current month local usage estimate' : `${activePeriodLabel} local usage estimate`}
                     </div>
                   </div>
                   <span className={`macos-badge ${styles.badgeDimmed}`}>
-                    INVOICE DATA
+                    LOCAL ESTIMATE
                   </span>
                 </div>
 
@@ -205,7 +205,7 @@ export default function CostPulseHeader({
                 </div>
 
                 <div className={styles.inactiveNote}>
-                  No CodexBar invoice data is active yet for this view.
+                  No CodexBar local Codex or Claude usage data is active yet for this view.
                 </div>
               </div>
             </>
