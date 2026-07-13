@@ -45,7 +45,7 @@ own implicit module behavior.
 | --- | --- | --- |
 | `PORT` | `3333` | Express port |
 | `MISSION_CONTROL_HOST` | `127.0.0.1` | Bind host; changing this can expose an unauthenticated control surface |
-| `MC_GATEWAY_TOKEN` | empty | OpenClaw gateway token fallback |
+| `MC_GATEWAY_TOKEN` | empty | Fallback used by session helpers only; not a global gateway-token override |
 | `MC_USER_HOME` | `HOME` | Home used for OpenClaw/Hermes usage and cron discovery |
 | `HERMES_PROFILE` | `hmudur` | Hermes profile used by cron and usage readers |
 | `HERMES_STATE_DB` | profile state DB | Explicit Hermes usage database |
@@ -78,6 +78,12 @@ own implicit module behavior.
 Additional GBrain, Hermes, Ollama, and proxy variables are owned by those local
 tools. Prefer their own configuration rather than duplicating credentials in
 Mission Control.
+
+For all gateway-backed routes, configure the token in OpenClaw's gateway auth
+configuration or in `mc-config.gateway.token`. The latter can use an `${ENV}`
+placeholder. Setting only `MC_GATEWAY_TOKEN` does not configure chat, cron,
+tasks, quick actions, or settings because that environment fallback is read
+only by the session helpers.
 
 ## Runtime files
 
