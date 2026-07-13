@@ -95,12 +95,14 @@ function normalizedModelBreakdowns(row) {
   ), 0);
   const remainingTokens = Math.max(numeric(row?.totalTokens) - explicitTokens, 0);
   const missingCost = missingIndexes.reduce((sum, index) => sum + Math.max(numeric(models[index]?.cost), 0), 0);
+  const canUseCostWeights = missingCost > 0
+    && missingIndexes.every((index) => numeric(models[index]?.cost) > 0);
   const fallbackTokens = new Map();
   let allocatedTokens = 0;
 
   missingIndexes.forEach((index, position) => {
     const isLast = position === missingIndexes.length - 1;
-    const weight = missingCost > 0
+    const weight = canUseCostWeights
       ? Math.max(numeric(models[index]?.cost), 0) / missingCost
       : 1 / missingIndexes.length;
     const tokens = isLast ? remainingTokens - allocatedTokens : remainingTokens * weight;
@@ -268,7 +270,7 @@ function mergeCodexBarReports(raw) {
       merged.outputTokens += numeric(day.outputTokens);
       merged.cacheReadTokens += numeric(day.cacheReadTokens);
       merged.cacheCreationTokens += numeric(day.cacheCreationTokens);
-      for (const model of Array.isArray(day.modelBreakdowns) ? day.modelBreakdowns : []) {
+      for (const model of normalizedModelBreakdowns(day)) {
         const name = String(model?.modelName || 'unknown');
         const modelTotal = merged.models.get(name) || { modelName: name, totalTokens: 0, cost: 0 };
         modelTotal.totalTokens += numeric(model?.totalTokens);

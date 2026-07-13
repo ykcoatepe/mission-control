@@ -109,6 +109,30 @@ test('allocates daily tokens when CodexBar model breakdowns omit token counts', 
   assert.equal(summary.dailyByModel[0]['claude-haiku-4-5_tokens'], 100);
 });
 
+test('keeps zero-cost and mixed explicit model usage visible during token allocation', () => {
+  const summary = buildClaudeCodeUsageSummary([{
+    provider: 'claude',
+    daily: [{
+      date: '2026-07-13',
+      totalCost: 4,
+      totalTokens: 400,
+      modelBreakdowns: [
+        { modelName: 'claude-explicit', cost: 1, totalTokens: 100 },
+        { modelName: 'claude-paid-missing', cost: 3 },
+        { modelName: 'claude-zero-cost-missing', cost: 0 },
+      ],
+    }],
+  }], 'day', new Date('2026-07-13T12:00:00+03:00'));
+
+  const tokensByModel = Object.fromEntries(summary.byService.map((item) => [item.name, item.tokens]));
+  assert.deepEqual(tokensByModel, {
+    'claude-explicit': 100,
+    'claude-paid-missing': 150,
+    'claude-zero-cost-missing': 150,
+  });
+  assert.equal(Object.values(tokensByModel).reduce((sum, tokens) => sum + tokens, 0), 400);
+});
+
 test('merges Codex and Claude CodexBar reports for headline spend and model mix', () => {
   const merged = mergeCodexBarReports([
     {
@@ -156,6 +180,29 @@ test('merges Codex and Claude CodexBar reports for headline spend and model mix'
   assert.deepEqual(
     merged.daily[0].modelBreakdowns.map((model) => model.modelName),
     ['claude-opus-4-6', 'gpt-5.6-sol'],
+  );
+});
+
+test('preserves daily model token totals when merged CodexBar reports omit them', () => {
+  const merged = mergeCodexBarReports([{
+    provider: 'claude',
+    daily: [{
+      date: '2026-07-13',
+      totalCost: 4,
+      totalTokens: 400,
+      modelBreakdowns: [
+        { modelName: 'claude-opus-4-6', cost: 3 },
+        { modelName: 'claude-haiku-4-5', cost: 1 },
+      ],
+    }],
+  }]);
+
+  assert.deepEqual(
+    merged.daily[0].modelBreakdowns.map((model) => [model.modelName, model.totalTokens]),
+    [
+      ['claude-haiku-4-5', 100],
+      ['claude-opus-4-6', 300],
+    ],
   );
 });
 
