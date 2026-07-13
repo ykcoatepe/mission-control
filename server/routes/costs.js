@@ -10,6 +10,7 @@ const {
   hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
+  needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../services/claudeCodeUsage');
 
@@ -758,7 +759,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       if (cached) {
         const ageMs = Date.now() - cached.time;
         const ttl = cached.detailed ? costsCacheTtl : costsFallbackCacheTtl;
-        const isFresh = ageMs < ttl && !needsClaudeCodeCacheRefresh(cached.value);
+        const isFresh = ageMs < ttl
+          && !needsClaudeCodeCacheRefresh(cached.value)
+          && !needsCurrentPeriodRefresh(cached.value);
         if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period);
         const normalizedCachedValue = normalizeUsageCosts(cached.value);
         return res.json(attachCostsMeta(normalizedCachedValue, {

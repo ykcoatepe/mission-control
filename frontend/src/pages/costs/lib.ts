@@ -297,6 +297,19 @@ export function sumCostRows(rows: Array<{ totalCost?: number; cost?: number }> =
   return rows.reduce((sum, row) => sum + Number(row.totalCost ?? row.cost ?? 0), 0)
 }
 
+export function millisecondsUntilNextCalendarDay(now = new Date()) {
+  const nextDay = new Date(now)
+  nextDay.setHours(24, 0, 0, 0)
+  return Math.max(nextDay.getTime() - now.getTime(), 1)
+}
+
+export function calendarRefreshQueryKeys(period: 'day' | '7d' | 'month') {
+  return [
+    ['api', '/api/costs/codexbar'],
+    ['api', `/api/costs?period=${period}`],
+  ] as const
+}
+
 function codexbarDateKey(date: Date) {
   return date.toLocaleDateString('en-CA', {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',

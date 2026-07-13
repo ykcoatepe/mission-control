@@ -35,6 +35,8 @@ import {
   calculateTrend,
   costReliabilityLabel,
   sumCostRows,
+  calendarRefreshQueryKeys,
+  millisecondsUntilNextCalendarDay,
   codexbarRowsForPeriod,
   buildCodexbarChartData,
   previousCodexbarRows,
@@ -73,7 +75,32 @@ export default function Costs() {
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
+  const [calendarNow, setCalendarNow] = useState(() => new Date())
   const staleCostsRetry = useRef<{ key: string; startedAt: number } | null>(null)
+
+  useEffect(() => {
+    let timerId = 0
+    const refreshCalendarNow = () => {
+      const next = new Date()
+      setCalendarNow(current => current.toDateString() === next.toDateString() ? current : next)
+      calendarRefreshQueryKeys(period).forEach(queryKey => {
+        void queryClient.invalidateQueries({ queryKey })
+      })
+    }
+    const scheduleNextCalendarRefresh = () => {
+      timerId = window.setTimeout(() => {
+        refreshCalendarNow()
+        scheduleNextCalendarRefresh()
+      }, millisecondsUntilNextCalendarDay())
+    }
+
+    scheduleNextCalendarRefresh()
+    window.addEventListener('focus', refreshCalendarNow)
+    return () => {
+      window.clearTimeout(timerId)
+      window.removeEventListener('focus', refreshCalendarNow)
+    }
+  }, [period, queryClient])
 
   // ---- Four period-independent fetches ----
   const { data: awsCosts } = useApi<AWSSCostData>('/api/aws/costs')
@@ -186,9 +213,9 @@ export default function Costs() {
     return codexbarRowsForPeriod(
       codexbarCosts?.daily || [],
       period,
-      new Date(fallbackSessionTimestamp * 1000),
+      calendarNow,
     )
-  }, [codexbarActive, codexbarCosts?.daily, fallbackSessionTimestamp, period])
+  }, [calendarNow, codexbarActive, codexbarCosts?.daily, period])
 
   const chartSeries = useMemo<ChartSeriesItem[]>(() => {
     const totals = new Map<string, { totalCost: number; totalTokens: number }>()
@@ -425,7 +452,7 @@ export default function Costs() {
   const codexbarPreviousDays = previousCodexbarRows(
     codexbarCosts?.daily || [],
     period,
-    new Date(fallbackSessionTimestamp * 1000),
+    calendarNow,
   )
   const codexbarPreviousPeriodCost = codexbarPreviousDays.length ? sumCostRows(codexbarPreviousDays) : null
   const codexbarPreviousDailyAvg = codexbarPreviousPeriodCost !== null ? codexbarPreviousPeriodCost / codexbarPreviousDays.length : null

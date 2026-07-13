@@ -7,6 +7,7 @@ const {
   hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
+  needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../server/services/claudeCodeUsage');
 
@@ -243,6 +244,12 @@ test('refreshes legacy disk caches that predate the Claude Code source', () => {
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { openclawStatus: 'ready' } }), true);
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { claudeCodeStatus: 'ready' } }), false);
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { claudeCodeStatus: 'unavailable' } }), false);
+});
+
+test('refreshes a cache whose period ended before the current local day', () => {
+  const now = new Date(2026, 6, 14, 0, 0, 1);
+  assert.equal(needsCurrentPeriodRefresh({ period: { end: '2026-07-13' } }, now), true);
+  assert.equal(needsCurrentPeriodRefresh({ period: { end: '2026-07-14' } }, now), false);
 });
 
 test('recognizes a zero-usage Claude agent as preservable cached source data', () => {

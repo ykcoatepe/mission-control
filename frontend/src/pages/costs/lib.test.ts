@@ -11,6 +11,8 @@ import {
   hashColor,
   codexbarRowsForPeriod,
   buildCodexbarChartData,
+  calendarRefreshQueryKeys,
+  millisecondsUntilNextCalendarDay,
   previousCodexbarRows,
   sumCostRows,
 } from './lib'
@@ -286,5 +288,17 @@ describe('CodexBar calendar periods', () => {
       total: 0,
       totalTokens: 0,
     }])
+  })
+
+  it('schedules a period-bound refresh at the next local midnight', () => {
+    const now = new Date(2026, 6, 13, 23, 59, 59, 500)
+    expect(millisecondsUntilNextCalendarDay(now)).toBe(500)
+  })
+
+  it('refreshes CodexBar and the active usage period at a calendar boundary', () => {
+    expect(calendarRefreshQueryKeys('7d')).toEqual([
+      ['api', '/api/costs/codexbar'],
+      ['api', '/api/costs?period=7d'],
+    ])
   })
 })

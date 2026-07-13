@@ -120,6 +120,10 @@ function needsClaudeCodeCacheRefresh(value) {
   return !Object.prototype.hasOwnProperty.call(value?.meta || {}, 'claudeCodeStatus');
 }
 
+function needsCurrentPeriodRefresh(value, now = new Date()) {
+  return String(value?.period?.end || '') !== dayKey(now);
+}
+
 function hasClaudeCodeAgent(value) {
   return Boolean(value?.agents?.some((agent) => {
     const key = String(agent?.key || '').toLowerCase();
@@ -319,5 +323,6 @@ module.exports = {
   hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
+  needsCurrentPeriodRefresh,
   sumUsageSummaries,
 };

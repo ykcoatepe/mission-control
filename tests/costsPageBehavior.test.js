@@ -30,6 +30,16 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('setCalendarNow') &&
+  source.includes('millisecondsUntilNextCalendarDay') &&
+  source.includes("window.addEventListener('focus'") &&
+  source.includes('calendarRefreshQueryKeys(period)') &&
+  source.includes('queryClient.invalidateQueries({ queryKey })') &&
+  source.includes('codexbarRowsForPeriod(\n      codexbarCosts?.daily || [],\n      period,\n      calendarNow,'),
+  'Costs page should refresh period bounds and both usage queries after local midnight or focus',
+);
+
+assert.ok(
   source.includes("return { period: 'vs previous month', daily: 'vs previous month avg' }"),
   'CodexBar month labels should describe the calendar-month baseline shared by Agent Split',
 );
