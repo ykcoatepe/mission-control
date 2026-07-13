@@ -131,7 +131,10 @@ Kanban, cron, costs, and supply-chain surfaces after a change.
    curl -s "$MC_BASE_URL/api/costs?period=7d"
    ```
 
-   Check the `meta` object. It should make source availability visible with fields such as `openclawStatus`, `hermesStatus`, `stale`, and `refreshing`.
+   Check the `meta` object. It should make source availability visible with
+   fields such as `openclawStatus`, `hermesStatus`, `claudeCodeStatus`, `stale`,
+   and `refreshing`. When local Claude Code logs are available, `agents` should
+   include a `claude_code` bucket.
 
 10. Verify primary routes and compatibility redirects.
 

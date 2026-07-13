@@ -16,9 +16,9 @@ The current release is a shared-brain operations center:
 - **Brain / Shared Brain** - independent GBrain, Hermes, and OpenClaw state,
   evidence freshness, decision inbox, evidence drawer, local search, and safe
   GBrain triggers from one read-first home surface.
-- **Cost Tracker** - OpenClaw + Hermes usage, budget posture, model/service
-  breakdowns, and fast cached responses that preserve stale-but-useful data when
-  a background usage refresh fails.
+- **Cost Tracker** - OpenClaw + Hermes + Claude Code usage, budget posture,
+  model/service breakdowns, and fast cached responses that preserve
+  stale-but-useful data when a background usage refresh fails.
 - **Cron Jobs + Calendar** - recurring job status, failed/overdue jobs, compact
   model display, manual run/toggle controls, and schedule-oriented scanning.
 - **Hermes Kanban** - profile-backed task board with triage, ready, running,
@@ -165,10 +165,11 @@ documented in [Frontend Conventions](docs/reference-frontend-conventions.md).
 The backend favors bounded reads, cached snapshots, and explicit fallbacks so the
 UI remains useful when a slow runtime source stalls. User-facing health should
 come from evidence-bearing API responses, not from optimistic labels alone.
-Cost responses merge fresh Hermes data with cached OpenClaw data when OpenClaw
-collection fails, and stale responses carry explicit metadata instead of silently
-looking fresh. Chat fallback requests are abortable on client disconnect so a
-closed browser tab does not leave child agent work running in the background.
+Cost responses merge OpenClaw, fresh Hermes, and local Claude Code/CodexBar
+data. If OpenClaw or Claude Code collection fails, the latest detailed data for
+that source is preserved and marked stale instead of silently disappearing.
+Chat fallback requests are abortable on client disconnect so a closed browser
+tab does not leave child agent work running in the background.
 
 ## Validation
 

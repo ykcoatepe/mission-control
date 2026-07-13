@@ -1,7 +1,7 @@
 // Pure helper functions and constants for the Costs page.
 // No hooks, no JSX — safe to import from any context.
 
-import type { TokenServiceData, CodexBarDailyEntry, TokenData } from './types'
+import type { TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem } from './types'
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -297,16 +297,109 @@ export function sumCostRows(rows: Array<{ totalCost?: number; cost?: number }> =
   return rows.reduce((sum, row) => sum + Number(row.totalCost ?? row.cost ?? 0), 0)
 }
 
-export function previousCodexbarRows(days: CodexBarDailyEntry[] = [], period: 'day' | '7d' | 'month') {
-  if (period === 'day') return days.slice(-2, -1)
-  if (period === '7d') return days.slice(-14, -7)
-  return days.slice(-60, -30)
+export function millisecondsUntilNextCalendarDay(now = new Date()) {
+  const nextDay = new Date(now)
+  nextDay.setHours(24, 0, 0, 0)
+  return Math.max(nextDay.getTime() - now.getTime(), 1)
+}
+
+export function calendarRefreshQueryKeys(period: 'day' | '7d' | 'month') {
+  return [
+    ['api', '/api/costs/codexbar'],
+    ['api', `/api/costs?period=${period}`],
+  ] as const
+}
+
+function codexbarDateKey(date: Date) {
+  return date.toLocaleDateString('en-CA', {
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  })
+}
+
+function codexbarPeriodBounds(period: 'day' | '7d' | 'month', now: Date, previous: boolean) {
+  if (period === 'month') {
+    const end = new Date(now)
+    if (previous) end.setDate(0)
+    const start = new Date(end)
+    start.setDate(1)
+    return { start: codexbarDateKey(start), end: codexbarDateKey(end) }
+  }
+
+  const days = period === 'day' ? 1 : period === '7d' ? 7 : 30
+  const end = new Date(now)
+  end.setDate(end.getDate() - (previous ? days : 0))
+  const start = new Date(end)
+  start.setDate(start.getDate() - days + 1)
+  return { start: codexbarDateKey(start), end: codexbarDateKey(end) }
+}
+
+function codexbarRowsInBounds(days: CodexBarDailyEntry[], start: string, end: string) {
+  const rowsByDate = new Map(days.map(day => [day.date, day]))
+  const rows: CodexBarDailyEntry[] = []
+  const cursor = new Date(`${start}T12:00:00`)
+  const finalDate = new Date(`${end}T12:00:00`)
+
+  while (cursor <= finalDate) {
+    const date = codexbarDateKey(cursor)
+    rows.push(rowsByDate.get(date) || {
+      date,
+      totalCost: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      models: [],
+    })
+    cursor.setDate(cursor.getDate() + 1)
+  }
+
+  return rows
+}
+
+export function codexbarRowsForPeriod(
+  days: CodexBarDailyEntry[] = [],
+  period: 'day' | '7d' | 'month',
+  now = new Date(),
+) {
+  const bounds = codexbarPeriodBounds(period, now, false)
+  return codexbarRowsInBounds(days, bounds.start, bounds.end)
+}
+
+export function previousCodexbarRows(
+  days: CodexBarDailyEntry[] = [],
+  period: 'day' | '7d' | 'month',
+  now = new Date(),
+) {
+  const bounds = codexbarPeriodBounds(period, now, true)
+  return codexbarRowsInBounds(days, bounds.start, bounds.end)
+}
+
+export function buildCodexbarChartData(
+  days: CodexBarDailyEntry[] = [],
+  chartSeries: ChartSeriesItem[] = [],
+): ChartDataRow[] {
+  return days.map(day => {
+    const row: Record<string, string | number> = {
+      day: new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' }),
+      fullDate: day.date,
+      total: Number(day.totalCost || 0),
+      totalTokens: Number(day.totalTokens || 0),
+    }
+
+    chartSeries.forEach(series => {
+      const modelNames = series.rawModels?.length ? series.rawModels : [series.model]
+      const matchingModels = (day.models || []).filter(model => modelNames.includes(model.model))
+      row[series.key] = matchingModels.reduce((sum, model) => sum + Number(model.cost || 0), 0)
+      row[`${series.key}__tokens`] = matchingModels.reduce((sum, model) => sum + Number(model.totalTokens || 0), 0)
+    })
+
+    return row as ChartDataRow
+  })
 }
 
 export function comparisonLabels(period: 'day' | '7d' | 'month') {
   if (period === 'day') return { period: 'vs previous day', daily: 'vs previous day' }
   if (period === '7d') return { period: 'vs previous 7 days', daily: 'vs previous 7d avg' }
-  return { period: 'vs previous 30 days', daily: 'vs previous 30d avg' }
+  return { period: 'vs previous month', daily: 'vs previous month avg' }
 }
 
 // ---------------------------------------------------------------------------

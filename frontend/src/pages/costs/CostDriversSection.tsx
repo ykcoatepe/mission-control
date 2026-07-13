@@ -250,7 +250,7 @@ export default function CostDriversSection({
                               <div className={styles.codexbarModelBadgeGroup}>
                                 <span className="macos-badge">#{index + 1}</span>
                                 <span className={m ? `${styles.codexbarModelName} ${styles.codexbarModelNameMobile}` : styles.codexbarModelName}>{model.model}</span>
-                                <span className="macos-badge macos-badge-orange">INVOICE</span>
+                                <span className="macos-badge macos-badge-orange">LOCAL ESTIMATE</span>
                               </div>
                               <div className={styles.codexbarModelShare}>{share.toFixed(1)}% share</div>
                             </div>
@@ -353,7 +353,7 @@ export default function CostDriversSection({
                 </div>
                 <div className={styles.methodologyBody}>
                   {codexbarActive
-                    ? 'This view is backed by CodexBar invoice data from OpenAI — the authoritative source.'
+                    ? 'This view combines local Codex and Claude Code logs through CodexBar. Costs are API-equivalent estimates, not subscription invoices.'
                     : hasAwsData
                     ? 'This view is backed by AWS billing data.'
                     : ledgerActive
