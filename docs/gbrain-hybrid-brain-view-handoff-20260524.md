@@ -1,9 +1,14 @@
 # Handoff: GBrain Hybrid Brain View
 
+> **Historical record.** This handoff predates the current Shared Brain
+> implementation. Counts, branch names, status, and proposed next steps below
+> are snapshots from 2026-05-24, not current operating instructions. Start at
+> the [documentation map](README.md) for the live product.
+
 Date: 2026-05-24
 Origin thread: Hermes workspace / office-hours
 Target project: Mission Control
-Status: Ready for Mission Control implementation planning
+Status at capture: Ready for Mission Control implementation planning; subsequently implemented
 
 ## Implementation Docs
 

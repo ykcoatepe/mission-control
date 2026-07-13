@@ -1,343 +1,179 @@
 # Operator Surfaces Reference
 
-This reference describes the public routes, API endpoints, local commands, and safety behavior of the Mission Control operator surfaces.
+This is the canonical inventory of Mission Control's browser routes, API
+families, and action boundaries. `frontend/src/appRoutes.tsx` and
+`server/routes/` remain the executable source of truth.
 
-## Browser Routes
+## Browser routes
 
-Primary navigation:
+### Primary navigation
 
-| Surface | Route | Purpose |
+| Label | Page title | Route | Module | Data owner |
+| --- | --- | --- | --- | --- |
+| Brain | Shared Brain | `/` | `dashboard` | Operations overview + GBrain actions |
+| Work | Hermes Kanban | `/work` | `workshop` | Hermes Kanban |
+| Automations | Cron Jobs | `/automations` | `cron` | OpenClaw + Hermes cron |
+| Sessions | Conversations | `/sessions` | `chat` | OpenClaw sessions/chat |
+| Explore | GBrain | `/gbrain` | `gbrain` | GBrain runtime and timeline |
+| Usage | Cost Tracker | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
+| Systems | Agent Hub | `/systems` | `agents` | agents, sessions, models |
+
+The title differences for Sessions/Conversations, Usage/Cost Tracker, and
+Systems/Agent Hub are intentional: navigation names describe the operator
+destination while the page retains its established product title.
+
+### Utility and direct routes
+
+| Route | Visibility | Purpose |
 | --- | --- | --- |
-| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
-| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
-| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
-| Sessions | `/sessions` | OpenClaw sessions and handoffs |
-| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
-| Usage | `/usage` | Spend and model mix |
-| Systems | `/systems` | Live agents and system inventory |
+| `/settings` | utility navigation | Setup, routing, heartbeat, budget, import/export |
+| `/councils` | utility navigation | Governance archive and open-approval alarm |
+| `/setup` | direct | First-run configuration |
+| `/workshop` | direct | Local/OpenClaw task board and execution |
+| `/calendar` | direct | Schedule and local calendar entries |
+| `/office` | direct | Digital Office telemetry and triage |
+| `/team` | direct | Team structure and bootstrap suggestions |
+| `/ollama` | direct | Local inference telemetry and optimization |
+| `/diagnostics` | direct | Memory, Docs, Scout, AWS, and Skills tabs |
 
-Utility navigation contains `/settings` (configuration) and `/councils`
-(read-only governance audit). The following Phase 2 source pages remain
-directly reachable but hidden from the sidebar: `/workshop`, `/calendar`,
-`/office`, `/team`, `/ollama`, and `/diagnostics`.
+Direct routes are mounted even when omitted from navigation. Module flags are
+presentation controls, not authorization.
 
-Legacy routes:
+### Compatibility redirects
 
-| Route | Behavior |
+| Old route | Current target |
 | --- | --- |
-| `/kanban` | Redirects to `/work` |
-| `/cron` | Redirects to `/automations` |
-| `/conversations` | Redirects to `/sessions` |
-| `/costs` | Redirects to `/usage` |
-| `/agents` | Redirects to `/systems` |
-| `/memory` | Redirects to `/diagnostics?tab=memory` |
-| `/scout` | Redirects to `/diagnostics?tab=scout` |
-| `/aws` | Redirects to `/diagnostics?tab=aws` |
-| `/skills` | Redirects to `/diagnostics?tab=skills` |
+| `/kanban` | `/work` |
+| `/cron` | `/automations` |
+| `/conversations` | `/sessions` |
+| `/costs` | `/usage` |
+| `/agents` | `/systems` |
+| `/memory` | `/diagnostics?tab=memory` |
+| `/scout` | `/diagnostics?tab=scout` |
+| `/aws` | `/diagnostics?tab=aws` |
+| `/skills` | `/diagnostics?tab=skills` |
 
-`/diagnostics` hides any tab whose module flag is explicitly `false` in
-`mc-config.json`. If the requested `?tab=` is hidden or unknown, it selects the
-first visible tab.
+## Core read models
 
-## Server Runtime
+### Health
 
-Mission Control is an Express server that serves the generated Vite build from
-`frontend/dist`.
+`GET /api/health` and `GET /healthz` return:
 
-| Setting | Default | Effect |
-| --- | --- | --- |
-| `PORT` | `3333` | Local HTTP port for the server and same-origin checks |
-| `MISSION_CONTROL_HOST` | `127.0.0.1` | Bind address for the HTTP listener |
-
-Health endpoints:
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/health` | Returns `{ ok, status, service, generatedAt }` |
-| `GET` | `/healthz` | Same health payload for simple process probes |
-
-Request guardrails:
-
-- `Host` must be one of `localhost`, `127.0.0.1`, or the same values with the
-  active `PORT`.
-- `POST`, `PUT`, `PATCH`, and `DELETE` requests with an `Origin` header must
-  come from `localhost` or `127.0.0.1` on the active `PORT`.
-- `/data/*` is not served statically; it returns `404` JSON.
-- Non-API browser routes fall through to `frontend/dist/index.html` so React
-  Router can handle deep links.
-
-## Operations Overview API
-
-`GET /api/operations/overview` is the read-only contract behind Brain and the
-sidebar status rail. It runs bounded readers for OpenClaw status and sessions,
-cron, Hermes Kanban, and GBrain, then returns a redacted evidence model. The
-endpoint does not run maintenance actions and does not expose raw messages,
-task bodies, tokens, or absolute home paths.
-
-| Field | Meaning |
-| --- | --- |
-| `schemaVersion` | Contract version; currently the string `"1"` |
-| `generatedAt` | Time the aggregate was built |
-| `overall` | Worst independently derived system state plus reason codes |
-| `systems` | Independent `gbrain`, `hermes`, and `openclaw` state, freshness, metrics, caveats, and evidence |
-| `attention` | Warning, critical, and unavailable items requiring operator review |
-| `evidence` | Redacted evidence ordered by observation time |
-| `capabilities` | Safe GBrain action metadata; execution remains on `/api/gbrain/actions` |
-
-System state (`healthy`, `warning`, `critical`, `inactive`, or `unavailable`)
-and evidence freshness (`fresh`, `stale`, `unknown`, or `unavailable`) are
-independent signals. Mission Control never averages the three systems into a
-false green. A GBrain trust score of `100/100` does not hide active caveats,
-and stale source evidence keeps a visible warning and attention item.
-
-## GBrain API
-
-GBrain probe endpoints are read-only. `GET /api/gbrain/actions` exposes the
-safe action catalog, and `POST /api/gbrain/actions` is a bounded local
-maintenance surface with an explicit action allowlist.
-
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/gbrain/overview` | Returns the cockpit, nodes, edges, caveats, and live probe payloads used by `/gbrain` |
-| `GET` | `/api/gbrain/health` | Runs `gbrain health --json` and `gbrain jobs stats --json`, then normalizes health, embeddings, and queue counters |
-| `GET` | `/api/gbrain/sources` | Runs `gbrain sources list --json`, falling back to `gbrain sources list` text parsing |
-| `GET` | `/api/gbrain/version` | Runs `gbrain --version` and normalizes the active CLI version |
-| `GET` | `/api/gbrain/integration-health` | Runs live GBrain tool/feature/source probes and reports Hermes/OpenClaw integration readiness |
-| `GET` | `/api/gbrain/actions` | Returns the allowlisted action catalog rendered by `/gbrain` |
-| `POST` | `/api/gbrain/actions` | Runs one allowlisted local maintenance action and returns redacted command evidence |
-
-Runtime details:
-
-- Command timeout: `7000` ms.
-- PATH includes `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, then the process PATH.
-- Error messages redact bearer tokens, `sk-` API keys, and `/Users/<name>` paths.
-- Live failure returns JSON with `ok: false`, `mode: live-read-only`, `status: unavailable`, `checkedAt`, and a redacted `error`.
-- Read probes prove current health, source, queue, and bridge state only. Repair
-  proof comes from the allowlisted action response and the follow-up overview
-  refresh.
-
-Supported action payloads for `POST /api/gbrain/actions`:
-
-| Action id | Class | Confirmation | Effect |
-| --- | --- | --- | --- |
-| `doctor-fast` | R0 | No | Fast read-only doctor check (`Run System Check` in Brain) |
-| `preview-sync` | R0 | No | Dry-run all registered local sources |
-| `sync-sources` | W1 | Yes | Sync local sources without remote pulls, then embed stale chunks |
-| `retry-failed-sync` | W1 | Yes | Retry failed source files, then embed stale chunks |
-| `embed-stale` | W1 | Yes | Refresh chunks already marked stale |
-| `embed-missing` | W1 | Yes | Backfill missing embeddings with the recent-priority fast path |
-| `check-resolvable` | R0 | No | Check skill-tree routing without fixes |
-| `storage-status` | R0 | No | Inspect local GBrain storage tier status |
-
-Safety policy:
-
-| Class | Brain behavior | Scope |
-| --- | --- | --- |
-| R0 | Runs directly | Diagnostic or preview-only local reads |
-| W1 | Requires a scoped confirmation dialog | Allowlisted local maintenance or repair |
-| W2 | Not rendered and cannot start | Destructive or materially broader writes |
-
-There are exactly eight supported action ids. Brain treats `Run System Check`
-as a UI label for `doctor-fast`, not a ninth action. An action response alone
-is not proof of repair: Brain reports `verified` only after a refreshed
-Operations overview has a newer GBrain `observedAt` and `fresh` freshness.
-Otherwise it reports that fresh proof is pending or unavailable.
-
-Action safety constraints:
-
-- No arbitrary command or source id is accepted from the browser.
-- Only one GBrain action may run at a time from Mission Control.
-- Action timeout is action-specific: 30000 ms for fast diagnostics, 60000 ms
-  for previews and routing checks, 120000 ms for normal maintenance or repair,
-  and 1800000 ms for `embed-missing`.
-- Long repairs use a soft timeout first: Mission Control sends SIGINT, reports
-  `status: timed-out` with `pending: true`, and keeps the action slot busy until
-  the process exits or the hard-kill delay expires.
-- Action output uses the same token, key, and home-path redaction as probes.
-
-The overview payload has these top-level fields:
-
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `ok` | boolean | Whether the overview model was built |
-| `mode` | string | `live-read-only` when live probes were attempted, otherwise `read-only-fixture` |
-| `refreshedAt` | ISO string | Live probe time or saved audit timestamp |
-| `trust` | object | Global label, status, score, proof source, and timestamp |
-| `cockpit` | object | Metric cards keyed by health, embeddings, queue, autopilot, bridge, and caveats |
-| `nodes` | array | Brain map nodes with proof, metrics, risks, and next safe action |
-| `edges` | array | Relationships between nodes and proof node ids |
-| `caveats` | array | Known caveats that do not invalidate the whole surface |
-| `integrationContract` | object | Shared-brain contract: GBrain is the cross-system brain while Hermes and OpenClaw keep their local memory systems |
-| `integrationHealth` | object | Live matrix for GBrain core tools, feature gaps, MCP config, runtime contract install, source freshness, and read/write smoke proof |
-| `live` | object | Raw normalized live health and source probe results |
-
-Node status values are `healthy`, `warning`, `critical`, and `inactive`.
-
-Memory integration boundary:
-
-- GBrain is the shared machine brain for cross-system recall, source search,
-  graph context, and curated durable knowledge.
-- Hermes profile memory and OpenClaw native memory remain their local/private
-  runtime memory systems.
-- Only curated decisions, playbooks, handoffs, and verified task outcomes should
-  be promoted into GBrain.
-- Raw transcripts, secrets, credentials, and untagged private memory must not be
-  mirrored into GBrain.
-
-Core tool contract:
-
-- Hermes and OpenClaw should treat `get_page`, `put_page`, `query`, `recall`,
-  `sources`, and `health` as the baseline GBrain shared-brain surface.
-- Mission Control verifies this with `gbrain --tools-json`; the canonical MCP
-  tool ids are `get_page`, `put_page`, `query`, `recall`,
-  `sources_list`, and `get_health`.
-- `think` is provider-backed synthesis, not a baseline read capability.
-  Mission Control shows a separate Think runtime warning until GBrain has an
-  active `chat_model`, `models.think`, `GBRAIN_MODEL`, or provider proxy base
-  URL plus live health proof. Tool discovery alone is not enough to call
-  `think` operational.
-- Mission Control verifies runtime guidance separately, so MCP connectivity is
-  not confused with Hermes/OpenClaw actually being instructed to use GBrain for
-  shared recall/search/writeback when appropriate.
-- `put_page` remains scoped to curated cross-system memory. It is not a raw
-  transcript or credential mirror.
-- `gbrain features --json` recommendations with id `no-integrations` are shown
-  as optional external recipes. They remain visible, but they do not downgrade
-  Hermes/OpenClaw core shared-brain health.
-
-## Hermes Kanban API
-
-Mission Control shells out to:
-
-```bash
-hermes --profile PROFILE kanban ...
+```json
+{"ok":true,"status":"ok","service":"mission-control","generatedAt":"..."}
 ```
 
-The profile is selected from `HERMES_PROFILE`, `mcConfig.hermes.profile`, or `hmudur`.
+### Operations overview
 
-| Method | Path | Description |
+`GET /api/operations/overview` is Brain's aggregate contract. Schema version
+`1` contains independent `systems.openclaw`, `systems.hermes`, and
+`systems.gbrain` objects plus `overall`, `attention`, `evidence`, and
+`capabilities`. Each reader is bounded and failure-isolated. The response
+redacts credentials, raw content, and absolute home paths.
+
+State, freshness, and trust are independent. A source can report high trust and
+still surface a caveat or stale evidence.
+
+### GBrain
+
+| Method | Endpoint | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/hermes-kanban` | Lists all board columns, stats, assignees, and summary counts |
-| `GET` | `/api/hermes-kanban/tasks/:taskId` | Shows one task with normalized events, comments, and runs |
-| `POST` | `/api/hermes-kanban/actions` | Runs one bounded Kanban action |
+| GET | `/api/gbrain/overview` | Normalized GBrain overview and saved/live proof |
+| GET | `/api/gbrain/health` | Live health and job statistics |
+| GET | `/api/gbrain/sources` | Source inventory |
+| GET | `/api/gbrain/version` | Runtime/version probe |
+| GET | `/api/gbrain/integration-health` | Bridge and integration proof |
+| GET | `/api/gbrain/actions` | Allowlisted action catalog |
+| POST | `/api/gbrain/actions` | Execute one allowlisted action |
+| GET | `/api/gbrain/timeline?limit=N` | Most recent evidence entries, bounded by `limit` |
 
-Supported action payloads for `POST /api/hermes-kanban/actions`:
+The health reader first uses the supported call interface and job statistics,
+with `gbrain health --json` as a compatibility fallback.
 
-| Action | Required fields | Optional fields | CLI effect |
-| --- | --- | --- | --- |
-| `create` | `title` | `body`, `assignee`, `workspace`, `tenant`, `priority`, `triage`, `skills` | `kanban create ... --created-by mission-control --json` |
-| `assign` | `taskId`, `assignee` | none | `kanban assign TASK_ID ASSIGNEE` |
-| `comment` | `taskId`, `text` | none | `kanban comment --author mission-control TASK_ID TEXT` |
-| `block` | `taskId` | `reason` | `kanban block TASK_ID REASON` |
-| `unblock` | `taskId` | none | `kanban unblock TASK_ID` |
-| `archive` | `taskId` | none | `kanban archive TASK_ID` |
-| `dispatch` | none | none | `kanban dispatch --max 1 --json` |
+The action catalog contains exactly:
 
-Safety constraints:
-
-- `taskId`, `title`, `assignee`, `workspace`, `tenant`, and `skill` values cannot start with `-`.
-- The action timeout is normally `15000` ms.
-- `dispatch` uses a `30000` ms timeout.
-
-## Cron API
-
-The cron surface merges OpenClaw jobs and Hermes profile jobs into one API shape.
-
-| Method | Path | Description |
+| ID | Safety | Confirmation |
 | --- | --- | --- |
-| `GET` | `/api/cron` | Returns cached or live cron jobs |
-| `POST` | `/api/cron/:id/toggle` | Enables or disables OpenClaw or Hermes jobs |
-| `POST` | `/api/cron/:id/run` | Runs an OpenClaw job |
-| `POST` | `/api/cron/create` | Creates an OpenClaw cron job |
-| `DELETE` | `/api/cron/:id` | Deletes an OpenClaw job |
-| `PATCH` | `/api/cron/:id/model` | Updates an OpenClaw model/thinking setting or a Hermes model setting |
+| `doctor-fast` | R0 diagnostic | no |
+| `preview-sync` | R0 preview | no |
+| `storage-status` | R0 diagnostic | no |
+| `sync-sources` | W1 maintenance | yes |
+| `retry-failed-sync` | W1 repair | yes |
+| `embed-stale` | W1 maintenance | yes |
+| `embed-missing` | W1 maintenance | yes |
+| `check-resolvable` | R0 diagnostic | no |
 
-Job ids are normalized as:
+Only one GBrain action runs at once. Arbitrary action names are rejected. An
+HTTP success means the action finished; the UI reports it as verified only
+after newer, fresh evidence is observed.
 
-```text
-openclaw:<sourceId>
-hermes:<sourceId>
-```
+## API families
 
-If the prefix is missing, Mission Control treats the job as OpenClaw unless a scheduler hint is provided.
+The tables below group the public application API. Endpoint path parameters use
+`:name` notation.
 
-Hermes action matrix:
+### Work, automations, and sessions
 
-| Action | Supported |
-| --- | --- |
-| Toggle enabled state | Yes |
-| Update model | Yes |
-| Update thinking | No |
-| Run now | No |
-| Delete | No |
-
-Hermes model aliases:
-
-| Input | Stored provider/model/base URL |
-| --- | --- |
-| `ollama/qwen3.6:35b-a3b-nvfp4` | `custom`, `qwen3.6:35b-a3b-nvfp4`, `http://127.0.0.1:11434/v1` |
-| `custom/qwen3.6:35b-a3b-nvfp4` | `custom`, `qwen3.6:35b-a3b-nvfp4`, `http://127.0.0.1:11434/v1` |
-| `openai/gpt-5.5` | `openai-codex`, `openai/gpt-5.5`, no base URL |
-| `openai-codex/openai/gpt-5.5` | `openai-codex`, `openai/gpt-5.5`, no base URL |
-
-## Costs API
-
-| Method | Path | Description |
+| Family | Endpoints | Notes |
 | --- | --- | --- |
-| `GET` | `/api/costs?period=day|7d|month` | Returns combined OpenClaw, Hermes, and Claude Code usage |
-| `GET` | `/api/costs/codexbar` | Returns merged local Codex + Claude CodexBar usage when available |
+| Hermes Kanban | `GET /api/hermes-kanban`, `GET /api/hermes-kanban/tasks/:taskId`, `POST /api/hermes-kanban/actions` | Named actions and flag-safe argument validation |
+| Cron | `GET /api/cron`, `POST /api/cron/create`, `POST /api/cron/:id/toggle`, `POST /api/cron/:id/run`, `PATCH /api/cron/:id/model`, `DELETE /api/cron/:id` | Hermes jobs cannot run/delete; toggle/model are allowed |
+| Calendar | `GET /api/calendar`, `POST /api/calendar`, `PATCH /api/calendar/:id`, `POST /api/calendar/sync-cron` | Combines schedule data with local entries |
+| Tasks | `GET /api/activity`, `GET /api/tasks`, `GET /api/tasks/board`, `GET /api/tasks/:taskId`, `POST /api/tasks`, `POST /api/tasks/add`, `POST /api/tasks/assistant`, `PATCH /api/tasks/:taskId`, `DELETE /api/tasks/:taskId`, `POST /api/tasks/:taskId/execute` | Execute dispatches real OpenClaw work; list/board may reconcile and persist state |
+| Sessions | `GET /api/sessions`, `GET /api/sessions/:sessionKey/history`, `POST /api/sessions/:sessionKey/send`, `DELETE /api/sessions/:key/close` | `close` hides locally; it does not terminate OpenClaw |
+| Chat | `POST /api/chat` | Gateway/SSE proxy with abort handling |
 
-Cost collection behavior:
+### Usage, systems, and models
 
-- OpenClaw usage runs through `scripts/openclaw-usage-summary.js`.
-- Default OpenClaw timeout is `120000` ms and can be overridden with `MC_OPENCLAW_USAGE_TIMEOUT_MS`.
-- Hermes usage reads the active profile SQLite state database.
-- Claude Code usage is read from local logs through `codexbar cost --provider claude`; displayed costs are API-equivalent estimates, not subscription invoices.
-- Detailed results are cached in `MC_COSTS_CACHE_DIR` or the OS temp directory.
-- If a refresh is already running, the API returns the best cached result with `meta.refreshing: true`.
-- If OpenClaw is unavailable but previous detailed OpenClaw data exists, Mission Control preserves it and marks `meta.stale: true`.
-- If Claude Code collection is unavailable but previous detailed Claude Code data exists, Mission Control preserves that bucket and marks it stale.
+| Family | Endpoints | Notes |
+| --- | --- | --- |
+| Status | `GET /api/status` | Dashboard/runtime status snapshot |
+| Usage | `GET /api/costs?period=7d`, `GET /api/costs/codexbar` | Periods are normalized; metadata reports source readiness, stale state, and refresh state |
+| Agents | `GET /api/agents`, `POST /api/agents/create`, `POST /api/agents/:agentId/model` | Registry, live sessions, custom agents, model override |
+| Team/Office | `GET /api/team/structure`, `POST /api/team/structure/bootstrap`, `GET /api/office/telemetry` | Bootstrap produces suggested structure; office is live telemetry |
+| Models | `GET /api/models`, `GET /api/model`, `POST /api/model` | Catalog and OpenClaw default model |
+| Ollama | `GET /api/ollama/telemetry`, `GET /api/ollama/telemetry/history`, `GET /api/ollama/telemetry/models`, `POST /api/ollama/optimization` | Local model and memory telemetry |
 
-Cost normalization rules:
+Usage merges included/local consumption and estimated spend from multiple
+sources. `meta.openclawStatus`, `meta.hermesStatus`, `meta.claudeCodeStatus`,
+`meta.stale`, and `meta.refreshing` explain source reliability. A stale cached
+source is not equivalent to zero usage.
 
-- Local models and subscription-included GPT-5.5 usage are not treated as billable spend.
-- Implausible micro-cost cloud rows are normalized to included spend.
-- Unknown zero-cost cloud models remain `unknown`, not estimated spend.
-- Estimated daily spend is only applied to rows with tokens for that day.
+### Settings and diagnostics
 
-## CI Gates
+| Family | Endpoints | Notes |
+| --- | --- | --- |
+| Settings | `GET /api/config`, `GET|POST /api/setup`, `GET /api/settings`, `POST /api/settings/budget`, `GET|POST /api/settings/model-routing`, `GET|POST /api/settings/heartbeat`, `GET /api/settings/export`, `POST /api/settings/import` | Public config strips known gateway/Notion/Scout secrets; import accepts one config file |
+| Memory | `GET /api/memory` | Local memory projection |
+| Docs | `GET /api/docs`, `POST /api/docs/upload`, `GET /cron-search` | Upload limit is 20 files; settings imports and document uploads have separate temporary paths |
+| Skills | `GET /api/skills`, `POST /api/skills/:name/toggle`, `POST /api/skills/:name/install`, `POST /api/skills/:name/uninstall` | Install/uninstall currently acknowledge but do not implement package changes |
+| Scout | `GET /api/scout`, `GET /api/scout/status`, `POST /api/scout/scan`, `POST /api/scout/deploy`, `POST /api/scout/dismiss` | Optional Brave Search-backed workflow |
+| AWS | `GET /api/aws/services`, `GET /api/aws/bedrock-models`, `POST /api/aws/generate-image`, `GET /api/aws/image/:id`, `GET /api/aws/gallery`, `GET /api/aws/s3-image/:key`, `GET /api/aws/costs` | Optional Bedrock/S3 integration |
 
-Two workflows run on every PR and push to `master`:
+### Governance and operator actions
 
-- `.github/workflows/ci.yml` — `backend-tests` (root `npm test`, the full
-  `tests/` suite via `node --test`) and `frontend-checks` (`npm run lint`,
-  then `npm run build` which type-checks with `tsc -b` and builds with Vite).
-- `.github/workflows/supply-chain.yml` — the npm incident gate described below.
+| Family | Endpoints | Notes |
+| --- | --- | --- |
+| Councils | `GET /api/councils/summary`, `GET /api/councils/decisions`, `GET /api/councils/agents`, `GET /api/councils/governance/scorecard`, `GET /api/councils/decisions/:decisionId/timeline`, `POST /api/councils/decisions/:decisionId/action` | Action returns `410` unless explicitly enabled |
+| Ops | `GET /api/ops/events`, `POST /api/ops/openclaw/self-heal` | Local event history and a real OpenClaw recovery action |
+| Quick | `POST /api/heartbeat/run`, `POST /api/quick/emails`, `POST /api/quick/schedule` | OpenClaw gateway actions |
 
-### Supply-chain gate
+## Request boundary
 
-`scripts/check-npm-supply-chain.mjs`:
+The server binds to loopback by default and only accepts localhost Host values.
+Its mutation Origin check uses a local-origin prefix test, not exact origin
+parsing, so it is defense in depth rather than an authentication or robust CSRF
+boundary. Hidden navigation, module flags, and disabled buttons do not secure
+endpoints; keep the service private and treat every POST/PATCH/DELETE as a real
+local side effect.
 
-- Fetches `NPM_INCIDENT_ADVISORY_URL`, defaulting to the Snyk TanStack/Mini Shai-Hulud advisory page.
-- Extracts exact npm package and version indicators from embedded Nuxt JavaScript.
-- Scans `package-lock.json`, `pnpm-lock.yaml`, and `yarn.lock`.
-- Fails only on exact malicious package/version matches.
-- Fails closed when no npm indicators can be parsed.
-
-The supply-chain workflow also runs:
-
-```bash
-npm ci --ignore-scripts
-(cd frontend && npm ci --ignore-scripts)
-npm audit signatures
-(cd frontend && npm audit signatures)
-```
+`/data/*` is deliberately blocked. The SPA fallback serves `index.html` for any
+non-API route, so an HTTP 200 proves route reachability but not successful React
+rendering.
 
 ## Related
 
-- [First Operator Check](tutorial-first-operator-check.md)
+- [Configuration and Runtime Reference](reference-configuration.md)
 - [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md)
-- [How to Update the Local Live Build](how-to-update-local-live-build.md)
+- [System Architecture](explanation-system-architecture.md)
 - [Read-Only Evidence Design](explanation-read-only-evidence-design.md)
-- [Frontend Conventions](reference-frontend-conventions.md)
-- [GBrain Hybrid Brain View Handoff](gbrain-hybrid-brain-view-handoff-20260524.md)
