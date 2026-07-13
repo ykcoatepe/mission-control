@@ -141,6 +141,10 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
   const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
   assert.match(routeSource, /codexbar cost --format json --provider claude --days 70/);
   assert.match(routeSource, /codexbar cost --format json --provider both --days 70/);
+  assert.match(
+    routeSource,
+    /codexbar cost --format json --provider both --days 70', \{\s*timeout: 30000,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
+  );
   assert.doesNotMatch(routeSource, /req\.query[^\n]*provider/);
 });
 

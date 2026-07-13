@@ -786,7 +786,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
   router.get('/api/costs/codexbar', async (req, res) => {
     try {
-      const { stdout } = await execPromise('codexbar cost --format json --provider both --days 70', { timeout: 30000 });
+      const { stdout } = await execPromise('codexbar cost --format json --provider both --days 70', {
+        timeout: 30000,
+        maxBuffer: 20 * 1024 * 1024,
+        env: process.env,
+      });
       const data = JSON.parse(stdout);
       const raw = mergeCodexBarReports(data);
       if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
