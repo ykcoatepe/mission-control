@@ -41,19 +41,26 @@ Build first because Express serves `frontend/dist`:
 
 ```bash
 npm run build
+```
+
+Then choose one start command and keep that first terminal running:
+
+```bash
+# default instance
 npm start
-```
 
-Use another port for an isolated instance:
-
-```bash
+# or an isolated instance
 PORT=3499 npm start
-export MC_BASE_URL=http://127.0.0.1:3499
 ```
 
-Otherwise:
+Open a second terminal at the repository root for the remaining checks. Point
+it at the instance you started:
 
 ```bash
+# isolated instance
+export MC_BASE_URL=http://127.0.0.1:3499
+
+# or the default instance
 export MC_BASE_URL=http://127.0.0.1:3333
 ```
 
