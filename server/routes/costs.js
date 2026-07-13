@@ -14,6 +14,66 @@ const {
   sumUsageSummaries,
 } = require('../services/claudeCodeUsage');
 
+function cachedUsageAgent(previous, agent) {
+  if (!agent?.label) return null;
+  const prefix = `${agent.label} / `;
+  const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith(prefix));
+  const modelKeys = prefixedModelKeys.map((key) => key.replace(prefix, ''));
+  const dailyByModel = (previous.dailyByModel || []).map((row) => {
+    const out = { date: row.date, totalCost: 0, apiEquivalentCost: 0, totalTokens: 0 };
+    prefixedModelKeys.forEach((prefixedKey, index) => {
+      const key = modelKeys[index];
+      const cost = Number(row[prefixedKey] || 0);
+      const tokens = Number(row[`${prefixedKey}_tokens`] || 0);
+      out[key] = cost;
+      out[`${key}_tokens`] = tokens;
+      out[`${key}_input`] = Number(row[`${prefixedKey}_input`] || 0);
+      out[`${key}_output`] = Number(row[`${prefixedKey}_output`] || 0);
+      out[`${key}_reasoning`] = Number(row[`${prefixedKey}_reasoning`] || 0);
+      out[`${key}_cacheRead`] = Number(row[`${prefixedKey}_cacheRead`] || 0);
+      out[`${key}_cacheWrite`] = Number(row[`${prefixedKey}_cacheWrite`] || 0);
+      out[`${key}_apiEquivalentUsd`] = row[`${prefixedKey}_apiEquivalentUsd`] ?? null;
+      out[`${key}_apiEquivalentStatus`] = row[`${prefixedKey}_apiEquivalentStatus`] || 'unavailable';
+      out[`${key}_costSource`] = row[`${prefixedKey}_costSource`] || 'cached';
+      out.totalCost += cost;
+      if (out[`${key}_apiEquivalentUsd`] !== null) {
+        out.apiEquivalentCost += Number(out[`${key}_apiEquivalentUsd`] || 0);
+      }
+      out.totalTokens += tokens;
+    });
+    return out;
+  });
+  const daily = dailyByModel.map((row) => ({
+    date: row.date,
+    cost: row.totalCost,
+    totalCost: row.totalCost,
+    tokens: row.totalTokens,
+    totalTokens: row.totalTokens,
+    input: 0,
+    output: 0,
+    reasoning: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    apiEquivalentCost: row.apiEquivalentCost,
+  }));
+  const byService = (previous.byService || [])
+    .filter((item) => item.agent === agent.label || String(item.name || '').startsWith(prefix))
+    .map((item) => ({ ...item, name: String(item.name || '').replace(prefix, '') }));
+
+  return {
+    key: agent.key,
+    label: agent.label,
+    accent: agent.accent,
+    source: `${agent.source || 'openclaw.usage'}.cached`,
+    status: 'stale',
+    summary: agent.summary || {},
+    daily,
+    dailyByModel,
+    modelKeys,
+    byService,
+  };
+}
+
 function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const router = express.Router();
   const execPromise = util.promisify(exec);
@@ -188,7 +248,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           SUM(COALESCE(cache_read_tokens, 0)) AS cacheRead,
           SUM(COALESCE(cache_write_tokens, 0)) AS cacheWrite,
           SUM(COALESCE(reasoning_tokens, 0)) AS reasoning,
-          SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) + COALESCE(reasoning_tokens, 0)) AS tokens,
+          SUM(COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0) + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0)) AS tokens,
           SUM(COALESCE(actual_cost_usd, estimated_cost_usd, 0)) AS cost,
           GROUP_CONCAT(DISTINCT COALESCE(NULLIF(cost_status, ''), 'unknown')) AS statuses,
           GROUP_CONCAT(DISTINCT COALESCE(NULLIF(billing_mode, ''), 'unknown')) AS billingModes
@@ -205,9 +265,26 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         const tokens = Number(row.tokens || 0);
         const cost = Number(row.cost || 0);
         const sessions = Number(row.sessions || 0);
-        const existing = byModel.get(name) || { name, cost: 0, tokens: 0, sessions: 0, costStatus: row.statuses || 'unknown', billingModes: row.billingModes || 'unknown' };
+        const existing = byModel.get(name) || {
+          name,
+          cost: 0,
+          tokens: 0,
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          reasoning: 0,
+          sessions: 0,
+          costStatus: row.statuses || 'unknown',
+          billingModes: row.billingModes || 'unknown',
+        };
         existing.cost += cost;
         existing.tokens += tokens;
+        existing.input += Number(row.input || 0);
+        existing.output += Number(row.output || 0);
+        existing.cacheRead += Number(row.cacheRead || 0);
+        existing.cacheWrite += Number(row.cacheWrite || 0);
+        existing.reasoning += Number(row.reasoning || 0);
         existing.sessions += sessions;
         byModel.set(name, existing);
 
@@ -219,7 +296,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         day.cacheRead += Number(row.cacheRead || 0);
         day.cacheWrite += Number(row.cacheWrite || 0);
         day.reasoning += Number(row.reasoning || 0);
-        day.models[name] = { cost, tokens };
+        const dayModel = day.models[name] || { cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
+        dayModel.cost += cost;
+        dayModel.tokens += tokens;
+        dayModel.input += Number(row.input || 0);
+        dayModel.output += Number(row.output || 0);
+        dayModel.cacheRead += Number(row.cacheRead || 0);
+        dayModel.cacheWrite += Number(row.cacheWrite || 0);
+        dayModel.reasoning += Number(row.reasoning || 0);
+        day.models[name] = dayModel;
         byDay.set(row.date, day);
       }
 
@@ -244,6 +329,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           const b = day.models[svc.name] || { cost: 0, tokens: 0 };
           out[svc.name] = b.cost || 0;
           out[`${svc.name}_tokens`] = b.tokens || 0;
+          out[`${svc.name}_input`] = b.input || 0;
+          out[`${svc.name}_output`] = b.output || 0;
+          out[`${svc.name}_cacheRead`] = b.cacheRead || 0;
+          out[`${svc.name}_cacheWrite`] = b.cacheWrite || 0;
+          out[`${svc.name}_reasoning`] = b.reasoning || 0;
           out[`${svc.name}_costSource`] = svc.costSource;
         }
         return out;
@@ -263,7 +353,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         periodRange: { start: r.startKey, end: r.endKey },
         summary: {
           periodUsd,
-          previousPeriodUsd: 0,
+          previousPeriodUsd: null,
           periodTokens,
           todayUsd: todayRow.cost || 0,
           yesterdayUsd: yesterdayRow.cost || 0,
@@ -299,6 +389,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         const name = `${prefix}${svc.name}`;
         out[name] = Number(row[svc.name] || 0);
         out[`${name}_tokens`] = Number(row[`${svc.name}_tokens`] || 0);
+        out[`${name}_input`] = Number(row[`${svc.name}_input`] || 0);
+        out[`${name}_output`] = Number(row[`${svc.name}_output`] || 0);
+        out[`${name}_cacheRead`] = Number(row[`${svc.name}_cacheRead`] || 0);
+        out[`${name}_cacheWrite`] = Number(row[`${svc.name}_cacheWrite`] || 0);
+        out[`${name}_reasoning`] = Number(row[`${svc.name}_reasoning`] || 0);
+        out[`${name}_apiEquivalentUsd`] = row[`${svc.name}_apiEquivalentUsd`] ?? null;
+        out[`${name}_apiEquivalentStatus`] = row[`${svc.name}_apiEquivalentStatus`] || 'unavailable';
         out[`${name}_costSource`] = row[`${svc.name}_costSource`] || svc.costSource || 'unknown';
       });
       return out;
@@ -352,7 +449,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       periodRange: { start: r.startKey, end: r.endKey },
       summary: {
         periodUsd: 0,
-        previousPeriodUsd: 0,
+        previousPeriodUsd: null,
         periodTokens: 0,
         todayUsd: 0,
         yesterdayUsd: 0,
@@ -386,7 +483,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     sources.forEach((src) => (src.daily || []).forEach((day) => keySet.add(day.date)));
     const keys = Array.from(keySet).sort();
     const daily = keys.map((date) => {
-      const out = { date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+      const out = { date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0, input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0 };
       sources.forEach((src) => {
         const row = (src.daily || []).find((day) => day.date === date) || {};
         out.cost += Number(row.cost || row.totalCost || 0);
@@ -395,6 +492,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         out.totalTokens = out.tokens;
         out.input += Number(row.input || 0);
         out.output += Number(row.output || 0);
+        out.reasoning += Number(row.reasoning || 0);
         out.cacheRead += Number(row.cacheRead || 0);
         out.cacheWrite += Number(row.cacheWrite || 0);
       });
@@ -412,13 +510,31 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         (src.modelKeys || []).forEach((key) => {
           out[key] = Number(row[key] || 0);
           out[`${key}_tokens`] = Number(row[`${key}_tokens`] || 0);
+          out[`${key}_input`] = Number(row[`${key}_input`] || 0);
+          out[`${key}_output`] = Number(row[`${key}_output`] || 0);
+          out[`${key}_reasoning`] = Number(row[`${key}_reasoning`] || 0);
+          out[`${key}_cacheRead`] = Number(row[`${key}_cacheRead`] || 0);
+          out[`${key}_cacheWrite`] = Number(row[`${key}_cacheWrite`] || 0);
+          out[`${key}_apiEquivalentUsd`] = row[`${key}_apiEquivalentUsd`] ?? null;
+          out[`${key}_apiEquivalentStatus`] = row[`${key}_apiEquivalentStatus`] || 'unavailable';
           out[`${key}_costSource`] = row[`${key}_costSource`] || 'unknown';
         });
       });
       return out;
     });
 
-    const sumSummary = (field) => sources.reduce((sum, src) => sum + Number(src.summary?.[field] || 0), 0);
+    const rawSummaryValues = (field) => sources.map((src) => src.summary?.[field]);
+    const summaryValues = (field) => rawSummaryValues(field)
+      .filter((value) => value !== null && value !== undefined);
+    const sumSummary = (field) => summaryValues(field)
+      .reduce((sum, value) => sum + Number(value || 0), 0);
+    const sumOptionalSummary = (field) => {
+      const rawValues = rawSummaryValues(field);
+      const values = summaryValues(field);
+      return rawValues.length > 0 && values.length === rawValues.length
+        ? values.reduce((sum, value) => sum + Number(value || 0), 0)
+        : null;
+    };
     const agents = sources.map((src) => src.agent).filter(Boolean);
 
     return {
@@ -427,7 +543,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       periodRange: { start: keys[0] || null, end: keys[keys.length - 1] || null },
       summary: {
         periodUsd: sumSummary('periodUsd'),
-        previousPeriodUsd: sumSummary('previousPeriodUsd'),
+        previousPeriodUsd: sumOptionalSummary('previousPeriodUsd'),
         periodTokens: sumSummary('periodTokens'),
         todayUsd: sumSummary('todayUsd'),
         yesterdayUsd: sumSummary('yesterdayUsd'),
@@ -539,54 +655,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return key === 'claude_code' || source.startsWith('claude-code.');
   }
 
-  function cachedUsageAgent(previous, agent) {
-    if (!agent?.label) return null;
-    const prefix = `${agent.label} / `;
-    const prefixedModelKeys = (previous.modelKeys || []).filter((key) => key.startsWith(prefix));
-    const modelKeys = prefixedModelKeys.map((key) => key.replace(prefix, ''));
-    const dailyByModel = (previous.dailyByModel || []).map((row) => {
-      const out = { date: row.date, totalCost: 0, totalTokens: 0 };
-      prefixedModelKeys.forEach((prefixedKey, index) => {
-        const key = modelKeys[index];
-        const cost = Number(row[prefixedKey] || 0);
-        const tokens = Number(row[`${prefixedKey}_tokens`] || 0);
-        out[key] = cost;
-        out[`${key}_tokens`] = tokens;
-        out[`${key}_costSource`] = row[`${prefixedKey}_costSource`] || 'cached';
-        out.totalCost += cost;
-        out.totalTokens += tokens;
-      });
-      return out;
-    });
-    const daily = dailyByModel.map((row) => ({
-      date: row.date,
-      cost: row.totalCost,
-      totalCost: row.totalCost,
-      tokens: row.totalTokens,
-      totalTokens: row.totalTokens,
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    }));
-    const byService = (previous.byService || [])
-      .filter((item) => item.agent === agent.label || String(item.name || '').startsWith(prefix))
-      .map((item) => ({ ...item, name: String(item.name || '').replace(prefix, '') }));
-
-    return {
-      key: agent.key,
-      label: agent.label,
-      accent: agent.accent,
-      source: `${agent.source || 'openclaw.usage'}.cached`,
-      status: 'stale',
-      summary: agent.summary || {},
-      daily,
-      dailyByModel,
-      modelKeys,
-      byService,
-    };
-  }
-
   function cachedFilteredUsage(previous, period, predicate, source, note) {
     const agents = (previous?.agents || [])
       .filter(predicate)
@@ -667,6 +735,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       byService: normalizedUsage.byService || [],
       agents: normalizedUsage.agents || [],
       costReliability: normalizedUsage.costReliability,
+      apiEquivalentReliability: normalizedUsage.apiEquivalentReliability,
       budget: mcConfig.budget || { monthly: 0 },
     }, meta);
   }
@@ -840,4 +909,5 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
 module.exports = {
   buildCostsRouter,
+  cachedUsageAgent,
 };

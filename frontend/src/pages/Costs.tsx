@@ -39,7 +39,6 @@ import {
   millisecondsUntilNextCalendarDay,
   codexbarRowsForPeriod,
   buildCodexbarChartData,
-  previousCodexbarRows,
   comparisonLabels,
   readNumericField,
   hasUsableAgentSplitData,
@@ -201,8 +200,8 @@ export default function Costs() {
   const labels = {
     thisMonth: m ? 'Month' : 'This Month',
     creditsLeft: m ? 'Credits' : 'Credits Left',
-    dailyAvg: m ? 'Daily Avg' : 'Daily Average',
-    projected: m ? 'Projected' : 'Projected Monthly',
+    dailyAvg: m ? 'Tracked Avg' : 'Tracked Daily Average',
+    projected: m ? 'Tracked Proj.' : 'Projected Tracked Spend',
   }
 
   const ledgerActive = !!(tokenData && ['token-usage.csv', 'openclaw.usage', 'combined.agent_usage'].includes(tokenData.source || '') && tokenData.summary)
@@ -220,7 +219,19 @@ export default function Costs() {
   const chartSeries = useMemo<ChartSeriesItem[]>(() => {
     const totals = new Map<string, { totalCost: number; totalTokens: number }>()
 
-    if (codexbarActive && codexbarPeriodDays.length) {
+    if (ledgerActive && tokenData?.dailyByModel?.length) {
+      tokenData.dailyByModel.forEach(day => {
+        Object.keys(day).forEach(key => {
+          if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
+          const cost = readNumericField(day, `${key}_apiEquivalentUsd`)
+          const tokens = readNumericField(day, `${key}_tokens`)
+          const current = totals.get(key) || { totalCost: 0, totalTokens: 0 }
+          current.totalCost += cost
+          current.totalTokens += tokens
+          totals.set(key, current)
+        })
+      })
+    } else if (codexbarActive && codexbarPeriodDays.length) {
       codexbarPeriodDays.forEach(day => {
         ;(day.models || []).forEach(model => {
           const name = model.model || 'Unknown model'
@@ -228,18 +239,6 @@ export default function Costs() {
           current.totalCost += Number(model.cost || 0)
           current.totalTokens += Number(model.totalTokens || 0)
           totals.set(name, current)
-        })
-      })
-    } else if (ledgerActive && tokenData?.dailyByModel?.length) {
-      tokenData.dailyByModel.forEach(day => {
-        Object.entries(day).forEach(([key, value]) => {
-          if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'totalTokens' || key.endsWith('_tokens') || key.endsWith('_costSource')) return
-          const cost = Number(value || 0)
-          const tokens = readNumericField(day, `${key}_tokens`)
-          const current = totals.get(key) || { totalCost: 0, totalTokens: 0 }
-          current.totalCost += Number.isFinite(cost) ? cost : 0
-          current.totalTokens += Number.isFinite(tokens) ? tokens : 0
-          totals.set(key, current)
         })
       })
     } else {
@@ -277,25 +276,25 @@ export default function Costs() {
   }, [codexbarActive, codexbarPeriodDays, ledgerActive, tokenData])
 
   const chartData = useMemo<ChartDataRow[]>(() => {
-    if (codexbarActive && codexbarPeriodDays.length) {
-      return buildCodexbarChartData(codexbarPeriodDays, chartSeries)
-    }
-
     if (!chartSeries.length) return []
 
-    if (!ledgerActive || !tokenData?.dailyByModel?.length) return []
+    if (!ledgerActive || !tokenData?.dailyByModel?.length) {
+      return codexbarActive && codexbarPeriodDays.length
+        ? buildCodexbarChartData(codexbarPeriodDays, chartSeries)
+        : []
+    }
 
     const rows = tokenData.dailyByModel.map(day => {
       const row: Record<string, string | number> = {
         day: new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' }),
         fullDate: day.date,
-        total: Number(day.totalCost || 0),
+        total: Number(day.apiEquivalentCost || 0),
         totalTokens: Number(day.totalTokens || 0),
       }
 
       chartSeries.forEach(series => {
         const modelNames = series.rawModels?.length ? series.rawModels : [series.model]
-        const value = modelNames.reduce((sum, model) => sum + readNumericField(day, model), 0)
+        const value = modelNames.reduce((sum, model) => sum + readNumericField(day, `${model}_apiEquivalentUsd`), 0)
         const tokens = modelNames.reduce((sum, model) => sum + readNumericField(day, `${model}_tokens`), 0)
         row[series.key] = value
         row[`${series.key}__tokens`] = tokens
@@ -352,10 +351,16 @@ export default function Costs() {
     }
   }, [chartData, sessionEstimateData])
 
-  const tokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
+  const allTokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
     const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string> }>()
 
-    const addBucket = (rawName: string, tokens: number, cost: number) => {
+    const addBucket = (
+      rawName: string,
+      tokens: number,
+      cost: number,
+      apiEquivalentCost: number | null | undefined,
+      apiEquivalentAvailable: boolean,
+    ) => {
       if (tokens <= 0 && cost <= 0) return
       const name = canonicalModelName(rawName)
       const current = buckets.get(name) || {
@@ -364,12 +369,18 @@ export default function Costs() {
         rawNamesSet: new Set<string>(),
         tokens: 0,
         cost: 0,
+        apiEquivalentCost: 0,
+        apiEquivalentAvailable: false,
         local: false,
         color: getModelColor(rawName || name),
       }
 
       current.tokens += Number.isFinite(tokens) ? tokens : 0
       current.cost += Number.isFinite(cost) ? cost : 0
+      if (apiEquivalentAvailable && apiEquivalentCost !== null && apiEquivalentCost !== undefined && Number.isFinite(apiEquivalentCost)) {
+        current.apiEquivalentCost += apiEquivalentCost
+        current.apiEquivalentAvailable = true
+      }
       current.local = current.local || isLocalModel(rawName)
       current.color = getModelColor(name)
       if (rawName) current.rawNamesSet.add(rawName)
@@ -378,14 +389,22 @@ export default function Costs() {
 
     if (ledgerActive && tokenData?.byService?.length) {
       tokenData.byService.forEach(item => {
-        addBucket(item.name, item.tokens || 0, item.cost || 0)
+        addBucket(
+          item.name,
+          item.tokens || 0,
+          item.cost || 0,
+          item.apiEquivalentUsd,
+          item.apiEquivalentStatus !== 'unavailable' && item.apiEquivalentStatus !== 'not_applicable',
+        )
       })
     } else {
       sessions.forEach(session => {
         addBucket(
           session.model || session.displayName || 'Unknown',
           session.totalTokens || 0,
-          estimateCost(session.totalTokens || 0, session.model)
+          estimateCost(session.totalTokens || 0, session.model),
+          estimateCost(session.totalTokens || 0, session.model),
+          !isLocalModel(session.model || ''),
         )
       })
     }
@@ -395,6 +414,8 @@ export default function Costs() {
       rawNames: Array.from(item.rawNamesSet),
       tokens: item.tokens,
       cost: item.cost,
+      apiEquivalentCost: item.apiEquivalentCost,
+      apiEquivalentAvailable: item.apiEquivalentAvailable,
       local: item.local,
       color: item.color,
       share: 0,
@@ -407,8 +428,8 @@ export default function Costs() {
         share: total > 0 ? (item.tokens / total) * 100 : 0,
       }))
       .sort((a, b) => b.tokens - a.tokens)
-      .slice(0, 8)
   }, [ledgerActive, sessions, tokenData])
+  const tokenBreakdown = allTokenBreakdown.slice(0, 8)
 
   if (loading) {
     return (
@@ -434,7 +455,7 @@ export default function Costs() {
   const isAwsEnabled = config?.modules?.aws === true
   const hasAwsData = !!(awsCosts && awsCosts.total > 0)
   const totalTokens = ledgerActive
-    ? tokenData?.summary?.periodTokens || tokenData?.summary?.thisMonthTokens || tokenData?.summary?.totalTokens || 0
+    ? tokenData?.summary?.periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0
     : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
 
   const tokenBasedCost = estimateCost(totalTokens, 'sonnet')
@@ -449,51 +470,59 @@ export default function Costs() {
     ? periodLabels[loadedCostsPeriodKey as keyof typeof periodLabels]
     : activePeriodLabel
   const codexbarPeriodCost = sumCostRows(codexbarPeriodDays)
-  const codexbarPreviousDays = previousCodexbarRows(
-    codexbarCosts?.daily || [],
-    period,
-    calendarNow,
-  )
-  const codexbarPreviousPeriodCost = codexbarPreviousDays.length ? sumCostRows(codexbarPreviousDays) : null
-  const codexbarPreviousDailyAvg = codexbarPreviousPeriodCost !== null ? codexbarPreviousPeriodCost / codexbarPreviousDays.length : null
   const codexbarPeriodTokens = codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
 
-  const currentPeriodCost = codexbarActive
-    ? codexbarPeriodCost
-    : hasAwsData
+  const currentPeriodCost = hasAwsData
       ? awsCosts?.total || 0
       : ledgerActive
         ? (tokenData?.summary?.periodUsd ?? tokenData?.summary?.thisMonthUsd) || 0
         : tokenBasedCost
 
-  const trackedDays = codexbarActive ? codexbarPeriodDays : hasAwsData ? awsCosts?.daily || [] : tokenData?.daily || []
-  const dailyAvg = codexbarActive
-    ? codexbarPeriodCost / Math.max(codexbarPeriodDays.length, 1)
-    : hasAwsData
+  const apiEquivalentReliability = ledgerActive
+    ? tokenData?.apiEquivalentReliability || 'unavailable'
+    : 'estimated'
+  const apiEquivalentAvailable = apiEquivalentReliability === 'estimated' || apiEquivalentReliability === 'partial'
+  const apiEquivalentPeriodCost = ledgerActive
+    ? apiEquivalentAvailable
+      ? Number(tokenData?.summary?.periodApiEquivalentUsd ?? tokenData?.summary?.apiEquivalentUsd ?? 0)
+      : null
+    : codexbarActive
+      ? codexbarPeriodCost
+      : tokenBasedCost
+
+  const trackedDays = hasAwsData ? awsCosts?.daily || [] : tokenData?.daily || []
+  const apiEquivalentDays = ledgerActive
+    ? tokenData?.daily || []
+    : codexbarActive
+      ? codexbarPeriodDays
+      : trackedDays
+  const dailyAvg = hasAwsData
       ? (awsCosts?.daily || []).reduce((sum, d) => sum + (d.cost || 0), 0) / Math.max(awsCosts?.daily?.length || 0, 1)
       : ledgerActive
         ? currentPeriodCost / Math.max(trackedDays.length, 1)
         : tokenBasedCost / 30
 
-  const previousPeriodCost = codexbarActive
-    ? codexbarPreviousPeriodCost
-    : tokenData?.summary?.previousPeriodUsd ?? null
-  const previousDailyAvg = codexbarActive
-    ? codexbarPreviousDailyAvg
-    : tokenData?.summary?.yesterdayUsd ?? null
+  const apiEquivalentDailyAvg = apiEquivalentPeriodCost === null
+    ? null
+    : apiEquivalentPeriodCost / Math.max(apiEquivalentDays.length, 1)
+
+  const previousPeriodCost = hasAwsData ? null : tokenData?.summary?.previousPeriodUsd ?? null
+  const previousDailyAvg = hasAwsData ? null : tokenData?.summary?.yesterdayUsd ?? null
   const compareLabel = comparisonLabels(period)
   const monthlyTrend = calculateTrend(currentPeriodCost, previousPeriodCost)
   const dailyTrend = calculateTrend(dailyAvg, previousDailyAvg)
 
   const projectedMonthly = dailyAvg * 30
+  const apiEquivalentProjectedMonthly = apiEquivalentDailyAvg === null ? null : apiEquivalentDailyAvg * 30
   const costSourceLabel = hasAwsData
     ? 'AWS live billing'
-    : codexbarActive
-      ? 'CodexBar local estimate'
-      : ledgerActive
+    : ledgerActive
         ? (tokenData.source === 'combined.agent_usage' ? 'OpenClaw + Hermes + Claude Code Usage' : tokenData.source === 'openclaw.usage' ? 'OpenClaw Usage' : 'Token ledger')
+      : codexbarActive
+        ? 'CodexBar local estimate'
         : 'Estimated from sessions'
-  const chartDayCount = trackedDays.length
+  const chartDayCount = chartData.length || apiEquivalentDays.length
+  const apiEquivalentTokenVolume = ledgerActive ? totalTokens : codexbarPeriodTokens
   const monthlyBudgetBase = ledgerActive ? tokenData?.summary?.thisMonthUsd || 0 : currentPeriodCost
   const budgetUsage = budget > 0 ? monthlyBudgetBase / budget : 0
   const budgetUsagePct = budget > 0 ? Math.round(budgetUsage * 100) : 0
@@ -527,23 +556,12 @@ export default function Costs() {
     }))
 
   const dominantModel = tokenBreakdown[0] || null
-  const localTokenShare = tokenBreakdown
+  const localTokenShare = allTokenBreakdown
     .filter(item => item.local)
     .reduce((sum, item) => sum + item.share, 0)
   const sessionPressureMax = Math.max(...topSessions.map(session => session.tokens), 1)
-  const blendedCostBreakdown = codexbarActive && codexbarLatest?.models?.length
-    ? (() => {
-        const total = codexbarLatest.models.reduce((sum, model) => sum + (model.cost || 0), 0)
-        return codexbarLatest.models.map(model => ({
-          name: model.model,
-          amount: model.cost || 0,
-          share: total > 0 ? ((model.cost || 0) / total) * 100 : 0,
-          color: '#FF9500',
-          secondary: `${formatTokens(model.totalTokens || 0)} tokens`,
-          local: false,
-        }))
-      })()
-    : hasAwsData && awsCosts
+  const apiEquivalentBreakdownTotal = allTokenBreakdown.reduce((sum, item) => sum + (item.apiEquivalentAvailable ? item.apiEquivalentCost : 0), 0)
+  const blendedCostBreakdown = hasAwsData && awsCosts
       ? awsCosts.services.slice(0, m ? 5 : 8).map(service => ({
         name: service.name,
         amount: service.cost,
@@ -551,14 +569,17 @@ export default function Costs() {
         color: getServiceColor(service.name),
         secondary: formatCurrency(service.cost),
       }))
-      : tokenBreakdown.map(item => ({
+      : allTokenBreakdown
+        .slice()
+        .sort((a, b) => b.apiEquivalentCost - a.apiEquivalentCost || b.tokens - a.tokens)
+        .map(item => ({
         name: item.name,
-        amount: item.cost,
-        share: item.share,
+        amount: item.apiEquivalentAvailable ? item.apiEquivalentCost : 0,
+        share: item.apiEquivalentAvailable && apiEquivalentBreakdownTotal > 0 ? (item.apiEquivalentCost / apiEquivalentBreakdownTotal) * 100 : 0,
         color: item.color,
         secondary: `${formatTokens(item.tokens)} tokens`,
         local: item.local,
-      }))
+        }))
 
   const costSignals = [
     dominantModel
@@ -597,16 +618,36 @@ export default function Costs() {
 
   const agentSplit = agentSplitPending ? [] : (tokenData?.agents || []).map(agent => {
     const prefix = `${agent.label} / `
-    const modelTotals = new Map<string, { name: string; tokens: number; cost: number; costSource?: string }>()
+    const modelTotals = new Map<string, {
+      name: string
+      tokens: number
+      cost: number
+      apiEquivalentCost: number
+      apiEquivalentAvailable: boolean
+      costSource?: string
+    }>()
 
     ;(tokenData?.dailyByModel || []).forEach(day => {
       Object.keys(day).forEach(key => {
-        if (!key.startsWith(prefix) || key.endsWith('_tokens') || key.endsWith('_costSource')) return
+        if (!key.startsWith(prefix) || /_(tokens|input|output|reasoning|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
         const rawTokens = Number(day[`${key}_tokens`] || 0)
         const rawCost = Number(day[key] || 0)
-        const current = modelTotals.get(key) || { name: key, tokens: 0, cost: 0, costSource: String(day[`${key}_costSource`] || '') }
+        const rawApiEquivalent = day[`${key}_apiEquivalentUsd`]
+        const rawApiEquivalentStatus = String(day[`${key}_apiEquivalentStatus`] || '')
+        const current = modelTotals.get(key) || {
+          name: key,
+          tokens: 0,
+          cost: 0,
+          apiEquivalentCost: 0,
+          apiEquivalentAvailable: false,
+          costSource: String(day[`${key}_costSource`] || ''),
+        }
         current.tokens += Number.isFinite(rawTokens) ? rawTokens : 0
         current.cost += Number.isFinite(rawCost) ? rawCost : 0
+        if (rawApiEquivalentStatus === 'estimated' && rawApiEquivalent !== null && rawApiEquivalent !== undefined && Number.isFinite(Number(rawApiEquivalent))) {
+          current.apiEquivalentCost += Number(rawApiEquivalent)
+          current.apiEquivalentAvailable = true
+        }
         current.costSource = current.costSource || String(day[`${key}_costSource`] || '')
         modelTotals.set(key, current)
       })
@@ -615,6 +656,8 @@ export default function Costs() {
     const periodModels = Array.from(modelTotals.values()).filter(model => model.tokens > 0 || model.cost > 0)
     const periodTokens = periodModels.reduce((sum, model) => sum + model.tokens, 0)
     const periodCost = periodModels.reduce((sum, model) => sum + model.cost, 0)
+    const periodApiEquivalentCost = periodModels.reduce((sum, model) => sum + model.apiEquivalentCost, 0)
+    const periodApiEquivalentAvailable = periodModels.some(model => model.apiEquivalentAvailable)
     const tokens = periodModels.length > 0
       ? periodTokens
       : Number(agent.summary?.periodTokens ?? agent.summary?.thisMonthTokens ?? agent.summary?.totalTokens ?? 0)
@@ -636,6 +679,12 @@ export default function Costs() {
       tokens,
       cost,
       costLabel,
+      apiEquivalentCost: periodModels.length > 0
+        ? periodApiEquivalentCost
+        : Number(agent.summary?.periodApiEquivalentUsd ?? agent.summary?.apiEquivalentUsd ?? 0),
+      apiEquivalentAvailable: periodModels.length > 0
+        ? periodApiEquivalentAvailable
+        : (agent.byService || []).some(service => service.apiEquivalentStatus === 'estimated'),
       topModel: topModel?.name
         ?.replace(/^OpenClaw \/ /, '')
         .replace(/^Hermes \/ /, '')
@@ -647,11 +696,11 @@ export default function Costs() {
   const overviewPills = [
     {
       label: 'Tracking Mode',
-      value: codexbarActive ? 'CodexBar' : costSourceLabel,
-      accent: codexbarActive ? '#FF9500' : hasAwsData ? '#32D74B' : ledgerActive ? '#5E5CE6' : '#FF9F0A',
+      value: ledgerActive ? 'Combined usage' : codexbarActive ? 'CodexBar' : costSourceLabel,
+      accent: ledgerActive ? '#5E5CE6' : codexbarActive ? '#FF9500' : hasAwsData ? '#32D74B' : '#FF9F0A',
     },
     {
-      label: 'CodexBar Session',
+      label: 'CodexBar API Eq.',
       value: formatCurrency(codexbarCosts?.sessionCostUSD || 0),
       accent: codexbarActive ? '#FF9500' : '#8E8E93',
     },
@@ -687,10 +736,14 @@ export default function Costs() {
           overviewPills={overviewPills}
           codexbarActive={codexbarActive}
           codexbarCosts={codexbarCosts}
-          codexbarPeriodTokens={codexbarPeriodTokens}
+          codexbarPeriodTokens={apiEquivalentTokenVolume}
           currentPeriodCost={currentPeriodCost}
           dailyAvg={dailyAvg}
           projectedMonthly={projectedMonthly}
+          apiEquivalentPeriodCost={apiEquivalentPeriodCost}
+          apiEquivalentDailyAvg={apiEquivalentDailyAvg}
+          apiEquivalentProjectedMonthly={apiEquivalentProjectedMonthly}
+          apiEquivalentReliability={apiEquivalentReliability}
         />
 
         {(agentSplit.length > 0 || agentSplitPending) && (
@@ -766,7 +819,6 @@ export default function Costs() {
           codexbarActive={codexbarActive}
           ledgerActive={ledgerActive}
           hasAwsData={hasAwsData}
-          activePeriodLabel={activePeriodLabel}
           awsCosts={awsCosts ?? null}
           hasSessionEstimateChart={hasSessionEstimateChart}
           sessionEstimateData={sessionEstimateData as SessionEstimateDay[]}
@@ -774,6 +826,7 @@ export default function Costs() {
           totalTokens={totalTokens}
           tokenBasedCost={tokenBasedCost}
           blendedCostBreakdown={blendedCostBreakdown as BlendedCostItem[]}
+          apiEquivalentReliability={apiEquivalentReliability}
         />
 
         <CostDriversSection

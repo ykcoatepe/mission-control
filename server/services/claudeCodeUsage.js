@@ -71,10 +71,16 @@ const USAGE_SUMMARY_FIELDS = [
 
 function sumUsageSummaries(agents = []) {
   return Object.fromEntries(
-    USAGE_SUMMARY_FIELDS.map((field) => [
-      field,
-      agents.reduce((sum, agent) => sum + numeric(agent?.summary?.[field]), 0),
-    ]),
+    USAGE_SUMMARY_FIELDS.map((field) => {
+      const rawValues = agents.map((agent) => agent?.summary?.[field]);
+      const values = rawValues.filter((value) => value !== null && value !== undefined);
+      return [
+        field,
+        field === 'previousPeriodUsd' && values.length !== rawValues.length
+          ? null
+          : values.reduce((sum, value) => sum + numeric(value), 0),
+      ];
+    }),
   );
 }
 
@@ -148,12 +154,29 @@ function normalizedDailyRow(row, date) {
   };
 }
 
+function claudeCodeBillingState(payload = {}) {
+  const evidence = [
+    payload.billingMode,
+    payload.billing_mode,
+    payload.costSource,
+    payload.costStatus,
+  ].filter(Boolean).join(' ').toLowerCase();
+  if (evidence.includes('subscription') || evidence.includes('included')) return 'included';
+  if (evidence.includes('metered') || evidence.includes('api')) return 'metered';
+  return 'unknown';
+}
+
 function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
   const payload = Array.isArray(raw)
     ? raw.find((item) => String(item?.provider || '').toLowerCase() === 'claude')
     : raw;
   if (!payload || typeof payload !== 'object') return null;
 
+  const billingState = claudeCodeBillingState(payload);
+  const trackedCost = (cost) => billingState === 'metered' ? numeric(cost) : 0;
+  const costSource = billingState === 'metered' ? 'api' : billingState;
+  const costStatus = billingState === 'metered' ? 'metered' : billingState;
+  const billingModes = billingState === 'metered' ? 'api_metered' : billingState === 'included' ? 'subscription_included' : 'unknown';
   const range = rangeForPeriod(period, now);
   const rowsByDate = new Map(
     (Array.isArray(payload.daily) ? payload.daily : [])
@@ -178,12 +201,20 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
     .sort((left, right) => right.tokens - left.tokens)
     .map((item) => ({
       ...item,
+      cost: trackedCost(item.cost),
+      apiEquivalentUsd: item.cost,
+      apiEquivalentStatus: 'estimated',
+      apiEquivalentSource: 'codexbar',
       sessions: 0,
       percentage: 0,
-      costSource: 'fallback_estimate',
-      costStatus: 'estimated',
-      billingModes: 'subscription_estimate',
-      costNote: 'CodexBar API-equivalent estimate from local Claude Code logs; not a subscription invoice',
+      costSource,
+      costStatus,
+      billingModes,
+      costNote: billingState === 'included'
+        ? 'Subscription-included usage; CodexBar estimate is reported separately as API equivalent'
+        : billingState === 'metered'
+          ? 'API-metered Claude Code usage; CodexBar cost is tracked and also shown as API equivalent'
+          : 'Billing mode is not available from CodexBar; estimate is reported only as API equivalent',
     }));
   const periodTokens = daily.reduce((sum, row) => sum + row.tokens, 0);
   byService.forEach((item) => {
@@ -192,13 +223,15 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
 
   const modelKeys = byService.map((item) => item.name);
   const dailyByModel = daily.map((day) => {
-    const out = { date: day.date, totalCost: day.cost, totalTokens: day.tokens };
+    const out = { date: day.date, totalCost: trackedCost(day.cost), apiEquivalentCost: day.cost, totalTokens: day.tokens };
     const models = new Map(day.modelBreakdowns.map((model) => [String(model?.modelName || 'unknown'), model]));
     for (const name of modelKeys) {
       const model = models.get(name);
-      out[name] = numeric(model?.cost);
+      out[name] = trackedCost(model?.cost);
       out[`${name}_tokens`] = numeric(model?.totalTokens);
-      out[`${name}_costSource`] = 'fallback_estimate';
+      out[`${name}_apiEquivalentUsd`] = numeric(model?.cost);
+      out[`${name}_apiEquivalentStatus`] = 'estimated';
+      out[`${name}_costSource`] = costSource;
     }
     return out;
   });
@@ -218,7 +251,8 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
     const set = keys instanceof Set ? keys : new Set(keys);
     return allRows.filter((row) => set.has(row.date)).reduce((sum, row) => sum + row.tokens, 0);
   };
-  const periodUsd = daily.reduce((sum, row) => sum + row.cost, 0);
+  const periodApiEquivalentUsd = daily.reduce((sum, row) => sum + row.cost, 0);
+  const periodUsd = trackedCost(periodApiEquivalentUsd);
   const todayRow = allRows.find((row) => row.date === today) || normalizedDailyRow(null, today);
   const yesterdayRow = allRows.find((row) => row.date === yesterday) || normalizedDailyRow(null, yesterday);
   const monthRows = allRows.filter((row) => row.date.startsWith(monthPrefix));
@@ -229,20 +263,29 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
     periodRange: { start: range.keys[0] || null, end: range.keys.at(-1) || null },
     summary: {
       periodUsd,
-      previousPeriodUsd: costForKeys(range.previousKeys),
+      previousPeriodUsd: billingState === 'unknown' ? null : trackedCost(costForKeys(range.previousKeys)),
+      periodApiEquivalentUsd,
+      previousPeriodApiEquivalentUsd: costForKeys(range.previousKeys),
       periodTokens,
-      todayUsd: todayRow.cost,
-      yesterdayUsd: yesterdayRow.cost,
-      thisWeekUsd: costForKeys(lastSevenKeys),
-      thisMonthUsd: monthRows.reduce((sum, row) => sum + row.cost, 0),
+      todayUsd: trackedCost(todayRow.cost),
+      yesterdayUsd: trackedCost(yesterdayRow.cost),
+      thisWeekUsd: trackedCost(costForKeys(lastSevenKeys)),
+      thisMonthUsd: trackedCost(monthRows.reduce((sum, row) => sum + row.cost, 0)),
       totalUsd: periodUsd,
       todayTokens: todayRow.tokens,
       thisWeekTokens: tokensForKeys(lastSevenKeys),
       thisMonthTokens: monthRows.reduce((sum, row) => sum + row.tokens, 0),
       totalTokens: periodTokens,
-      note: 'Source: CodexBar local Claude Code log scan; costs are API-equivalent estimates, not subscription invoices',
+      note: billingState === 'unknown'
+        ? 'Source: CodexBar local Claude Code log scan; billing mode is unknown, so costs are shown only as API-equivalent estimates'
+        : 'Source: CodexBar local Claude Code log scan; tracked spend follows explicit billing metadata and API equivalent remains a comparison estimate',
     },
-    daily: daily.map(({ modelBreakdowns: _modelBreakdowns, ...row }) => row),
+    daily: daily.map(({ modelBreakdowns: _modelBreakdowns, cost: apiEquivalentCost, totalCost: _totalCost, ...row }) => ({
+      ...row,
+      cost: trackedCost(apiEquivalentCost),
+      totalCost: trackedCost(apiEquivalentCost),
+      apiEquivalentCost,
+    })),
     dailyByModel,
     modelKeys,
     byService,

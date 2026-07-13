@@ -280,7 +280,7 @@
 
 .agentMetricGrid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -292,7 +292,7 @@
 }
 
 .agentMetricValue {
-  font-size: 26px;
+  font-size: 22px;
   color: rgba(255,255,255,0.96);
   font-weight: 300;
   margin-top: 5px;
@@ -307,6 +307,13 @@
   font-weight: 700;
   margin-top: 4px;
   /* color set inline: Metered vs paid */
+}
+
+.agentEquivalentLabel {
+  font-size: 10px;
+  font-weight: 700;
+  margin-top: 4px;
+  color: #64D2FF;
 }
 
 .agentProgressSection {

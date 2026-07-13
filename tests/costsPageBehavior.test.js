@@ -9,6 +9,8 @@ const costsDir = path.join(pagesDir, 'costs');
 const filesToCheck = [
   path.join(pagesDir, 'Costs.tsx'),
   path.join(costsDir, 'AgentSplitCard.tsx'),
+  path.join(costsDir, 'CostPulseHeader.tsx'),
+  path.join(costsDir, 'DailySpendSection.tsx'),
   path.join(costsDir, 'lib.ts'),
   path.join(costsDir, 'types.ts'),
 ].filter(f => fs.existsSync(f));
@@ -55,6 +57,44 @@ assert.ok(
 assert.ok(
   source.includes("agent.status === 'stale'") && source.includes('Stale source'),
   'Agent Split should visibly mark preserved Claude Code data as stale',
+);
+
+assert.ok(
+  source.includes('API equivalent') &&
+  source.includes('apiEquivalentCost') &&
+  source.includes('apiEquivalentUsd'),
+  'Agent and model cost views should show API-equivalent cost separately from tracked spend',
+);
+
+assert.ok(
+  source.includes('const currentPeriodCost = hasAwsData') &&
+  source.includes('apiEquivalentPeriodCost') &&
+  source.includes('All-source API Equivalent') &&
+  source.includes('Public-list-price estimate; not tracked subscription spend'),
+  'Headline and metric cards should keep tracked spend separate from all-source API equivalent',
+);
+
+assert.ok(
+  source.includes('periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0'),
+  'Selected-period zero tokens must not fall back to month or all-time token volume',
+);
+
+assert.ok(
+  source.includes('const allTokenBreakdown = useMemo') &&
+  source.includes('.sort((a, b) => b.apiEquivalentCost - a.apiEquivalentCost') &&
+  source.includes("hasAwsData ? 'Ranked from live AWS billing") &&
+  source.includes('tokens|input|output|reasoning|cacheRead|cacheWrite'),
+  'Spend composition should rank the complete model set by API equivalent and label AWS billing accurately',
+);
+
+assert.ok(
+  source.includes('apiEquivalentReliability') &&
+  source.includes('PARTIAL ESTIMATE') &&
+  source.includes('UNAVAILABLE') &&
+  source.includes('NOT APPLICABLE') &&
+  source.includes('NO USAGE') &&
+  source.includes('API equivalent unavailable'),
+  'API-equivalent headline should expose partial and unavailable estimates instead of presenting them as complete zero spend',
 );
 
 console.log('costs page behavior guards passed');

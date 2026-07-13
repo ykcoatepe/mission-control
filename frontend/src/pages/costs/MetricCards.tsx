@@ -98,7 +98,7 @@ export default function MetricCards({
               <DollarSign size={m ? 16 : 20} style={{ color: currentPeriodCost > 100 ? '#FF9500' : '#32D74B' }} />
             </div>
             <span className={m ? `${styles.cardLabel} ${styles.cardLabelMobile}` : styles.cardLabel}>
-              {period === 'month' ? labels.thisMonth : activePeriodLabel}
+              {period === 'month' ? `${labels.thisMonth} Tracked` : `${activePeriodLabel} Tracked`}
             </span>
           </div>
           <p className={m ? `${styles.cardValue} ${styles.cardValueMobile}` : styles.cardValue}>

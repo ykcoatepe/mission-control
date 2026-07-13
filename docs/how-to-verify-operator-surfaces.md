@@ -96,7 +96,7 @@ curl -fsS "$MC_BASE_URL/api/gbrain/timeline?limit=20" | jq \
 curl -fsS "$MC_BASE_URL/api/hermes-kanban" | jq '{profile,summary,error}'
 curl -fsS "$MC_BASE_URL/api/cron" | jq '{count:(.jobs|length),error}'
 curl -fsS "$MC_BASE_URL/api/costs?period=7d" | jq \
-  '{period,summary,meta,agents:(.agents|map({key,source,status}))}'
+  '{period,summary,meta,agents:(.agents|map({key,source,status,trackedUsd:.summary.periodUsd,apiEquivalentUsd:.summary.periodApiEquivalentUsd}))}'
 if codexbar_payload=$(curl -fsS "$MC_BASE_URL/api/costs/codexbar"); then
   printf '%s\n' "$codexbar_payload" | jq \
     '{source,provider,updatedAt,totals,dailyCount:(.daily|length)}'
@@ -113,6 +113,12 @@ expose OpenClaw, Hermes, and Claude Code source status plus `stale` and
 CLI is missing, its command fails, or no Codex/Claude reports exist. The guarded
 request treats any of those non-success responses as an optional skip instead
 of failing the entire smoke.
+
+For subscription-backed sources, `periodUsd` remains zero and services report
+`costStatus: included`. Their comparison value lives in
+`periodApiEquivalentUsd` and per-model `apiEquivalentUsd`; local or unpriced
+models may explicitly return `not_applicable` or `unavailable` instead of a
+fabricated dollar value.
 
 Do not call mutation endpoints during this read smoke. Some GET task endpoints
 perform reconciliation and may persist normalized task state, so omit them when

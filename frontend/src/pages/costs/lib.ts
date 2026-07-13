@@ -289,6 +289,11 @@ export function formatAgentCostValue(cost: number, sourceLabel: string) {
   return formatPreciseCurrency(cost)
 }
 
+export function formatApiEquivalentValue(cost: number | null | undefined, available = true) {
+  if (!available || cost === null || cost === undefined || !Number.isFinite(cost)) return 'N/A'
+  return formatPreciseCurrency(cost)
+}
+
 // ---------------------------------------------------------------------------
 // CodexBar period helpers
 // ---------------------------------------------------------------------------
