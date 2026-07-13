@@ -302,6 +302,8 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
   assert.match(routeSource, /out\[`\$\{svc\.name\}_reasoning`\] = b\.reasoning \|\| 0/);
   assert.match(routeSource, /out\[`\$\{key\}_reasoning`\] = Number\(row\[`\$\{key\}_reasoning`\] \|\| 0\)/);
   assert.doesNotMatch(routeSource, /cache_write_tokens, 0\) \+ COALESCE\(reasoning_tokens, 0\)\) AS tokens/);
+  assert.doesNotMatch(routeSource, /row\[`\$\{svc\.name\}_apiEquivalentUsd`\] \?\? svc\.apiEquivalentUsd/);
+  assert.doesNotMatch(routeSource, /row\[`\$\{svc\.name\}_apiEquivalentStatus`\] \|\| svc\.apiEquivalentStatus/);
 });
 
 test('preserved source summaries keep every cost and token aggregate', () => {

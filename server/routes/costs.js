@@ -394,8 +394,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         out[`${name}_cacheRead`] = Number(row[`${svc.name}_cacheRead`] || 0);
         out[`${name}_cacheWrite`] = Number(row[`${svc.name}_cacheWrite`] || 0);
         out[`${name}_reasoning`] = Number(row[`${svc.name}_reasoning`] || 0);
-        out[`${name}_apiEquivalentUsd`] = row[`${svc.name}_apiEquivalentUsd`] ?? svc.apiEquivalentUsd ?? null;
-        out[`${name}_apiEquivalentStatus`] = row[`${svc.name}_apiEquivalentStatus`] || svc.apiEquivalentStatus || 'unavailable';
+        out[`${name}_apiEquivalentUsd`] = row[`${svc.name}_apiEquivalentUsd`] ?? null;
+        out[`${name}_apiEquivalentStatus`] = row[`${svc.name}_apiEquivalentStatus`] || 'unavailable';
         out[`${name}_costSource`] = row[`${svc.name}_costSource`] || svc.costSource || 'unknown';
       });
       return out;
