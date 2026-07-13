@@ -278,15 +278,37 @@ export function costReliabilityLabel(item?: Pick<TokenServiceData, 'costSource' 
   const status = String(item?.costStatus || '').toLowerCase()
   const modes = String(item?.billingModes || '').toLowerCase()
   if (source.includes('included') || status.includes('included') || modes.includes('included')) return 'Included'
-  if (source.includes('unknown') || status.includes('unknown')) return 'Unknown cost'
+  if (source.includes('unknown') || status.includes('unknown')) return 'Not tracked'
   if (source.includes('fallback')) return 'Estimated'
   if (source.includes('api')) return 'Metered'
-  return 'Unknown cost'
+  return 'Not tracked'
 }
 
-export function formatAgentCostValue(cost: number, sourceLabel: string) {
-  if (cost === 0 && (sourceLabel === 'Included' || sourceLabel === 'Unknown cost')) return sourceLabel
-  return formatPreciseCurrency(cost)
+export function summarizeCostReliability(items: TokenServiceData[] = []) {
+  const activeItems = items.filter(item => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
+  const labeledItems = activeItems.map(item => ({ item, label: costReliabilityLabel(item) }))
+  const labels = new Set(labeledItems.map(entry => entry.label))
+  const label = labels.size === 0
+    ? 'Not tracked'
+    : labels.size === 1
+      ? labels.values().next().value || 'Not tracked'
+      : labels.has('Not tracked')
+        ? 'Partial'
+        : 'Mixed'
+
+  return {
+    label,
+    meteredCost: labeledItems.reduce((sum, entry) => (
+      entry.label === 'Metered' ? sum + Number(entry.item.cost || 0) : sum
+    ), 0),
+    estimatedCost: labeledItems.reduce((sum, entry) => (
+      entry.label === 'Estimated' ? sum + Number(entry.item.cost || 0) : sum
+    ), 0),
+  }
+}
+
+export function aggregateCostReliabilityLabel(items: TokenServiceData[] = []) {
+  return summarizeCostReliability(items).label
 }
 
 export function formatApiEquivalentValue(cost: number | null | undefined, available = true) {

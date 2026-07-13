@@ -15,6 +15,9 @@ import {
   millisecondsUntilNextCalendarDay,
   previousCodexbarRows,
   sumCostRows,
+  costReliabilityLabel,
+  aggregateCostReliabilityLabel,
+  summarizeCostReliability,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -127,6 +130,58 @@ describe('formatComparisonValue', () => {
   })
   it('formats zero as currency', () => {
     expect(formatComparisonValue(0)).toBe('$0.00')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// costReliabilityLabel
+// ---------------------------------------------------------------------------
+
+describe('costReliabilityLabel', () => {
+  it('uses neutral copy when billing data is not tracked', () => {
+    expect(costReliabilityLabel({ costSource: 'unknown' })).toBe('Not tracked')
+    expect(costReliabilityLabel()).toBe('Not tracked')
+  })
+
+  it('keeps explicit billing modes distinct', () => {
+    expect(costReliabilityLabel({ costSource: 'included' })).toBe('Included')
+    expect(costReliabilityLabel({ costSource: 'api' })).toBe('Metered')
+    expect(costReliabilityLabel({ costSource: 'fallback' })).toBe('Estimated')
+  })
+})
+
+describe('aggregateCostReliabilityLabel', () => {
+  it('marks included and untracked usage as partially tracked', () => {
+    expect(aggregateCostReliabilityLabel([
+      { name: 'included', tokens: 100, costSource: 'included' },
+      { name: 'unknown', tokens: 10, costSource: 'unknown' },
+    ])).toBe('Partial')
+  })
+
+  it('keeps uniform active usage labels and ignores empty rows', () => {
+    expect(aggregateCostReliabilityLabel([
+      { name: 'included', tokens: 100, costSource: 'included' },
+      { name: 'empty', tokens: 0, cost: 0, costSource: 'unknown' },
+    ])).toBe('Included')
+  })
+
+  it('marks fully tracked mixed billing modes as mixed', () => {
+    expect(aggregateCostReliabilityLabel([
+      { name: 'included', tokens: 100, costSource: 'included' },
+      { name: 'metered', tokens: 10, cost: 1, costSource: 'api' },
+    ])).toBe('Mixed')
+  })
+
+  it('keeps metered and estimated amounts separate in mixed summaries', () => {
+    expect(summarizeCostReliability([
+      { name: 'metered', tokens: 10, cost: 1.25, costSource: 'api' },
+      { name: 'estimated', tokens: 20, cost: 2.5, costSource: 'fallback_estimate' },
+      { name: 'unknown', tokens: 5, costSource: 'unknown' },
+    ])).toEqual({
+      label: 'Partial',
+      meteredCost: 1.25,
+      estimatedCost: 2.5,
+    })
   })
 })
 

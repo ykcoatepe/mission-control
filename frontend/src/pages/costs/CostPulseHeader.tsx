@@ -97,14 +97,13 @@ export default function CostPulseHeader({
 
           <div
             className={styles.pillsGrid}
-            style={{ '--pills-cols': m ? '1fr 1fr' : `repeat(${overviewPills.length}, minmax(0, 1fr))` } as CSSProperties}
+            style={{ '--pills-cols': m ? '1fr 1fr' : 'repeat(3, minmax(0, 1fr))' } as CSSProperties}
           >
             {overviewPills.map(pill => (
               <div
                 key={pill.label}
                 title={pill.title}
                 className={m ? `${styles.pill} ${styles.pillMobile}` : styles.pill}
-                style={{ boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px ${pill.accent}18` }}
               >
                 <div className={styles.pillLabel}>{pill.label}</div>
                 <div className={m ? `${styles.pillValue} ${styles.pillValueMobile}` : styles.pillValue}>{pill.value}</div>

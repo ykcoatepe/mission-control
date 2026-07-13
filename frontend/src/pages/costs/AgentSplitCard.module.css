@@ -206,16 +206,16 @@
 
 .agentGrid {
   display: grid;
-  gap: 12px;
+  gap: 14px;
   /* grid-template-columns set inline */
 }
 
 .agentCard {
-  padding: 18px;
-  border-radius: 18px;
+  padding: 17px;
+  border-radius: 16px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 15px;
   min-width: 0;
   /* border, background, box-shadow set inline via accent */
 }
@@ -266,9 +266,14 @@
 }
 
 .agentShare {
-  font-size: 12px;
-  color: rgba(255,255,255,0.58);
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.055);
+  border: 1px solid rgba(255,255,255,0.07);
+  font-size: 11px;
+  color: rgba(255,255,255,0.62);
   font-weight: 700;
+  white-space: nowrap;
 }
 
 .agentStateGroup {
@@ -278,12 +283,6 @@
   flex-shrink: 0;
 }
 
-.agentMetricGrid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
 .agentMetricLabel {
   font-size: 10px;
   color: rgba(255,255,255,0.42);
@@ -291,29 +290,61 @@
   letter-spacing: 0.08em;
 }
 
-.agentMetricValue {
-  font-size: 22px;
+.apiEquivalentBlock {
+  padding: 13px 0 14px;
+  border-top: 1px solid rgba(255,255,255,0.07);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+}
+
+.apiEquivalentValue {
+  font-size: 29px;
   color: rgba(255,255,255,0.96);
   font-weight: 300;
-  margin-top: 5px;
+  line-height: 1.08;
+  margin-top: 7px;
+  font-feature-settings: "tnum";
 }
 
-.agentMetricValueMobile {
-  font-size: 22px;
-}
-
-.agentCostLabel {
-  font-size: 10px;
-  font-weight: 700;
-  margin-top: 4px;
-  /* color set inline: Metered vs paid */
+.apiEquivalentValueMobile {
+  font-size: 27px;
 }
 
 .agentEquivalentLabel {
   font-size: 10px;
-  font-weight: 700;
-  margin-top: 4px;
-  color: #64D2FF;
+  font-weight: 600;
+  margin-top: 5px;
+  color: rgba(100,210,255,0.76);
+}
+
+.secondaryMetrics {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.7fr) minmax(0, 1.3fr);
+  gap: 16px;
+}
+
+.secondaryMetricValue {
+  margin-top: 6px;
+  font-size: 18px;
+  line-height: 1.2;
+  color: rgba(255,255,255,0.88);
+  font-weight: 650;
+}
+
+.modelMetric {
+  min-width: 0;
+  padding-left: 16px;
+  border-left: 1px solid rgba(255,255,255,0.07);
+}
+
+.secondaryModelValue {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.25;
+  color: rgba(255,255,255,0.78);
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .agentProgressSection {
@@ -335,12 +366,18 @@
   /* width + background set inline */
 }
 
-.agentTopModel {
+.billingStatus {
   font-size: 11px;
-  color: rgba(255,255,255,0.48);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: rgba(255,255,255,0.46);
+  font-weight: 650;
+}
+
+.billingStatusIncluded {
+  color: rgba(50,215,75,0.76);
+}
+
+.billingStatusPartial {
+  color: rgba(255,159,10,0.82);
 }
 
 @keyframes spin {
