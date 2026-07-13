@@ -10,6 +10,7 @@ import {
   formatSessionName,
   hashColor,
   codexbarRowsForPeriod,
+  buildCodexbarChartData,
   previousCodexbarRows,
   sumCostRows,
 } from './lib'
@@ -256,8 +257,8 @@ describe('CodexBar calendar periods', () => {
     expect(week.at(-1)?.date).toBe('2026-07-13')
     expect(sumCostRows(week) / week.length).toBeCloseTo(3 / 7)
     const month = codexbarRowsForPeriod(rows, 'month', now)
-    expect(month).toHaveLength(30)
-    expect(month[0].date).toBe('2026-06-14')
+    expect(month).toHaveLength(13)
+    expect(month[0].date).toBe('2026-07-01')
     expect(month.at(-1)?.date).toBe('2026-07-13')
     expect(sumCostRows(month)).toBe(5)
   })
@@ -271,6 +272,19 @@ describe('CodexBar calendar periods', () => {
     expect(sumCostRows(week)).toBe(2)
     const month = previousCodexbarRows(rows, 'month', now)
     expect(month).toHaveLength(30)
+    expect(month[0].date).toBe('2026-06-01')
+    expect(month.at(-1)?.date).toBe('2026-06-30')
     expect(sumCostRows(month)).toBe(1)
+  })
+
+  it('keeps a zero-spend CodexBar period renderable without model series', () => {
+    const zeroDay = codexbarRowsForPeriod(rows, 'day', new Date('2026-07-12T12:00:00+03:00'))
+
+    expect(buildCodexbarChartData(zeroDay, [])).toEqual([{
+      day: '12',
+      fullDate: '2026-07-12',
+      total: 0,
+      totalTokens: 0,
+    }])
   })
 })

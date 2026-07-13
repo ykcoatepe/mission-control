@@ -82,6 +82,14 @@ function needsClaudeCodeCacheRefresh(value) {
   return !Object.prototype.hasOwnProperty.call(value?.meta || {}, 'claudeCodeStatus');
 }
 
+function hasClaudeCodeAgent(value) {
+  return Boolean(value?.agents?.some((agent) => {
+    const key = String(agent?.key || '').toLowerCase();
+    const source = String(agent?.source || '').toLowerCase();
+    return key === 'claude_code' || source.startsWith('claude-code.');
+  }));
+}
+
 function normalizedDailyRow(row, date) {
   return {
     date,
@@ -270,6 +278,7 @@ function mergeCodexBarReports(raw) {
 
 module.exports = {
   buildClaudeCodeUsageSummary,
+  hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
   sumUsageSummaries,

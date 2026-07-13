@@ -7,6 +7,7 @@ const { exec } = require('child_process');
 const { normalizeUsageCosts } = require('../services/costSanity');
 const {
   buildClaudeCodeUsageSummary,
+  hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
   sumUsageSummaries,
@@ -683,7 +684,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           ]);
           const previous = costsCache.get(cacheKey)?.value;
           const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
-          const hasPreviousClaudeCode = !!previous?.agents?.some((agent) => isClaudeCodeAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
+          const hasPreviousClaudeCode = hasClaudeCodeAgent(previous);
           const preservedPreviousOpenClaw = !openclawData && hasPreviousOpenClaw;
           const preservedPreviousClaudeCode = !claudeCodeData && hasPreviousClaudeCode;
           const effectiveOpenClawData = openclawData || (preservedPreviousOpenClaw ? cachedOpenClawUsage(previous, period) : null);

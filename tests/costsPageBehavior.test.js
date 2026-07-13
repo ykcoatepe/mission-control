@@ -30,8 +30,8 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes("return { period: 'vs previous 30 days', daily: 'vs previous 30d avg' }"),
-  'CodexBar month labels should describe the actual rolling baseline',
+  source.includes("return { period: 'vs previous month', daily: 'vs previous month avg' }"),
+  'CodexBar month labels should describe the calendar-month baseline shared by Agent Split',
 );
 
 assert.ok(

@@ -36,6 +36,7 @@ import {
   costReliabilityLabel,
   sumCostRows,
   codexbarRowsForPeriod,
+  buildCodexbarChartData,
   previousCodexbarRows,
   comparisonLabels,
   readNumericField,
@@ -249,29 +250,11 @@ export default function Costs() {
   }, [codexbarActive, codexbarPeriodDays, ledgerActive, tokenData])
 
   const chartData = useMemo<ChartDataRow[]>(() => {
-    if (!chartSeries.length) return []
-
     if (codexbarActive && codexbarPeriodDays.length) {
-      return codexbarPeriodDays.map(day => {
-        const row: Record<string, string | number> = {
-          day: new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' }),
-          fullDate: day.date,
-          total: Number(day.totalCost || 0),
-          totalTokens: Number(day.totalTokens || 0),
-        }
-
-        chartSeries.forEach(series => {
-          const modelNames = series.rawModels?.length ? series.rawModels : [series.model]
-          const matchingModels = (day.models || []).filter(model => modelNames.includes(model.model))
-          const value = matchingModels.reduce((sum, model) => sum + Number(model.cost || 0), 0)
-          const tokens = matchingModels.reduce((sum, model) => sum + Number(model.totalTokens || 0), 0)
-          row[series.key] = value
-          row[`${series.key}__tokens`] = tokens
-        })
-
-        return row as ChartDataRow
-      })
+      return buildCodexbarChartData(codexbarPeriodDays, chartSeries)
     }
+
+    if (!chartSeries.length) return []
 
     if (!ledgerActive || !tokenData?.dailyByModel?.length) return []
 

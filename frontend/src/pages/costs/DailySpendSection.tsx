@@ -478,7 +478,9 @@ export default function DailySpendSection({
             ) : (
               <div className={styles.fallbackWrap}>
                 <div className={styles.fallbackNote}>
-                  Recharts received data but visible bar height resolved to zero. Showing guaranteed CSS fallback.
+                  {codexbarActive
+                    ? 'No local Codex or Claude spend was recorded for this period.'
+                    : 'Recharts received data but visible bar height resolved to zero. Showing guaranteed CSS fallback.'}
                 </div>
                 <div
                   className={styles.fallbackBarList}

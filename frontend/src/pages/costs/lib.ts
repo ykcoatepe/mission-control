@@ -1,7 +1,7 @@
 // Pure helper functions and constants for the Costs page.
 // No hooks, no JSX — safe to import from any context.
 
-import type { TokenServiceData, CodexBarDailyEntry, TokenData } from './types'
+import type { TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem } from './types'
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -304,6 +304,14 @@ function codexbarDateKey(date: Date) {
 }
 
 function codexbarPeriodBounds(period: 'day' | '7d' | 'month', now: Date, previous: boolean) {
+  if (period === 'month') {
+    const end = new Date(now)
+    if (previous) end.setDate(0)
+    const start = new Date(end)
+    start.setDate(1)
+    return { start: codexbarDateKey(start), end: codexbarDateKey(end) }
+  }
+
   const days = period === 'day' ? 1 : period === '7d' ? 7 : 30
   const end = new Date(now)
   end.setDate(end.getDate() - (previous ? days : 0))
@@ -352,10 +360,33 @@ export function previousCodexbarRows(
   return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 
+export function buildCodexbarChartData(
+  days: CodexBarDailyEntry[] = [],
+  chartSeries: ChartSeriesItem[] = [],
+): ChartDataRow[] {
+  return days.map(day => {
+    const row: Record<string, string | number> = {
+      day: new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' }),
+      fullDate: day.date,
+      total: Number(day.totalCost || 0),
+      totalTokens: Number(day.totalTokens || 0),
+    }
+
+    chartSeries.forEach(series => {
+      const modelNames = series.rawModels?.length ? series.rawModels : [series.model]
+      const matchingModels = (day.models || []).filter(model => modelNames.includes(model.model))
+      row[series.key] = matchingModels.reduce((sum, model) => sum + Number(model.cost || 0), 0)
+      row[`${series.key}__tokens`] = matchingModels.reduce((sum, model) => sum + Number(model.totalTokens || 0), 0)
+    })
+
+    return row as ChartDataRow
+  })
+}
+
 export function comparisonLabels(period: 'day' | '7d' | 'month') {
   if (period === 'day') return { period: 'vs previous day', daily: 'vs previous day' }
   if (period === '7d') return { period: 'vs previous 7 days', daily: 'vs previous 7d avg' }
-  return { period: 'vs previous 30 days', daily: 'vs previous 30d avg' }
+  return { period: 'vs previous month', daily: 'vs previous month avg' }
 }
 
 // ---------------------------------------------------------------------------

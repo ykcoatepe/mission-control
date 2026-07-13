@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   buildClaudeCodeUsageSummary,
+  hasClaudeCodeAgent,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
   sumUsageSummaries,
@@ -174,4 +175,11 @@ test('refreshes legacy disk caches that predate the Claude Code source', () => {
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { openclawStatus: 'ready' } }), true);
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { claudeCodeStatus: 'ready' } }), false);
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { claudeCodeStatus: 'unavailable' } }), false);
+});
+
+test('recognizes a zero-usage Claude agent as preservable cached source data', () => {
+  assert.equal(hasClaudeCodeAgent({
+    agents: [{ key: 'claude_code', source: 'claude-code.codexbar', summary: { periodTokens: 0, periodUsd: 0 } }],
+  }), true);
+  assert.equal(hasClaudeCodeAgent({ agents: [] }), false);
 });
