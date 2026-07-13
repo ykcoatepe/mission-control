@@ -78,6 +78,42 @@ function sumUsageSummaries(agents = []) {
   );
 }
 
+function normalizedModelBreakdowns(row) {
+  const models = Array.isArray(row?.modelBreakdowns) ? row.modelBreakdowns : [];
+  const missingIndexes = models
+    .map((model, index) => {
+      const hasTokens = model?.totalTokens !== undefined
+        && model?.totalTokens !== null
+        && Number.isFinite(Number(model.totalTokens));
+      return hasTokens ? -1 : index;
+    })
+    .filter((index) => index >= 0);
+  if (!missingIndexes.length) return models;
+
+  const explicitTokens = models.reduce((sum, model, index) => (
+    missingIndexes.includes(index) ? sum : sum + numeric(model?.totalTokens)
+  ), 0);
+  const remainingTokens = Math.max(numeric(row?.totalTokens) - explicitTokens, 0);
+  const missingCost = missingIndexes.reduce((sum, index) => sum + Math.max(numeric(models[index]?.cost), 0), 0);
+  const fallbackTokens = new Map();
+  let allocatedTokens = 0;
+
+  missingIndexes.forEach((index, position) => {
+    const isLast = position === missingIndexes.length - 1;
+    const weight = missingCost > 0
+      ? Math.max(numeric(models[index]?.cost), 0) / missingCost
+      : 1 / missingIndexes.length;
+    const tokens = isLast ? remainingTokens - allocatedTokens : remainingTokens * weight;
+    fallbackTokens.set(index, tokens);
+    allocatedTokens += tokens;
+  });
+
+  return models.map((model, index) => ({
+    ...model,
+    totalTokens: fallbackTokens.has(index) ? fallbackTokens.get(index) : numeric(model?.totalTokens),
+  }));
+}
+
 function needsClaudeCodeCacheRefresh(value) {
   return !Object.prototype.hasOwnProperty.call(value?.meta || {}, 'claudeCodeStatus');
 }
@@ -102,7 +138,7 @@ function normalizedDailyRow(row, date) {
     cacheRead: numeric(row?.cacheReadTokens),
     cacheWrite: numeric(row?.cacheCreationTokens),
     reasoning: 0,
-    modelBreakdowns: Array.isArray(row?.modelBreakdowns) ? row.modelBreakdowns : [],
+    modelBreakdowns: normalizedModelBreakdowns(row),
   };
 }
 

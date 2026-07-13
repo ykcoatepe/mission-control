@@ -88,6 +88,27 @@ test('keeps the previous seven-day baseline correct across a month boundary', ()
   assert.equal(summary.summary.previousPeriodUsd, 4);
 });
 
+test('allocates daily tokens when CodexBar model breakdowns omit token counts', () => {
+  const summary = buildClaudeCodeUsageSummary([{
+    provider: 'claude',
+    daily: [{
+      date: '2026-07-13',
+      totalCost: 4,
+      totalTokens: 400,
+      modelBreakdowns: [
+        { modelName: 'claude-opus-4-6', cost: 3 },
+        { modelName: 'claude-haiku-4-5', cost: 1 },
+      ],
+    }],
+  }], 'day', new Date('2026-07-13T12:00:00+03:00'));
+
+  assert.equal(summary.summary.periodTokens, 400);
+  assert.equal(summary.byService.find((item) => item.name === 'claude-opus-4-6').tokens, 300);
+  assert.equal(summary.byService.find((item) => item.name === 'claude-haiku-4-5').tokens, 100);
+  assert.equal(summary.dailyByModel[0]['claude-opus-4-6_tokens'], 300);
+  assert.equal(summary.dailyByModel[0]['claude-haiku-4-5_tokens'], 100);
+});
+
 test('merges Codex and Claude CodexBar reports for headline spend and model mix', () => {
   const merged = mergeCodexBarReports([
     {
