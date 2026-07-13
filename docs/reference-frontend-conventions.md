@@ -1,204 +1,136 @@
 # Frontend Conventions
 
-This reference describes how the Mission Control frontend is structured and the
-conventions every page change is expected to follow: route registration, the
-data layer, the styling system, the UI kit, module folders, and lint rules.
+This reference describes the current frontend structure and the rules expected
+for new work. It distinguishes enforced contracts from migration targets in
+legacy pages.
 
 ## Route registry
 
-All routes live in `frontend/src/appRoutes.tsx` as `AppRouteDefinition` entries:
+`frontend/src/appRoutes.tsx` is the only browser-route registry.
 
-| Field | Type | Meaning |
-| --- | --- | --- |
-| `path` | string | Browser route (e.g. `/costs`) |
-| `label` | string | Sidebar label |
-| `module` | string | `mc-config.json` module flag that gates visibility |
-| `component` | lazy component | Page component, loaded via `React.lazy` |
-| `icon` | LucideIcon | Sidebar icon; routes without one are hidden from nav |
-| `nav` | boolean | `false` keeps the route reachable but out of the sidebar |
-| `navPlacement` | string | `primary` or `utility`; omitted routes stay out of navigation |
-| `section` | string | Route grouping metadata such as `core`, `intelligence`, or `system` |
-| `description` | string | Secondary line under the sidebar label |
-
-The sidebar (`components/Sidebar.tsx`) renders exactly seven primary routes and
-two utility routes when their module flags are enabled:
-
-| Surface | Route | Purpose |
-| --- | --- | --- |
-| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
-| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
-| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
-| Sessions | `/sessions` | OpenClaw sessions and handoffs |
-| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
-| Usage | `/usage` | Spend and model mix |
-| Systems | `/systems` | Live agents and system inventory |
-
-The utility routes are `/settings` and `/councils`. The sidebar also reads
-`/api/operations/overview` to show independent GBrain, Hermes, and OpenClaw
-state and freshness; it must not collapse them into one averaged status.
-
-Diagnostics is the one grouped route. `/diagnostics` is visible when at least
-one diagnostic module (`docs`, `scout`, `aws`, or `skills`) is not explicitly
-disabled; `settings` alone does not keep the grouped route visible. Old direct
-routes stay reachable as redirect shims:
-
-| Legacy route | Redirect target |
+| Field | Meaning |
 | --- | --- |
-| `/memory` | `/diagnostics?tab=memory` |
-| `/scout` | `/diagnostics?tab=scout` |
-| `/aws` | `/diagnostics?tab=aws` |
-| `/skills` | `/diagnostics?tab=skills` |
+| `path` | Browser path |
+| `label` | Navigation label |
+| `component` | Lazy-loaded page component |
+| `module` | Presentation flag in `mc-config.json` |
+| `icon` | Navigation icon when the route is eligible for navigation |
+| `nav` | `false` marks a hidden/direct route or redirect |
+| `navPlacement` | `primary` or `utility`; required for sidebar placement |
+| `anyModule` | Show a grouped surface when any listed module is enabled |
+| `section`, `description` | Navigation metadata |
 
-Those legacy routes stay out of the sidebar with `nav: false`. Phase 1 also
-keeps `/workshop`, `/calendar`, `/office`, `/team`, `/ollama`, and
-`/diagnostics` directly reachable for Phase 2 work while hiding them from
-navigation. Compatibility aliases redirect `/kanban`, `/cron`,
-`/conversations`, `/costs`, and `/agents` to `/work`, `/automations`,
-`/sessions`, `/usage`, and `/systems` respectively.
+The tested primary order is `/`, `/work`, `/automations`, `/sessions`,
+`/gbrain`, `/usage`, `/systems`. Utility navigation is `/settings`, then
+`/councils`. Direct pages and compatibility redirects are listed in the
+[Operator Surfaces Reference](reference-operator-surfaces.md).
 
-## Data layer
+Only explicit `false` disables an eligible navigation item. All registry
+entries are still mounted by `App.tsx`; module flags are not authorization.
+Diagnostics applies its own tab filtering, with `docs` currently owning both
+Memory and Docs.
 
-All API access goes through `frontend/src/lib/hooks.ts`, which wraps TanStack
-Query:
+Add or change route behavior together with assertions in
+`src/appRoutes.test.ts`. Do not duplicate the route table in page-level docs.
 
-| Export | Use |
+## Data access
+
+The standard read layer is `frontend/src/lib/hooks.ts`:
+
+| Export | Purpose |
 | --- | --- |
-| `fetchJson<T>(url, init?)` | Fetch wrapper; rejects non-2xx and non-JSON payloads |
-| `apiQueryOptions<T>(url, interval?)` | Query options with key `['api', url]` and optional polling interval (ms) |
-| `useApi<T>(url, interval?)` | The standard page hook; returns `{ data, loading, error, refetch }` |
+| `fetchJson<T>(url, init?)` | JSON fetch wrapper with non-2xx/non-JSON errors |
+| `apiQueryOptions<T>(url, interval?)` | Stable TanStack Query options and optional polling |
+| `useApi<T>(url, interval?)` | Page read helper returning data/loading/error/refetch |
 
-Current scope:
+New and migrated pages should use TanStack Query for server state, `useApi` for
+ordinary reads, and `useMutation` for writes. Polling belongs in Query options,
+not hand-written `setInterval` effects. Conditional refresh can use a
+`refetchInterval` callback, as Usage does while data is stale or refreshing.
 
-- Core operator pages use page-level CSS Modules: Dashboard, Cron, Calendar,
-  Hermes Kanban, Digital Office, Agents, AWS, Scout, Docs, Memory, Skills,
-  Settings, Setup, Team Structure, Workshop, Councils, Ollama Monitor, GBrain,
-  Costs, and Diagnostics.
-- `pages/BrainHome.tsx` composes the Shared Brain from the typed
-  `pages/brain/` components. Reads use `/api/operations/overview`; GBrain writes
-  continue through the existing allowlisted `/api/gbrain/actions` endpoint.
-- Brain treats system state and evidence freshness as separate fields. It keeps
-  GBrain caveats and stale-source warnings visible even when trust is `100/100`.
-- Capability metadata drives action safety: R0 runs directly, W1 requires
-  scoped confirmation, and W2 is not rendered. A completed action becomes
-  `verified` only when refreshed GBrain proof is newer and fresh.
-- `pages/Chat.tsx` still carries some local inline layout while using
-  `Chat.module.css`; treat it as the remaining exception, not the template.
-- `pages/costs/` and `pages/cron/` use section-level CSS Modules because those
-  pages are split into typed subcomponents.
+Several older pages still call `fetch` directly. That is current implementation
+debt, not the preferred template. Do not refactor an unrelated page solely to
+make it conform.
 
-Rules:
+Brain reads `/api/operations/overview` and invokes only the allowlisted
+`/api/gbrain/actions` contract. It must keep state, freshness, provenance, and
+caveats separate, and it must wait for newer proof before marking a repair
+verified.
 
-- Pages do not hand-roll `fetch().then()` chains inside effects. Use `useApi`
-  for reads, `useMutation` for writes.
-- Polling is expressed as the `interval` argument (e.g.
-  `useApi('/api/status', 30000)`), not `setInterval`.
-- Conditional retry-while-stale uses a `refetchInterval` callback. Example:
-  `pages/Costs.tsx` re-polls `/api/costs` every 2.5s while the payload reports
-  `source === 'sessions.fast_fallback'`, `meta.refreshing`, or `meta.stale`.
-- `refetchOnWindowFocus` stays off; the console is a long-lived operator surface.
+## Styling
 
-## Styling system
+There is no utility CSS framework. Use:
 
-Two layers, no utility framework (Tailwind was removed; only its preflight
-reset survives as a small base-reset block in `index.css`):
+1. global tokens and shared macOS-style primitives from `src/index.css`;
+2. a colocated CSS Module for page/component-specific layout and styling.
 
-1. **Global classes** in `frontend/src/index.css` — the macOS design language:
-   `macos-panel`, `macos-button`, `macos-input`, `macos-badge`, text hierarchy
-   (`text-title`, `text-body`, `text-label`), status dots, and the `:root`
-   color/vibrancy variables.
-2. **CSS Modules** per page or component (`X.module.css` next to `X.tsx`) for
-   everything else.
+Static values belong in classes. Inline style is appropriate only for values
+computed from data, responsive branches that cannot be expressed cleanly, SVG
+or chart geometry, and content rendered through third-party portals. Prefer a
+typed CSS custom property when a class needs one dynamic value.
 
-Rules:
+Use the paired `.name` / `.nameMobile` pattern with `useIsMobile()` where the
+existing design requires explicit mobile variants.
 
-- Static values belong in module classes, not inline `style={{}}`.
-- Inline styles are reserved for values computed from data at runtime
-  (per-item accent colors, percentage widths, responsive branches). Prefer the
-  CSS-variable pattern when a class needs one dynamic value:
-  `style={{ '--accent': color } as CSSProperties}` with `var(--accent)` in the
-  module class.
-- Styles rendered into Recharts-portalled DOM (custom tooltips, legend
-  formatters) stay inline — module scoping does not reach those nodes.
-- Mobile variants follow the paired-class pattern: `.foo` / `.fooMobile`
-  toggled by `useIsMobile()`.
+## Shared components
 
-## UI kit
-
-Shared primitives live in `frontend/src/components/`:
+Reusable primitives live in `src/components/`:
 
 | Component | Purpose |
 | --- | --- |
-| `ui/PageHeader` | Icon + title + subtitle block at the top of a page |
-| `ui/StatCard` | KPI card: uppercase label, large tabular-nums value, optional icon/accent |
-| `ui/EmptyState` | Centered icon-in-circle + title + description placeholder |
-| `GlassCard` | Frosted panel wrapper with entrance delay |
-| `StatusBadge` | Status pill with colored dot (`active`, `idle`, `failed`, ...) |
-| `AnimatedCounter` | Number that counts up on mount |
-| `PageTransition` | Page-level enter/exit animation wrapper |
+| `ui/PageHeader` | Page title, icon, and subtitle |
+| `ui/StatCard` | Label/value KPI card |
+| `ui/EmptyState` | Empty or unavailable state |
+| `GlassCard` | Frosted panel wrapper |
+| `StatusBadge` | State pill and dot |
+| `AnimatedCounter` | Animated numeric value |
+| `PageTransition` | Route/page transition |
 
-Adopt a kit component only when the rendered output stays identical to the
-local markup it replaces; pixel fidelity wins over reuse.
+Reuse a primitive when it preserves the established hierarchy and behavior.
+User-visible status surfaces need loading, empty, stale, unavailable, and error
+states appropriate to the API contract.
 
-## Module-folder pattern for large pages
+## Large-page organization
 
-When a page outgrows a single file, it becomes a folder. `pages/costs/` and
-`pages/cron/` are the templates:
+`pages/brain/`, `pages/costs/`, and `pages/cron/` are current templates:
 
 ```text
-pages/Costs.tsx              # orchestrator: state, queries, composition
-pages/costs/types.ts         # payload interfaces
-pages/costs/lib.ts           # pure helpers (formatters, color mapping)
-pages/costs/<Section>.tsx    # one component per page section
-pages/costs/<Section>.module.css
-
-pages/Cron.tsx               # orchestrator: filters, mutations, composition
-pages/cron/types.ts          # cron payload and view-model interfaces
-pages/cron/lib.ts            # model options, overlap markers, fetch helper
-pages/cron/lib.test.ts       # vitest coverage for pure cron logic
-pages/cron/<Section>.tsx     # table, card list, modal, dialog, badges
-pages/cron/<Section>.module.css
+pages/Feature.tsx                 # queries, state, top-level composition
+pages/feature/types.ts            # payload and view-model types
+pages/feature/lib.ts              # pure derivations and formatting
+pages/feature/lib.test.ts         # behavior tests for pure logic
+pages/feature/Section.tsx         # focused rendered section
+pages/feature/Section.module.css  # section styles
 ```
 
-The orchestrator owns data fetching and top-level derivations; sections receive
-typed props and own only the memoization that serves them.
+The orchestrator owns server state and mutations. Sections receive typed props
+and should remain render-focused. Extract pure behavior only when it reduces
+real complexity; cover it with colocated Vitest tests.
 
-Pure logic extracted into `lib.ts` gets vitest coverage in the sibling
-`lib.test.ts`. Keep network writes in the orchestrator or a small local fetch
-helper so sections stay render-focused.
+## Lint and React rules
 
-## Lint rules that shape code
+ESLint treats React Hooks compiler rules as errors. Important constraints:
 
-ESLint runs with the react-hooks compiler rules as errors. The ones that
-require specific patterns:
-
-- `react-hooks/set-state-in-effect` — do not mirror props/data into state from
-  a `useEffect`. Initialize form state with a render-phase sentinel (see
-  `EntryModal` in `pages/Calendar.tsx`) or derive during render.
-- `react-hooks/exhaustive-deps` — wrap derived arrays/objects in `useMemo`
-  before using them as hook dependencies.
-- `react-hooks/purity` — no `Date.now()` during render; use a ticking
-  `useState(() => Date.now())` + interval (see `pages/Calendar.tsx`).
-- `@typescript-eslint/no-explicit-any` — API payloads get a small interface
-  describing only the fields the page reads.
-
-Targeted `eslint-disable-next-line` comments are allowed only with a reason
-comment for genuine rule false positives; two such sites exist today
-(URL-param sync in `pages/Workshop.tsx`, mount fetch in
-`pages/TeamStructure.tsx`).
+- do not mirror props/query data into state from an effect when it can be
+  derived during render;
+- memoize arrays/objects used as dependencies;
+- do not call impure time functions during render—store a ticking time value;
+- describe the fields a page reads instead of using explicit `any`;
+- use a targeted disable only for a documented rule false positive.
 
 ## Checks
 
 ```bash
-cd frontend
-npm run lint     # ESLint, errors block CI
-npm test         # vitest unit suite
-npm run build    # tsc -b + vite build
+npm --prefix frontend run lint
+npm --prefix frontend test
+npm --prefix frontend run build
 ```
 
-Both run on every PR via `.github/workflows/ci.yml`.
+CI runs all three. UI changes also need an integrated check against the
+Express-served production bundle, not only Vite or source inspection.
 
 ## Related
 
-- [Operator Surfaces Reference](reference-operator-surfaces.md)
+- [System Architecture](explanation-system-architecture.md)
 - [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md)
-- [Read-Only Evidence Design](explanation-read-only-evidence-design.md)
+- [Configuration and Runtime Reference](reference-configuration.md)

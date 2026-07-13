@@ -1,5 +1,10 @@
 # Mission Control Shared Brain Core Implementation Plan
 
+> **Historical implementation plan.** The Shared Brain work described here has
+> landed. Unchecked task boxes and file lists reflect the execution plan, not
+> current outstanding work. Use the
+> [active documentation map](../../README.md) for current behavior and checks.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the OpenClaw-centric home screen with a Quiet Observatory Brain Map that presents independent GBrain, Hermes, and OpenClaw evidence, decisions, and safely classified GBrain triggers.

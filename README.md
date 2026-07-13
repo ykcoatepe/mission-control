@@ -1,225 +1,110 @@
-# Mission Control - Local AI Ops Console
+# Mission Control
 
-Mission Control is the local operator console for the AI stack on this machine.
-It runs at `http://127.0.0.1:3333` and gives one fast surface for active
-sessions, cron jobs, cost usage, local models, Digital Office state, governance
-history, and runtime health across OpenClaw, Hermes, GBrain, Ollama, and related
-local tools.
+Mission Control is a local operations console for the AI stack on this
+machine. It brings OpenClaw, Hermes, GBrain, Ollama, Claude Code, CodexBar, and
+supporting local services into one evidence-first interface at
+`http://127.0.0.1:3333`.
 
-This app is meant to answer the operator question first: what is running, what
-needs attention, what changed recently, and which action is safe to take next.
+The current product is organized around seven operator destinations:
 
-## Current Version
-
-The current release is a shared-brain operations center:
-
-- **Brain / Shared Brain** - independent GBrain, Hermes, and OpenClaw state,
-  evidence freshness, decision inbox, evidence drawer, local search, and safe
-  GBrain triggers from one read-first home surface.
-- **Cost Tracker** - OpenClaw + Hermes + Claude Code usage, budget posture,
-  model/service breakdowns, and fast cached responses that preserve
-  stale-but-useful data when a background usage refresh fails.
-- **Cron Jobs + Calendar** - recurring job status, failed/overdue jobs, compact
-  model display, manual run/toggle controls, and schedule-oriented scanning.
-- **Hermes Kanban** - profile-backed task board with triage, ready, running,
-  blocked, and done columns plus bounded card actions.
-- **GBrain** - trust cockpit, living brain map, evidence drawer, and bounded
-  local maintenance actions for shared memory health, sources, queues, and caveats.
-- **Governance Archive** - read-only view of council/governance records. Council
-  mutations are disabled by default because the old council flow was not earning
-  its operational weight.
-- **Digital Office / Team Structure / Agent Hub** - office telemetry, desks,
-  active sessions, team registry, runtime ownership, and agent attention cues.
-- **Ollama Monitor** - local model inventory, health, memory posture, and tuning
-  surfaces for local LLM operations.
-- **Diagnostics** - consolidated tab page (Memory, Docs, Scout, AWS, Skills) for
-  supporting diagnostic surfaces; old individual routes redirect here.
-- **Settings** - configuration surface.
-
-## Pages
-
-The sidebar has seven primary destinations:
-
-| Surface | Route | Purpose |
+| Destination | Route | What it answers |
 | --- | --- | --- |
-| Brain | `/` | Shared GBrain, Hermes, and OpenClaw evidence, decisions, and safe GBrain triggers |
-| Work | `/work` | Hermes work in Phase 1; cross-system merge follows in Phase 2 |
-| Automations | `/automations` | Cron list in Phase 1; schedule view follows in Phase 2 |
-| Sessions | `/sessions` | OpenClaw sessions and handoffs |
-| Explore | `/gbrain` | GBrain health, sources, memory, triggers, and timeline |
-| Usage | `/usage` | Spend and model mix |
-| Systems | `/systems` | Live agents and system inventory |
+| Brain | `/` | What needs attention across GBrain, Hermes, and OpenClaw? |
+| Work | `/work` | What is queued, running, blocked, or ready in Hermes? |
+| Automations | `/automations` | Which OpenClaw and Hermes jobs are scheduled or failing? |
+| Sessions | `/sessions` | Which conversations and handoffs are active? |
+| Explore | `/gbrain` | What is the detailed GBrain health, source, queue, and evidence state? |
+| Usage | `/usage` | What are OpenClaw, Hermes, Claude Code, and CodexBar using or costing? |
+| Systems | `/systems` | Which agents, sessions, models, and runtimes are present? |
 
-`/settings` and `/councils` remain utility destinations. Phase 2 source pages
-such as `/workshop`, `/calendar`, `/office`, `/team`, `/ollama`, and
-`/diagnostics` remain directly reachable without crowding primary navigation.
-Compatibility routes `/kanban`, `/cron`, `/conversations`, `/costs`, and
-`/agents` redirect to their new primary destinations.
+Settings and the governance archive are utility destinations. Calendar,
+Workshop, Digital Office, Team Structure, Ollama, Setup, and Diagnostics remain
+directly reachable without appearing in primary navigation.
 
-## Quick Start
+## Quick start
 
-### Requirements
-
-- Node.js 18+
-- A local OpenClaw or Hermes setup if you want live runtime data
-- Optional: Brave Search API key for Scout
-- Optional: local Ollama install for the Ollama Monitor page
-
-### Install
+Requirements: Node.js 20.19+ in the Node 20 line, or Node.js 22.12+. OpenClaw,
+Hermes, GBrain, Ollama, CodexBar, AWS, Notion, and Brave Search are optional
+integrations; unavailable sources render as explicit empty, stale, warning, or
+unavailable states.
 
 ```bash
 git clone https://github.com/ykcoatepe/mission-control.git
 cd mission-control
-
 npm install
-cd frontend
-npm install
-npm run build
-cd ..
-
+npm --prefix frontend install
 cp mc-config.default.json mc-config.json
+npm run build
 npm start
 ```
 
-Open `http://127.0.0.1:3333`.
+Open `http://127.0.0.1:3333`. Mission Control binds to loopback by default and
+does not provide application authentication. Do not expose it on a network by
+changing `MISSION_CONTROL_HOST` unless you add an appropriate trusted access
+boundary.
 
-The Setup page can auto-detect the local OpenClaw config and write
-`mc-config.json`. Keep `mc-config.json` local; it is intentionally gitignored.
-
-## Runtime Data
-
-Mission Control intentionally keeps live operator state out of git:
-
-- `mc-config.json` - local app configuration
-- `data/` - runtime snapshots and local state
-- `tasks.json` - local workshop/task queue state
-- `logs/` and `*.log` - server/runtime logs
-- `frontend/dist/` - generated frontend build
-- `node_modules/` and `frontend/node_modules/` - installed dependencies
-
-Do not commit live OpenClaw, Hermes, token, or personal runtime data.
-
-## Configuration
-
-Common environment switches:
-
-| Variable | Purpose |
-| --- | --- |
-| `PORT` | Override the default `3333` server port |
-| `MC_USER_HOME` | Explicit host home for OpenClaw usage lookups |
-| `MC_OPENCLAW_USAGE_TIMEOUT_MS` | Timeout for OpenClaw usage summary collection |
-| `MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS=1` | Re-enable council action endpoints |
-
-Council action endpoints return `410 Gone` unless
-`MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS=1` is set. Keep the default archive-only
-mode unless a real OpenClaw operation needs active council mutations again.
+Local configuration and runtime data are intentionally gitignored, including
+`mc-config.json`, `data/`, `documents/`, `tasks.json`, logs, generated frontend
+assets, and installed dependencies. Never commit tokens, local transcripts, or
+personal runtime data.
 
 ## Documentation
 
-| Document | Use it when |
-| --- | --- |
-| [First Operator Check](docs/tutorial-first-operator-check.md) | You want a first end-to-end walkthrough of the new operator surfaces |
-| [How to Verify Operator Surfaces](docs/how-to-verify-operator-surfaces.md) | You need commands to verify GBrain, Hermes Kanban, cron, costs, and supply-chain behavior |
-| [How to Update the Local Live Build](docs/how-to-update-local-live-build.md) | You merged PRs and need the machine's running `127.0.0.1:3333` app to serve current `master` |
-| [Operator Surfaces Reference](docs/reference-operator-surfaces.md) | You need the exact browser routes, API endpoints, actions, defaults, and constraints |
-| [Read-Only Evidence Design](docs/explanation-read-only-evidence-design.md) | You want the rationale behind read-only probes, explicit stale state, and bounded actions |
-| [Frontend Conventions](docs/reference-frontend-conventions.md) | You are changing frontend code and need the data-layer, styling, UI-kit, and lint conventions |
-| [GBrain Hybrid Brain View Handoff](docs/gbrain-hybrid-brain-view-handoff-20260524.md) | You need the product handoff that shaped the `/gbrain` implementation |
+Start with the [documentation map](docs/README.md), which separates learning,
+operational procedures, exact contracts, and design rationale.
 
-## Architecture
+- [First operator check](docs/tutorial-first-operator-check.md) — learn the
+  current workflow from Brain to source evidence.
+- [Verification runbook](docs/how-to-verify-operator-surfaces.md) — test code,
+  APIs, routes, and the served build.
+- [Local live update](docs/how-to-update-local-live-build.md) — rebuild and
+  restart the machine's running instance after a merge.
+- [Operator surfaces reference](docs/reference-operator-surfaces.md) — browser
+  routes, API families, mutations, and safety boundaries.
+- [Configuration reference](docs/reference-configuration.md) — config keys,
+  environment variables, runtime paths, and dependencies.
+- [System architecture](docs/explanation-system-architecture.md) — how the
+  frontend, Express API, readers, caches, and local systems fit together.
+- [Frontend conventions](docs/reference-frontend-conventions.md) — route,
+  query, styling, and test conventions for UI work.
+
+## Repository map
 
 ```text
 mission-control/
-├── server.js                 # Express entrypoint and static serving
-├── server/
-│   ├── routes/               # API route modules
-│   └── services/             # Runtime, session, cron, team, and cache services
-├── scripts/                  # Local helpers and usage summarizers
-├── tests/                    # Backend test suite (node --test)
-├── .github/workflows/        # CI: tests, lint, build, supply-chain gate
-├── mc-config.default.json    # Safe config template
-├── frontend/
-│   ├── src/
-│   │   ├── appRoutes.tsx     # Route and sidebar registry
-│   │   ├── pages/            # Operator pages
-│   │   │   ├── cron/         # Module-folder pattern: typed sections, helpers, vitest coverage
-│   │   │   └── costs/        # Module-folder pattern: types, lib, section components
-│   │   ├── components/       # Shared UI primitives and layout
-│   │   │   └── ui/           # UI kit: PageHeader, StatCard, EmptyState
-│   │   ├── lib/              # Hooks (react-query data layer) and client helpers
-│   │   └── utils/            # Sanitization helpers
-│   └── dist/                 # Generated build served by Express
-└── mission-control.service   # systemd template
+├── server.js                 # Express composition root and SPA server
+├── server/routes/            # HTTP route families
+├── server/services/          # Readers, normalization, caches, and persistence
+├── scripts/                  # Usage summaries and operational helpers
+├── tests/                    # Node test suite
+├── frontend/src/
+│   ├── appRoutes.tsx         # Canonical browser-route/navigation registry
+│   ├── pages/                # Operator surfaces
+│   ├── components/           # Layout and reusable UI
+│   └── lib/                  # Query and client helpers
+├── mc-config.default.json    # Safe local configuration template
+└── docs/                     # Diataxis documentation and design history
 ```
 
-**Stack:** React 19, Vite 7, TypeScript, TanStack Query, Framer Motion,
-Recharts, lucide-react, and Express. Styling is plain CSS: global classes in
-`index.css` plus CSS Modules per page/component (no utility framework).
-The main operator pages now use page-level CSS Modules; inline style remains
-only for runtime values, responsive branches, chart/SVG geometry, and
-third-party portal content.
-
-Frontend conventions (data layer, styling system, UI kit, lint rules) are
-documented in [Frontend Conventions](docs/reference-frontend-conventions.md).
-
-The backend favors bounded reads, cached snapshots, and explicit fallbacks so the
-UI remains useful when a slow runtime source stalls. User-facing health should
-come from evidence-bearing API responses, not from optimistic labels alone.
-Cost responses merge OpenClaw, fresh Hermes, and local Claude Code/CodexBar
-data. If OpenClaw or Claude Code collection fails, the latest detailed data for
-that source is preserved and marked stale instead of silently disappearing.
-Chat fallback requests are abortable on client disconnect so a closed browser
-tab does not leave child agent work running in the background.
+Stack: Express 5, React 19, TypeScript 5.9, Vite 7, TanStack Query, Framer
+Motion, Recharts, Vitest, and Node's built-in test runner. Styling uses global
+design tokens plus CSS Modules; there is no utility CSS framework.
 
 ## Validation
 
-Local checks (these are also what CI runs on every PR):
-
 ```bash
-npm test                       # backend test suite (node --test, tests/)
-cd frontend
-npm run lint                   # ESLint (react-hooks compiler rules are errors)
-npm test                       # vitest unit suite
-npm run build                  # tsc + vite production build
+npm test
+npm --prefix frontend run lint
+npm --prefix frontend test
+npm --prefix frontend run build
+git diff --check
 ```
 
-CI lives in `.github/workflows/ci.yml` (backend tests + frontend lint/build)
-and `.github/workflows/supply-chain.yml` (npm incident IOC gate, frozen
-lockfiles, registry signatures).
-
-For shared-brain UI changes, verify the running app at
-`http://127.0.0.1:3333` and inspect the read-only
-`/api/operations/overview` endpoint directly with `curl`. A GBrain trust score
-of `100/100` never suppresses active caveats or stale source evidence.
-
-## Feature Notes
-
-- Brain should remain compact and decision-first. GBrain, Hermes, and OpenClaw
-  retain independent state and freshness; do not average them into a false
-  global green state.
-- Cost Tracker should continue to return a usable fallback quickly, then refresh
-  richer OpenClaw/Hermes usage in the background. If one source fails, keep the
-  fresh source data and mark any cached source data as stale.
-- GBrain write actions must stay allowlisted, local-first, and visibly separated
-  from evidence probes. The `/api/gbrain/actions` catalog is the source of truth
-  for the operator buttons shown on `/gbrain`.
-- Hermes Kanban actions should keep argument boundaries explicit. Do not pass
-  user-controlled values that can be interpreted as CLI flags.
-- Chat and agent fallback routes should pass abort signals through to child work
-  and listen for response close events before cancelling that work.
-- Governance Archive is intentionally quieter than the old council workflow. If
-  the council becomes operationally useful again, improve and re-enable it behind
-  the existing environment gate.
-- Skills is still available as a direct route but hidden from navigation while
-  it has no meaningful operator workflow.
+CI runs the backend suite plus frontend lint, unit tests, and production build.
+The separate supply-chain workflow checks lockfiles, registry signatures, and
+the configured npm incident advisory.
 
 ## License
 
-[Business Source License 1.1](LICENSE)
-
-- Free to use, modify, and self-host
-- Personal and internal commercial use allowed
-- Cannot be offered as a hosted SaaS to third parties
-- Converts to MIT on 2030-02-07
-
-Maintained for local AI operations.
+[Business Source License 1.1](LICENSE). The licensed work converts to MIT on
+2030-02-07.

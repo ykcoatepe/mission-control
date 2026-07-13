@@ -1,7 +1,12 @@
 # Mission Control Shared Brain Rehaul Design
 
+> **Implemented design record.** This document preserves the pre-implementation
+> problem statement and approved decisions from 2026-07-10. Its “current state”
+> and route descriptions are historical. Use the
+> [active documentation map](../../README.md) for current behavior.
+
 Date: 2026-07-10
-Status: approved by user
+Status: approved by user; implemented
 Implementation focus: Phase 1, Shared Brain Core
 
 ## Summary

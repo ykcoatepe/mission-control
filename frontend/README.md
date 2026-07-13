@@ -1,105 +1,39 @@
-# Mission Control Frontend
+# Mission Control frontend
 
-React + TypeScript + Vite frontend for the Mission Control operator console.
-
-The frontend is not a generic Vite template anymore. It is the live UI for the
-local AI operator console at `http://127.0.0.1:3333`.
-
-## App Shape
-
-- Routes are registered in `src/appRoutes.tsx`.
-- The sidebar is generated from route definitions where `nav !== false`.
-- Pages live in `src/pages/`.
-- Shared UI primitives live in `src/components/`.
-- Client helpers and API hooks live in `src/lib/`.
-- Production assets are generated into `dist/` and served by the Express server.
-
-Current primary surfaces:
-
-- Dashboard
-- Conversations
-- Workshop
-- Hermes Kanban
-- Cost Tracker
-- Cron Jobs
-- Calendar
-- GBrain
-- Diagnostics
-- Ollama Monitor
-- Governance Archive
-- Team Structure
-- Digital Office
-- Agent Hub
-- Settings
-
-Diagnostics groups Memory, Docs, Scout, AWS, and Skills behind one sidebar
-item. The old `/memory`, `/scout`, `/aws`, and `/skills` routes redirect to the
-matching Diagnostics tab.
+The frontend is a React 19 + TypeScript application built by Vite and served by
+the root Express process from `frontend/dist`.
 
 ## Commands
 
-```bash
-npm install
-npm run dev -- --host 127.0.0.1
-npm run build
-npm run lint
-npm test
-```
-
-For normal local operation from the repository root:
+Run from the repository root:
 
 ```bash
-cd frontend
-npm run build
-cd ..
-npm start
+npm --prefix frontend install
+npm --prefix frontend run dev
+npm --prefix frontend test
+npm --prefix frontend run lint
+npm --prefix frontend run build
 ```
 
-Then open `http://127.0.0.1:3333`.
+The development server is useful for isolated UI work. Runtime-integrated QA
+should use the production build through `http://127.0.0.1:3333`, because that
+is the surface that exercises the Express API and SPA fallback together.
 
-## API Contract
+## Source map
 
-The frontend talks to the same-origin Express API under `/api/...`.
+- `src/appRoutes.tsx` is the canonical route and navigation registry.
+- `src/pages/` contains routed surfaces; large pages use a typed folder beside
+  their orchestrator file, as in `pages/brain/`, `pages/costs/`, and
+  `pages/cron/`.
+- `src/components/` contains layout and shared UI primitives.
+- `src/lib/hooks.ts` contains the standard TanStack Query read helpers.
+- `src/index.css` defines global tokens and shared macOS-style primitives;
+  page-specific styles live in CSS Modules.
 
-Important runtime endpoints include:
+Module flags control whether destinations appear in navigation or Diagnostics;
+they are not an authorization boundary and do not prevent direct route access.
 
-- `/api/health`
-- `/api/status`
-- `/api/sessions`
-- `/api/costs`
-- `/api/cron`
-- `/api/office/telemetry`
-- `/api/team`
-- `/api/agents`
-- `/api/ollama`
-- `/api/councils`
-
-Pages should render explicit fallback and stale-data states instead of implying
-that a runtime source is healthy when it only timed out or returned cached data.
-Cost views should preserve and label stale cached data when a background refresh
-fails instead of clearing useful totals from the operator surface.
-
-## UX Rules
-
-- Keep the UI operator-first: compact, scan-friendly, and action-oriented.
-- Prefer concrete status, timestamps, counts, and source labels over generic
-  "healthy" copy.
-- Normalize timestamps from API payloads before rendering relative ages. Backend
-  sources may send seconds, milliseconds, numeric strings, or ISO strings.
-- Keep empty or inactive systems out of primary navigation unless they help the
-  operator make a decision.
-- Use route-level code splitting as currently defined in `appRoutes.tsx`.
-- Use lucide icons for buttons and navigation when an icon exists.
-- Do not let cards become nested dashboards. Repeated items can be cards; page
-  sections should stay clean and readable.
-
-## Build Output
-
-`dist/` is generated and gitignored. Rebuild it before running the Express server
-when frontend assets change:
-
-```bash
-npm run build
-```
-
-The repository keeps source in git and leaves runtime/generated artifacts local.
+See the canonical [frontend conventions](../docs/reference-frontend-conventions.md),
+[operator surfaces reference](../docs/reference-operator-surfaces.md), and
+[verification runbook](../docs/how-to-verify-operator-surfaces.md). Do not copy
+route or API catalogs into this file; those contracts change in the root app.

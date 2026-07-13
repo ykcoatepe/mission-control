@@ -1,145 +1,114 @@
 # First Operator Check
 
-This tutorial walks through the first useful Mission Control check: start the
-local console, inspect shared evidence for GBrain, Hermes, and OpenClaw, then
-confirm the underlying work, automation, and usage surfaces.
+This tutorial teaches the current Mission Control workflow: begin with shared
+attention on Brain, inspect its proof, move to the owning source surface, and
+confirm that refreshed evidence changed the state.
 
-## What you'll need
+## Before you begin
 
-- Node.js 18 or newer.
-- Dependencies installed at the repository root and in `frontend/`.
-- A local OpenClaw or Hermes setup if you want live data instead of empty or unavailable states.
-- Optional: `gbrain` on PATH for live GBrain probes.
-
-## Step 1: Start Mission Control
-
-From the repository root:
+You need Node.js 20.19+ in the Node 20 line or Node.js 22.12+, installed
+root/frontend dependencies, and a built frontend. OpenClaw, Hermes, and GBrain
+are optional for starting the app but are needed for live evidence from their
+respective systems.
 
 ```bash
 npm install
-cd frontend
-npm install
+npm --prefix frontend install
+cp -n mc-config.default.json mc-config.json
 npm run build
-cd ..
 npm start
 ```
 
-The server starts on `http://127.0.0.1:3333` unless `PORT` is set.
+Open `http://127.0.0.1:3333`.
 
-## Step 2: Open Brain
+## 1. Read Brain before opening a source tool
 
-Open:
+Brain shows OpenClaw, Hermes, and GBrain independently. Look at each system's
+state, freshness, observed time, and caveats, then scan the Decision Inbox.
 
-```text
-http://127.0.0.1:3333/
-```
+Do not treat an empty inbox as proof that every system is healthy. Likewise, a
+GBrain trust score of `100/100` does not hide missing embeddings, stale sources,
+or other caveats.
 
-Brain is the common read-first center for OpenClaw, Hermes, and GBrain. You
-should see three independent system states, evidence freshness, the Decision
-Inbox, an evidence timeline and drawer, and the existing safe GBrain triggers.
-The first result appears as soon as `/api/operations/overview` responds.
-
-Do not interpret an empty Decision Inbox as a global health average. Each
-system keeps its own state and freshness. A `100/100` GBrain trust score still
-shows active caveats and stale source warnings.
-
-## Step 3: Verify the same data from the API
-
-Run:
+Confirm the same contract from the API:
 
 ```bash
-curl -s http://127.0.0.1:3333/api/operations/overview
+curl -fsS http://127.0.0.1:3333/api/operations/overview | jq \
+  '{schemaVersion,mode,systems,attention,evidenceCount:(.evidence|length)}'
 ```
 
-Expected shape:
+You should see schema version `1`, mode `live-read-first`, and separate
+`openclaw`, `hermes`, and `gbrain` system objects. An unavailable integration is
+a valid result when its provenance and failure state are explicit.
 
-```json
-{
-  "ok": true,
-  "schemaVersion": "1",
-  "mode": "live-read-first",
-  "overall": {},
-  "systems": {
-    "gbrain": {},
-    "hermes": {},
-    "openclaw": {}
-  },
-  "attention": [],
-  "evidence": [],
-  "capabilities": []
-}
-```
+## 2. Follow one attention item to its evidence
 
-Use `/api/operations/overview` for this aggregate, not
-`/api/gbrain/overview`. The Operations endpoint runs bounded read-only readers
-and reports unavailable evidence explicitly. It must not expose raw messages,
-task bodies, tokens, or absolute home paths.
+Select an attention item, then open its evidence drawer. Compare:
 
-The capability list contains exactly these eight ids:
-`doctor-fast`, `preview-sync`, `sync-sources`, `retry-failed-sync`,
-`embed-stale`, `embed-missing`, `check-resolvable`, and `storage-status`.
-R0 diagnostics and previews run directly. W1 maintenance and repair require a
-scoped confirmation. W2 actions are not rendered. `Run System Check` is the
-Brain label for `doctor-fast`, not an extra action.
+- source and provenance;
+- observed time and freshness;
+- caveat or recommendation;
+- the detailed source destination.
 
-## Step 4: Inspect Hermes Kanban
+Use the source destination rather than guessing from the aggregate:
 
-Open:
+- Hermes work: `http://127.0.0.1:3333/work`
+- OpenClaw/Hermes schedules: `http://127.0.0.1:3333/automations`
+- GBrain detail: `http://127.0.0.1:3333/gbrain`
+- sessions: `http://127.0.0.1:3333/sessions`
+- usage: `http://127.0.0.1:3333/usage`
+- agent/runtime inventory: `http://127.0.0.1:3333/systems`
 
-```text
-http://127.0.0.1:3333/work
-```
+The specialized page carries more source-specific context than Brain.
 
-The board shows `triage`, `todo`, `ready`, `running`, `blocked`, and `done` columns. If Hermes is not reachable, the API returns an empty board plus an error instead of crashing the page.
+## 3. Learn the safe action model
 
-Check the backing endpoint:
+Brain and Explore expose the same eight allowlisted GBrain actions. Try an R0
+diagnostic such as **Run System Check** (`doctor-fast`) or a preview action.
+R0 runs without a confirmation dialog because it does not repair data.
 
-```bash
-curl -s http://127.0.0.1:3333/api/hermes-kanban
-```
+W1 actions such as source sync or embedding repair require confirmation scoped
+to that exact action. Cancel the dialog during a first walkthrough. W2 actions
+are not rendered.
 
-The response includes the active Hermes profile, column data, assignee totals, and summary counts.
+An action finishing is not proof that the underlying condition changed. The UI
+keeps the result in a verifying state until a newer Operations response carries
+fresh GBrain evidence.
 
-## Step 5: Check cron and cost posture
+## 4. Check work, automation, and usage ownership
 
-Open:
+Open `/work`. The Hermes board uses `triage`, `todo`, `ready`, `running`,
+`blocked`, and `done` columns. If Hermes is unavailable, the page should keep an
+explicit empty/error state instead of failing the whole app.
 
-```text
-http://127.0.0.1:3333/automations
-http://127.0.0.1:3333/usage
-```
+Open `/automations`. Each job identifies its scheduler. OpenClaw jobs support
+the full set of configured controls. Hermes jobs can be toggled and have their
+model changed, but cannot be run or deleted here.
 
-Cron should show both OpenClaw and Hermes jobs when available. Hermes jobs are editable for model and enabled state, but they are not runnable or deletable from Mission Control.
+Open `/usage`. The page combines OpenClaw, Hermes, Claude Code, and CodexBar
+evidence. Read the source reliability metadata alongside totals: preserved
+stale detail is useful history, not current proof and not zero usage.
 
-Costs should show OpenClaw and Hermes usage when both sources are available. If OpenClaw usage is slow or unavailable, Mission Control can preserve the last detailed OpenClaw data while still showing fresh Hermes usage.
+## 5. Recognize secondary surfaces
 
-## Step 6: Explore GBrain evidence
+Settings and Governance Archive are utility destinations. `/workshop`,
+`/calendar`, `/office`, `/team`, `/ollama`, `/setup`, and `/diagnostics` are
+reachable directly but intentionally absent from primary navigation. A module
+flag may hide a navigation item or Diagnostics tab; it does not block the URL.
 
-Open:
+Old bookmarks continue to redirect, including `/kanban`, `/cron`,
+`/conversations`, `/costs`, and `/agents`.
 
-```text
-http://127.0.0.1:3333/gbrain
-```
+## What you verified
 
-Explore retains the detailed GBrain health, sources, memory, triggers, and
-timeline surface. After an allowed action, completion is not yet repair proof:
-Brain reports `verified` only after a refreshed Operations overview advances
-GBrain `observedAt` and marks the evidence `fresh`.
+You used the current operator loop:
 
-Phase 2 source pages such as `/diagnostics`, `/workshop`, and `/calendar` remain
-directly reachable but are intentionally hidden from primary navigation. Old
-bookmarks such as `/kanban`, `/cron`, `/conversations`, `/costs`, and `/agents`
-redirect to their new primary destinations.
+1. begin with independent state and freshness on Brain;
+2. inspect provenance-bearing evidence;
+3. move to the owning source surface;
+4. distinguish preview, confirmed maintenance, and broader dispatch actions;
+5. wait for newer proof before calling an outcome verified.
 
-## What you built
-
-You started the local operator console and verified the new PR surfaces from both the browser and API:
-
-- Brain shows independent GBrain, Hermes, and OpenClaw evidence and freshness.
-- GBrain caveats and stale evidence remain visible even at `100/100` trust.
-- Hermes Kanban cards are visible in Mission Control.
-- Cron jobs show scheduler ownership and safe actions.
-- Cost data keeps stale and unavailable source states explicit.
-- Detailed GBrain exploration and the original eight triggers remain available.
-
-For exact endpoint details, see [Operator Surfaces Reference](reference-operator-surfaces.md). For verification and troubleshooting commands, see [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md). After merging PRs, use [How to Update the Local Live Build](how-to-update-local-live-build.md) to rebuild and restart the running local app.
+For exact routes and endpoints, use the
+[Operator Surfaces Reference](reference-operator-surfaces.md). For a release or
+PR check, follow [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md).
