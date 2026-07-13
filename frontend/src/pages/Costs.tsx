@@ -33,7 +33,7 @@ import {
   toChartKey,
   estimateCost,
   calculateTrend,
-  costReliabilityLabel,
+  summarizeCostReliability,
   sumCostRows,
   calendarRefreshQueryKeys,
   millisecondsUntilNextCalendarDay,
@@ -668,17 +668,17 @@ export default function Costs() {
       .slice()
       .sort((a, b) => Number(b.tokens || 0) - Number(a.tokens || 0))[0]
       || (agent.byService || []).slice().sort((a, b) => Number(b.tokens || 0) - Number(a.tokens || 0))[0]
-    const costSourceProbe = (agent.byService || []).find(service => Number(service.cost || 0) > 0)
-      || periodModels.find(model => Number(model.cost || 0) > 0)
-      || (agent.byService || []).find(service => Number(service.tokens || 0) > 0)
-      || topModel
-    const costLabel = costReliabilityLabel(costSourceProbe)
+    const billingSummary = summarizeCostReliability(
+      periodModels.length > 0 ? periodModels : (agent.byService || []),
+    )
 
     return {
       ...agent,
       tokens,
       cost,
-      costLabel,
+      costLabel: billingSummary.label,
+      meteredCost: billingSummary.meteredCost,
+      estimatedCost: billingSummary.estimatedCost,
       apiEquivalentCost: periodModels.length > 0
         ? periodApiEquivalentCost
         : Number(agent.summary?.periodApiEquivalentUsd ?? agent.summary?.apiEquivalentUsd ?? 0),

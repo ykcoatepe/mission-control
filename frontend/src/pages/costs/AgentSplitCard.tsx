@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Loader2 } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
-import { formatApiEquivalentValue, formatCompactTokenValue, formatAgentCostValue, formatTokens } from './lib'
+import { formatApiEquivalentValue, formatCompactTokenValue, formatPreciseCurrency, formatTokens } from './lib'
 import type { AgentUsageData } from './types'
 import styles from './AgentSplitCard.module.css'
 
@@ -9,6 +9,8 @@ interface AgentSplitItem extends AgentUsageData {
   tokens: number
   cost: number
   costLabel: string
+  meteredCost: number
+  estimatedCost: number
   apiEquivalentCost: number
   apiEquivalentAvailable: boolean
   topModel: string
@@ -76,7 +78,7 @@ export default function AgentSplitCard({
             </div>
             {!agentSplitPending && (
               <div className={styles.sourceNote}>
-                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs. Tracked cost reflects billing mode; API equivalent applies public rate cards to the same usage across every priced source.
+                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs. API equivalent uses public list prices; billing status stays separate from that estimate.
               </div>
             )}
           </div>
@@ -162,20 +164,39 @@ export default function AgentSplitCard({
         ) : (
           <div
             className={styles.agentGrid}
-            style={{ gridTemplateColumns: m ? '1fr' : `repeat(${agentSplit.length}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: m ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}
           >
             {agentSplit.map(agent => {
               const share = totalAgentTokens > 0 ? (agent.tokens / totalAgentTokens) * 100 : 0
               const accent = agent.accent || (agent.key === 'hermes' ? '#00C7BE' : '#5E5CE6')
               const bucketDetails = AGENT_BUCKET_DETAILS[agent.key]
+              const billingDetails = [
+                agent.meteredCost > 0 ? `${formatPreciseCurrency(agent.meteredCost)} metered` : null,
+                agent.estimatedCost > 0 ? `${formatPreciseCurrency(agent.estimatedCost)} estimated` : null,
+              ].filter(Boolean).join(' + ')
+              const billingStatus = agent.costLabel === 'Included'
+                ? 'Billing included'
+                : agent.costLabel === 'Metered'
+                  ? `Metered · ${formatPreciseCurrency(agent.meteredCost)}`
+                  : agent.costLabel === 'Estimated'
+                    ? `Estimated cost · ${formatPreciseCurrency(agent.estimatedCost)}`
+                    : agent.costLabel === 'Partial'
+                      ? billingDetails
+                        ? `Partially tracked · ${billingDetails}`
+                        : 'Partially tracked'
+                      : agent.costLabel === 'Mixed'
+                        ? billingDetails
+                          ? `Mixed billing · ${billingDetails}`
+                          : 'Mixed billing'
+                        : 'Billing untracked'
               return (
                 <div
                   key={agent.key}
                   className={m ? `${styles.agentCard} ${styles.agentCardMobile}` : styles.agentCard}
                   style={{
-                    border: `1px solid ${accent}55`,
-                    background: `linear-gradient(145deg, ${accent}22 0%, rgba(255,255,255,0.035) 45%, rgba(255,255,255,0.02) 100%)`,
-                    boxShadow: `0 14px 34px ${accent}18`,
+                    border: '1px solid rgba(255,255,255,0.09)',
+                    background: `radial-gradient(circle at 12% 0%, ${accent}14, transparent 42%), rgba(255,255,255,0.025)`,
+                    boxShadow: `inset 0 1px 0 ${accent}55`,
                   }}
                 >
                   <div className={styles.agentCardTop}>
@@ -193,37 +214,32 @@ export default function AgentSplitCard({
                     </div>
                     <div className={styles.agentStateGroup}>
                       {agent.status === 'stale' && <span className="macos-badge macos-badge-orange">STALE</span>}
-                      <span className={styles.agentShare}>{share.toFixed(1)}%</span>
+                      <span className={styles.agentShare}>Mix {share.toFixed(1)}%</span>
                     </div>
                   </div>
 
-                  <div className={styles.agentMetricGrid}>
-                    <div>
-                      <div className={styles.agentMetricLabel}>Cost</div>
-                      <div className={m ? `${styles.agentMetricValue} ${styles.agentMetricValueMobile}` : styles.agentMetricValue}>
-                        {formatAgentCostValue(agent.cost, agent.costLabel)}
-                      </div>
-                      <div
-                        className={styles.agentCostLabel}
-                        style={{ color: agent.costLabel === 'Metered' ? 'rgba(255,255,255,0.42)' : '#FFCC00' }}
-                      >
-                        {agent.costLabel}
-                      </div>
+                  <div className={styles.apiEquivalentBlock}>
+                    <div className={styles.agentMetricLabel}>API equivalent</div>
+                    <div className={m ? `${styles.apiEquivalentValue} ${styles.apiEquivalentValueMobile}` : styles.apiEquivalentValue}>
+                      {formatApiEquivalentValue(agent.apiEquivalentCost, agent.apiEquivalentAvailable)}
                     </div>
-                    <div>
-                      <div className={styles.agentMetricLabel}>API equivalent</div>
-                      <div className={m ? `${styles.agentMetricValue} ${styles.agentMetricValueMobile}` : styles.agentMetricValue}>
-                        {formatApiEquivalentValue(agent.apiEquivalentCost, agent.apiEquivalentAvailable)}
-                      </div>
-                      <div className={styles.agentEquivalentLabel}>Estimated list price</div>
-                    </div>
+                    <div className={styles.agentEquivalentLabel}>Estimated public list price</div>
+                  </div>
+
+                  <div className={styles.secondaryMetrics}>
                     <div title={`${formatTokens(agent.tokens)} tokens`}>
                       <div className={styles.agentMetricLabel}>Tokens</div>
                       <div
-                        className={m ? `${styles.agentMetricValue} ${styles.agentMetricValueMobile}` : styles.agentMetricValue}
+                        className={styles.secondaryMetricValue}
                         style={{ fontFeatureSettings: '"tnum"' } as CSSProperties}
                       >
                         {formatCompactTokenValue(agent.tokens)}
+                      </div>
+                    </div>
+                    <div className={styles.modelMetric}>
+                      <div className={styles.agentMetricLabel}>Top model</div>
+                      <div className={styles.secondaryModelValue} title={agent.topModel}>
+                        {agent.topModel}
                       </div>
                     </div>
                   </div>
@@ -238,8 +254,14 @@ export default function AgentSplitCard({
                         }}
                       />
                     </div>
-                    <div className={styles.agentTopModel} title={agent.topModel}>
-                      Top model: {agent.topModel}
+                    <div
+                      className={agent.costLabel === 'Included'
+                        ? `${styles.billingStatus} ${styles.billingStatusIncluded}`
+                        : agent.costLabel === 'Partial'
+                          ? `${styles.billingStatus} ${styles.billingStatusPartial}`
+                          : styles.billingStatus}
+                    >
+                      {billingStatus}
                     </div>
                   </div>
                 </div>
