@@ -82,6 +82,7 @@ describe('brain truth components', () => {
     expect(html).toContain('stale')
     expect(html).toContain('no current proof')
     expect(html).toContain('data-state="warning"')
+    expect(html).toContain('data-freshness="stale"')
   })
 
   it('keeps the fixed three-system map relationship and explicit accessible states', () => {
@@ -93,6 +94,8 @@ describe('brain truth components', () => {
     expect(html.indexOf('GBrain')).toBeLessThan(html.indexOf('Hermes'))
     expect(html.indexOf('Hermes')).toBeLessThan(html.indexOf('OpenClaw'))
     expect(html).toContain('aria-label="OpenClaw: warning, stale, no current proof · Heartbeat unavailable')
+    expect(html).toContain('data-freshness="fresh"')
+    expect(html).toContain('data-freshness="stale"')
     expect(html).toContain('Sources')
     expect(html).toContain('Triggers')
   })
@@ -107,7 +110,9 @@ describe('brain truth components', () => {
 
     expect(sortedHtml.indexOf('Critical item')).toBeLessThan(sortedHtml.indexOf('Warning item'))
     expect(sortedHtml).toContain('data-severity="critical"')
+    expect(sortedHtml).toContain('data-attention="active"')
     expect(emptyHtml).toContain('Review system freshness')
+    expect(emptyHtml).toContain('data-attention="clear"')
   })
 
   it('limits the evidence stream and labels missing timestamps as unknown', () => {
@@ -175,8 +180,10 @@ describe('brain truth components', () => {
     }))
 
     expect(html).toContain('Run fast doctor')
+    expect(html).toContain('Read-only diagnostics')
     expect(html).toContain('Runs diagnostic directly')
     expect(html).toContain('Sync local sources')
+    expect(html).toContain('Guarded maintenance')
     expect(html).toContain('Confirmation required')
     expect(html).toContain('Worker unavailable')
     expect(html).toContain('disabled=""')

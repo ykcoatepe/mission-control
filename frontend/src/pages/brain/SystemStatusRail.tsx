@@ -12,6 +12,7 @@ export function SystemStatusRail({ systems }: { systems: OperationSystem[] }) {
           to={system.detailHref}
           className={styles.statusCard}
           data-state={system.state}
+          data-freshness={system.freshness}
         >
           <span className={styles.statusIdentity}>
             <span aria-hidden="true" className={styles.statusDot} />
