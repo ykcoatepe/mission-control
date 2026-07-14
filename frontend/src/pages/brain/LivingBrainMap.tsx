@@ -44,8 +44,14 @@ export function LivingBrainMap({
       </header>
       <div className={styles.mapCanvas}>
         <svg className={styles.mapConnections} viewBox="0 0 100 100" aria-hidden="true" preserveAspectRatio="none">
-          <path d="M18 28 L50 50 L82 28" />
-          <path d="M18 28 L18 74 L50 50 L82 74 L82 28" />
+          <g className={styles.mapConnectionsBase}>
+            <path d="M18 28 L50 50 L82 28" />
+            <path d="M18 28 L18 74 L50 50 L82 74 L82 28" />
+          </g>
+          <g key={overview.generatedAt} className={styles.mapConnectionPulse}>
+            <path d="M18 28 L50 50 L82 28" />
+            <path d="M18 28 L18 74 L50 50 L82 74 L82 28" />
+          </g>
         </svg>
         {systems.map((system) => {
           const proof = mapProof(system)
@@ -56,6 +62,7 @@ export function LivingBrainMap({
               className={styles.mapNode}
               data-system={system.id}
               data-state={system.state}
+              data-freshness={system.freshness}
               style={nodePosition(positions[system.id].x, positions[system.id].y)}
               aria-label={`${system.label}: ${system.state}, ${system.freshness}, ${proof}`}
               onClick={() => onSelectSystem(system)}

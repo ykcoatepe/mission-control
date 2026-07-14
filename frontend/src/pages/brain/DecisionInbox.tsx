@@ -12,7 +12,11 @@ export function DecisionInbox({
   const sorted = sortAttention(items)
 
   return (
-    <section className={styles.inbox} aria-labelledby="decision-inbox-title">
+    <section
+      className={styles.inbox}
+      data-attention={sorted.length > 0 ? 'active' : 'clear'}
+      aria-labelledby="decision-inbox-title"
+    >
       <header className={styles.panelHeader}>
         <div>
           <p className={styles.eyebrow}>Operator queue</p>
