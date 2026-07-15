@@ -6,7 +6,6 @@ import {
   Brain,
   CheckCircle2,
   Clock,
-  Cpu,
   Database,
   Link2,
   Network,
@@ -19,16 +18,18 @@ import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import { formatDate, timeAgo, useApi } from '../lib/hooks'
 import { postGBrainAction } from './gbrain/api'
+import { deriveOperationalState, deriveQueueEvidenceStatus, timelineDeltaLines } from './gbrain/presentation'
 import {
   resolveGBrainAction,
   visibleGBrainActions,
 } from './gbrain/actionPolicy'
 import type { GBrainActionResult } from './gbrain/types'
+import type { GBrainEvidenceStatus } from './gbrain/presentation'
 import { ActionConfirmDialog } from './brain/ActionConfirmDialog'
 import type { OperationCapability, OperationSystem, SafetyClass } from './brain/types'
 import styles from './GBrain.module.css'
 
-type EvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
+type EvidenceStatus = GBrainEvidenceStatus
 type NodeKind = 'core' | 'agent' | 'source' | 'queue' | 'bridge'
 
 interface Proof {
@@ -171,6 +172,7 @@ interface GBrainOverview {
     recommendedNextSlice: string
   }
   live?: {
+    health?: LiveHealth | null
     sources?: LiveSources | null
   }
   timelineSummary?: TimelineSummary
@@ -195,7 +197,8 @@ interface LiveSource {
   freshness?: SourceFreshness
 }
 
-interface LiveSources {
+interface LiveSourcesAvailable {
+  ok: true
   checkedAt: string
   freshness?: {
     status: EvidenceStatus
@@ -209,6 +212,44 @@ interface LiveSources {
   }
   sources: LiveSource[]
 }
+
+interface LiveSourcesUnavailable {
+  ok: false
+  checkedAt: string
+  status: string
+  error?: string
+  sources: LiveSource[]
+  freshness?: undefined
+}
+
+type LiveSources = LiveSourcesAvailable | LiveSourcesUnavailable
+
+interface LiveHealthAvailable {
+  ok: true
+  checkedAt: string
+  status: string
+  score: number | null
+  metrics: {
+    pages: number | null
+    chunks: number | null
+    embedded: number | null
+    missingEmbeddings: number | null
+    stalePages: number | null
+    embeddingCoverage: number | null
+    queue: { waiting: number | null; active: number | null; stalled: number | null }
+  }
+}
+
+interface LiveHealthUnavailable {
+  ok: false
+  checkedAt: string
+  status: string
+  error?: string
+  score?: undefined
+  metrics?: undefined
+}
+
+type LiveHealth = LiveHealthAvailable | LiveHealthUnavailable
 
 interface TimelineDiff {
   kind: string
@@ -249,7 +290,7 @@ interface TimelineEntry {
     source: string
     lastVerifiedAt: string
   }
-  metrics: Record<string, string>
+  metrics: Record<string, string | number | null>
   bridgeProof: { id: string; label: string; status: EvidenceStatus; proofLabel: string; proofSource: string; verifiedAt: string }[]
   sourceFreshness: { status: EvidenceStatus; label: string; warningCount: number; defaultThresholdHours: number }
   warnings: string[]
@@ -406,6 +447,13 @@ function formatActionTimeout(timeoutMs?: number) {
   return `${Math.round(timeoutMs / 1000)}s`
 }
 
+function incidentDetailForDisplay(detail: string) {
+  const normalized = detail.replace(/\b1 stale pages\b/i, '1 stale page')
+  return normalized.replace(/ at (\d{4}-\d{2}-\d{2}T[\d:.]+Z)\.?$/, (_match, timestamp: string) => (
+    ` · detected ${timeAgo(timestamp)}`
+  ))
+}
+
 function kindIcon(kind: NodeKind) {
   if (kind === 'core') return <Brain size={22} />
   if (kind === 'agent') return <Bot size={19} />
@@ -450,7 +498,9 @@ export default function GBrain() {
   const runningActionRef = useRef<string | null>(null)
   const [actionResult, setActionResult] = useState<PageGBrainActionResult | null>(null)
   const [confirmationActionId, setConfirmationActionId] = useState<string | null>(null)
+  const [mapAnimationCycle, setMapAnimationCycle] = useState(0)
   const confirmationTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const drawerRef = useRef<HTMLDivElement | null>(null)
   const [acknowledgedIncidents, setAcknowledgedIncidents] = useState<Set<string>>(() => {
     if (typeof window === 'undefined') return new Set()
     try {
@@ -472,6 +522,11 @@ export default function GBrain() {
     if (exists) setSelectedId(nodeId)
   }
 
+  const revealSelectedEvidence = () => {
+    drawerRef.current?.scrollIntoView({ behavior: 'auto', block: 'start' })
+    drawerRef.current?.focus({ preventScroll: true })
+  }
+
   const timelineSummary = data?.timelineSummary
   const incidentCandidates = data?.incidentBanners?.length
     ? data.incidentBanners
@@ -480,24 +535,40 @@ export default function GBrain() {
       : timelineSummary?.incidentBanners?.length
         ? timelineSummary.incidentBanners
         : [data?.incidentBanner || timeline?.incidentBanner || timelineSummary?.incidentBanner].filter(Boolean) as IncidentBanner[]
-  const incidentBanner = incidentCandidates.find((candidate) => {
+  const visibleIncidentCandidates = incidentCandidates.filter((candidate) => {
     const key = candidate.snapshotId || `${candidate.title}:${candidate.detail}`
     return candidate.kind !== 'recent-regression' || !acknowledgedIncidents.has(key)
-  }) || null
-  const incidentKey = incidentBanner?.snapshotId || `${incidentBanner?.title || ''}:${incidentBanner?.detail || ''}`
-  const canAcknowledgeIncident = incidentBanner?.kind === 'recent-regression' && Boolean(incidentKey)
+  })
+  const activeIncidentBanner = visibleIncidentCandidates.find((candidate) => candidate.kind !== 'recent-regression') || null
+  const recoveredIncidentBanner = visibleIncidentCandidates.find((candidate) => candidate.kind === 'recent-regression') || null
+  const recoveredIncidentKey = recoveredIncidentBanner?.snapshotId
+    || `${recoveredIncidentBanner?.title || ''}:${recoveredIncidentBanner?.detail || ''}`
+  const incidentIsCurrent = Boolean(activeIncidentBanner)
   const timelineEnabled = timeline?.enabled ?? timelineSummary?.enabled ?? true
   const timelineEntries = timeline?.entries || []
-  const visibleTimelineEntries = timelineEntries.slice(0, 2)
+  const visibleTimelineEntries = timelineEntries.slice(0, 4)
   const hiddenTimelineCount = Math.max(0, (timeline?.retainedEntryCount ?? timelineEntries.length) - visibleTimelineEntries.length)
-  const showTimelineDiff = timelineSummary?.diff && timelineSummary.diff.kind !== 'unchanged'
+  const timelineDiff = timeline?.diff || timelineSummary?.diff
+  const showTimelineDiff = Boolean(timelineDiff && timelineDiff.kind !== 'unchanged')
   const staleSources = useMemo(() => {
     return (data?.live?.sources?.sources || []).filter((source) => source.freshness?.status === 'warning')
   }, [data?.live?.sources?.sources])
   const actions = actionsData?.actions?.length ? actionsData.actions : fallbackActions
   const visibleActions = visibleGBrainActions(actions)
-  const systemCheckAction = visibleActions.find((action) => action.id === 'doctor-fast')
-  const systemCheckRunning = runningAction === 'doctor-fast'
+  const actionGroups = [
+    {
+      id: 'r0',
+      label: 'R0 diagnostics',
+      detail: 'Direct · read-only',
+      actions: visibleActions.filter((action) => action.safetyClass === 'R0'),
+    },
+    {
+      id: 'w1',
+      label: 'W1 maintenance',
+      detail: 'Confirmation required',
+      actions: visibleActions.filter((action) => action.safetyClass === 'W1'),
+    },
+  ].filter((group) => group.actions.length > 0)
   const canRunActions = Boolean(data)
   const proofScope = proofScopeFor(data, loading)
   const confirmationAction = confirmationActionId
@@ -531,20 +602,144 @@ export default function GBrain() {
   const selectedContractSystem = data?.integrationContract?.systems?.find((system) => system.id === selectedNode?.id)
   const selectedIntegrationSystem = data?.integrationHealth?.systems?.find((system) => system.id === selectedNode?.id)
   const missingIntegrationTools = data?.integrationHealth?.toolContract?.tools?.filter((tool) => !tool.present) || []
-  const healthyNodeCount = (data?.nodes || []).filter((node) => node.status === 'healthy').length
-  const degradedNodeCount = (data?.nodes || []).filter((node) => node.status === 'warning').length
-  const disconnectedNodeCount = (data?.nodes || []).filter((node) => node.status === 'critical' || node.status === 'inactive').length
-  const nodeCount = data?.nodes?.length || 0
   const integrationConnectedCount = data?.integrationHealth?.connectedCount ?? 0
   const integrationSystemCount = data?.integrationHealth?.systemCount ?? 0
   const allIntegrationSystemsConnected = Boolean(data?.integrationHealth && integrationConnectedCount === integrationSystemCount)
-  const heroSignals: { label: string; value: string; detail: string; status: EvidenceStatus; icon: ReactNode }[] = [
+  const liveSources = data?.live?.sources
+  const liveSourcesAvailable = liveSources?.ok === true
+  const sourcesUnavailable = liveSources?.ok === false
+  const sourceFreshness = liveSourcesAvailable ? liveSources.freshness : undefined
+  const liveHealth = data?.live?.health
+  const liveHealthAvailable = liveHealth?.ok === true
+  const healthUnavailable = liveHealth?.ok === false
+  const liveHealthMetrics = liveHealthAvailable ? liveHealth.metrics : null
+  const queueCounters = liveHealthMetrics?.queue
+  const queueEvidenceStatus = deriveQueueEvidenceStatus({
+    fallbackStatus: data?.nodes?.find((node) => node.id === 'queues')?.status || 'inactive',
+    hasLiveHealth: liveHealthAvailable,
+    countersAvailable: Boolean(queueCounters && [queueCounters.waiting, queueCounters.active, queueCounters.stalled].every(Number.isFinite)),
+    missingEmbeddings: liveHealthMetrics?.missingEmbeddings ?? null,
+    stalledJobs: queueCounters?.stalled ?? null,
+  })
+  const presentedNodes = (data?.nodes || []).map((node) => (
+    node.id === 'queues' ? { ...node, status: queueEvidenceStatus } : node
+  ))
+  const selectedNodeStatus = selectedNode?.id === 'queues' ? queueEvidenceStatus : selectedNode?.status || 'inactive'
+  const healthyNodeCount = presentedNodes.filter((node) => node.status === 'healthy').length
+  const degradedNodeCount = presentedNodes.filter((node) => node.status === 'warning').length
+  const disconnectedNodeCount = presentedNodes.filter((node) => node.status === 'critical' || node.status === 'inactive').length
+  const nodeCount = presentedNodes.length
+  const stalePageCount = liveHealthMetrics?.stalePages ?? null
+  const brainQualityScore = liveHealthAvailable ? liveHealth.score : null
+  const brainQualityStatus: EvidenceStatus = healthUnavailable
+    ? 'critical'
+    : brainQualityScore === null
+      ? 'inactive'
+    : brainQualityScore >= 90
+      ? 'healthy'
+      : brainQualityScore >= 70
+        ? 'warning'
+        : 'critical'
+  const compiledTruthStatus: EvidenceStatus = healthUnavailable
+    ? 'critical'
+    : stalePageCount === null
+      ? 'inactive'
+    : stalePageCount > 0
+      ? 'warning'
+      : 'healthy'
+  const compiledTruthValue = healthUnavailable
+    ? 'Unavailable'
+    : stalePageCount === null
+      ? 'Unknown'
+    : stalePageCount > 0
+      ? `${stalePageCount} page${stalePageCount === 1 ? '' : 's'} behind`
+      : 'Current'
+  const allSourcesNotApplicable = Boolean(
+    sourceFreshness
+    && sourceFreshness.freshCount === 0
+    && sourceFreshness.staleCount === 0
+    && sourceFreshness.unknownCount === 0
+    && sourceFreshness.untrackedCount > 0,
+  )
+  const sourceSyncValue = sourcesUnavailable
+    ? 'Unavailable'
+    : allSourcesNotApplicable
+      ? 'Not applicable'
+      : sourceFreshness?.status === 'healthy'
+        ? 'Fresh'
+        : sourceFreshness?.status === 'warning'
+          ? `${sourceFreshness.staleCount} stale`
+          : sourceFreshness?.status === 'critical'
+            ? 'Unavailable'
+            : 'Unknown'
+  const sourceSyncStatus: EvidenceStatus = sourcesUnavailable
+    ? 'critical'
+    : allSourcesNotApplicable
+      ? 'inactive'
+      : sourceFreshness?.status || 'inactive'
+  const probeAttemptAt = [liveHealth?.checkedAt, liveSources?.checkedAt]
+    .filter((value): value is string => Boolean(value))
+    .sort()
+    .at(-1) || null
+  const probeUnavailable = healthUnavailable || sourcesUnavailable
+  const probeValue = probeUnavailable
+    ? 'Unavailable'
+    : probeAttemptAt
+      ? timeAgo(probeAttemptAt)
+      : data?.mode === 'read-only-fixture'
+        ? 'Saved audit'
+        : 'Unknown'
+  const probeStatus: EvidenceStatus = probeUnavailable ? 'critical' : probeAttemptAt ? 'healthy' : 'inactive'
+  const caveatCount = new Set([...(data?.caveats || []), ...(data?.warnings || [])]).size
+  const operationalState = deriveOperationalState({
+    hasData: Boolean(data),
+    loading,
+    trustStatus: data?.trust.status || 'inactive',
+    incidentStatus: activeIncidentBanner?.status,
+    incidentIsCurrent,
+    caveatCount,
+  })
+  const operationalDetail = loading
+    ? 'Refreshing live probes before showing the current operator state.'
+    : activeIncidentBanner
+      ? `${activeIncidentBanner.title}. ${incidentDetailForDisplay(activeIncidentBanner.detail)}`
+      : data?.caveats?.[0] || data?.warnings?.[0] || proofScope.detail
+  const heroSignals: { label: string; value: string; detail: string; status: EvidenceStatus; icon: ReactNode; proofNodeId: string }[] = [
     {
-      label: 'Trust score',
+      label: 'Brain quality',
       icon: <ShieldCheck size={13} />,
-      value: data ? `${data.trust.score}/100` : '—',
-      detail: data ? `${data.trust.label}; verified ${timeAgo(data.trust.lastVerifiedAt)}` : 'Waiting for live proof',
-      status: data?.trust.status || 'inactive',
+      value: healthUnavailable ? 'Unavailable' : brainQualityScore === null ? 'Unknown' : `${brainQualityScore}/100`,
+      detail: healthUnavailable
+        ? liveHealth.error || 'Live health probe is unavailable'
+        : brainQualityScore === null
+          ? 'No live brain quality score returned'
+          : 'Coverage, links, timelines, orphans, and dead links; freshness is separate',
+      status: brainQualityStatus,
+      proofNodeId: 'gbrain-core',
+    },
+    {
+      label: 'Compiled truth',
+      icon: <Brain size={13} />,
+      value: compiledTruthValue,
+      detail: healthUnavailable
+        ? liveHealth.error || 'Live health probe is unavailable'
+        : stalePageCount === null
+          ? 'No compiled page counter returned'
+          : 'Compiled pages compared with newer timeline evidence',
+      status: compiledTruthStatus,
+      proofNodeId: 'gbrain-core',
+    },
+    {
+      label: 'Source sync',
+      icon: <Database size={13} />,
+      value: sourceSyncValue,
+      detail: sourcesUnavailable
+        ? liveSources.error || 'Live source probe is unavailable'
+        : sourceFreshness
+          ? `${sourceFreshness.freshCount} sync-tracked fresh · ${sourceFreshness.untrackedCount || 0} not applicable`
+          : 'No live source timestamps returned',
+      status: sourceSyncStatus,
+      proofNodeId: 'sources',
     },
     {
       label: 'Systems',
@@ -556,37 +751,44 @@ export default function GBrain() {
           : `${integrationSystemCount - integrationConnectedCount} required system${integrationSystemCount - integrationConnectedCount === 1 ? '' : 's'} missing runtime proof`
         : 'Topology loaded from overview',
       status: data?.integrationHealth?.status || data?.trust.status || 'inactive',
+      proofNodeId: 'gbrain-core',
     },
     {
-      label: 'Think runtime',
-      icon: <Cpu size={13} />,
-      value: data?.integrationHealth?.thinkRuntime ? statusLabel(data.integrationHealth.thinkRuntime.status) : 'Read proof',
-      detail: data?.integrationHealth?.thinkRuntime?.detail || 'Runtime proof appears in the evidence drawer',
-      status: data?.integrationHealth?.thinkRuntime?.status || 'inactive',
-    },
-    {
-      label: 'Last verified',
+      label: 'Probe checked',
       icon: <Clock size={13} />,
-      value: data ? timeAgo(data.trust.lastVerifiedAt) : '—',
-      detail: data?.trust.source || 'Waiting for source proof',
-      status: data?.trust.status || 'inactive',
+      value: probeValue,
+      detail: probeUnavailable
+        ? `Live probe attempted ${probeAttemptAt ? timeAgo(probeAttemptAt) : 'recently'}; evidence unavailable`
+        : probeAttemptAt
+          ? data?.trust.source || 'Live read probes completed'
+          : 'No current live probe attempt recorded',
+      status: probeStatus,
+      proofNodeId: 'gbrain-core',
     },
   ]
   // These cockpit metrics are already shown in the hero strip; skip them in the rail.
-  const heroCockpitLabels = new Set(['health', 'integration health', 'think runtime'])
+  const heroCockpitLabels = new Set(['health', 'embeddings', 'integration health', 'freshness', 'source freshness'])
   const cockpitEntries = Object.entries(data?.cockpit || {}).filter(
     ([, metric]) => !heroCockpitLabels.has(metric.label.toLowerCase()),
   )
-  const mapReady = data?.trust.status === 'healthy' && disconnectedNodeCount === 0
+  const mapReady = operationalState.status === 'healthy' && disconnectedNodeCount === 0
   const mapSummary = mapReady
-    ? 'All core systems verified and operational'
-    : data?.trust.status === 'critical'
+    ? 'All live proof dimensions are operational'
+    : operationalState.status === 'critical'
       ? 'Critical proof requires operator review'
-      : 'Live proof has caveats; review evidence before action'
+      : 'Live proof degraded; review GBrain Core'
+  const mapIsActive = Boolean(runningAction || showTimelineDiff)
+  const timelineAnimationKey = timelineEntries[0]?.capturedAt || timelineSummary?.lastCapturedAt || 'stable'
+  const mapAnimationKey = `${timelineAnimationKey}:${mapAnimationCycle}`
+  const timelineRows = visibleTimelineEntries.map((entry, index) => ({
+    entry,
+    changes: timelineDeltaLines(entry, timelineEntries[index + 1]),
+  }))
 
   const runAction = async (action: string, confirmed = false) => {
     if (runningActionRef.current) return
     runningActionRef.current = action
+    setMapAnimationCycle((current) => current + 1)
     setRunningAction(action)
     setActionResult(null)
     try {
@@ -632,19 +834,11 @@ export default function GBrain() {
     if (currentAction) void runAction(currentAction.id, true)
   }
 
-  const runSystemCheck = async () => {
-    if (systemCheckAction) {
-      requestAction(systemCheckAction.id)
-      return
-    }
-    await refetch()
-  }
-
   const acknowledgeIncident = () => {
-    if (!incidentKey) return
+    if (!recoveredIncidentBanner || !recoveredIncidentKey) return
     setAcknowledgedIncidents((current) => {
       const next = new Set(current)
-      next.add(incidentKey)
+      next.add(recoveredIncidentKey)
       try {
         window.localStorage.setItem('gbrain.acknowledgedIncidents', JSON.stringify([...next].slice(-50)))
       } catch {
@@ -659,6 +853,7 @@ export default function GBrain() {
       <div className={styles.page}>
         <div className={styles.topBar}>
           <div>
+            <div className={styles.pageEyebrow}>Explore · Shared memory</div>
             <div className={styles.titleRow}>
               <span className={styles.titleIcon}><Brain size={20} /></span>
               <h1>{data?.title || 'GBrain'}</h1>
@@ -670,64 +865,85 @@ export default function GBrain() {
           <button
             className={styles.trustBadge}
             onClick={() => refetch()}
-            style={{ '--status-color': statusColor(data?.trust.status || 'inactive') } as CSSProperties}
+            style={{ '--status-color': statusColor(operationalState.status) } as CSSProperties}
+            aria-label="Refresh live GBrain proof"
           >
-            <span className={styles.trustDot} />
+            <RefreshCw size={15} />
             <span>
-              <strong>{loading ? 'Loading trust state' : data?.trust.label || 'No trust state'}</strong>
-              <small>{data?.trust.score !== undefined ? `${data.trust.score}/100` : 'Refresh'}</small>
+              <strong>{loading ? 'Checking live proof' : 'Refresh live proof'}</strong>
+              <small>{data?.trust.lastVerifiedAt ? `Probe checked ${timeAgo(data.trust.lastVerifiedAt)}` : 'Run read-only probes'}</small>
             </span>
           </button>
         </div>
 
-        <div
-          className={styles.proofScope}
-          style={{ '--status-color': statusColor(proofScope.status) } as CSSProperties}
-          role="status"
+        <section
+          className={styles.statusOverview}
+          style={{ '--status-color': statusColor(operationalState.status) } as CSSProperties}
         >
-          <ShieldCheck size={15} />
-          <strong>{proofScope.label}</strong>
-          <span>{proofScope.detail}</span>
-        </div>
-
-        <div className={styles.heroStrip}>
-          {heroSignals.map((signal) => (
-            <div
-              className={styles.heroCard}
-              key={signal.label}
-              style={{ '--status-color': statusColor(signal.status) } as CSSProperties}
-            >
-              <span className={styles.heroLabel}>{signal.icon}{signal.label}</span>
-              <strong className={styles.heroValue}>{signal.value}</strong>
-              <small className={styles.heroDetail}>{signal.detail}</small>
+          <span className={styles.srOnly} role="status" aria-live="polite" aria-atomic="true">
+            {operationalState.label}. {operationalDetail}
+          </span>
+          <div className={styles.statusLead}>
+            <span className={styles.statusLeadIcon}>
+              {operationalState.status === 'healthy' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
+            </span>
+            <div>
+              <span className={styles.statusEyebrow}>Live operational state</span>
+              <strong>{operationalState.label}</strong>
+              <p>{operationalDetail}</p>
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div className={styles.heroStrip} aria-label="Independent proof dimensions">
+            {heroSignals.map((signal) => (
+              <button
+                className={styles.heroCard}
+                key={signal.label}
+                style={{ '--status-color': statusColor(signal.status) } as CSSProperties}
+                type="button"
+                title={signal.detail}
+                onClick={() => selectProofNode(signal.proofNodeId)}
+              >
+                <span className={styles.heroLabel}>{signal.icon}{signal.label}</span>
+                <strong className={styles.heroValue}>{signal.value}</strong>
+                <small className={styles.heroDetail}>{signal.detail}</small>
+              </button>
+            ))}
+          </div>
+
+          <div
+            className={styles.proofScope}
+            style={{ '--status-color': statusColor(proofScope.status) } as CSSProperties}
+            title={proofScope.detail}
+          >
+            <ShieldCheck size={14} />
+            <strong>{proofScope.label}</strong>
+            <span>Brain quality, source sync, compiled truth, and probe time are independent evidence dimensions.</span>
+          </div>
+        </section>
+
+        {recoveredIncidentBanner ? (
+          <aside
+            className={styles.recoveredIncident}
+            style={{ '--status-color': statusColor(recoveredIncidentBanner.status) } as CSSProperties}
+            aria-label="Recovered regression awaiting acknowledgement"
+          >
+            <Clock size={16} />
+            <div>
+              <strong>Recovered regression awaiting acknowledgement</strong>
+              <span>{recoveredIncidentBanner.title}. {incidentDetailForDisplay(recoveredIncidentBanner.detail)}</span>
+            </div>
+            <button type="button" onClick={acknowledgeIncident}>Acknowledge history</button>
+          </aside>
+        ) : null}
 
         {error ? <GlassCard><div className={styles.error}>{error}</div></GlassCard> : null}
 
-        {incidentBanner ? (
-          <div
-            className={styles.incidentBanner}
-            style={{ '--status-color': statusColor(incidentBanner.status) } as CSSProperties}
-            role="status"
-          >
-            <AlertTriangle size={17} />
-            <div>
-              <strong>{incidentBanner.title}</strong>
-              <span>{incidentBanner.detail}</span>
-            </div>
-            {canAcknowledgeIncident ? (
-              <button type="button" onClick={acknowledgeIncident}>Acknowledge</button>
-            ) : null}
-          </div>
-        ) : null}
-
         <div className={styles.layout}>
-          <GlassCard noPad className={styles.rail}>
+          <GlassCard noPad hover={false} className={styles.rail}>
             <div className={styles.panelHeader}>
-              <div className={styles.panelTitle}><ShieldCheck size={15} /> Trust Cockpit</div>
-              <div className={styles.panelMeta}>{data?.trust.lastVerifiedAt ? timeAgo(data.trust.lastVerifiedAt) : '—'}</div>
+              <div className={styles.panelTitle}><ShieldCheck size={15} /> Proof dimensions</div>
+              <div className={styles.panelMeta}>Independent signals</div>
             </div>
             <div className={styles.railBody}>
               <div className={styles.statGrid}>
@@ -746,59 +962,54 @@ export default function GBrain() {
                   </button>
                 ))}
               </div>
-              {timelineSummary ? (
-                <div className={styles.timelineHealth}>
-                  <div className={styles.metricTop}>
-                    <span className={styles.metricLabel}>Timeline ledger</span>
-                    <span className={styles.statusDot} style={{ '--status-color': statusColor(timelineSummary.status) } as CSSProperties} />
-                  </div>
-                  <div className={styles.metricValue}>{timelineSummary.retainedEntryCount} retained</div>
-                  <div className={styles.metricDetail}>
-                    {timelineSummary.lastCapturedAt ? `Last proof ${timeAgo(timelineSummary.lastCapturedAt)} · ${timelineSummary.lastCaptureReason}` : timelineSummary.lastCaptureReason}
-                  </div>
-                  <div className={styles.metricSubDetail}>{timelineSummary.malformedLineCount} malformed · duplicate skips tracked</div>
-                </div>
-              ) : null}
               {!data && !loading ? <div className={styles.metricDetail}>No overview payload loaded.</div> : null}
             </div>
           </GlassCard>
 
-          <GlassCard noPad className={styles.mapPanel}>
+          <GlassCard noPad hover={false} className={styles.mapPanel}>
             <div className={styles.panelHeader}>
               <div className={styles.panelTitle}><Network size={15} /> Living Brain Map</div>
               <div className={styles.panelMeta}>{data?.mode || 'read-only'}</div>
             </div>
             <div className={styles.mapCanvas}>
               <div className={styles.mapStage}>
-                <div className={styles.mapGlow} aria-hidden="true" />
-                <div className={styles.mapOrbit} aria-hidden="true" />
-                <div className={styles.mapInnerOrbit} aria-hidden="true" />
-                <svg className={styles.edgeLayer} viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-                  {(data?.edges || []).map((edge) => {
-                    const line = lineFor(edge)
-                    return (
-                      <g key={edge.id}>
-                        <line
-                          className={styles.edgeLine}
-                          x1={line.x1}
-                          y1={line.y1}
-                          x2={line.x2}
-                          y2={line.y2}
-                          style={{ '--status-color': statusColor(edge.status) } as CSSProperties}
-                        />
-                        <circle
-                          className={styles.edgePulse}
-                          cx={line.mx}
-                          cy={line.my}
-                          r="0.75"
-                          style={{ '--status-color': statusColor(edge.status) } as CSSProperties}
-                        />
-                      </g>
-                    )
-                  })}
-                </svg>
+                <div
+                  key={mapAnimationKey}
+                  className={`${styles.mapAnimationLayer} ${mapIsActive ? styles.mapAnimationLayerActive : ''}`}
+                  aria-hidden="true"
+                >
+                  <div className={styles.mapGlow} />
+                  <div className={styles.mapOrbit} />
+                  <div className={styles.mapInnerOrbit} />
+                  <svg className={styles.edgeLayer} viewBox="0 0 100 100" preserveAspectRatio="none">
+                    {(data?.edges || []).map((edge) => {
+                      const line = lineFor(edge)
+                      const edgeStatus = edge.proofNodeId === 'queues' ? queueEvidenceStatus : edge.status
+                      return (
+                        <g key={edge.id}>
+                          <line
+                            className={styles.edgeLine}
+                            x1={line.x1}
+                            y1={line.y1}
+                            x2={line.x2}
+                            y2={line.y2}
+                            style={{ '--status-color': statusColor(edgeStatus) } as CSSProperties}
+                          />
+                          <circle
+                            className={styles.edgePulse}
+                            cx={line.mx}
+                            cy={line.my}
+                            r="0.75"
+                            style={{ '--status-color': statusColor(edgeStatus) } as CSSProperties}
+                          />
+                        </g>
+                      )
+                    })}
+                  </svg>
+                  <span className={styles.mapCorePulse} />
+                </div>
 
-                {(data?.nodes || []).map((node) => {
+                {presentedNodes.map((node) => {
                   const position = nodePositions[node.id] || { x: 50, y: 50, size: 110 }
                   const active = selectedNode?.id === node.id
                   const healthy = node.status === 'healthy'
@@ -807,6 +1018,8 @@ export default function GBrain() {
                       key={node.id}
                       className={`${styles.node} ${node.kind === 'core' ? styles.coreNode : ''} ${active ? styles.nodeActive : ''} ${!healthy ? styles.nodeAlert : ''}`}
                       onClick={() => setSelectedId(node.id)}
+                      aria-pressed={active}
+                      aria-controls="gbrain-evidence-drawer"
                       style={{
                         '--node-x': `${position.x}%`,
                         '--node-y': `${position.y}%`,
@@ -826,9 +1039,40 @@ export default function GBrain() {
                   )
                 })}
               </div>
+              <div className={styles.mobileNodeList} aria-label="GBrain topology">
+                {presentedNodes.map((node) => (
+                  <button
+                    key={`mobile-${node.id}`}
+                    type="button"
+                    className={`${styles.mobileNode} ${selectedNode?.id === node.id ? styles.mobileNodeActive : ''}`}
+                    onClick={() => setSelectedId(node.id)}
+                    aria-pressed={selectedNode?.id === node.id}
+                    aria-controls="gbrain-evidence-drawer"
+                    style={{ '--status-color': statusColor(node.status), '--node-accent': kindAccent(node.kind) } as CSSProperties}
+                  >
+                    <span className={styles.nodeIcon}>{kindIcon(node.kind)}</span>
+                    <span>
+                      <strong>{node.label}</strong>
+                      <small>{nodeRole(node)}</small>
+                    </span>
+                    <em><i />{statusLabel(node.status)}</em>
+                  </button>
+                ))}
+              </div>
+              {selectedNode ? (
+                <div className={styles.mobileEvidencePreview}>
+                  <div role="status" aria-live="polite" aria-atomic="true">
+                    <strong>{selectedNode.label}</strong>
+                    <span>{selectedNode.proof.label} · {statusLabel(selectedNodeStatus)}</span>
+                  </div>
+                  <button type="button" onClick={revealSelectedEvidence} aria-controls="gbrain-evidence-drawer">
+                    View evidence
+                  </button>
+                </div>
+              ) : null}
               <div
                 className={styles.mapActionBand}
-                style={{ '--status-color': statusColor(data?.trust.status || 'inactive') } as CSSProperties}
+                style={{ '--status-color': statusColor(operationalState.status) } as CSSProperties}
               >
                 <span className={styles.mapActionIcon}><RefreshCw size={18} /></span>
                 <div>
@@ -838,57 +1082,56 @@ export default function GBrain() {
                 <div className={styles.mapActionStats}>
                   <span><i style={{ '--status-color': statusColor('healthy') } as CSSProperties} />{healthyNodeCount}/{nodeCount || '—'} verified</span>
                   <span><i style={{ '--status-color': statusColor(degradedNodeCount ? 'warning' : 'healthy') } as CSSProperties} />{degradedNodeCount} degraded</span>
-                  <span><i style={{ '--status-color': statusColor(disconnectedNodeCount ? 'critical' : 'healthy') } as CSSProperties} />{data ? `${data.trust.score}%` : '—'} operational</span>
+                  <span><i style={{ '--status-color': statusColor(brainQualityStatus) } as CSSProperties} />{brainQualityScore === null ? '—' : `${brainQualityScore}/100`} quality</span>
                 </div>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    if (systemCheckAction) requestAction(systemCheckAction.id, event.currentTarget)
-                    else void runSystemCheck()
-                  }}
-                  disabled={loading || Boolean(runningAction)}
-                  title={systemCheckAction?.command || 'Refresh GBrain overview'}
-                >
-                  {systemCheckRunning ? 'Running check...' : loading ? 'Checking...' : 'Run System Check'}
-                </button>
               </div>
             </div>
             <div className={styles.actionsDock}>
               <div className={styles.actionHeader}>
-                <span>Allowlisted actions</span>
-                <small>{runningAction ? 'running' : `${visibleActions.length} local · probes stay read-only`}</small>
+                <span>Controlled operations</span>
+                <small>{runningAction ? 'running' : `${visibleActions.length} allowlisted · probes stay read-only`}</small>
               </div>
-              <div className={styles.actionGrid}>
-                {visibleActions.map((action) => {
-                  const timeoutLabel = formatActionTimeout(action.timeoutMs)
-                  return (
-                    <button
-                      key={action.id}
-                      className={styles.actionButton}
-                      type="button"
-                      disabled={!canRunActions || Boolean(runningAction) || action.enabled === false}
-                      title={`${action.command}${timeoutLabel ? ` · timeout ${timeoutLabel}` : ''}`}
-                      style={{ '--action-color': actionKindColor(action.kind) } as CSSProperties}
-                      onClick={(event) => requestAction(action.id, event.currentTarget)}
-                    >
-                      <span className={styles.actionIconTile}>
-                        {action.kind === 'diagnostic' || action.kind === 'preview' ? <RefreshCw size={13} /> : <Play size={13} />}
-                      </span>
-                      <span>
-                        <span className={styles.actionTitleRow}>
-                          <strong>{runningAction === action.id ? `${action.label}...` : action.label}</strong>
-                          <em>{[
-                            actionKindLabel(action.kind),
-                            action.safetyClass,
-                            action.requiresConfirmation ? 'confirm' : 'direct',
-                            timeoutLabel,
-                          ].filter(Boolean).join(' · ')}</em>
-                        </span>
-                        <small className={styles.actionDescription}>{action.description}</small>
-                      </span>
-                    </button>
-                  )
-                })}
+              <div className={styles.actionGroups}>
+                {actionGroups.map((group) => (
+                  <section className={styles.actionGroup} key={group.id} aria-labelledby={`gbrain-actions-${group.id}`}>
+                    <div className={styles.actionGroupHeader}>
+                      <strong id={`gbrain-actions-${group.id}`}>{group.label}</strong>
+                      <span>{group.detail}</span>
+                    </div>
+                    <div className={styles.actionGrid}>
+                      {group.actions.map((action) => {
+                        const timeoutLabel = formatActionTimeout(action.timeoutMs)
+                        return (
+                          <button
+                            key={action.id}
+                            className={styles.actionButton}
+                            type="button"
+                            disabled={!canRunActions || Boolean(runningAction) || action.enabled === false}
+                            title={`${action.command}${timeoutLabel ? ` · timeout ${timeoutLabel}` : ''}`}
+                            style={{ '--action-color': actionKindColor(action.kind) } as CSSProperties}
+                            onClick={(event) => requestAction(action.id, event.currentTarget)}
+                          >
+                            <span className={styles.actionIconTile}>
+                              {action.kind === 'diagnostic' || action.kind === 'preview' ? <RefreshCw size={13} /> : <Play size={13} />}
+                            </span>
+                            <span>
+                              <span className={styles.actionTitleRow}>
+                                <strong>{runningAction === action.id ? `${action.label}...` : action.label}</strong>
+                                <em>{[
+                                  actionKindLabel(action.kind),
+                                  action.safetyClass,
+                                  action.requiresConfirmation ? 'confirm' : 'direct',
+                                  timeoutLabel,
+                                ].filter(Boolean).join(' · ')}</em>
+                              </span>
+                              <small className={styles.actionDescription}>{action.description}</small>
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </section>
+                ))}
               </div>
               {actionResult ? (
                 <div
@@ -914,22 +1157,25 @@ export default function GBrain() {
               onConfirm={confirmAction}
               returnFocusRef={confirmationTriggerRef}
             />
-            <div className={styles.warningStrip}>
-              <AlertTriangle size={15} style={{ color: '#FFD60A', flex: '0 0 auto', marginTop: 1 }} />
-              <span>{data?.handoff.recommendedNextSlice || 'Static fixture first; live health endpoints come after the UI model is clear.'}</span>
-            </div>
           </GlassCard>
 
-          <GlassCard noPad className={styles.drawer}>
+          <GlassCard noPad hover={false} className={styles.drawer}>
+            <div
+              id="gbrain-evidence-drawer"
+              ref={drawerRef}
+              className={styles.drawerTarget}
+              tabIndex={-1}
+              aria-label={`Evidence Drawer${selectedNode ? `: ${selectedNode.label}` : ''}`}
+            >
             <div className={styles.panelHeader}>
               <div className={styles.panelTitle}><Radio size={15} /> Evidence Drawer</div>
-              <div className={styles.panelMeta}>{selectedNode ? statusLabel(selectedNode.status) : '—'}</div>
+              <div className={styles.panelMeta}>{selectedNode ? statusLabel(selectedNodeStatus) : '—'}</div>
             </div>
             {selectedNode ? (
-              <div className={styles.drawerBody}>
+              <div className={styles.drawerBody} key={selectedNode.id}>
                 <div className={styles.selectedTitle}>
                   <h2>{selectedNode.label}</h2>
-                  <span className={styles.statusDot} style={{ '--status-color': statusColor(selectedNode.status) } as CSSProperties} />
+                  <span className={styles.statusDot} style={{ '--status-color': statusColor(selectedNodeStatus) } as CSSProperties} />
                 </div>
                 <p className={styles.summary}>{selectedNode.summary}</p>
 
@@ -1083,10 +1329,11 @@ export default function GBrain() {
                 <div className={styles.summary}>Loading evidence...</div>
               </div>
             )}
+            </div>
           </GlassCard>
         </div>
 
-        <GlassCard noPad className={styles.timelinePanel}>
+        <GlassCard noPad hover={false} className={styles.timelinePanel}>
           <div className={styles.panelHeader}>
             <div className={styles.panelTitle}><RefreshCw size={15} /> Evidence Timeline</div>
             <div className={styles.panelMeta}>
@@ -1097,7 +1344,7 @@ export default function GBrain() {
             {showTimelineDiff ? (
               <div className={styles.diffStrip}>
                 <CheckCircle2 size={15} />
-                <span>{timelineSummary.diff.summary}</span>
+                <span>{timelineDiff?.summary}</span>
               </div>
             ) : null}
 
@@ -1116,36 +1363,34 @@ export default function GBrain() {
               <div className={styles.timelineEmpty}>No timeline entries yet. Current live proof is shown above.</div>
             ) : (
               <div className={styles.timelineList}>
-                {visibleTimelineEntries.map((entry, index) => (
-                  <article
-                    key={entry.id}
-                    className={`${styles.timelineEntry} ${index > 0 ? styles.timelineEntryCompact : ''}`}
-                    style={{ '--status-color': statusColor(entry.trust.status) } as CSSProperties}
-                    tabIndex={0}
-                  >
-                    <div className={styles.timelineEntryTop}>
-                      <div>
-                        <strong>{entry.trust.label}</strong>
-                        <span>{formatDate(entry.capturedAt)} · {entry.actor}</span>
+                {timelineRows.map(({ entry, changes }, index) => {
+                  const changeLines = changes.length
+                    ? changes
+                    : [index === 0 && showTimelineDiff ? timelineDiff?.summary || 'Latest proof captured' : 'No material change']
+                  const omittedChangeCount = Math.max(0, changeLines.length - 3)
+                  return (
+                    <article
+                      key={`${entry.id}-${index === 0 && showTimelineDiff ? timelineAnimationKey : 'stable'}`}
+                      className={`${styles.timelineEntry} ${index === 0 && showTimelineDiff ? styles.timelineEntryNew : ''}`}
+                      style={{ '--status-color': statusColor(entry.trust.status) } as CSSProperties}
+                    >
+                      <span className={styles.timelineDot} />
+                      <div className={styles.timelineEntryTop}>
+                        <div>
+                          <strong>{entry.trust.label}</strong>
+                          <span>{timeAgo(entry.capturedAt)} · {entry.actor}</span>
+                        </div>
+                        <span className={styles.timelineStatus}>{statusLabel(entry.trust.status)}</span>
                       </div>
-                      <span className={styles.timelineStatus}>{statusLabel(entry.trust.status)}</span>
-                    </div>
-                    <div className={styles.timelineMetrics}>
-                      <span>Health {entry.metrics.health || '—'}</span>
-                      <span>Embeddings {entry.metrics.embeddings || '—'}</span>
-                      <span>Queue {entry.metrics.queue || '—'}</span>
-                      <span>Freshness {statusLabel(entry.sourceFreshness?.status || 'inactive')}</span>
-                      <span>Caveats {entry.metrics.caveats || '0'}</span>
-                    </div>
-                    {index === 0 ? (
-                      <div className={styles.timelineProofs}>
-                        {entry.bridgeProof.slice(0, 3).map((proof) => (
-                          <span key={`${entry.id}-${proof.id}`}>{proof.label}: {statusLabel(proof.status)}</span>
-                        ))}
+                      <div className={styles.timelineChanges}>
+                        {changeLines.slice(0, 3).map((change) => <span key={`${entry.id}-${change}`}>{change}</span>)}
+                        {omittedChangeCount > 0 ? (
+                          <span className={styles.timelineMoreChanges}>+{omittedChangeCount} more change{omittedChangeCount === 1 ? '' : 's'}</span>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </article>
-                ))}
+                    </article>
+                  )
+                })}
                 {hiddenTimelineCount > 0 ? (
                   <div className={styles.timelineMore}>{hiddenTimelineCount} older proof snapshots retained in the ledger.</div>
                 ) : null}
