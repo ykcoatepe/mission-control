@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import type { ReactNode } from 'react'
 import { useIsMobile } from '../lib/useIsMobile'
 
@@ -13,13 +13,14 @@ interface Props {
 
 export default function GlassCard({ children, className = '', hover = true, delay = 0, noPad = false, overflowVisible = false }: Props) {
   const isMobile = useIsMobile()
+  const reduceMotion = useReducedMotion()
   
   return (
     <motion.div
-      initial={{ opacity: 0, y: 10 }}
+      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: [0.4, 0, 0.2, 1] }}
-      whileHover={hover && !isMobile ? {
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.4, delay, ease: [0.4, 0, 0.2, 1] }}
+      whileHover={hover && !isMobile && !reduceMotion ? {
         y: -2,
         transition: { duration: 0.15, ease: [0.4, 0, 0.2, 1] }
       } : undefined}

@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import type { ReactNode } from 'react'
 
 interface Props {
@@ -7,12 +7,14 @@ interface Props {
 }
 
 export default function PageTransition({ children, className = '' }: Props) {
+  const reduceMotion = useReducedMotion()
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16, filter: 'blur(8px)' }}
+      initial={reduceMotion ? false : { opacity: 0, y: 16, filter: 'blur(8px)' }}
       animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-      exit={{ opacity: 0, y: -16, filter: 'blur(8px)' }}
-      transition={{ duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
+      exit={reduceMotion ? undefined : { opacity: 0, y: -16, filter: 'blur(8px)' }}
+      transition={reduceMotion ? { duration: 0 } : { duration: 0.4, ease: [0.4, 0, 0.2, 1] }}
       className={className}
     >
       {children}

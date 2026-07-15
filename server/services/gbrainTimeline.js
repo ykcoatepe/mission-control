@@ -66,6 +66,12 @@ function thresholdForSource(sourceId, thresholds = DEFAULT_SOURCE_THRESHOLDS) {
   return Number(thresholds[foundKey] || thresholds.default || DEFAULT_SOURCE_THRESHOLD_HOURS);
 }
 
+function finiteMetric(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 function normalizeSnapshot(overview, options = {}) {
   const now = options.capturedAt || overview?.refreshedAt || new Date().toISOString();
   const nodes = Array.isArray(overview?.nodes) ? overview.nodes : [];
@@ -93,6 +99,8 @@ function normalizeSnapshot(overview, options = {}) {
     staleCount: Number(overview?.live?.sources?.freshness?.staleCount || 0),
     warningCount: Number(overview?.live?.sources?.warningCount || 0),
   };
+  const missingEmbeddings = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddings);
+  const stalePages = finiteMetric(overview?.live?.health?.metrics?.stalePages);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -110,6 +118,8 @@ function normalizeSnapshot(overview, options = {}) {
       health: sanitizeTimelineText(cockpit.health?.value || ''),
       embeddings: sanitizeTimelineText(cockpit.embeddings?.value || ''),
       embeddingsDetail: sanitizeTimelineText(cockpit.embeddings?.detail || ''),
+      ...(missingEmbeddings === null ? {} : { missingEmbeddings }),
+      ...(stalePages === null ? {} : { stalePages }),
       queue: sanitizeTimelineText(cockpit.queue?.value || ''),
       caveats: sanitizeTimelineText(cockpit.caveats?.value || ''),
       bridge: sanitizeTimelineText(cockpit.bridge?.value || ''),
@@ -247,6 +257,8 @@ function computeTrustDiff(current, previous) {
     ['trust.score', current.trust?.score, previous.trust?.score],
     ['health', current.metrics?.health, previous.metrics?.health],
     ['embeddings', current.metrics?.embeddings, previous.metrics?.embeddings],
+    ['missingEmbeddings', current.metrics?.missingEmbeddings, previous.metrics?.missingEmbeddings],
+    ['stalePages', current.metrics?.stalePages, previous.metrics?.stalePages],
     ['queue', current.metrics?.queue, previous.metrics?.queue],
     ['caveats', current.metrics?.caveats, previous.metrics?.caveats],
     ['sourceFreshness.status', current.sourceFreshness?.status, previous.sourceFreshness?.status],
@@ -277,8 +289,12 @@ function parseQueueBacklog(value) {
 }
 
 function regressionSignals(entry) {
-  const missingEmbeddings = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
-  const stalePages = parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
+  const structuredMissingEmbeddings = finiteMetric(entry?.metrics?.missingEmbeddings);
+  const structuredStalePages = finiteMetric(entry?.metrics?.stalePages);
+  const missingEmbeddings = structuredMissingEmbeddings
+    ?? parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
+  const stalePages = structuredStalePages
+    ?? parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+stale pages/i);
   const warnings = Array.isArray(entry?.warnings) ? entry.warnings.join(' ') : '';
   const staleSources = Math.max(
     Number(entry?.sourceFreshness?.staleCount || 0),

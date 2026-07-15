@@ -99,6 +99,51 @@ function overview(overrides = {}) {
   assert.doesNotMatch(serialized, /sk-secret/);
 })();
 
+(function testNormalizeSnapshotStoresIndependentEmbeddingAndCompiledTruthCounters() {
+  const input = overview({ embeddingsDetail: '3 missing' });
+  input.live.health = {
+    ok: true,
+    metrics: {
+      missingEmbeddings: 3,
+      stalePages: 2,
+    },
+  };
+
+  const snapshot = normalizeSnapshot(input);
+  const previous = {
+    ...snapshot,
+    metrics: { ...snapshot.metrics, missingEmbeddings: 0, stalePages: 0 },
+  };
+
+  assert.equal(snapshot.metrics.missingEmbeddings, 3);
+  assert.equal(snapshot.metrics.stalePages, 2);
+  assert.equal(snapshot.metrics.embeddingsDetail, '3 missing');
+  assert.deepEqual(
+    computeTrustDiff(snapshot, previous).changes.filter(
+      ({ field }) => field === 'missingEmbeddings' || field === 'stalePages',
+    ),
+    [
+      { field: 'missingEmbeddings', from: 0, to: 3 },
+      { field: 'stalePages', from: 0, to: 2 },
+    ],
+  );
+})();
+
+(function testNormalizeSnapshotOmitsUnavailableCountersForLegacyFingerprintCompatibility() {
+  const snapshot = normalizeSnapshot(overview());
+  const legacySnapshot = {
+    ...snapshot,
+    metrics: { ...snapshot.metrics },
+  };
+  delete legacySnapshot.metrics.missingEmbeddings;
+  delete legacySnapshot.metrics.stalePages;
+
+  assert.equal(Object.hasOwn(snapshot.metrics, 'missingEmbeddings'), false);
+  assert.equal(Object.hasOwn(snapshot.metrics, 'stalePages'), false);
+  assert.equal(fingerprintSnapshot(snapshot), fingerprintSnapshot(legacySnapshot));
+  assert.equal(computeTrustDiff(snapshot, legacySnapshot).kind, 'unchanged');
+})();
+
 (function testFingerprintIgnoresCaptureTimestamp() {
   const first = normalizeSnapshot(overview({ refreshedAt: '2026-05-24T12:00:00.000Z' }), { capturedAt: '2026-05-24T12:00:00.000Z' });
   const second = normalizeSnapshot(overview({ refreshedAt: '2026-05-24T12:00:30.000Z' }), { capturedAt: '2026-05-24T12:00:30.000Z' });
