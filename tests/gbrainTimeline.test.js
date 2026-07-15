@@ -129,6 +129,21 @@ function overview(overrides = {}) {
   );
 })();
 
+(function testNormalizeSnapshotOmitsUnavailableCountersForLegacyFingerprintCompatibility() {
+  const snapshot = normalizeSnapshot(overview());
+  const legacySnapshot = {
+    ...snapshot,
+    metrics: { ...snapshot.metrics },
+  };
+  delete legacySnapshot.metrics.missingEmbeddings;
+  delete legacySnapshot.metrics.stalePages;
+
+  assert.equal(Object.hasOwn(snapshot.metrics, 'missingEmbeddings'), false);
+  assert.equal(Object.hasOwn(snapshot.metrics, 'stalePages'), false);
+  assert.equal(fingerprintSnapshot(snapshot), fingerprintSnapshot(legacySnapshot));
+  assert.equal(computeTrustDiff(snapshot, legacySnapshot).kind, 'unchanged');
+})();
+
 (function testFingerprintIgnoresCaptureTimestamp() {
   const first = normalizeSnapshot(overview({ refreshedAt: '2026-05-24T12:00:00.000Z' }), { capturedAt: '2026-05-24T12:00:00.000Z' });
   const second = normalizeSnapshot(overview({ refreshedAt: '2026-05-24T12:00:30.000Z' }), { capturedAt: '2026-05-24T12:00:30.000Z' });

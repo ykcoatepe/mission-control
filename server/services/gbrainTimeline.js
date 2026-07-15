@@ -99,6 +99,8 @@ function normalizeSnapshot(overview, options = {}) {
     staleCount: Number(overview?.live?.sources?.freshness?.staleCount || 0),
     warningCount: Number(overview?.live?.sources?.warningCount || 0),
   };
+  const missingEmbeddings = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddings);
+  const stalePages = finiteMetric(overview?.live?.health?.metrics?.stalePages);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -116,8 +118,8 @@ function normalizeSnapshot(overview, options = {}) {
       health: sanitizeTimelineText(cockpit.health?.value || ''),
       embeddings: sanitizeTimelineText(cockpit.embeddings?.value || ''),
       embeddingsDetail: sanitizeTimelineText(cockpit.embeddings?.detail || ''),
-      missingEmbeddings: finiteMetric(overview?.live?.health?.metrics?.missingEmbeddings),
-      stalePages: finiteMetric(overview?.live?.health?.metrics?.stalePages),
+      ...(missingEmbeddings === null ? {} : { missingEmbeddings }),
+      ...(stalePages === null ? {} : { stalePages }),
       queue: sanitizeTimelineText(cockpit.queue?.value || ''),
       caveats: sanitizeTimelineText(cockpit.caveats?.value || ''),
       bridge: sanitizeTimelineText(cockpit.bridge?.value || ''),
