@@ -41,6 +41,7 @@ function rangeForPeriod(period, now) {
     previousEnd.setDate(0);
     previousStart = new Date(previousEnd);
     previousStart.setDate(1);
+    previousEnd.setDate(Math.min(end.getDate(), previousEnd.getDate()));
   }
 
   return {
@@ -57,6 +58,7 @@ function numeric(value) {
 const USAGE_SUMMARY_FIELDS = [
   'periodUsd',
   'previousPeriodUsd',
+  'previousPeriodApiEquivalentUsd',
   'todayUsd',
   'yesterdayUsd',
   'thisWeekUsd',
@@ -76,7 +78,7 @@ function sumUsageSummaries(agents = []) {
       const values = rawValues.filter((value) => value !== null && value !== undefined);
       return [
         field,
-        field === 'previousPeriodUsd' && values.length !== rawValues.length
+        field.startsWith('previousPeriod') && values.length !== rawValues.length
           ? null
           : values.reduce((sum, value) => sum + numeric(value), 0),
       ];
@@ -266,6 +268,7 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
       previousPeriodUsd: billingState === 'unknown' ? null : trackedCost(costForKeys(range.previousKeys)),
       periodApiEquivalentUsd,
       previousPeriodApiEquivalentUsd: costForKeys(range.previousKeys),
+      previousPeriodApiEquivalentReliability: tokensForKeys(range.previousKeys) > 0 ? 'estimated' : 'no_usage',
       periodTokens,
       todayUsd: trackedCost(todayRow.cost),
       yesterdayUsd: trackedCost(yesterdayRow.cost),

@@ -14,7 +14,7 @@ import {
   formatCurrency,
   formatTokens,
   formatPreciseCurrency,
-  estimateCost,
+  formatCompactTokenValue,
   canonicalModelName,
   isLocalModel,
 } from './lib'
@@ -90,7 +90,7 @@ function CustomChartTooltip({
 interface SessionEstimateDay {
   day: string
   fullDate: string
-  estimatedCost: number
+  estimatedCost: number | null
   tokens: number
   intensity: number
 }
@@ -131,7 +131,7 @@ function SessionEstimateChartLocal({ data, activeDate, onSelect }: SessionEstima
               }}
             >
               <div className={styles.seBarCost}>
-                {day.estimatedCost > 0 ? formatCurrency(day.estimatedCost) : 'idle'}
+                {day.tokens > 0 ? formatCompactTokenValue(day.tokens) : 'idle'}
               </div>
               <div
                 className={styles.seBarTrack}
@@ -167,8 +167,8 @@ function SessionEstimateChartLocal({ data, activeDate, onSelect }: SessionEstima
             <div className={styles.seDetailValue}>{activeDay.fullDate}</div>
           </div>
           <div>
-            <div className={styles.seDetailLabel}>Estimated Spend</div>
-            <div className={styles.seDetailValue}>{formatCurrency(activeDay.estimatedCost)}</div>
+            <div className={styles.seDetailLabel}>Cost Coverage</div>
+            <div className={styles.seDetailValue}>Unavailable</div>
           </div>
           <div>
             <div className={styles.seDetailLabel}>Tokens</div>
@@ -333,9 +333,8 @@ export interface DailySpendSectionProps {
   awsCosts: AWSSCostData | null
   hasSessionEstimateChart: boolean
   sessionEstimateData: SessionEstimateDay[]
-  projectedMonthly: number
   totalTokens: number
-  tokenBasedCost: number
+  tokenBasedCost: number | null
   blendedCostBreakdown: BlendedCostItem[]
   apiEquivalentReliability: string
 }
@@ -355,7 +354,6 @@ export default function DailySpendSection({
   awsCosts,
   hasSessionEstimateChart,
   sessionEstimateData,
-  projectedMonthly,
   totalTokens,
   tokenBasedCost,
   blendedCostBreakdown,
@@ -571,11 +569,11 @@ export default function DailySpendSection({
               >
                 <div className={styles.sessionEstimateStatCell}>
                   <div className={styles.sessionEstimateStatLabel}>Fallback Mode</div>
-                  <div className={styles.sessionEstimateStatValue}>Session activity estimate</div>
+                  <div className={styles.sessionEstimateStatValue}>Session activity only</div>
                 </div>
                 <div className={styles.sessionEstimateStatCell}>
-                  <div className={styles.sessionEstimateStatLabel}>Monthly Estimate</div>
-                  <div className={styles.sessionEstimateStatValue}>{formatCurrency(projectedMonthly)}</div>
+                  <div className={styles.sessionEstimateStatLabel}>Cost Coverage</div>
+                  <div className={styles.sessionEstimateStatValue}>Unavailable</div>
                 </div>
                 <div className={styles.sessionEstimateStatCell}>
                   <div className={styles.sessionEstimateStatLabel}>Observed Tokens</div>
@@ -618,10 +616,12 @@ export default function DailySpendSection({
               className={styles.tokenFallbackWrap}
               style={{ height: m ? '180px' : '240px' }}
             >
-              <div className={styles.tokenFallbackTitle}>Using token-based cost estimation</div>
+              <div className={styles.tokenFallbackTitle}>{tokenBasedCost === null ? 'Tracked cost unavailable' : 'Using token-based cost estimation'}</div>
               <div className={styles.tokenFallbackSub}>
                 Daily model history is not available yet.<br />
-                Estimated {formatCurrency(tokenBasedCost)} this month from {formatTokens(totalTokens)} tokens.
+                {tokenBasedCost === null
+                  ? `No priced model ledger is available for ${formatTokens(totalTokens)} tokens.`
+                  : `Estimated ${formatCurrency(tokenBasedCost)} this month from ${formatTokens(totalTokens)} tokens.`}
               </div>
             </div>
           )}
@@ -675,17 +675,18 @@ export default function DailySpendSection({
                   <span
                     className={styles.compositionFallbackLabel}
                     style={{ fontSize: m ? '12px' : '14px' }}
-                  >OpenClaw Sessions</span>
+                  >Session Token Volume</span>
                   <span
                     className={styles.compositionFallbackValue}
                     style={{ fontSize: m ? '12px' : '14px' }}
                   >
-                    {formatCurrency(estimateCost(totalTokens, 'sonnet'))}
+                    {formatCompactTokenValue(totalTokens)} tokens
                   </span>
                 </div>
                 <div className={styles.compositionFallbackTrack}>
                   <div className={styles.compositionFallbackFill} />
                 </div>
+                <div className={styles.compositionShareNote}>Cost Coverage: Unavailable</div>
               </div>
             ) : (
               <div className={styles.compositionEmpty}>No usage data yet</div>

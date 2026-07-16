@@ -11,11 +11,11 @@ interface BudgetCardProps {
   savingBudget: boolean
   canSaveBudget: boolean
   budgetError: string | null
-  budgetUsagePct: number
-  budgetUsage: number
-  budgetRemaining: number
+  budgetUsagePct: number | null
+  budgetUsage: number | null
+  budgetRemaining: number | null
   budgetBadgeClass: string
-  monthlyBudgetBase: number
+  monthlyBudgetBase: number | null
 }
 
 export default function BudgetCard({
@@ -46,7 +46,7 @@ export default function BudgetCard({
             </div>
           </div>
           <span className={`macos-badge ${budgetBadgeClass}`}>
-            {budget > 0 ? `${budgetUsagePct}% used` : 'No cap set'}
+            {budget > 0 ? budgetUsagePct === null ? 'Coverage unavailable' : `${budgetUsagePct}% used` : 'No cap set'}
           </span>
         </div>
 
@@ -86,7 +86,7 @@ export default function BudgetCard({
           </button>
         </div>
 
-        {budget > 0 ? (
+        {budget > 0 && monthlyBudgetBase !== null && budgetUsage !== null && budgetRemaining !== null && budgetUsagePct !== null ? (
           <div className={styles.progressSection}>
             <div className={styles.progressHeader}>
               <span className={styles.progressHeaderLabel}>Current spend vs budget</span>
@@ -108,6 +108,13 @@ export default function BudgetCard({
             <div className={styles.progressFooter}>
               <span className={styles.progressFooterLabel}>{budgetUsagePct}% used</span>
               <span className={styles.progressFooterLabel}>{formatCurrency(budgetRemaining)} remaining</span>
+            </div>
+          </div>
+        ) : budget > 0 ? (
+          <div className={m ? `${styles.noBudgetBox} ${styles.noBudgetBoxMobile}` : `${styles.noBudgetBox} ${styles.noBudgetBoxDesktop}`}>
+            <div className={styles.noBudgetTitle}>Tracked coverage unavailable</div>
+            <div className={styles.noBudgetSubtitle}>
+              Budget progress is withheld until the selected billing source has complete tracked spend.
             </div>
           </div>
         ) : (

@@ -78,7 +78,10 @@ async function runBehaviorTests() {
     const trajectoryFile = path.join(nestedDir, 'rollout-test.trajectory.jsonl');
     const timestamp = today.toISOString();
 
-    fs.appendFileSync(sessionFile, `${JSON.stringify({ type: 'session_meta', payload: { model_provider: 'openai-codex', model: 'gpt-test' } })}\n`);
+    fs.appendFileSync(sessionFile, `${JSON.stringify({ type: 'session_meta', payload: { model_provider: 'openai-codex', model: 'gpt-5.5' } })}\n`);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    writeTokenCountLine(sessionFile, yesterday.toISOString(), 7);
     writeUsageLine(sessionFile, timestamp, 11);
     writeUsageLine(sessionFile, timestamp, 13);
     writeTokenCountLine(sessionFile, timestamp, 17);
@@ -91,6 +94,7 @@ async function runBehaviorTests() {
     const summary = await buildForPeriod('day');
     assert.equal(summary.summary.recordsScanned, 3, 'usage records should come from both supported JSONL shapes');
     assert.equal(summary.summary.periodTokens, 41, 'message and token_count usage records should contribute to totals');
+    assert.ok(summary.summary.previousPeriodApiEquivalentUsd > 0, 'previous-day API equivalent should be available for trend baselines');
     assert.equal(summary.byService[0].sessions, 1, 'multiple usage records in one file should count as one session');
     const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
     const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');

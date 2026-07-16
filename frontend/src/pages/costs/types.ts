@@ -55,6 +55,8 @@ export interface AgentUsageData {
     totalUsd?: number
     totalTokens?: number
     periodApiEquivalentUsd?: number | null
+      previousPeriodApiEquivalentUsd?: number | null
+      previousPeriodApiEquivalentReliability?: string
     apiEquivalentUsd?: number | null
     apiEquivalentStatus?: 'estimated' | 'partial' | 'not_applicable' | 'unavailable' | 'no_usage' | string
   }
@@ -82,11 +84,14 @@ export interface TokenData {
     thisMonthTokens?: number
     totalTokens?: number
     periodApiEquivalentUsd?: number | null
+    previousPeriodApiEquivalentUsd?: number | null
+    previousPeriodApiEquivalentReliability?: string
     apiEquivalentUsd?: number | null
     note?: string
     budget?: { monthly: number; warning?: number }
   }
   byService: TokenServiceData[]
+  costReliability?: 'normalized' | 'partial_unknown' | string
   apiEquivalentReliability?: 'estimated' | 'partial' | 'not_applicable' | 'unavailable' | 'no_usage' | string
   budget?: { monthly: number }
   meta?: {

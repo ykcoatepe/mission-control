@@ -38,11 +38,15 @@ import {
   calendarRefreshQueryKeys,
   millisecondsUntilNextCalendarDay,
   codexbarRowsForPeriod,
+  previousCodexbarRows,
   buildCodexbarChartData,
   comparisonLabels,
   readNumericField,
   hasUsableAgentSplitData,
   parseMonthlyBudgetInput,
+  trackedSpendPresentation,
+  apiEquivalentMetricValues,
+  budgetSpendValue,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -205,6 +209,9 @@ export default function Costs() {
   }
 
   const ledgerActive = !!(tokenData && ['token-usage.csv', 'openclaw.usage', 'combined.agent_usage'].includes(tokenData.source || '') && tokenData.summary)
+  const unknownBillingSourceCount = (tokenData?.byService || []).filter(item => (
+    Number(item.tokens || 0) > 0 && String(item.costSource || '').toLowerCase() === 'unknown'
+  )).length
   const codexbarActive = !!(codexbarCosts && codexbarCosts.last30DaysCostUSD > 0)
   const codexbarLatest = codexbarCosts?.daily?.[codexbarCosts.daily.length - 1] || null
   const codexbarPeriodDays = useMemo(() => {
@@ -215,6 +222,9 @@ export default function Costs() {
       calendarNow,
     )
   }, [calendarNow, codexbarActive, codexbarCosts?.daily, period])
+  const codexbarPreviousPeriodDays = useMemo(() => {
+    return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow)
+  }, [calendarNow, codexbarCosts?.daily, period])
 
   const chartSeries = useMemo<ChartSeriesItem[]>(() => {
     const totals = new Map<string, { totalCost: number; totalTokens: number }>()
@@ -316,7 +326,7 @@ export default function Costs() {
       day: new Date(day.date).toLocaleDateString('en-US', { day: 'numeric' }),
       fullDate: day.date,
       tokens: Number(day.tokens || 0),
-      estimatedCost: estimateCost(Number(day.tokens || 0), 'sonnet'),
+      estimatedCost: null,
       intensity: 0,
     }))
 
@@ -454,11 +464,15 @@ export default function Costs() {
 
   const isAwsEnabled = config?.modules?.aws === true
   const hasAwsData = !!(awsCosts && awsCosts.total > 0)
+  const trackedSpend = trackedSpendPresentation({
+    reliability: ledgerActive ? tokenData?.costReliability : undefined,
+    unknownSourceCount: unknownBillingSourceCount,
+    selectedSourceIsComplete: hasAwsData,
+  })
   const totalTokens = ledgerActive
     ? tokenData?.summary?.periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0
     : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
 
-  const tokenBasedCost = estimateCost(totalTokens, 'sonnet')
   const periodLabels = { day: 'Daily', '7d': '7 Days', month: 'Monthly' } as const
   const activePeriodLabel = periodLabels[period]
   const loadedCostsPeriodKey = tokenData?.period?.key
@@ -476,11 +490,19 @@ export default function Costs() {
       ? awsCosts?.total || 0
       : ledgerActive
         ? (tokenData?.summary?.periodUsd ?? tokenData?.summary?.thisMonthUsd) || 0
-        : tokenBasedCost
+        : 0
+  const trackedValueAvailable = hasAwsData || ledgerActive
 
   const apiEquivalentReliability = ledgerActive
     ? tokenData?.apiEquivalentReliability || 'unavailable'
-    : 'estimated'
+    : codexbarActive
+      ? 'estimated'
+      : 'unavailable'
+  const previousApiEquivalentReliability = ledgerActive
+    ? tokenData?.summary?.previousPeriodApiEquivalentReliability || 'unavailable'
+    : codexbarActive
+      ? 'estimated'
+      : 'unavailable'
   const apiEquivalentAvailable = apiEquivalentReliability === 'estimated' || apiEquivalentReliability === 'partial'
   const apiEquivalentPeriodCost = ledgerActive
     ? apiEquivalentAvailable
@@ -488,7 +510,12 @@ export default function Costs() {
       : null
     : codexbarActive
       ? codexbarPeriodCost
-      : tokenBasedCost
+      : null
+  const previousApiEquivalentPeriodCost = ledgerActive
+    ? tokenData?.summary?.previousPeriodApiEquivalentUsd ?? null
+    : codexbarActive
+      ? sumCostRows(codexbarPreviousPeriodDays)
+      : null
 
   const trackedDays = hasAwsData ? awsCosts?.daily || [] : tokenData?.daily || []
   const apiEquivalentDays = ledgerActive
@@ -500,40 +527,67 @@ export default function Costs() {
       ? (awsCosts?.daily || []).reduce((sum, d) => sum + (d.cost || 0), 0) / Math.max(awsCosts?.daily?.length || 0, 1)
       : ledgerActive
         ? currentPeriodCost / Math.max(trackedDays.length, 1)
-        : tokenBasedCost / 30
+        : 0
 
-  const apiEquivalentDailyAvg = apiEquivalentPeriodCost === null
-    ? null
-    : apiEquivalentPeriodCost / Math.max(apiEquivalentDays.length, 1)
+  const apiEquivalentMetrics = apiEquivalentMetricValues({
+    periodCost: apiEquivalentPeriodCost,
+    previousPeriodCost: previousApiEquivalentPeriodCost,
+    dayCount: apiEquivalentDays.length,
+    previousDayCount: codexbarPreviousPeriodDays.length,
+    reliability: apiEquivalentReliability,
+    previousReliability: previousApiEquivalentReliability,
+  })
+  const apiEquivalentDailyAvg = apiEquivalentMetrics.dailyAverage
 
   const previousPeriodCost = hasAwsData ? null : tokenData?.summary?.previousPeriodUsd ?? null
   const previousDailyAvg = hasAwsData ? null : tokenData?.summary?.yesterdayUsd ?? null
   const compareLabel = comparisonLabels(period)
-  const monthlyTrend = calculateTrend(currentPeriodCost, previousPeriodCost)
-  const dailyTrend = calculateTrend(dailyAvg, previousDailyAvg)
 
   const projectedMonthly = dailyAvg * 30
-  const apiEquivalentProjectedMonthly = apiEquivalentDailyAvg === null ? null : apiEquivalentDailyAvg * 30
+  const apiEquivalentProjectedMonthly = apiEquivalentMetrics.projectedMonthly
+  const metricMode = hasAwsData ? 'tracked' : 'api-equivalent'
+  const metricPeriodCost = hasAwsData ? currentPeriodCost : apiEquivalentMetrics.periodCost
+  const metricDailyAverage = hasAwsData ? dailyAvg : apiEquivalentMetrics.dailyAverage
+  const metricProjectedMonthly = hasAwsData ? projectedMonthly : apiEquivalentMetrics.projectedMonthly
+  const metricPreviousPeriodCost = hasAwsData ? previousPeriodCost : apiEquivalentMetrics.previousPeriodCost
+  const metricPreviousDailyAverage = hasAwsData ? previousDailyAvg : apiEquivalentMetrics.previousDailyAverage
+  const metricPeriodTrend = metricPeriodCost !== null && metricPreviousPeriodCost !== null
+    ? calculateTrend(metricPeriodCost, metricPreviousPeriodCost)
+    : null
+  const metricDailyTrend = metricDailyAverage !== null && metricPreviousDailyAverage !== null
+    ? calculateTrend(metricDailyAverage, metricPreviousDailyAverage)
+    : null
+  const apiEquivalentDisplayReliability = apiEquivalentReliability === 'partial' || previousApiEquivalentReliability === 'partial'
+    ? 'partial'
+    : apiEquivalentReliability
   const costSourceLabel = hasAwsData
     ? 'AWS live billing'
     : ledgerActive
         ? (tokenData.source === 'combined.agent_usage' ? 'OpenClaw + Hermes + Claude Code Usage' : tokenData.source === 'openclaw.usage' ? 'OpenClaw Usage' : 'Token ledger')
       : codexbarActive
         ? 'CodexBar local estimate'
-        : 'Estimated from sessions'
+        : 'No tracked billing source'
   const chartDayCount = chartData.length || apiEquivalentDays.length
   const apiEquivalentTokenVolume = ledgerActive ? totalTokens : codexbarPeriodTokens
-  const monthlyBudgetBase = ledgerActive ? tokenData?.summary?.thisMonthUsd || 0 : currentPeriodCost
-  const budgetUsage = budget > 0 ? monthlyBudgetBase / budget : 0
-  const budgetUsagePct = budget > 0 ? Math.round(budgetUsage * 100) : 0
-  const budgetRemaining = budget > 0 ? budget - monthlyBudgetBase : 0
+  const monthlyBudgetBase = budgetSpendValue({
+    hasAwsData,
+    awsTotal: awsCosts?.total ?? null,
+    ledgerActive,
+    ledgerMonthSpend: tokenData?.summary?.thisMonthUsd ?? null,
+    trackedSpendComplete: trackedSpend.projectionAvailable && trackedValueAvailable,
+  })
+  const budgetUsage = budget > 0 && monthlyBudgetBase !== null ? monthlyBudgetBase / budget : null
+  const budgetUsagePct = budgetUsage === null ? null : Math.round(budgetUsage * 100)
+  const budgetRemaining = budget > 0 && monthlyBudgetBase !== null ? budget - monthlyBudgetBase : null
   const budgetBadgeClass = budget <= 0
     ? 'macos-badge'
-    : budgetUsage > 0.9
-      ? 'macos-badge-red'
-      : budgetUsage > 0.7
-        ? 'macos-badge-orange'
-        : 'macos-badge-green'
+    : budgetUsage === null
+      ? 'macos-badge-orange'
+      : budgetUsage > 0.9
+        ? 'macos-badge-red'
+        : budgetUsage > 0.7
+          ? 'macos-badge-orange'
+          : 'macos-badge-green'
 
   const creditsUsed = hasAwsData && awsCosts ? awsCosts.credits - awsCosts.remaining : 0
   const burnRate = hasAwsData && awsCosts && creditsUsed > 0
@@ -601,9 +655,13 @@ export default function Costs() {
     {
       title: 'Spend posture',
       body: budget > 0
-        ? `${budgetUsagePct}% of the monthly cap is already used. ${formatCurrency(Math.max(budgetRemaining, 0))} remains.`
-        : `No budget cap set. Current projected month is ${formatCurrency(projectedMonthly)}.`,
-      accent: budget > 0 && budgetUsage > 0.9 ? '#FF453A' : '#32D74B',
+        ? budgetUsagePct === null || budgetRemaining === null
+          ? 'Monthly budget progress is unavailable while tracked billing coverage is incomplete.'
+          : `${budgetUsagePct}% of the monthly cap is already used. ${formatCurrency(Math.max(budgetRemaining, 0))} remains.`
+        : trackedSpend.projectionAvailable && trackedValueAvailable
+          ? `No budget cap set. Current projected month is ${formatCurrency(projectedMonthly)}.`
+          : 'No budget cap set. Tracked spend projection is unavailable while billing coverage is partial.',
+      accent: budget > 0 && budgetUsage !== null && budgetUsage > 0.9 ? '#FF453A' : '#32D74B',
       icon: Target,
     },
     {
@@ -717,8 +775,8 @@ export default function Costs() {
     },
     {
       label: budget > 0 ? 'Budget Left' : 'Budget State',
-      value: budget > 0 ? formatCurrency(Math.max(budgetRemaining, 0)) : 'No cap',
-      accent: budget > 0 && budgetRemaining < budget * 0.2 ? '#FF453A' : '#32D74B',
+      value: budget > 0 ? budgetRemaining === null ? 'Unavailable' : formatCurrency(Math.max(budgetRemaining, 0)) : 'No cap',
+      accent: budget > 0 && budgetRemaining !== null && budgetRemaining < budget * 0.2 ? '#FF453A' : '#32D74B',
     },
   ]
 
@@ -743,7 +801,9 @@ export default function Costs() {
           apiEquivalentPeriodCost={apiEquivalentPeriodCost}
           apiEquivalentDailyAvg={apiEquivalentDailyAvg}
           apiEquivalentProjectedMonthly={apiEquivalentProjectedMonthly}
-          apiEquivalentReliability={apiEquivalentReliability}
+          apiEquivalentReliability={apiEquivalentDisplayReliability}
+          trackedSpend={trackedSpend}
+          trackedValueAvailable={trackedValueAvailable}
         />
 
         {(agentSplit.length > 0 || agentSplitPending) && (
@@ -759,7 +819,7 @@ export default function Costs() {
           />
         )}
 
-        {budget > 0 && monthlyBudgetBase > 0 && monthlyBudgetBase / budget > 0.8 && (
+        {budget > 0 && monthlyBudgetBase !== null && monthlyBudgetBase > 0 && monthlyBudgetBase / budget > 0.8 && (
           <div className={m ? `${costsStyles.budgetAlert} ${costsStyles.budgetAlertMobile}` : `${costsStyles.budgetAlert} ${costsStyles.budgetAlertDesktop}`}>
             <AlertCircle size={20} className={costsStyles.budgetAlertIcon} />
             <div>
@@ -767,7 +827,7 @@ export default function Costs() {
                 Budget alert
               </div>
               <div className={m ? `${costsStyles.budgetAlertBody} ${costsStyles.budgetAlertBodyMobile}` : costsStyles.budgetAlertBody}>
-                You have used {budgetUsagePct}% of the {formatCurrency(budget)} monthly target.
+                You have used {budgetUsagePct ?? 0}% of the {formatCurrency(budget)} monthly target.
               </div>
             </div>
           </div>
@@ -778,17 +838,19 @@ export default function Costs() {
           isAwsEnabled={isAwsEnabled}
           hasAwsData={hasAwsData}
           awsCosts={awsCosts ?? null}
-          currentPeriodCost={currentPeriodCost}
-          dailyAvg={dailyAvg}
-          projectedMonthly={projectedMonthly}
-          previousPeriodCost={previousPeriodCost}
-          previousDailyAvg={previousDailyAvg}
-          monthlyTrend={monthlyTrend}
-          dailyTrend={dailyTrend}
+          metricMode={metricMode}
+          currentPeriodCost={metricPeriodCost}
+          dailyAvg={metricDailyAverage}
+          projectedMonthly={metricProjectedMonthly}
+          previousPeriodCost={metricPreviousPeriodCost}
+          previousDailyAvg={metricPreviousDailyAverage}
+          monthlyTrend={metricPeriodTrend}
+          dailyTrend={metricDailyTrend}
           compareLabel={compareLabel}
           period={period}
           labels={labels}
           activePeriodLabel={activePeriodLabel}
+          apiEquivalentReliability={apiEquivalentDisplayReliability}
         />
 
         <BudgetCard
@@ -822,9 +884,8 @@ export default function Costs() {
           awsCosts={awsCosts ?? null}
           hasSessionEstimateChart={hasSessionEstimateChart}
           sessionEstimateData={sessionEstimateData as SessionEstimateDay[]}
-          projectedMonthly={projectedMonthly}
           totalTokens={totalTokens}
-          tokenBasedCost={tokenBasedCost}
+          tokenBasedCost={null}
           blendedCostBreakdown={blendedCostBreakdown as BlendedCostItem[]}
           apiEquivalentReliability={apiEquivalentReliability}
         />

@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import { DollarSign } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
 import { formatCurrency, formatTokens, formatCompactTokenValue } from './lib'
+import type { TrackedSpendPresentation } from './lib'
 import type { CodexBarCostData } from './types'
 import styles from './CostPulseHeader.module.css'
 
@@ -31,6 +32,8 @@ interface CostPulseHeaderProps {
   apiEquivalentDailyAvg: number | null
   apiEquivalentProjectedMonthly: number | null
   apiEquivalentReliability: string
+  trackedSpend: TrackedSpendPresentation
+  trackedValueAvailable: boolean
 }
 
 export default function CostPulseHeader({
@@ -52,11 +55,14 @@ export default function CostPulseHeader({
   apiEquivalentDailyAvg,
   apiEquivalentProjectedMonthly,
   apiEquivalentReliability,
+  trackedSpend,
+  trackedValueAvailable,
 }: CostPulseHeaderProps) {
   const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
   const isPartialApiEquivalent = apiEquivalentReliability === 'partial'
   const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
   const hasNoApiEquivalentUsage = apiEquivalentReliability === 'no_usage'
+  const trackedCoverageNote = [trackedSpend.valueQualifier, trackedSpend.coverageLabel].filter(Boolean).join(' · ')
   return (
     <GlassCard delay={0} noPad>
       <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
@@ -159,10 +165,10 @@ export default function CostPulseHeader({
                     {formatApiEquivalent(apiEquivalentProjectedMonthly)}
                   </div>
                 </div>
-                <div className={styles.codexbarMiniCell}>
+                <div className={styles.codexbarMiniCell} title={trackedCoverageNote || undefined}>
                   <div className={styles.codexbarCellLabel}>Tracked Spend</div>
                   <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
-                    {formatCurrency(currentPeriodCost)}
+                    {trackedValueAvailable ? formatCurrency(currentPeriodCost) : 'Unavailable'}
                   </div>
                 </div>
                 <div title={`${formatTokens(codexbarPeriodTokens)} tokens`} className={styles.codexbarMiniCell}>
@@ -179,21 +185,23 @@ export default function CostPulseHeader({
                 <div>
                   <div className={styles.pulseSubLabel}>Current Pulse</div>
                   <div className={m ? `${styles.pulseAmount} ${styles.pulseAmountMobile}` : styles.pulseAmount}>
-                    {formatCurrency(currentPeriodCost)}
+                    {trackedValueAvailable ? formatCurrency(currentPeriodCost) : 'Unavailable'}
                   </div>
                   <div className={styles.pulseDesc}>
-                    {period === 'month' ? 'Current month tracked spend' : `${activePeriodLabel} spend in view`}
+                    {trackedValueAvailable
+                      ? period === 'month' ? 'Current month tracked spend' : `${activePeriodLabel} spend in view`
+                      : 'No tracked billing source is available'}
                   </div>
                 </div>
 
                 <div className={styles.pulseMiniGrid}>
                   <div className={styles.pulseMiniCell}>
                     <div className={styles.pulseCellLabel}>Daily Pace</div>
-                    <div className={styles.pulseCellValue}>{formatCurrency(dailyAvg)}</div>
+                    <div className={styles.pulseCellValue}>{trackedValueAvailable ? formatCurrency(dailyAvg) : 'Unavailable'}</div>
                   </div>
                   <div className={styles.pulseMiniCell}>
                     <div className={styles.pulseCellLabel}>Projection</div>
-                    <div className={styles.pulseCellValue}>{formatCurrency(projectedMonthly)}</div>
+                    <div className={styles.pulseCellValue}>{trackedValueAvailable ? formatCurrency(projectedMonthly) : 'Unavailable'}</div>
                   </div>
                 </div>
               </div>
