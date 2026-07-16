@@ -325,6 +325,22 @@ export interface ApiEquivalentMetricValues {
   projectedMonthly: number | null
 }
 
+export function apiEquivalentPeriodValue({
+  reliability,
+  periodValue,
+  fallbackValue,
+}: {
+  reliability: string
+  periodValue: number | null | undefined
+  fallbackValue: number | null | undefined
+}) {
+  if (reliability !== 'estimated' && reliability !== 'partial') return null
+  const value = periodValue ?? fallbackValue
+  return value !== null && value !== undefined && Number.isFinite(Number(value))
+    ? Number(value)
+    : null
+}
+
 export function apiEquivalentMetricValues({
   periodCost,
   previousPeriodCost,
@@ -387,6 +403,13 @@ export function budgetSpendValue({
   }
   if (!ledgerActive || !trackedSpendComplete) return null
   return ledgerMonthSpend !== null && Number.isFinite(ledgerMonthSpend) ? Number(ledgerMonthSpend) : null
+}
+
+export function awsBillingDataAvailable(
+  isAwsEnabled: boolean,
+  awsCosts: { total: number } | null | undefined,
+) {
+  return isAwsEnabled && awsCosts !== null && awsCosts !== undefined && Number.isFinite(awsCosts.total)
 }
 
 export function summarizeCostReliability(items: TokenServiceData[] = []) {

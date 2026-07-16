@@ -21,6 +21,8 @@ import {
   trackedSpendPresentation,
   apiEquivalentMetricValues,
   budgetSpendValue,
+  awsBillingDataAvailable,
+  apiEquivalentPeriodValue,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -280,6 +282,31 @@ describe('apiEquivalentMetricValues', () => {
   })
 })
 
+describe('apiEquivalentPeriodValue', () => {
+  it('preserves a missing partial estimate as unavailable instead of manufacturing zero', () => {
+    expect(apiEquivalentPeriodValue({
+      reliability: 'partial',
+      periodValue: null,
+      fallbackValue: null,
+    })).toBeNull()
+    expect(apiEquivalentPeriodValue({
+      reliability: 'partial',
+      periodValue: 0,
+      fallbackValue: null,
+    })).toBe(0)
+    expect(apiEquivalentPeriodValue({
+      reliability: 'estimated',
+      periodValue: null,
+      fallbackValue: 5,
+    })).toBe(5)
+    expect(apiEquivalentPeriodValue({
+      reliability: 'unavailable',
+      periodValue: 5,
+      fallbackValue: null,
+    })).toBeNull()
+  })
+})
+
 describe('budgetSpendValue', () => {
   it('prefers AWS actual billing even when a ledger is also active', () => {
     expect(budgetSpendValue({
@@ -299,6 +326,14 @@ describe('budgetSpendValue', () => {
       ledgerMonthSpend: 0,
       trackedSpendComplete: false,
     })).toBeNull()
+  })
+})
+
+describe('awsBillingDataAvailable', () => {
+  it('treats an enabled zero-dollar AWS response as authoritative billing data', () => {
+    expect(awsBillingDataAvailable(true, { total: 0 })).toBe(true)
+    expect(awsBillingDataAvailable(false, { total: 0 })).toBe(false)
+    expect(awsBillingDataAvailable(true, null)).toBe(false)
   })
 })
 

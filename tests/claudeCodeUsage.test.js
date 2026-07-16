@@ -10,7 +10,7 @@ const {
   needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../server/services/claudeCodeUsage');
-const { cachedUsageAgent } = require('../server/routes/costs');
+const { cachedUsageAgent, sumPreviousApiEquivalentUsd } = require('../server/routes/costs');
 
 test('stale source reconstruction preserves API-equivalent token classes', () => {
   const previous = {
@@ -367,6 +367,29 @@ test('keeps a combined previous API-equivalent baseline unavailable when any sou
   ]);
 
   assert.equal(summary.previousPeriodApiEquivalentUsd, null);
+});
+
+test('combines previous API-equivalent baselines without letting idle ready sources erase them', () => {
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'no_usage' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'not_applicable' } },
+  ]), 4);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'unavailable' } },
+  ]), null);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: 99, previousPeriodApiEquivalentReliability: 'unavailable' } },
+  ]), null);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: 2 } },
+  ]), null);
 });
 
 test('refreshes legacy disk caches that predate the Claude Code source', () => {

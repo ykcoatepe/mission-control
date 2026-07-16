@@ -45,6 +45,34 @@ function clone(value) {
   assert.equal(usage.summary.previousPeriodApiEquivalentReliability, 'partial');
 })();
 
+(function testUnavailableSourceCoverageCannotClaimNoUsageOrNotApplicable() {
+  const noUsage = normalizeUsageCosts({
+    meta: { openclawStatus: 'unavailable', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: {
+      periodUsd: 0,
+      periodTokens: 0,
+      previousPeriodApiEquivalentReliability: 'no_usage',
+    },
+    daily: [],
+    dailyByModel: [],
+    byService: [],
+  });
+  assert.equal(noUsage.apiEquivalentReliability, 'partial');
+  assert.equal(noUsage.summary.previousPeriodApiEquivalentReliability, 'partial');
+
+  const localOnly = normalizeUsageCosts({
+    meta: { openclawStatus: 'ready', hermesStatus: 'unavailable', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0, periodTokens: 10 },
+    daily: [{ date: '2026-07-16', cost: 0, totalCost: 0, tokens: 10, totalTokens: 10 }],
+    dailyByModel: [{
+      date: '2026-07-16', totalCost: 0, totalTokens: 10,
+      'ollama/qwen': 0, 'ollama/qwen_tokens': 10,
+    }],
+    byService: [{ name: 'ollama/qwen', cost: 0, tokens: 10 }],
+  });
+  assert.equal(localOnly.apiEquivalentReliability, 'partial');
+})();
+
 (function testApiEquivalentUsesOfficialTokenClassRates() {
   const estimate = estimateApiEquivalentCost({
     name: 'openai/gpt-5.6-sol',

@@ -337,12 +337,13 @@ function normalizeUsageCosts(usage) {
     usage.meta?.claudeCodeStatus,
   ].filter(Boolean);
   const sourceCoveragePartial = sourceStatuses.includes('unavailable');
-  if (sourceCoveragePartial && apiEquivalentReliability === 'estimated') apiEquivalentReliability = 'partial';
+  const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
+  if (sourceCoveragePartial && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
   const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
   const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
-  if (sourceCoveragePartial && normalized.summary.previousPeriodApiEquivalentReliability === 'estimated') {
+  if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
     normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
   }
   normalized.costReliability = byService.some((item) => item.costSource === 'unknown') ? 'partial_unknown' : 'normalized';

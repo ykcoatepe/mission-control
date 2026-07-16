@@ -46,7 +46,9 @@ import {
   parseMonthlyBudgetInput,
   trackedSpendPresentation,
   apiEquivalentMetricValues,
+  apiEquivalentPeriodValue,
   budgetSpendValue,
+  awsBillingDataAvailable,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -463,7 +465,7 @@ export default function Costs() {
   }
 
   const isAwsEnabled = config?.modules?.aws === true
-  const hasAwsData = !!(awsCosts && awsCosts.total > 0)
+  const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts)
   const trackedSpend = trackedSpendPresentation({
     reliability: ledgerActive ? tokenData?.costReliability : undefined,
     unknownSourceCount: unknownBillingSourceCount,
@@ -503,11 +505,12 @@ export default function Costs() {
     : codexbarActive
       ? 'estimated'
       : 'unavailable'
-  const apiEquivalentAvailable = apiEquivalentReliability === 'estimated' || apiEquivalentReliability === 'partial'
   const apiEquivalentPeriodCost = ledgerActive
-    ? apiEquivalentAvailable
-      ? Number(tokenData?.summary?.periodApiEquivalentUsd ?? tokenData?.summary?.apiEquivalentUsd ?? 0)
-      : null
+    ? apiEquivalentPeriodValue({
+      reliability: apiEquivalentReliability,
+      periodValue: tokenData?.summary?.periodApiEquivalentUsd,
+      fallbackValue: tokenData?.summary?.apiEquivalentUsd,
+    })
     : codexbarActive
       ? codexbarPeriodCost
       : null

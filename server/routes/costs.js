@@ -74,6 +74,22 @@ function cachedUsageAgent(previous, agent) {
   };
 }
 
+function sumPreviousApiEquivalentUsd(sources = []) {
+  let total = 0;
+  for (const source of sources) {
+    const amount = source.summary?.previousPeriodApiEquivalentUsd;
+    const reliability = source.summary?.previousPeriodApiEquivalentReliability;
+    if (reliability === 'no_usage' || reliability === 'not_applicable') continue;
+    if (reliability !== 'estimated' && reliability !== 'partial') return null;
+    if (amount !== null && amount !== undefined && Number.isFinite(Number(amount))) {
+      total += Number(amount);
+      continue;
+    }
+    return null;
+  }
+  return total;
+}
+
 function hermesModelName(provider, model) {
   const p = String(provider || '').trim();
   const m = String(model || '').trim();
@@ -618,7 +634,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       summary: {
         periodUsd: sumSummary('periodUsd'),
         previousPeriodUsd: sumOptionalSummary('previousPeriodUsd'),
-        previousPeriodApiEquivalentUsd: sumOptionalSummary('previousPeriodApiEquivalentUsd'),
+        previousPeriodApiEquivalentUsd: sumPreviousApiEquivalentUsd(sources),
         previousPeriodApiEquivalentReliability,
         periodTokens: sumSummary('periodTokens'),
         todayUsd: sumSummary('todayUsd'),
@@ -989,4 +1005,5 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 module.exports = {
   buildCostsRouter,
   cachedUsageAgent,
+  sumPreviousApiEquivalentUsd,
 };
