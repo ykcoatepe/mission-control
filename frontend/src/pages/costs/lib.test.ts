@@ -23,6 +23,7 @@ import {
   budgetSpendValue,
   awsBillingDataAvailable,
   apiEquivalentPeriodValue,
+  awsIntegrationEnabled,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -334,6 +335,14 @@ describe('awsBillingDataAvailable', () => {
     expect(awsBillingDataAvailable(true, { total: 0 })).toBe(true)
     expect(awsBillingDataAvailable(false, { total: 0 })).toBe(false)
     expect(awsBillingDataAvailable(true, null)).toBe(false)
+  })
+})
+
+describe('awsIntegrationEnabled', () => {
+  it('requires both the AWS module and integration flags', () => {
+    expect(awsIntegrationEnabled({ modules: { aws: true }, aws: { enabled: true } })).toBe(true)
+    expect(awsIntegrationEnabled({ modules: { aws: true }, aws: { enabled: false } })).toBe(false)
+    expect(awsIntegrationEnabled({ modules: { aws: false }, aws: { enabled: true } })).toBe(false)
   })
 })
 

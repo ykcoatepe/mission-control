@@ -49,6 +49,7 @@ import {
   apiEquivalentPeriodValue,
   budgetSpendValue,
   awsBillingDataAvailable,
+  awsIntegrationEnabled,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -464,7 +465,7 @@ export default function Costs() {
     )
   }
 
-  const isAwsEnabled = config?.modules?.aws === true
+  const isAwsEnabled = awsIntegrationEnabled(config)
   const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts)
   const trackedSpend = trackedSpendPresentation({
     reliability: ledgerActive ? tokenData?.costReliability : undefined,

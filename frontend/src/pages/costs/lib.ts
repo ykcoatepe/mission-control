@@ -412,6 +412,13 @@ export function awsBillingDataAvailable(
   return isAwsEnabled && awsCosts !== null && awsCosts !== undefined && Number.isFinite(awsCosts.total)
 }
 
+export function awsIntegrationEnabled(config: {
+  modules?: { aws?: boolean }
+  aws?: { enabled?: boolean }
+} | null | undefined) {
+  return config?.modules?.aws === true && config?.aws?.enabled === true
+}
+
 export function summarizeCostReliability(items: TokenServiceData[] = []) {
   const activeItems = items.filter(item => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
   const labeledItems = activeItems.map(item => ({ item, label: costReliabilityLabel(item) }))

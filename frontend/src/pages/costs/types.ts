@@ -145,6 +145,9 @@ export interface ConfigData {
     aws?: boolean
     [key: string]: boolean | undefined
   }
+  aws?: {
+    enabled?: boolean
+  }
 }
 
 export interface ChartSeriesItem {
