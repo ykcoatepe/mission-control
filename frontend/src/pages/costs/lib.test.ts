@@ -18,6 +18,12 @@ import {
   costReliabilityLabel,
   aggregateCostReliabilityLabel,
   summarizeCostReliability,
+  trackedSpendPresentation,
+  apiEquivalentMetricValues,
+  budgetSpendValue,
+  awsBillingDataAvailable,
+  apiEquivalentPeriodValue,
+  awsIntegrationEnabled,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -185,6 +191,161 @@ describe('aggregateCostReliabilityLabel', () => {
   })
 })
 
+describe('trackedSpendPresentation', () => {
+  it('does not present partial billing coverage as a complete zero-spend projection', () => {
+    expect(trackedSpendPresentation({
+      reliability: 'partial_unknown',
+      unknownSourceCount: 2,
+    })).toEqual({
+      isPartial: true,
+      valueQualifier: 'Tracked spend from available billing data',
+      coverageLabel: '2 billing sources unknown',
+      projectionAvailable: false,
+    })
+  })
+
+  it('keeps projections available when tracked billing coverage is complete', () => {
+    expect(trackedSpendPresentation({
+      reliability: 'normalized',
+      unknownSourceCount: 0,
+    })).toEqual({
+      isPartial: false,
+      valueQualifier: null,
+      coverageLabel: null,
+      projectionAvailable: true,
+    })
+  })
+
+  it('does not inherit unrelated ledger uncertainty when the selected billing source is complete', () => {
+    expect(trackedSpendPresentation({
+      reliability: 'partial_unknown',
+      unknownSourceCount: 2,
+      selectedSourceIsComplete: true,
+    })).toEqual({
+      isPartial: false,
+      valueQualifier: null,
+      coverageLabel: null,
+      projectionAvailable: true,
+    })
+  })
+})
+
+describe('apiEquivalentMetricValues', () => {
+  it('builds comparable API-equivalent averages and projections from partial estimates', () => {
+    expect(apiEquivalentMetricValues({
+      periodCost: 100,
+      previousPeriodCost: 80,
+      dayCount: 5,
+      previousDayCount: 4,
+      reliability: 'partial',
+      previousReliability: 'estimated',
+    })).toEqual({
+      periodCost: 100,
+      previousPeriodCost: 80,
+      dailyAverage: 20,
+      previousDailyAverage: 20,
+      projectedMonthly: 600,
+    })
+  })
+
+  it('does not manufacture zero API-equivalent metrics when the estimate is unavailable', () => {
+    expect(apiEquivalentMetricValues({
+      periodCost: null,
+      previousPeriodCost: 80,
+      dayCount: 5,
+      previousDayCount: 5,
+      reliability: 'unavailable',
+      previousReliability: 'estimated',
+    })).toEqual({
+      periodCost: null,
+      previousPeriodCost: null,
+      dailyAverage: null,
+      previousDailyAverage: null,
+      projectedMonthly: null,
+    })
+  })
+
+  it('withholds an unreliable previous baseline without hiding the current estimate', () => {
+    expect(apiEquivalentMetricValues({
+      periodCost: 100,
+      previousPeriodCost: 80,
+      dayCount: 5,
+      previousDayCount: 5,
+      reliability: 'estimated',
+      previousReliability: 'unavailable',
+    })).toEqual({
+      periodCost: 100,
+      previousPeriodCost: null,
+      dailyAverage: 20,
+      previousDailyAverage: null,
+      projectedMonthly: 600,
+    })
+  })
+})
+
+describe('apiEquivalentPeriodValue', () => {
+  it('preserves a missing partial estimate as unavailable instead of manufacturing zero', () => {
+    expect(apiEquivalentPeriodValue({
+      reliability: 'partial',
+      periodValue: null,
+      fallbackValue: null,
+    })).toBeNull()
+    expect(apiEquivalentPeriodValue({
+      reliability: 'partial',
+      periodValue: 0,
+      fallbackValue: null,
+    })).toBe(0)
+    expect(apiEquivalentPeriodValue({
+      reliability: 'estimated',
+      periodValue: null,
+      fallbackValue: 5,
+    })).toBe(5)
+    expect(apiEquivalentPeriodValue({
+      reliability: 'unavailable',
+      periodValue: 5,
+      fallbackValue: null,
+    })).toBeNull()
+  })
+})
+
+describe('budgetSpendValue', () => {
+  it('prefers AWS actual billing even when a ledger is also active', () => {
+    expect(budgetSpendValue({
+      hasAwsData: true,
+      awsTotal: 50,
+      ledgerActive: true,
+      ledgerMonthSpend: 0,
+      trackedSpendComplete: false,
+    })).toBe(50)
+  })
+
+  it('withholds budget math when non-AWS tracked coverage is incomplete', () => {
+    expect(budgetSpendValue({
+      hasAwsData: false,
+      awsTotal: null,
+      ledgerActive: true,
+      ledgerMonthSpend: 0,
+      trackedSpendComplete: false,
+    })).toBeNull()
+  })
+})
+
+describe('awsBillingDataAvailable', () => {
+  it('treats an enabled zero-dollar AWS response as authoritative billing data', () => {
+    expect(awsBillingDataAvailable(true, { total: 0 })).toBe(true)
+    expect(awsBillingDataAvailable(false, { total: 0 })).toBe(false)
+    expect(awsBillingDataAvailable(true, null)).toBe(false)
+  })
+})
+
+describe('awsIntegrationEnabled', () => {
+  it('requires both the AWS module and integration flags', () => {
+    expect(awsIntegrationEnabled({ modules: { aws: true }, aws: { enabled: true } })).toBe(true)
+    expect(awsIntegrationEnabled({ modules: { aws: true }, aws: { enabled: false } })).toBe(false)
+    expect(awsIntegrationEnabled({ modules: { aws: false }, aws: { enabled: true } })).toBe(false)
+  })
+})
+
 // ---------------------------------------------------------------------------
 // parseMonthlyBudgetInput
 // ---------------------------------------------------------------------------
@@ -328,10 +489,14 @@ describe('CodexBar calendar periods', () => {
     expect(week).toHaveLength(7)
     expect(sumCostRows(week)).toBe(2)
     const month = previousCodexbarRows(rows, 'month', now)
-    expect(month).toHaveLength(30)
+    expect(month).toHaveLength(13)
     expect(month[0].date).toBe('2026-06-01')
-    expect(month.at(-1)?.date).toBe('2026-06-30')
+    expect(month.at(-1)?.date).toBe('2026-06-13')
     expect(sumCostRows(month)).toBe(1)
+  })
+
+  it('uses the actual shorter previous-month span for daily averages', () => {
+    expect(previousCodexbarRows([], 'month', new Date('2026-03-31T12:00:00+03:00'))).toHaveLength(28)
   })
 
   it('keeps a zero-spend CodexBar period renderable without model series', () => {

@@ -38,7 +38,24 @@ function rangeForPeriod(period) {
   const start = new Date(now);
   if (period === 'day') {
     start.setHours(0, 0, 0, 0);
-    return { startMs: start.getTime(), endMs: now.getTime(), keys: [dayKey(start)], startKey: dayKey(start), endKey: dayKey(now) };
+    const previousStart = new Date(start);
+    previousStart.setDate(previousStart.getDate() - 1);
+    const previousEnd = new Date(previousStart);
+    previousEnd.setHours(23, 59, 59, 999);
+    return {
+      startMs: start.getTime(),
+      endMs: now.getTime(),
+      keys: [dayKey(start)],
+      startKey: dayKey(start),
+      endKey: dayKey(now),
+      previous: {
+        startMs: previousStart.getTime(),
+        endMs: previousEnd.getTime(),
+        keys: [dayKey(previousStart)],
+        startKey: dayKey(previousStart),
+        endKey: dayKey(previousEnd),
+      },
+    };
   }
   if (period === '7d') {
     start.setHours(0, 0, 0, 0);
@@ -49,7 +66,30 @@ function rangeForPeriod(period) {
       keys.push(dayKey(cursor));
       cursor.setDate(cursor.getDate() + 1);
     }
-    return { startMs: start.getTime(), endMs: now.getTime(), keys, startKey: keys[0], endKey: keys[keys.length - 1] };
+    const previousEnd = new Date(start.getTime() - 1);
+    const previousStart = new Date(previousEnd);
+    previousStart.setHours(0, 0, 0, 0);
+    previousStart.setDate(previousStart.getDate() - 6);
+    const previousKeys = [];
+    const previousCursor = new Date(previousStart);
+    while (previousCursor <= previousEnd) {
+      previousKeys.push(dayKey(previousCursor));
+      previousCursor.setDate(previousCursor.getDate() + 1);
+    }
+    return {
+      startMs: start.getTime(),
+      endMs: now.getTime(),
+      keys,
+      startKey: keys[0],
+      endKey: keys[keys.length - 1],
+      previous: {
+        startMs: previousStart.getTime(),
+        endMs: previousEnd.getTime(),
+        keys: previousKeys,
+        startKey: previousKeys[0],
+        endKey: previousKeys[previousKeys.length - 1],
+      },
+    };
   }
   start.setHours(0, 0, 0, 0);
   start.setDate(1);
@@ -59,7 +99,32 @@ function rangeForPeriod(period) {
     keys.push(dayKey(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
-  return { startMs: start.getTime(), endMs: now.getTime(), keys, startKey: keys[0], endKey: keys[keys.length - 1] };
+  const previousEnd = new Date(start);
+  previousEnd.setDate(0);
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(1);
+  previousEnd.setDate(Math.min(now.getDate(), previousEnd.getDate()));
+  previousEnd.setHours(23, 59, 59, 999);
+  const previousKeys = [];
+  const previousCursor = new Date(previousStart);
+  while (previousCursor <= previousEnd) {
+    previousKeys.push(dayKey(previousCursor));
+    previousCursor.setDate(previousCursor.getDate() + 1);
+  }
+  return {
+    startMs: start.getTime(),
+    endMs: now.getTime(),
+    keys,
+    startKey: keys[0],
+    endKey: keys[keys.length - 1],
+    previous: {
+      startMs: previousStart.getTime(),
+      endMs: previousEnd.getTime(),
+      keys: previousKeys,
+      startKey: previousKeys[0],
+      endKey: previousKeys[previousKeys.length - 1],
+    },
+  };
 }
 
 function modelName(provider, model) {
@@ -428,14 +493,21 @@ function buildUsageFromAccumulator({
 
 async function buildForPeriod(period) {
   const r = rangeForPeriod(period);
-  const { records, filesScanned, filesAvailable } = await scanUsageRecords(r);
+  const { records, filesScanned, filesAvailable } = await scanUsageRecords({
+    startMs: r.previous.startMs,
+    endMs: r.endMs,
+  });
   const combinedAccumulator = createAccumulator(r.keys);
+  const previousCombinedAccumulator = createAccumulator(r.previous.keys);
   const bucketAccumulators = new Map(SESSION_BUCKETS.map((bucket) => [bucket.key, createAccumulator(r.keys)]));
+  const previousBucketAccumulators = new Map(SESSION_BUCKETS.map((bucket) => [bucket.key, createAccumulator(r.previous.keys)]));
 
   for (const record of records) {
     addRecord(combinedAccumulator, record);
+    addRecord(previousCombinedAccumulator, record);
     const bucket = sessionBucketForKey(record.sessionKey);
     addRecord(bucketAccumulators.get(bucket.key), record);
+    addRecord(previousBucketAccumulators.get(bucket.key), record);
   }
 
   const combined = buildUsageFromAccumulator({
@@ -447,6 +519,17 @@ async function buildForPeriod(period) {
     filesScanned,
     filesAvailable,
   });
+  const previousCombined = buildUsageFromAccumulator({
+    accumulator: previousCombinedAccumulator,
+    period,
+    range: r.previous,
+    source: 'openclaw.session_jsonl_fast_scan.previous',
+    note: 'Previous-period OpenClaw API-equivalent baseline',
+    filesScanned,
+    filesAvailable,
+  });
+  combined.summary.previousPeriodApiEquivalentUsd = previousCombined.summary.periodApiEquivalentUsd;
+  combined.summary.previousPeriodApiEquivalentReliability = previousCombined.apiEquivalentReliability;
 
   combined.agents = SESSION_BUCKETS.map((bucket) => {
     const usage = buildUsageFromAccumulator({
@@ -458,6 +541,17 @@ async function buildForPeriod(period) {
       filesScanned,
       filesAvailable,
     });
+    const previousUsage = buildUsageFromAccumulator({
+      accumulator: previousBucketAccumulators.get(bucket.key),
+      period,
+      range: r.previous,
+      source: `${bucket.source}.previous`,
+      note: `Previous-period ${bucket.label} API-equivalent baseline`,
+      filesScanned,
+      filesAvailable,
+    });
+    usage.summary.previousPeriodApiEquivalentUsd = previousUsage.summary.periodApiEquivalentUsd;
+    usage.summary.previousPeriodApiEquivalentReliability = previousUsage.apiEquivalentReliability;
 
     return {
       key: bucket.key,

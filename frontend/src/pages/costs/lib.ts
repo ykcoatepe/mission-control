@@ -284,6 +284,141 @@ export function costReliabilityLabel(item?: Pick<TokenServiceData, 'costSource' 
   return 'Not tracked'
 }
 
+export interface TrackedSpendPresentation {
+  isPartial: boolean
+  valueQualifier: string | null
+  coverageLabel: string | null
+  projectionAvailable: boolean
+}
+
+export function trackedSpendPresentation({
+  reliability,
+  unknownSourceCount,
+  selectedSourceIsComplete = false,
+}: {
+  reliability: string | undefined
+  unknownSourceCount: number
+  selectedSourceIsComplete?: boolean
+}): TrackedSpendPresentation {
+  const isPartial = !selectedSourceIsComplete && reliability === 'partial_unknown'
+  const count = Math.max(0, Math.floor(Number(unknownSourceCount) || 0))
+
+  return {
+    isPartial,
+    valueQualifier: isPartial ? 'Tracked spend from available billing data' : null,
+    coverageLabel: isPartial
+      ? count > 0
+        ? count === 1
+          ? '1 billing source unknown'
+          : `${count} billing sources unknown`
+        : 'Billing coverage partial'
+      : null,
+    projectionAvailable: !isPartial,
+  }
+}
+
+export interface ApiEquivalentMetricValues {
+  periodCost: number | null
+  previousPeriodCost: number | null
+  dailyAverage: number | null
+  previousDailyAverage: number | null
+  projectedMonthly: number | null
+}
+
+export function apiEquivalentPeriodValue({
+  reliability,
+  periodValue,
+  fallbackValue,
+}: {
+  reliability: string
+  periodValue: number | null | undefined
+  fallbackValue: number | null | undefined
+}) {
+  if (reliability !== 'estimated' && reliability !== 'partial') return null
+  const value = periodValue ?? fallbackValue
+  return value !== null && value !== undefined && Number.isFinite(Number(value))
+    ? Number(value)
+    : null
+}
+
+export function apiEquivalentMetricValues({
+  periodCost,
+  previousPeriodCost,
+  dayCount,
+  previousDayCount,
+  reliability,
+  previousReliability,
+}: {
+  periodCost: number | null
+  previousPeriodCost: number | null
+  dayCount: number
+  previousDayCount: number
+  reliability: string
+  previousReliability: string
+}): ApiEquivalentMetricValues {
+  const available = reliability === 'estimated' || reliability === 'partial'
+  const current = periodCost !== null && Number.isFinite(periodCost) ? Number(periodCost) : null
+  if (!available || current === null) {
+    return {
+      periodCost: null,
+      previousPeriodCost: null,
+      dailyAverage: null,
+      previousDailyAverage: null,
+      projectedMonthly: null,
+    }
+  }
+
+  const days = Math.max(1, Math.floor(Number(dayCount) || 0))
+  const previousAvailable = previousReliability === 'estimated' || previousReliability === 'partial'
+  const previous = previousAvailable && previousPeriodCost !== null && Number.isFinite(previousPeriodCost)
+    ? Number(previousPeriodCost)
+    : null
+  const dailyAverage = current / days
+  const previousDays = Math.max(1, Math.floor(Number(previousDayCount) || 0))
+
+  return {
+    periodCost: current,
+    previousPeriodCost: previous,
+    dailyAverage,
+    previousDailyAverage: previous === null ? null : previous / previousDays,
+    projectedMonthly: dailyAverage * 30,
+  }
+}
+
+export function budgetSpendValue({
+  hasAwsData,
+  awsTotal,
+  ledgerActive,
+  ledgerMonthSpend,
+  trackedSpendComplete,
+}: {
+  hasAwsData: boolean
+  awsTotal: number | null
+  ledgerActive: boolean
+  ledgerMonthSpend: number | null
+  trackedSpendComplete: boolean
+}) {
+  if (hasAwsData) {
+    return awsTotal !== null && Number.isFinite(awsTotal) ? Number(awsTotal) : null
+  }
+  if (!ledgerActive || !trackedSpendComplete) return null
+  return ledgerMonthSpend !== null && Number.isFinite(ledgerMonthSpend) ? Number(ledgerMonthSpend) : null
+}
+
+export function awsBillingDataAvailable(
+  isAwsEnabled: boolean,
+  awsCosts: { total: number } | null | undefined,
+) {
+  return isAwsEnabled && awsCosts !== null && awsCosts !== undefined && Number.isFinite(awsCosts.total)
+}
+
+export function awsIntegrationEnabled(config: {
+  modules?: { aws?: boolean }
+  aws?: { enabled?: boolean }
+} | null | undefined) {
+  return config?.modules?.aws === true && config?.aws?.enabled === true
+}
+
 export function summarizeCostReliability(items: TokenServiceData[] = []) {
   const activeItems = items.filter(item => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
   const labeledItems = activeItems.map(item => ({ item, label: costReliabilityLabel(item) }))
@@ -346,7 +481,11 @@ function codexbarDateKey(date: Date) {
 function codexbarPeriodBounds(period: 'day' | '7d' | 'month', now: Date, previous: boolean) {
   if (period === 'month') {
     const end = new Date(now)
-    if (previous) end.setDate(0)
+    if (previous) {
+      end.setDate(0)
+      const previousMonthLastDay = end.getDate()
+      end.setDate(Math.min(now.getDate(), previousMonthLastDay))
+    }
     const start = new Date(end)
     start.setDate(1)
     return { start: codexbarDateKey(start), end: codexbarDateKey(end) }

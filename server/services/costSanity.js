@@ -193,6 +193,18 @@ function isEstimatedCostSource(source) {
   return lower.includes('fallback') || lower.includes('estimate');
 }
 
+function combineApiEquivalentReliability(values = []) {
+  const statuses = values.filter(Boolean);
+  const active = statuses.filter((status) => status !== 'no_usage' && status !== 'not_applicable');
+  if (!active.length) return statuses.includes('not_applicable') ? 'not_applicable' : 'no_usage';
+  const hasEstimated = active.includes('estimated');
+  const hasPartial = active.includes('partial');
+  const hasUnavailable = active.includes('unavailable');
+  if (hasPartial || (hasEstimated && hasUnavailable)) return 'partial';
+  if (hasUnavailable) return 'unavailable';
+  return hasEstimated ? 'estimated' : 'unavailable';
+}
+
 function normalizeServiceCost(item = {}) {
   const out = { ...item };
   const tokens = Number(out.tokens || 0);
@@ -312,18 +324,31 @@ function normalizeUsageCosts(usage) {
     .map((item) => item.apiEquivalentStatus);
   const hasEstimatedApiEquivalent = apiEquivalentStatuses.includes('estimated');
   const hasUnavailableApiEquivalent = apiEquivalentStatuses.includes('unavailable');
-  const apiEquivalentReliability = apiEquivalentStatuses.length === 0
+  let apiEquivalentReliability = apiEquivalentStatuses.length === 0
     ? 'no_usage'
     : hasEstimatedApiEquivalent
     ? (hasUnavailableApiEquivalent ? 'partial' : 'estimated')
     : hasUnavailableApiEquivalent
       ? 'unavailable'
       : 'not_applicable';
+  const sourceStatuses = [
+    usage.meta?.openclawStatus,
+    usage.meta?.hermesStatus,
+    usage.meta?.claudeCodeStatus,
+  ].filter(Boolean);
+  const sourceCoveragePartial = sourceStatuses.includes('unavailable');
+  const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
+  if (sourceCoveragePartial && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
   const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
   const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
-  normalized.costReliability = byService.some((item) => item.costSource === 'unknown') ? 'partial_unknown' : 'normalized';
+  if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
+    normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
+  }
+  normalized.costReliability = sourceCoveragePartial || byService.some((item) => item.costSource === 'unknown')
+    ? 'partial_unknown'
+    : 'normalized';
   normalized.apiEquivalentReliability = apiEquivalentReliability;
 
   if (Array.isArray(usage.agents)) {
@@ -362,6 +387,7 @@ module.exports = {
   API_RATE_CARDS,
   displayCostLabel,
   estimateApiEquivalentCost,
+  combineApiEquivalentReliability,
   isImplausibleCloudCost,
   isLocalModel,
   isSubscriptionIncludedModel,

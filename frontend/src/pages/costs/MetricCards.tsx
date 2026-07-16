@@ -27,9 +27,10 @@ interface MetricCardsProps {
   isAwsEnabled: boolean
   hasAwsData: boolean
   awsCosts: AWSSCostData | null
-  currentPeriodCost: number
-  dailyAvg: number
-  projectedMonthly: number
+  metricMode: 'tracked' | 'api-equivalent'
+  currentPeriodCost: number | null
+  dailyAvg: number | null
+  projectedMonthly: number | null
   previousPeriodCost: number | null
   previousDailyAvg: number | null
   monthlyTrend: ReturnType<typeof calculateTrend>
@@ -38,6 +39,7 @@ interface MetricCardsProps {
   period: 'day' | '7d' | 'month'
   labels: { thisMonth: string; creditsLeft: string; dailyAvg: string; projected: string }
   activePeriodLabel: string
+  apiEquivalentReliability: string
 }
 
 export default function MetricCards({
@@ -45,6 +47,7 @@ export default function MetricCards({
   isAwsEnabled,
   hasAwsData,
   awsCosts,
+  metricMode,
   currentPeriodCost,
   dailyAvg,
   projectedMonthly,
@@ -56,7 +59,13 @@ export default function MetricCards({
   period,
   labels,
   activePeriodLabel,
+  apiEquivalentReliability,
 }: MetricCardsProps) {
+  const isApiEquivalent = metricMode === 'api-equivalent'
+  const estimateNote = apiEquivalentReliability === 'partial'
+    ? 'Partial estimate · Public API prices; not your invoice'
+    : 'Estimate · Public API prices; not your invoice'
+
   return (
     <div
       className={m ? `${styles.grid} ${styles.gridMobile}` : styles.grid}
@@ -73,11 +82,11 @@ export default function MetricCards({
               <Calendar size={m ? 16 : 20} className={styles.iconBlue} />
             </div>
             <span className={m ? `${styles.cardLabel} ${styles.cardLabelMobile}` : styles.cardLabel}>
-              {labels.dailyAvg}
+              {isApiEquivalent ? 'API-Equivalent Daily Average' : labels.dailyAvg}
             </span>
           </div>
           <p className={m ? `${styles.cardValue} ${styles.cardValueMobile}` : styles.cardValue}>
-            <AnimatedCounter end={dailyAvg} formatter={formatCurrency} />
+            {dailyAvg === null ? 'Unavailable' : <AnimatedCounter end={dailyAvg} formatter={formatCurrency} />}
           </p>
           <div className={styles.trendRow}>
             <div className={styles.trendLabel}>
@@ -85,6 +94,7 @@ export default function MetricCards({
             </div>
             <TrendBadge trend={dailyTrend} />
           </div>
+          {isApiEquivalent && <div className={styles.cardNote}>{estimateNote}</div>}
         </div>
       </GlassCard>
 
@@ -93,16 +103,18 @@ export default function MetricCards({
           <div className={styles.cardTop}>
             <div
               className={m ? `${styles.iconWrap} ${styles.iconWrapMobile}` : styles.iconWrap}
-              style={{ background: currentPeriodCost > 100 ? 'rgba(255,149,0,0.15)' : 'rgba(50,215,75,0.15)' }}
+              style={{ background: Number(currentPeriodCost || 0) > 100 ? 'rgba(255,149,0,0.15)' : 'rgba(50,215,75,0.15)' }}
             >
-              <DollarSign size={m ? 16 : 20} style={{ color: currentPeriodCost > 100 ? '#FF9500' : '#32D74B' }} />
+              <DollarSign size={m ? 16 : 20} style={{ color: Number(currentPeriodCost || 0) > 100 ? '#FF9500' : '#32D74B' }} />
             </div>
             <span className={m ? `${styles.cardLabel} ${styles.cardLabelMobile}` : styles.cardLabel}>
-              {period === 'month' ? `${labels.thisMonth} Tracked` : `${activePeriodLabel} Tracked`}
+              {isApiEquivalent
+                ? `${activePeriodLabel} API Equivalent`
+                : period === 'month' ? `${labels.thisMonth} Tracked` : `${activePeriodLabel} Tracked`}
             </span>
           </div>
           <p className={m ? `${styles.cardValue} ${styles.cardValueMobile}` : styles.cardValue}>
-            <AnimatedCounter end={currentPeriodCost} formatter={formatCurrency} />
+            {currentPeriodCost === null ? 'Unavailable' : <AnimatedCounter end={currentPeriodCost} formatter={formatCurrency} />}
           </p>
           <div className={styles.trendRow}>
             <div className={styles.trendLabel}>
@@ -110,6 +122,7 @@ export default function MetricCards({
             </div>
             <TrendBadge trend={monthlyTrend} />
           </div>
+          {isApiEquivalent && <div className={styles.cardNote}>{estimateNote}</div>}
         </div>
       </GlassCard>
 
@@ -141,14 +154,14 @@ export default function MetricCards({
               <TrendingUp size={m ? 16 : 20} className={styles.iconOrange} />
             </div>
             <span className={m ? `${styles.cardLabel} ${styles.cardLabelMobile}` : styles.cardLabel}>
-              {labels.projected}
+              {isApiEquivalent ? 'Projected API Equivalent' : labels.projected}
             </span>
           </div>
           <p className={m ? `${styles.cardValue} ${styles.cardValueMobile}` : styles.cardValue}>
-            <AnimatedCounter end={projectedMonthly} formatter={formatCurrency} />
+            {projectedMonthly === null ? 'Unavailable' : <AnimatedCounter end={projectedMonthly} formatter={formatCurrency} />}
           </p>
           <div className={styles.cardNote}>
-            Projected if the current pace holds
+            {isApiEquivalent ? estimateNote : 'Projected if the current pace holds'}
           </div>
         </div>
       </GlassCard>

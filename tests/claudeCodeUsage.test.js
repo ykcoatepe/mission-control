@@ -10,7 +10,7 @@ const {
   needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../server/services/claudeCodeUsage');
-const { cachedUsageAgent } = require('../server/routes/costs');
+const { cachedUsageAgent, sumPreviousApiEquivalentUsd } = require('../server/routes/costs');
 
 test('stale source reconstruction preserves API-equivalent token classes', () => {
   const previous = {
@@ -170,6 +170,19 @@ test('keeps the previous seven-day baseline correct across a month boundary', ()
   assert.equal(summary.summary.previousPeriodApiEquivalentUsd, 4);
 });
 
+test('compares month-to-date API equivalent with the same calendar span of the previous month', () => {
+  const summary = buildClaudeCodeUsageSummary([{
+    provider: 'claude',
+    daily: [
+      { date: '2026-06-01', totalCost: 1, totalTokens: 10, modelBreakdowns: [{ modelName: 'claude-opus-4-6', totalTokens: 10, cost: 1 }] },
+      { date: '2026-06-16', totalCost: 2, totalTokens: 20, modelBreakdowns: [{ modelName: 'claude-opus-4-6', totalTokens: 20, cost: 2 }] },
+      { date: '2026-06-30', totalCost: 30, totalTokens: 300, modelBreakdowns: [{ modelName: 'claude-opus-4-6', totalTokens: 300, cost: 30 }] },
+    ],
+  }], 'month', new Date('2026-07-16T12:00:00+03:00'));
+
+  assert.equal(summary.summary.previousPeriodApiEquivalentUsd, 3);
+});
+
 test('allocates daily tokens when CodexBar model breakdowns omit token counts', () => {
   const summary = buildClaudeCodeUsageSummary([{
     provider: 'claude',
@@ -308,13 +321,14 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
 
 test('preserved source summaries keep every cost and token aggregate', () => {
   const summary = sumUsageSummaries([
-    { summary: { periodUsd: 3, previousPeriodUsd: 2, todayUsd: 1, yesterdayUsd: 0.5, thisWeekUsd: 4, thisMonthUsd: 5, totalUsd: 6, periodTokens: 30, todayTokens: 10, thisWeekTokens: 40, thisMonthTokens: 50, totalTokens: 60 } },
-    { summary: { periodUsd: 7, previousPeriodUsd: 8, todayUsd: 9, yesterdayUsd: 1.5, thisWeekUsd: 6, thisMonthUsd: 5, totalUsd: 4, periodTokens: 70, todayTokens: 90, thisWeekTokens: 60, thisMonthTokens: 50, totalTokens: 40 } },
+    { summary: { periodUsd: 3, previousPeriodUsd: 2, previousPeriodApiEquivalentUsd: 12, todayUsd: 1, yesterdayUsd: 0.5, thisWeekUsd: 4, thisMonthUsd: 5, totalUsd: 6, periodTokens: 30, todayTokens: 10, thisWeekTokens: 40, thisMonthTokens: 50, totalTokens: 60 } },
+    { summary: { periodUsd: 7, previousPeriodUsd: 8, previousPeriodApiEquivalentUsd: 18, todayUsd: 9, yesterdayUsd: 1.5, thisWeekUsd: 6, thisMonthUsd: 5, totalUsd: 4, periodTokens: 70, todayTokens: 90, thisWeekTokens: 60, thisMonthTokens: 50, totalTokens: 40 } },
   ]);
 
   assert.deepEqual(summary, {
     periodUsd: 10,
     previousPeriodUsd: 10,
+    previousPeriodApiEquivalentUsd: 30,
     todayUsd: 10,
     yesterdayUsd: 2,
     thisWeekUsd: 10,
@@ -344,6 +358,38 @@ test('keeps a combined previous tracked-spend baseline unavailable when any sour
   ]);
 
   assert.equal(summary.previousPeriodUsd, null);
+});
+
+test('keeps a combined previous API-equivalent baseline unavailable when any source is missing it', () => {
+  const summary = sumUsageSummaries([
+    { summary: { previousPeriodApiEquivalentUsd: 4 } },
+    { summary: {} },
+  ]);
+
+  assert.equal(summary.previousPeriodApiEquivalentUsd, null);
+});
+
+test('combines previous API-equivalent baselines without letting idle ready sources erase them', () => {
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'no_usage' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'not_applicable' } },
+  ]), 4);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'unavailable' } },
+  ]), null);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: 99, previousPeriodApiEquivalentReliability: 'unavailable' } },
+  ]), null);
+
+  assert.equal(sumPreviousApiEquivalentUsd([
+    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
+    { summary: { previousPeriodApiEquivalentUsd: 2 } },
+  ]), null);
 });
 
 test('refreshes legacy disk caches that predate the Claude Code source', () => {

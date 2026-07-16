@@ -11,6 +11,7 @@ const filesToCheck = [
   path.join(costsDir, 'AgentSplitCard.tsx'),
   path.join(costsDir, 'CostPulseHeader.tsx'),
   path.join(costsDir, 'DailySpendSection.tsx'),
+  path.join(costsDir, 'MetricCards.tsx'),
   path.join(costsDir, 'lib.ts'),
   path.join(costsDir, 'types.ts'),
 ].filter(f => fs.existsSync(f));
@@ -95,6 +96,43 @@ assert.ok(
   source.includes('NO USAGE') &&
   source.includes('API equivalent unavailable'),
   'API-equivalent headline should expose partial and unavailable estimates instead of presenting them as complete zero spend',
+);
+
+assert.ok(
+  source.includes('trackedSpendPresentation') &&
+  source.includes('costReliability') &&
+  source.includes('selectedSourceIsComplete: hasAwsData') &&
+  source.includes('Tracked spend from available billing data') &&
+  source.includes('billing sources unknown') &&
+  source.includes('API-Equivalent Daily Average') &&
+  source.includes('Projected API Equivalent') &&
+  source.includes('previousPeriodApiEquivalentUsd') &&
+  source.includes('apiEquivalentMetricValues') &&
+  source.includes('Public API prices; not your invoice') &&
+  source.includes('Tracked spend projection is unavailable') &&
+  !source.includes('Metered spend projection is unavailable') &&
+  !source.includes('Cannot project while billing coverage is partial'),
+  'Metric cards should show API-equivalent estimates and trends while tracked billing truth remains separate',
+);
+
+assert.ok(
+  source.includes("codexbarActive\n      ? 'estimated'\n      : 'unavailable'") &&
+  !source.includes("codexbarActive\n      ? codexbarPeriodCost\n      : tokenBasedCost") &&
+  !source.includes("const tokenBasedCost = estimateCost(totalTokens, 'sonnet')") &&
+  !source.includes("estimateCost(Number(day.tokens || 0), 'sonnet')") &&
+  !source.includes("estimateCost(totalTokens, 'sonnet')") &&
+  source.includes('trackedValueAvailable') &&
+  source.includes("trackedValueAvailable ? formatCurrency(currentPeriodCost) : 'Unavailable'") &&
+  source.includes('Session activity only') &&
+  source.includes('Cost Coverage') &&
+  !source.includes('Monthly Estimate') &&
+  !source.includes('Estimated Spend'),
+  'sessions without a priced model ledger must not be fabricated as API-equivalent or tracked Sonnet spend',
+);
+
+assert.ok(
+  source.includes('budgetSpendValue({') && source.includes('hasAwsData'),
+  'budget math should use the same selected tracked source as the cards and withhold incomplete coverage',
 );
 
 console.log('costs page behavior guards passed');

@@ -4,7 +4,7 @@ const path = require('path');
 const os = require('os');
 const util = require('util');
 const { exec } = require('child_process');
-const { normalizeUsageCosts } = require('../services/costSanity');
+const { normalizeUsageCosts, combineApiEquivalentReliability } = require('../services/costSanity');
 const {
   buildClaudeCodeUsageSummary,
   hasClaudeCodeAgent,
@@ -72,6 +72,114 @@ function cachedUsageAgent(previous, agent) {
     modelKeys,
     byService,
   };
+}
+
+function sumPreviousApiEquivalentUsd(sources = []) {
+  let total = 0;
+  for (const source of sources) {
+    const amount = source.summary?.previousPeriodApiEquivalentUsd;
+    const reliability = source.summary?.previousPeriodApiEquivalentReliability;
+    if (reliability === 'no_usage' || reliability === 'not_applicable') continue;
+    if (reliability !== 'estimated' && reliability !== 'partial') return null;
+    if (amount !== null && amount !== undefined && Number.isFinite(Number(amount))) {
+      total += Number(amount);
+      continue;
+    }
+    return null;
+  }
+  return total;
+}
+
+function hermesModelName(provider, model) {
+  const p = String(provider || '').trim();
+  const m = String(model || '').trim();
+  if (!p && !m) return 'unknown';
+  if (!p || p === 'unknown') return m || 'unknown';
+  if (!m || m === 'unknown') return p;
+  return `${p}/${m}`;
+}
+
+function buildHermesUsageRows(rows, keys) {
+  const byModel = new Map();
+  const byDay = new Map();
+  for (const row of rows) {
+    const name = hermesModelName(row.provider, row.model);
+    const tokens = Number(row.tokens || 0);
+    const cost = Number(row.cost || 0);
+    const sessions = Number(row.sessions || 0);
+    const existing = byModel.get(name) || {
+      name,
+      cost: 0,
+      tokens: 0,
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      reasoning: 0,
+      sessions: 0,
+      costStatus: row.statuses || 'unknown',
+      billingModes: row.billingModes || 'unknown',
+    };
+    existing.cost += cost;
+    existing.tokens += tokens;
+    existing.input += Number(row.input || 0);
+    existing.output += Number(row.output || 0);
+    existing.cacheRead += Number(row.cacheRead || 0);
+    existing.cacheWrite += Number(row.cacheWrite || 0);
+    existing.reasoning += Number(row.reasoning || 0);
+    existing.sessions += sessions;
+    byModel.set(name, existing);
+
+    const day = byDay.get(row.date) || { date: row.date, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, models: {} };
+    day.cost += cost;
+    day.tokens += tokens;
+    day.input += Number(row.input || 0);
+    day.output += Number(row.output || 0);
+    day.cacheRead += Number(row.cacheRead || 0);
+    day.cacheWrite += Number(row.cacheWrite || 0);
+    day.reasoning += Number(row.reasoning || 0);
+    const dayModel = day.models[name] || { cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
+    dayModel.cost += cost;
+    dayModel.tokens += tokens;
+    dayModel.input += Number(row.input || 0);
+    dayModel.output += Number(row.output || 0);
+    dayModel.cacheRead += Number(row.cacheRead || 0);
+    dayModel.cacheWrite += Number(row.cacheWrite || 0);
+    dayModel.reasoning += Number(row.reasoning || 0);
+    day.models[name] = dayModel;
+    byDay.set(row.date, day);
+  }
+
+  const daily = keys.map((date) => {
+    const day = byDay.get(date) || { date, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, models: {} };
+    return { ...day, totalCost: day.cost, totalTokens: day.tokens };
+  });
+  const byService = Array.from(byModel.values())
+    .filter((item) => item.tokens > 0 || item.cost > 0)
+    .sort((a, b) => b.tokens - a.tokens)
+    .map((item) => ({ ...item, percentage: 0, costSource: item.cost > 0 ? 'api' : (String(item.costStatus || '').includes('included') ? 'included' : 'unknown') }));
+  const periodTokens = daily.reduce((sum, day) => sum + Number(day.tokens || 0), 0);
+  const periodUsd = daily.reduce((sum, day) => sum + Number(day.cost || 0), 0);
+  byService.forEach((item) => {
+    item.percentage = periodTokens > 0 ? Math.round((Number(item.tokens || 0) / periodTokens) * 100) : 0;
+  });
+  const dailyByModel = daily.map((day) => {
+    const out = { date: day.date, totalCost: day.cost, totalTokens: day.tokens };
+    for (const svc of byService) {
+      const b = day.models[svc.name] || { cost: 0, tokens: 0 };
+      out[svc.name] = b.cost || 0;
+      out[`${svc.name}_tokens`] = b.tokens || 0;
+      out[`${svc.name}_input`] = b.input || 0;
+      out[`${svc.name}_output`] = b.output || 0;
+      out[`${svc.name}_cacheRead`] = b.cacheRead || 0;
+      out[`${svc.name}_cacheWrite`] = b.cacheWrite || 0;
+      out[`${svc.name}_reasoning`] = b.reasoning || 0;
+      out[`${svc.name}_costSource`] = svc.costSource;
+    }
+    return out;
+  });
+
+  return { daily, byService, dailyByModel, periodTokens, periodUsd };
 }
 
 function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
@@ -176,7 +284,19 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     const start = new Date(now);
     if (period === 'day') {
       start.setHours(0, 0, 0, 0);
-      return { startSec: Math.floor(start.getTime() / 1000), endSec: Math.floor(now.getTime() / 1000), keys: [dayKey(start)], startKey: dayKey(start), endKey: dayKey(now) };
+      const previousStart = new Date(start);
+      previousStart.setDate(previousStart.getDate() - 1);
+      const previousEnd = new Date(start.getTime() - 1);
+      return {
+        startSec: Math.floor(start.getTime() / 1000),
+        endSec: Math.floor(now.getTime() / 1000),
+        keys: [dayKey(start)],
+        startKey: dayKey(start),
+        endKey: dayKey(now),
+        previousStartSec: Math.floor(previousStart.getTime() / 1000),
+        previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+        previousKeys: [dayKey(previousStart)],
+      };
     }
     if (period === '7d') {
       start.setHours(0, 0, 0, 0);
@@ -187,7 +307,26 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         keys.push(dayKey(cursor));
         cursor.setDate(cursor.getDate() + 1);
       }
-      return { startSec: Math.floor(start.getTime() / 1000), endSec: Math.floor(now.getTime() / 1000), keys, startKey: keys[0], endKey: keys[keys.length - 1] };
+      const previousEnd = new Date(start.getTime() - 1);
+      const previousStart = new Date(previousEnd);
+      previousStart.setHours(0, 0, 0, 0);
+      previousStart.setDate(previousStart.getDate() - 6);
+      const previousKeys = [];
+      const previousCursor = new Date(previousStart);
+      while (previousCursor <= previousEnd) {
+        previousKeys.push(dayKey(previousCursor));
+        previousCursor.setDate(previousCursor.getDate() + 1);
+      }
+      return {
+        startSec: Math.floor(start.getTime() / 1000),
+        endSec: Math.floor(now.getTime() / 1000),
+        keys,
+        startKey: keys[0],
+        endKey: keys[keys.length - 1],
+        previousStartSec: Math.floor(previousStart.getTime() / 1000),
+        previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+        previousKeys,
+      };
     }
     start.setHours(0, 0, 0, 0);
     start.setDate(1);
@@ -197,7 +336,28 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       keys.push(dayKey(cursor));
       cursor.setDate(cursor.getDate() + 1);
     }
-    return { startSec: Math.floor(start.getTime() / 1000), endSec: Math.floor(now.getTime() / 1000), keys, startKey: keys[0], endKey: keys[keys.length - 1] };
+    const previousEnd = new Date(start);
+    previousEnd.setDate(0);
+    const previousStart = new Date(previousEnd);
+    previousStart.setDate(1);
+    previousEnd.setDate(Math.min(now.getDate(), previousEnd.getDate()));
+    previousEnd.setHours(23, 59, 59, 999);
+    const previousKeys = [];
+    const previousCursor = new Date(previousStart);
+    while (previousCursor <= previousEnd) {
+      previousKeys.push(dayKey(previousCursor));
+      previousCursor.setDate(previousCursor.getDate() + 1);
+    }
+    return {
+      startSec: Math.floor(start.getTime() / 1000),
+      endSec: Math.floor(now.getTime() / 1000),
+      keys,
+      startKey: keys[0],
+      endKey: keys[keys.length - 1],
+      previousStartSec: Math.floor(previousStart.getTime() / 1000),
+      previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+      previousKeys,
+    };
   }
 
   async function sqliteJson(dbPath, sql) {
@@ -224,15 +384,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
   }
 
-  function hermesModelName(provider, model) {
-    const p = String(provider || '').trim();
-    const m = String(model || '').trim();
-    if (!p && !m) return 'unknown';
-    if (!p || p === 'unknown') return m || 'unknown';
-    if (!m || m === 'unknown') return p;
-    return `${p}/${m}`;
-  }
-
   async function hermesUsageSummary(period = 'month') {
     const dbPath = hermesProfileDbPath();
     try {
@@ -253,91 +404,25 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           GROUP_CONCAT(DISTINCT COALESCE(NULLIF(cost_status, ''), 'unknown')) AS statuses,
           GROUP_CONCAT(DISTINCT COALESCE(NULLIF(billing_mode, ''), 'unknown')) AS billingModes
         FROM sessions
-        WHERE started_at >= ${r.startSec} AND started_at <= ${r.endSec}
+        WHERE started_at >= ${r.previousStartSec} AND started_at <= ${r.endSec}
         GROUP BY date, provider, model
         ORDER BY date ASC, tokens DESC
       `);
-
-      const byModel = new Map();
-      const byDay = new Map();
-      for (const row of rows) {
-        const name = hermesModelName(row.provider, row.model);
-        const tokens = Number(row.tokens || 0);
-        const cost = Number(row.cost || 0);
-        const sessions = Number(row.sessions || 0);
-        const existing = byModel.get(name) || {
-          name,
-          cost: 0,
-          tokens: 0,
-          input: 0,
-          output: 0,
-          cacheRead: 0,
-          cacheWrite: 0,
-          reasoning: 0,
-          sessions: 0,
-          costStatus: row.statuses || 'unknown',
-          billingModes: row.billingModes || 'unknown',
-        };
-        existing.cost += cost;
-        existing.tokens += tokens;
-        existing.input += Number(row.input || 0);
-        existing.output += Number(row.output || 0);
-        existing.cacheRead += Number(row.cacheRead || 0);
-        existing.cacheWrite += Number(row.cacheWrite || 0);
-        existing.reasoning += Number(row.reasoning || 0);
-        existing.sessions += sessions;
-        byModel.set(name, existing);
-
-        const day = byDay.get(row.date) || { date: row.date, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, models: {} };
-        day.cost += cost;
-        day.tokens += tokens;
-        day.input += Number(row.input || 0);
-        day.output += Number(row.output || 0);
-        day.cacheRead += Number(row.cacheRead || 0);
-        day.cacheWrite += Number(row.cacheWrite || 0);
-        day.reasoning += Number(row.reasoning || 0);
-        const dayModel = day.models[name] || { cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 };
-        dayModel.cost += cost;
-        dayModel.tokens += tokens;
-        dayModel.input += Number(row.input || 0);
-        dayModel.output += Number(row.output || 0);
-        dayModel.cacheRead += Number(row.cacheRead || 0);
-        dayModel.cacheWrite += Number(row.cacheWrite || 0);
-        dayModel.reasoning += Number(row.reasoning || 0);
-        day.models[name] = dayModel;
-        byDay.set(row.date, day);
-      }
-
-      const daily = r.keys.map((date) => {
-        const day = byDay.get(date) || { date, cost: 0, tokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, models: {} };
-        return { ...day, totalCost: day.cost, totalTokens: day.tokens };
+      const currentKeys = new Set(r.keys);
+      const previousKeys = new Set(r.previousKeys);
+      const currentUsage = buildHermesUsageRows(rows.filter((row) => currentKeys.has(row.date)), r.keys);
+      const previousUsage = buildHermesUsageRows(rows.filter((row) => previousKeys.has(row.date)), r.previousKeys);
+      const normalizedPreviousUsage = normalizeUsageCosts({
+        source: 'hermes.state.db.previous',
+        period,
+        periodRange: { start: r.previousKeys[0] || null, end: r.previousKeys[r.previousKeys.length - 1] || null },
+        summary: { periodUsd: previousUsage.periodUsd },
+        daily: previousUsage.daily,
+        dailyByModel: previousUsage.dailyByModel,
+        modelKeys: previousUsage.byService.map((item) => item.name),
+        byService: previousUsage.byService,
       });
-
-      const byService = Array.from(byModel.values())
-        .filter((item) => item.tokens > 0 || item.cost > 0)
-        .sort((a, b) => b.tokens - a.tokens)
-        .map((item) => ({ ...item, percentage: 0, costSource: item.cost > 0 ? 'api' : (String(item.costStatus || '').includes('included') ? 'included' : 'unknown') }));
-      const periodTokens = daily.reduce((sum, day) => sum + Number(day.tokens || 0), 0);
-      const periodUsd = daily.reduce((sum, day) => sum + Number(day.cost || 0), 0);
-      byService.forEach((item) => {
-        item.percentage = periodTokens > 0 ? Math.round((item.tokens / periodTokens) * 100) : 0;
-      });
-
-      const dailyByModel = daily.map((day) => {
-        const out = { date: day.date, totalCost: day.cost, totalTokens: day.tokens };
-        for (const svc of byService) {
-          const b = day.models[svc.name] || { cost: 0, tokens: 0 };
-          out[svc.name] = b.cost || 0;
-          out[`${svc.name}_tokens`] = b.tokens || 0;
-          out[`${svc.name}_input`] = b.input || 0;
-          out[`${svc.name}_output`] = b.output || 0;
-          out[`${svc.name}_cacheRead`] = b.cacheRead || 0;
-          out[`${svc.name}_cacheWrite`] = b.cacheWrite || 0;
-          out[`${svc.name}_reasoning`] = b.reasoning || 0;
-          out[`${svc.name}_costSource`] = svc.costSource;
-        }
-        return out;
-      });
+      const { daily, byService, dailyByModel, periodTokens, periodUsd } = currentUsage;
 
       const todayKey = dayKey(new Date());
       const yesterday = new Date();
@@ -354,6 +439,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         summary: {
           periodUsd,
           previousPeriodUsd: null,
+          previousPeriodApiEquivalentUsd: normalizedPreviousUsage.summary?.periodApiEquivalentUsd ?? null,
+          previousPeriodApiEquivalentReliability: normalizedPreviousUsage.apiEquivalentReliability,
           periodTokens,
           todayUsd: todayRow.cost || 0,
           yesterdayUsd: yesterdayRow.cost || 0,
@@ -536,6 +623,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         : null;
     };
     const agents = sources.map((src) => src.agent).filter(Boolean);
+    const previousPeriodApiEquivalentReliability = combineApiEquivalentReliability(
+      sources.map((src) => src.summary?.previousPeriodApiEquivalentReliability),
+    );
 
     return {
       source: 'combined.agent_usage',
@@ -544,6 +634,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       summary: {
         periodUsd: sumSummary('periodUsd'),
         previousPeriodUsd: sumOptionalSummary('previousPeriodUsd'),
+        previousPeriodApiEquivalentUsd: sumPreviousApiEquivalentUsd(sources),
+        previousPeriodApiEquivalentReliability,
         periodTokens: sumSummary('periodTokens'),
         todayUsd: sumSummary('todayUsd'),
         yesterdayUsd: sumSummary('yesterdayUsd'),
@@ -716,7 +808,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   function detailedCostsResult(period, combinedUsage, meta = {}) {
-    const normalizedUsage = normalizeUsageCosts(combinedUsage);
+    const normalizedUsage = normalizeUsageCosts({
+      ...combinedUsage,
+      meta: { ...(combinedUsage.meta || {}), ...meta },
+    });
     const rangeRows = normalizedUsage.daily || [];
     return attachCostsMeta({
       source: normalizedUsage.source,
@@ -910,4 +1005,5 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 module.exports = {
   buildCostsRouter,
   cachedUsageAgent,
+  sumPreviousApiEquivalentUsd,
 };
