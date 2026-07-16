@@ -346,7 +346,9 @@ function normalizeUsageCosts(usage) {
   if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
     normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
   }
-  normalized.costReliability = byService.some((item) => item.costSource === 'unknown') ? 'partial_unknown' : 'normalized';
+  normalized.costReliability = sourceCoveragePartial || byService.some((item) => item.costSource === 'unknown')
+    ? 'partial_unknown'
+    : 'normalized';
   normalized.apiEquivalentReliability = apiEquivalentReliability;
 
   if (Array.isArray(usage.agents)) {

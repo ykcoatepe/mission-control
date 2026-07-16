@@ -43,6 +43,7 @@ function clone(value) {
 
   assert.equal(usage.apiEquivalentReliability, 'partial');
   assert.equal(usage.summary.previousPeriodApiEquivalentReliability, 'partial');
+  assert.equal(usage.costReliability, 'partial_unknown');
 })();
 
 (function testUnavailableSourceCoverageCannotClaimNoUsageOrNotApplicable() {
