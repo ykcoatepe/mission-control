@@ -124,7 +124,6 @@ export default function Costs() {
   const costsQuery = useQuery<TokenData, Error>({
     queryKey: ['api', `/api/costs?period=${period}`],
     queryFn: () => fetchJson<TokenData>(`/api/costs?period=${period}`),
-    placeholderData: previousData => previousData,
     refetchInterval: (query) => {
       const tokens = query.state.data as CostsTokenData | undefined
       const stale =
@@ -257,7 +256,7 @@ export default function Costs() {
     assignments: ReadonlyMap<string, string>
   }>(() => ({ activeKey: '[]', assignments: new Map() }))
   let modelColors = modelColorState.assignments
-  if (modelColorState.activeKey !== activeModelKey) {
+  if (!costsQuery.isPending && modelColorState.activeKey !== activeModelKey) {
     modelColors = assignModelColors(activeModelNames, modelColorState.assignments)
     setModelColorState({ activeKey: activeModelKey, assignments: modelColors })
   }

@@ -21,5 +21,6 @@ test('canonical spend buckets preserve the pooled raw-model color', () => {
 })
 
 test('period transitions retain ledger assignments while replacement data loads', () => {
-  assert.match(costsSource, /placeholderData: previousData => previousData/)
+  assert.doesNotMatch(costsSource, /placeholderData:/)
+  assert.match(costsSource, /if \(!costsQuery\.isPending && modelColorState\.activeKey !== activeModelKey\)/)
 })
