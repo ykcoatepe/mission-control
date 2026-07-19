@@ -82,10 +82,67 @@ export function formatSessionTimestamp(timestamp: number) {
 // ---------------------------------------------------------------------------
 
 const DYNAMIC_COLORS = [
-  '#FF9500', '#FF6B00', '#FFD60A', '#FF453A',
-  '#BF5AF2', '#32D74B', '#007AFF', '#00C7BE',
-  '#FF9F0A', '#64D2FF', '#30D158', '#FF375F',
+  '#4DA3FF', // blue
+  '#FF9F43', // orange
+  '#42D392', // green
+  '#FF5D5D', // red
+  '#B388FF', // purple
+  '#2DD4BF', // teal
+  '#FF78B5', // pink
+  '#FACC15', // yellow
+  '#818CF8', // indigo
+  '#A3E635', // lime
+  '#22D3EE', // cyan
+  '#FB7185', // coral
 ]
+
+export function modelColorKey(model: string): string {
+  return model.trim().toLowerCase()
+}
+
+function overflowModelColor(index: number): string {
+  const hue = Math.round((index * 137.508 + 24) % 360)
+  const lightness = index % 2 === 0 ? 66 : 74
+  return `hsl(${hue} 78% ${lightness}%)`
+}
+
+export function assignModelColors(
+  activeModels: string[],
+  previousAssignments: ReadonlyMap<string, string> = new Map(),
+): Map<string, string> {
+  const activeKeys = Array.from(new Set(activeModels.map(modelColorKey).filter(Boolean)))
+  const assignments = new Map<string, string>()
+  const reservedColors = new Set<string>()
+
+  activeKeys.forEach(key => {
+    const previousColor = previousAssignments.get(key)
+    if (previousColor && !reservedColors.has(previousColor)) {
+      assignments.set(key, previousColor)
+      reservedColors.add(previousColor)
+    }
+  })
+
+  activeKeys.forEach(key => {
+    if (assignments.has(key)) return
+    const availableColor = DYNAMIC_COLORS.find(color => !reservedColors.has(color))
+    let overflowIndex = 0
+    let generatedColor = overflowModelColor(overflowIndex)
+    while (reservedColors.has(generatedColor)) {
+      overflowIndex += 1
+      generatedColor = overflowModelColor(overflowIndex)
+    }
+    const color = availableColor || generatedColor
+    assignments.set(key, color)
+    reservedColors.add(color)
+  })
+
+  return assignments
+}
+
+export function assignedModelColor(assignments: ReadonlyMap<string, string>, model: string): string {
+  const key = modelColorKey(model)
+  return assignments.get(key) || hashColor(key)
+}
 
 export function hashColor(str: string): string {
   let hash = 0
@@ -94,22 +151,6 @@ export function hashColor(str: string): string {
     hash |= 0
   }
   return DYNAMIC_COLORS[Math.abs(hash) % DYNAMIC_COLORS.length]
-}
-
-export function getModelColor(model: string) {
-  const lower = model.toLowerCase()
-  if (lower.includes('gpt-5.4') && !lower.includes('mini')) return '#FF9500' // orange
-  if (lower.includes('gpt-5.4-mini')) return '#FF6B00' // deep orange
-  if (lower.includes('gpt-5.3')) return '#FFD60A' // yellow
-  if (lower.includes('gpt-5') && !lower.includes('5.4') && !lower.includes('5.3')) return '#FF453A' // red-orange
-  if (lower.includes('claude-sonnet') || lower.includes('sonnet')) return '#BF5AF2'
-  if (lower.includes('claude-opus') || lower.includes('opus')) return '#FF453A'
-  if (lower.includes('claude-haiku') || lower.includes('haiku')) return '#32D74B'
-  if (lower.includes('ollama/')) return 'rgba(100, 210, 255, 0.68)'
-  if (lower.includes('minimax')) return '#8E8E93'
-  if (lower.includes('hunter-alpha') || lower.includes('openrouter')) return '#007AFF'
-  return hashColor(model)
-  return '#8E8E93'
 }
 
 export function getServiceColor(name: string) {

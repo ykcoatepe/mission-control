@@ -26,7 +26,8 @@ import {
   formatTokens,
   formatCompactTokenValue,
   formatSessionName,
-  getModelColor,
+  assignModelColors,
+  assignedModelColor,
   getServiceColor,
   canonicalModelName,
   isLocalModel,
@@ -229,6 +230,37 @@ export default function Costs() {
     return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow)
   }, [calendarNow, codexbarCosts?.daily, period])
 
+  const activeModelNames = useMemo(() => {
+    const names: string[] = []
+
+    ;(tokenData?.dailyByModel || []).forEach(day => {
+      Object.keys(day).forEach(key => {
+        if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
+        names.push(key)
+      })
+    })
+    ;(tokenData?.byService || []).forEach(item => names.push(item.name))
+    codexbarPeriodDays.forEach(day => {
+      ;(day.models || []).forEach(model => names.push(model.model || 'Unknown model'))
+    })
+    sessions.forEach(session => names.push(session.model || session.displayName || 'Unknown'))
+
+    return names
+  }, [codexbarPeriodDays, sessions, tokenData])
+
+  const activeModelKey = JSON.stringify(
+    Array.from(new Set(activeModelNames.map(model => model.trim().toLowerCase()).filter(Boolean))).sort(),
+  )
+  const [modelColorState, setModelColorState] = useState<{
+    activeKey: string
+    assignments: ReadonlyMap<string, string>
+  }>(() => ({ activeKey: '[]', assignments: new Map() }))
+  let modelColors = modelColorState.assignments
+  if (modelColorState.activeKey !== activeModelKey) {
+    modelColors = assignModelColors(activeModelNames, modelColorState.assignments)
+    setModelColorState({ activeKey: activeModelKey, assignments: modelColors })
+  }
+
   const chartSeries = useMemo<ChartSeriesItem[]>(() => {
     const totals = new Map<string, { totalCost: number; totalTokens: number }>()
 
@@ -262,7 +294,7 @@ export default function Costs() {
       .map(([model, values], index) => ({
         model,
         key: toChartKey(index),
-        color: getModelColor(model),
+        color: assignedModelColor(modelColors, model),
         totalCost: values.totalCost,
         totalTokens: values.totalTokens,
       }))
@@ -286,7 +318,7 @@ export default function Costs() {
       : visible
 
     return withOther.map((item, index) => ({ ...item, key: toChartKey(index) }))
-  }, [codexbarActive, codexbarPeriodDays, ledgerActive, tokenData])
+  }, [codexbarActive, codexbarPeriodDays, ledgerActive, modelColors, tokenData])
 
   const chartData = useMemo<ChartDataRow[]>(() => {
     if (!chartSeries.length) return []
@@ -385,7 +417,7 @@ export default function Costs() {
         apiEquivalentCost: 0,
         apiEquivalentAvailable: false,
         local: false,
-        color: getModelColor(rawName || name),
+        color: assignedModelColor(modelColors, rawName || name),
       }
 
       current.tokens += Number.isFinite(tokens) ? tokens : 0
@@ -395,7 +427,7 @@ export default function Costs() {
         current.apiEquivalentAvailable = true
       }
       current.local = current.local || isLocalModel(rawName)
-      current.color = getModelColor(name)
+      current.color = assignedModelColor(modelColors, name)
       if (rawName) current.rawNamesSet.add(rawName)
       buckets.set(name, current)
     }
@@ -441,7 +473,7 @@ export default function Costs() {
         share: total > 0 ? (item.tokens / total) * 100 : 0,
       }))
       .sort((a, b) => b.tokens - a.tokens)
-  }, [ledgerActive, sessions, tokenData])
+  }, [ledgerActive, modelColors, sessions, tokenData])
   const tokenBreakdown = allTokenBreakdown.slice(0, 8)
 
   if (loading) {
@@ -609,7 +641,7 @@ export default function Costs() {
       tokens: s.totalTokens,
       cost: estimateCost(s.totalTokens, s.model),
       timestamp: s.updatedAt ? new Date(s.updatedAt).getTime() / 1000 : fallbackSessionTimestamp,
-      color: getModelColor(s.model || ''),
+      color: assignedModelColor(modelColors, s.model || ''),
       channel: s.key.split(':')[0] || 'session',
     }))
 
