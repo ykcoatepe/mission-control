@@ -427,7 +427,6 @@ export default function Costs() {
         current.apiEquivalentAvailable = true
       }
       current.local = current.local || isLocalModel(rawName)
-      current.color = assignedModelColor(modelColors, name)
       if (rawName) current.rawNamesSet.add(rawName)
       buckets.set(name, current)
     }

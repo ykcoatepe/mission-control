@@ -14,3 +14,8 @@ test('Costs keeps one recyclable color assignment pool for every model view', ()
   assert.doesNotMatch(costsSource, /getModelColor\(/)
   assert.doesNotMatch(costsSource, /previousModelColors\.current/)
 })
+
+test('canonical spend buckets preserve the pooled raw-model color', () => {
+  assert.match(costsSource, /color: assignedModelColor\(modelColors, rawName \|\| name\)/)
+  assert.doesNotMatch(costsSource, /current\.color = assignedModelColor\(modelColors, name\)/)
+})
