@@ -22,7 +22,8 @@ test('canonical spend buckets preserve the pooled raw-model color', () => {
 
 test('period transitions retain ledger assignments while replacement data loads', () => {
   assert.doesNotMatch(costsSource, /placeholderData:/)
-  assert.match(costsSource, /if \(!costsQuery\.isPending && modelColorState\.activeKey !== activeModelKey\)/)
+  assert.match(costsSource, /const modelColorsRefreshing =\s*costsQuery\.isPending \|\|\s*tokenData\?\.source === 'sessions\.fast_fallback' \|\|\s*!!tokenData\?\.meta\?\.refreshing/)
+  assert.match(costsSource, /if \(!modelColorsRefreshing && modelColorState\.activeKey !== activeModelKey\)/)
 })
 
 test('sessions without a model reuse their assigned fallback-name color', () => {

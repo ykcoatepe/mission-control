@@ -256,7 +256,11 @@ export default function Costs() {
     assignments: ReadonlyMap<string, string>
   }>(() => ({ activeKey: '[]', assignments: new Map() }))
   let modelColors = modelColorState.assignments
-  if (!costsQuery.isPending && modelColorState.activeKey !== activeModelKey) {
+  const modelColorsRefreshing =
+    costsQuery.isPending ||
+    tokenData?.source === 'sessions.fast_fallback' ||
+    !!tokenData?.meta?.refreshing
+  if (!modelColorsRefreshing && modelColorState.activeKey !== activeModelKey) {
     modelColors = assignModelColors(activeModelNames, modelColorState.assignments)
     setModelColorState({ activeKey: activeModelKey, assignments: modelColors })
   }
