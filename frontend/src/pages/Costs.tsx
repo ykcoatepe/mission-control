@@ -124,6 +124,7 @@ export default function Costs() {
   const costsQuery = useQuery<TokenData, Error>({
     queryKey: ['api', `/api/costs?period=${period}`],
     queryFn: () => fetchJson<TokenData>(`/api/costs?period=${period}`),
+    placeholderData: previousData => previousData,
     refetchInterval: (query) => {
       const tokens = query.state.data as CostsTokenData | undefined
       const stale =
