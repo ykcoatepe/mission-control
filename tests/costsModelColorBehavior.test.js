@@ -24,3 +24,8 @@ test('period transitions retain ledger assignments while replacement data loads'
   assert.doesNotMatch(costsSource, /placeholderData:/)
   assert.match(costsSource, /if \(!costsQuery\.isPending && modelColorState\.activeKey !== activeModelKey\)/)
 })
+
+test('sessions without a model reuse their assigned fallback-name color', () => {
+  assert.match(costsSource, /color: assignedModelColor\(modelColors, s\.model \|\| s\.displayName \|\| 'Unknown'\)/)
+  assert.doesNotMatch(costsSource, /assignedModelColor\(modelColors, s\.model \|\| ''\)/)
+})

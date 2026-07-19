@@ -640,7 +640,7 @@ export default function Costs() {
       tokens: s.totalTokens,
       cost: estimateCost(s.totalTokens, s.model),
       timestamp: s.updatedAt ? new Date(s.updatedAt).getTime() / 1000 : fallbackSessionTimestamp,
-      color: assignedModelColor(modelColors, s.model || ''),
+      color: assignedModelColor(modelColors, s.model || s.displayName || 'Unknown'),
       channel: s.key.split(':')[0] || 'session',
     }))
 
