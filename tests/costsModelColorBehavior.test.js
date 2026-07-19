@@ -29,3 +29,8 @@ test('sessions without a model reuse their assigned fallback-name color', () => 
   assert.match(costsSource, /color: assignedModelColor\(modelColors, s\.model \|\| s\.displayName \|\| 'Unknown'\)/)
   assert.doesNotMatch(costsSource, /assignedModelColor\(modelColors, s\.model \|\| ''\)/)
 })
+
+test('reasoning metrics never reserve model colors', () => {
+  assert.doesNotMatch(costsSource, /\/_\(tokens\|input\|output\|cacheRead\|/)
+  assert.equal((costsSource.match(/\/_\(tokens\|input\|output\|reasoning\|cacheRead/g) || []).length, 3)
+})

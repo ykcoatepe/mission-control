@@ -235,7 +235,7 @@ export default function Costs() {
 
     ;(tokenData?.dailyByModel || []).forEach(day => {
       Object.keys(day).forEach(key => {
-        if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
+        if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|reasoning|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
         names.push(key)
       })
     })
@@ -267,7 +267,7 @@ export default function Costs() {
     if (ledgerActive && tokenData?.dailyByModel?.length) {
       tokenData.dailyByModel.forEach(day => {
         Object.keys(day).forEach(key => {
-          if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
+          if (key === 'date' || key === 'models' || key === 'totalCost' || key === 'apiEquivalentCost' || key === 'totalTokens' || /_(tokens|input|output|reasoning|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/.test(key)) return
           const cost = readNumericField(day, `${key}_apiEquivalentUsd`)
           const tokens = readNumericField(day, `${key}_tokens`)
           const current = totals.get(key) || { totalCost: 0, totalTokens: 0 }
