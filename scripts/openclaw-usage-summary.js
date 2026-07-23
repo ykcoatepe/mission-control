@@ -148,7 +148,11 @@ function modelName(provider, model, sessionKey = '') {
 function applyModelContext(context, payload = {}) {
   const provider = payload.model_provider_id || payload.model_provider || payload.provider;
   const model = payload.model || payload.model_id;
-  if (provider && provider !== context.provider && !model) context.model = '';
+  if (
+    provider
+    && providerFamily(provider) !== providerFamily(context.provider)
+    && !model
+  ) context.model = '';
   context.provider = provider || context.provider;
   context.model = model || context.model;
 }
@@ -177,7 +181,9 @@ function sessionMetaBillingMode(payload = {}) {
 }
 
 function isSubscriptionIncludedRecord(record = {}) {
-  return record.provider === 'openai-codex' || record.billingMode === 'subscription_included';
+  return record.provider === 'openai-codex'
+    || record.billingProvider === 'openai-codex'
+    || record.billingMode === 'subscription_included';
 }
 
 function sessionBucketForKey(sessionKey) {
@@ -250,6 +256,7 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
     cacheWrite,
     totalTokens,
     totalCost,
+    billingProvider: explicitProvider || context.provider || '',
     billingMode: message?.billingMode || message?.billing_mode || usage.billingMode || usage.billing_mode || context.billingMode || '',
     sessionKey,
   };

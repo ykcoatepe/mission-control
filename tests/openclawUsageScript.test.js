@@ -276,6 +276,8 @@ async function runBehaviorTests() {
     writeTokenCountLine(sessionFile, timestamp, 23);
     writeProviderOnlyUsageLine(sessionFile, timestamp, 19, 'openai-codex');
     writeProviderOnlyUsageLine(sessionFile, timestamp, 29, 'openai-responses', 'api');
+    writeTurnContextLine(sessionFile, undefined, 'openai-codex');
+    writeTokenCountLine(sessionFile, timestamp, 31);
     writeProviderOnlyUsageLine(sessionFile, timestamp, 17, 'anthropic');
 
     const summary = await buildForPeriod('day');
@@ -284,9 +286,41 @@ async function runBehaviorTests() {
       Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
       {
         'openai/gpt-5.6-sol': 71,
+        'openai-codex/gpt-5.6-sol': 31,
         'anthropic/unknown': 17,
       },
-      'equivalent OpenAI aliases should inherit context while different providers must not',
+      'equivalent OpenAI aliases should preserve context while different providers must not',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const nestedDir = path.join(
+      home,
+      '.openclaw',
+      'agents',
+      'alpha',
+      'agent',
+      'codex-home',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(nestedDir, { recursive: true });
+    const sessionFile = path.join(nestedDir, 'explicit-subscription-provider.jsonl');
+    const timestamp = today.toISOString();
+
+    writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeProviderOnlyUsageLine(sessionFile, timestamp, 37, 'openai-codex');
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.equal(codexAppAgent.byService[0].name, 'openai/gpt-5.6-sol');
+    assert.equal(
+      codexAppAgent.byService[0].costSource,
+      'included',
+      'an explicit openai-codex provider should preserve subscription billing evidence',
     );
   });
 
