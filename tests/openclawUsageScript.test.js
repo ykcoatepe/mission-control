@@ -40,11 +40,11 @@ function writeUsageLine(file, timestamp, totalTokens) {
   })}\n`);
 }
 
-function writeProviderOnlyUsageLine(file, timestamp, totalTokens, provider) {
+function writeProviderOnlyUsageLine(file, timestamp, totalTokens, provider, field = 'provider') {
   fs.appendFileSync(file, `${JSON.stringify({
     message: {
       timestamp,
-      provider,
+      [field]: provider,
       usage: {
         input: totalTokens,
         output: 0,
@@ -274,6 +274,8 @@ async function runBehaviorTests() {
     })}\n`);
     writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
     writeTokenCountLine(sessionFile, timestamp, 23);
+    writeProviderOnlyUsageLine(sessionFile, timestamp, 19, 'openai-codex');
+    writeProviderOnlyUsageLine(sessionFile, timestamp, 29, 'openai-responses', 'api');
     writeProviderOnlyUsageLine(sessionFile, timestamp, 17, 'anthropic');
 
     const summary = await buildForPeriod('day');
@@ -281,10 +283,10 @@ async function runBehaviorTests() {
     assert.deepEqual(
       Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
       {
-        'openai/gpt-5.6-sol': 23,
+        'openai/gpt-5.6-sol': 71,
         'anthropic/unknown': 17,
       },
-      'an explicit provider must not inherit a contextual model from another provider',
+      'equivalent OpenAI aliases should inherit context while different providers must not',
     );
   });
 

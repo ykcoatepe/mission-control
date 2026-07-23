@@ -153,6 +153,18 @@ function applyModelContext(context, payload = {}) {
   context.model = model || context.model;
 }
 
+function providerFamily(provider) {
+  const normalized = String(provider || '').trim().toLowerCase();
+  return [
+    'openai',
+    'openai-codex',
+    'openai-responses',
+    'openai-chatgpt-responses',
+  ].includes(normalized)
+    ? 'openai'
+    : normalized;
+}
+
 function sessionMetaBillingMode(payload = {}) {
   const source = typeof payload.source === 'string'
     ? payload.source
@@ -216,14 +228,21 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
     : Date.parse(timestampRaw || '') || fallbackTimestampMs;
   const explicitProvider = message?.provider || message?.api;
   const explicitModel = message?.model || message?.modelId;
-  const contextualModel = !explicitProvider || explicitProvider === context.provider
+  const providerMatchesContext = !explicitProvider || (
+    context.provider
+    && providerFamily(explicitProvider) === providerFamily(context.provider)
+  );
+  const contextualModel = providerMatchesContext
     ? context.model
     : '';
+  const provider = !explicitModel && contextualModel && explicitProvider
+    ? context.provider
+    : explicitProvider || context.provider || 'unknown';
 
   return {
     timestampMs,
     date: dayKey(new Date(timestampMs)),
-    provider: explicitProvider || context.provider || 'unknown',
+    provider,
     model: explicitModel || contextualModel || 'unknown',
     input,
     output,
