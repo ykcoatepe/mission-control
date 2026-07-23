@@ -40,6 +40,21 @@ function writeUsageLine(file, timestamp, totalTokens) {
   })}\n`);
 }
 
+function writeProviderOnlyUsageLine(file, timestamp, totalTokens, provider) {
+  fs.appendFileSync(file, `${JSON.stringify({
+    message: {
+      timestamp,
+      provider,
+      usage: {
+        input: totalTokens,
+        output: 0,
+        totalTokens,
+        cost: { total: 0 },
+      },
+    },
+  })}\n`);
+}
+
 function writeTokenCountLine(file, timestamp, totalTokens) {
   fs.appendFileSync(file, `${JSON.stringify({
     timestamp,
@@ -54,6 +69,23 @@ function writeTokenCountLine(file, timestamp, totalTokens) {
           total_tokens: totalTokens,
         },
       },
+    },
+  })}\n`);
+}
+
+function writeTurnContextLine(file, model, modelProvider = undefined) {
+  fs.appendFileSync(file, `${JSON.stringify({
+    type: 'turn_context',
+    payload: { model, model_provider: modelProvider },
+  })}\n`);
+}
+
+function writeThreadSettingsLine(file, model, modelProvider = undefined) {
+  fs.appendFileSync(file, `${JSON.stringify({
+    type: 'event_msg',
+    payload: {
+      type: 'thread_settings_applied',
+      thread_settings: { model, model_provider_id: modelProvider },
     },
   })}\n`);
 }
@@ -100,6 +132,160 @@ async function runBehaviorTests() {
     const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
     assert.equal(codexAppAgent.summary.periodTokens, 41, 'nested codex-home sessions should be split into Codex App Sessions');
     assert.equal(openclawAgent.summary.periodTokens, 0, 'nested codex-home sessions should not inflate direct OpenClaw usage');
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const nestedDir = path.join(
+      home,
+      '.openclaw',
+      'agents',
+      'alpha',
+      'agent',
+      'codex-home',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(nestedDir, { recursive: true });
+    const sessionFile = path.join(nestedDir, 'turn-context-model.jsonl');
+    const timestamp = today.toISOString();
+
+    fs.appendFileSync(sessionFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'openclaw', source: 'vscode' },
+    })}\n`);
+    writeThreadSettingsLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 19);
+    writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 23);
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.deepEqual(
+      codexAppAgent.byService.map((service) => [service.name, service.tokens]),
+      [['openai/gpt-5.6-sol', 42]],
+      'Codex App usage should use preceding thread settings and turn context model metadata',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const nestedDir = path.join(
+      home,
+      '.openclaw',
+      'agents',
+      'alpha',
+      'agent',
+      'codex-home',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(nestedDir, { recursive: true });
+    const sessionFile = path.join(nestedDir, 'future-context.jsonl');
+    const timestamp = today.toISOString();
+
+    fs.appendFileSync(sessionFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { model_provider: 'openai', originator: 'openclaw', source: 'vscode' },
+    })}\n`);
+    writeTokenCountLine(sessionFile, timestamp, 19);
+    writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 23);
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.deepEqual(
+      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      {
+        'openai/gpt-5.6-sol': 23,
+        'openai/unknown': 19,
+      },
+      'a later turn context must not retroactively relabel earlier model-less usage',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const nestedDir = path.join(
+      home,
+      '.openclaw',
+      'agents',
+      'alpha',
+      'agent',
+      'codex-home',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(nestedDir, { recursive: true });
+    const sessionFile = path.join(nestedDir, 'model-transition.jsonl');
+    const timestamp = today.toISOString();
+
+    fs.appendFileSync(sessionFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { model_provider: 'openai', originator: 'openclaw', source: 'vscode' },
+    })}\n`);
+    writeTurnContextLine(sessionFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 11);
+    writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 13);
+    writeThreadSettingsLine(sessionFile, undefined, 'anthropic');
+    writeTokenCountLine(sessionFile, timestamp, 17);
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.deepEqual(
+      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      {
+        'anthropic/unknown': 17,
+        'openai/gpt-5.6-sol': 13,
+        'openai/gpt-5.5': 11,
+      },
+      'model transitions should preserve prior usage and clear stale models when the provider changes',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const nestedDir = path.join(
+      home,
+      '.openclaw',
+      'agents',
+      'alpha',
+      'agent',
+      'codex-home',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(nestedDir, { recursive: true });
+    const sessionFile = path.join(nestedDir, 'provider-mismatch.jsonl');
+    const timestamp = today.toISOString();
+
+    fs.appendFileSync(sessionFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'openclaw', source: 'vscode' },
+    })}\n`);
+    writeTurnContextLine(sessionFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(sessionFile, timestamp, 23);
+    writeProviderOnlyUsageLine(sessionFile, timestamp, 17, 'anthropic');
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.deepEqual(
+      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      {
+        'openai/gpt-5.6-sol': 23,
+        'anthropic/unknown': 17,
+      },
+      'an explicit provider must not inherit a contextual model from another provider',
+    );
   });
 
   await withTempHome(async (home) => {
