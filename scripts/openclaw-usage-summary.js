@@ -127,7 +127,7 @@ function rangeForPeriod(period) {
   };
 }
 
-function modelName(provider, model) {
+function modelName(provider, model, sessionKey = '') {
   const p = String(provider || '').trim();
   const m = String(model || '').trim();
   if (!p && !m) return 'unknown';
@@ -135,10 +135,38 @@ function modelName(provider, model) {
   // model. Yordam's default OpenClaw model is GPT-5.5, which is subscription
   // included; leaving this as openai/unknown makes Mission Control show a fake
   // unknown-cost bucket for most OpenClaw tokens.
-  if (p === 'openai' && (!m || m === 'unknown')) return process.env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
+  if (p === 'openai' && (!m || m === 'unknown')) {
+    return sessionBucketForKey(sessionKey).key === 'codex_app'
+      ? 'openai/unknown'
+      : process.env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
+  }
   if (!p) return m;
   if (!m) return p;
   return `${p}/${m}`;
+}
+
+function applyModelContext(context, payload = {}) {
+  const provider = payload.model_provider_id || payload.model_provider || payload.provider;
+  const model = payload.model || payload.model_id;
+  if (
+    provider
+    && providerFamily(provider) !== providerFamily(context.provider)
+    && !model
+  ) context.model = '';
+  context.provider = provider || context.provider;
+  context.model = model || context.model;
+}
+
+function providerFamily(provider) {
+  const normalized = String(provider || '').trim().toLowerCase();
+  return [
+    'openai',
+    'openai-codex',
+    'openai-responses',
+    'openai-chatgpt-responses',
+  ].includes(normalized)
+    ? 'openai'
+    : normalized;
 }
 
 function sessionMetaBillingMode(payload = {}) {
@@ -153,7 +181,9 @@ function sessionMetaBillingMode(payload = {}) {
 }
 
 function isSubscriptionIncludedRecord(record = {}) {
-  return record.provider === 'openai-codex' || record.billingMode === 'subscription_included';
+  return record.provider === 'openai-codex'
+    || record.billingProvider === 'openai-codex'
+    || record.billingMode === 'subscription_included';
 }
 
 function sessionBucketForKey(sessionKey) {
@@ -202,18 +232,31 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
   const timestampMs = typeof timestampRaw === 'number'
     ? (timestampRaw < 10_000_000_000 ? timestampRaw * 1000 : timestampRaw)
     : Date.parse(timestampRaw || '') || fallbackTimestampMs;
+  const explicitProvider = message?.provider || message?.api;
+  const explicitModel = message?.model || message?.modelId;
+  const providerMatchesContext = !explicitProvider || (
+    context.provider
+    && providerFamily(explicitProvider) === providerFamily(context.provider)
+  );
+  const contextualModel = providerMatchesContext
+    ? context.model
+    : '';
+  const provider = !explicitModel && contextualModel && explicitProvider
+    ? context.provider
+    : explicitProvider || context.provider || 'unknown';
 
   return {
     timestampMs,
     date: dayKey(new Date(timestampMs)),
-    provider: message?.provider || message?.api || context.provider || 'unknown',
-    model: message?.model || message?.modelId || context.model || 'unknown',
+    provider,
+    model: explicitModel || contextualModel || 'unknown',
     input,
     output,
     cacheRead,
     cacheWrite,
     totalTokens,
     totalCost,
+    billingProvider: explicitProvider || context.provider || '',
     billingMode: message?.billingMode || message?.billing_mode || usage.billingMode || usage.billing_mode || context.billingMode || '',
     sessionKey,
   };
@@ -313,9 +356,17 @@ async function scanUsageRecords(range) {
         continue;
       }
       if (obj.type === 'session_meta' && obj.payload && typeof obj.payload === 'object') {
-        context.provider = obj.payload.model_provider || obj.payload.provider || context.provider;
-        context.model = obj.payload.model || obj.payload.model_id || context.model;
+        applyModelContext(context, obj.payload);
         context.billingMode = sessionMetaBillingMode(obj.payload) || context.billingMode;
+      }
+      if (obj.type === 'event_msg' && obj.payload?.type === 'thread_settings_applied') {
+        const settings = obj.payload.thread_settings;
+        if (settings && typeof settings === 'object') {
+          applyModelContext(context, settings);
+        }
+      }
+      if (obj.type === 'turn_context' && obj.payload && typeof obj.payload === 'object') {
+        applyModelContext(context, obj.payload);
       }
       const record = extractUsageRecord(obj, file.mtimeMs, file.sessionKey, context);
       if (!record || record.timestampMs < range.startMs || record.timestampMs > range.endMs) continue;
@@ -361,7 +412,7 @@ function addRecord(accumulator, record) {
   daily.cacheRead += record.cacheRead;
   daily.cacheWrite += record.cacheWrite;
 
-  const name = modelName(record.provider, record.model);
+  const name = modelName(record.provider, record.model, record.sessionKey);
   const model = accumulator.modelTotals.get(name) || createTotalsBucket(name);
   model.cost += record.totalCost;
   model.tokens += record.totalTokens;
