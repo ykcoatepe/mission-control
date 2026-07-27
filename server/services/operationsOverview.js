@@ -277,8 +277,12 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const heartbeatAt = statusUnavailable
     ? null
     : epochObservedAt(status?.heartbeat?.lastHeartbeat, generatedAt);
-  const heartbeatStale = !heartbeatAt
-    || (Date.parse(generatedAt) - Date.parse(heartbeatAt)) > 2 * 60 * 60 * 1000;
+  const heartbeatDisabled = !statusUnavailable
+    && String(status?.agent?.heartbeatInterval || '').trim().toLowerCase() === 'disabled';
+  const heartbeatStale = !heartbeatDisabled && (
+    !heartbeatAt
+    || (Date.parse(generatedAt) - Date.parse(heartbeatAt)) > 2 * 60 * 60 * 1000
+  );
   const caveats = [
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
@@ -317,9 +321,13 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       'openclaw:heartbeat',
       'openclaw',
       'heartbeat',
-      statusUnavailable ? 'unavailable' : heartbeatStale ? 'warning' : 'healthy',
+      statusUnavailable ? 'unavailable' : heartbeatDisabled ? 'inactive' : heartbeatStale ? 'warning' : 'healthy',
       heartbeatAt,
-      heartbeatStale ? 'Heartbeat stale or unavailable' : 'Heartbeat current',
+      heartbeatDisabled
+        ? 'Heartbeat disabled by configuration'
+        : heartbeatStale
+          ? 'Heartbeat stale or unavailable'
+          : 'Heartbeat current',
       '/api/status',
       '/systems',
     ),
@@ -438,8 +446,8 @@ function adaptHermes(board, cron, generatedAt) {
   const running = Number(board?.summary?.running || 0);
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'hermes');
   const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'hermes', generatedAt);
-  const kanbanState = blocked > 0 ? 'critical' : 'healthy';
-  const state = blocked > 0 ? 'critical' : cronUnavailable ? 'warning' : 'healthy';
+  const kanbanState = blocked > 0 ? 'warning' : 'healthy';
+  const state = blocked > 0 ? 'warning' : cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
     'hermes:kanban',
     'hermes',
@@ -479,7 +487,7 @@ function adaptHermes(board, cron, generatedAt) {
     attention.push({
       id: 'hermes:blocked',
       system: 'hermes',
-      severity: 'critical',
+      severity: 'warning',
       reasonCode: 'hermes_tasks_blocked',
       title: 'Hermes work is blocked',
       detail: `${blocked} tasks require operator review.`,

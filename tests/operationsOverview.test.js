@@ -137,6 +137,22 @@ test('does not create a session conflict when status exposes no comparable activ
   );
 });
 
+test('treats an intentionally disabled OpenClaw heartbeat as inactive, not stale', () => {
+  const input = healthyInput();
+  input.status.agent.activeSessionsObserved = false;
+  input.status.agent.heartbeatInterval = 'disabled';
+  input.status.heartbeat = {};
+
+  const overview = buildOperationsOverview(input, { generatedAt });
+  const heartbeat = overview.systems.openclaw.evidence.find((item) => item.id === 'openclaw:heartbeat');
+
+  assert.equal(overview.systems.openclaw.state, 'healthy');
+  assert.equal(overview.systems.openclaw.freshness, 'fresh');
+  assert.equal(heartbeat.status, 'inactive');
+  assert.equal(heartbeat.summary, 'Heartbeat disabled by configuration');
+  assert.ok(!overview.attention.some((item) => item.reasonCode === 'openclaw_heartbeat_stale'));
+});
+
 test('keeps GBrain caveats visible when trust is 100 and freshness is independent', () => {
   const input = healthyInput();
   input.gbrain.caveats = ['Embedding worker persistence is not verified.'];
@@ -151,17 +167,18 @@ test('keeps GBrain caveats visible when trust is 100 and freshness is independen
   assert.ok(overview.attention.some((item) => item.reasonCode === 'gbrain_active_caveat'));
 });
 
-test('blocked Hermes work is critical and outranks warnings', () => {
+test('blocked Hermes work warns without claiming the service is critical', () => {
   const input = healthyInput();
   input.hermes.summary.blocked = 2;
-  input.gbrain.caveats = ['Backfill proof is pending.'];
 
   const overview = buildOperationsOverview(input, { generatedAt });
+  const blockedAttention = overview.attention.find((item) => item.reasonCode === 'hermes_tasks_blocked');
+  const kanbanEvidence = overview.systems.hermes.evidence.find((item) => item.id === 'hermes:kanban');
 
-  assert.equal(overview.overall.state, 'critical');
-  assert.equal(overview.attention[0].reasonCode, 'hermes_tasks_blocked');
-  assert.equal(overview.attention[0].severity, 'critical');
-  assert.ok(overview.attention.slice(1).every((item) => item.severity !== 'critical'));
+  assert.equal(overview.overall.state, 'warning');
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.equal(blockedAttention.severity, 'warning');
+  assert.equal(kanbanEvidence.status, 'warning');
 });
 
 test('missing evidence and explicitly failed readers never become healthy', () => {
