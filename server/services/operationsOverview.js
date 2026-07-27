@@ -447,7 +447,7 @@ function adaptHermes(board, cron, generatedAt) {
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'hermes');
   const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'hermes', generatedAt);
   const kanbanState = blocked > 0 ? 'warning' : 'healthy';
-  const state = blocked > 0 ? 'warning' : cronUnavailable ? 'warning' : 'healthy';
+  const state = cronUnavailable ? 'warning' : 'healthy';
   const proof = evidence(
     'hermes:kanban',
     'hermes',
