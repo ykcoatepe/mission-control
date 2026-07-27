@@ -167,18 +167,22 @@ test('keeps GBrain caveats visible when trust is 100 and freshness is independen
   assert.ok(overview.attention.some((item) => item.reasonCode === 'gbrain_active_caveat'));
 });
 
-test('blocked Hermes work warns without claiming the service is critical', () => {
+test('blocked Hermes board work remains actionable without implying an unhealthy service', () => {
   const input = healthyInput();
+  input.status.agent.activeSessionsObserved = false;
   input.hermes.summary.blocked = 2;
 
   const overview = buildOperationsOverview(input, { generatedAt });
   const blockedAttention = overview.attention.find((item) => item.reasonCode === 'hermes_tasks_blocked');
   const kanbanEvidence = overview.systems.hermes.evidence.find((item) => item.id === 'hermes:kanban');
 
-  assert.equal(overview.overall.state, 'warning');
-  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.equal(overview.overall.state, 'healthy');
+  assert.equal(overview.systems.hermes.state, 'healthy');
+  assert.equal(overview.systems.hermes.metrics.blocked, 2);
   assert.equal(blockedAttention.severity, 'warning');
   assert.equal(kanbanEvidence.status, 'warning');
+  assert.equal(kanbanEvidence.summary, '1 running, 2 blocked');
+  assert.ok(overview.systems.hermes.caveats.some((item) => item.includes('blocked')));
 });
 
 test('missing evidence and explicitly failed readers never become healthy', () => {
