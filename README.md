@@ -5,7 +5,7 @@ machine. It brings OpenClaw, Hermes, GBrain, Ollama, Claude Code, CodexBar, and
 supporting local services into one evidence-first interface at
 `http://127.0.0.1:3333`.
 
-The current product is organized around seven operator destinations:
+The current product is organized around eight operator destinations:
 
 | Destination | Route | What it answers |
 | --- | --- | --- |
@@ -16,9 +16,10 @@ The current product is organized around seven operator destinations:
 | Explore | `/gbrain` | What is the detailed GBrain health, source, queue, and evidence state? |
 | Usage | `/usage` | What are OpenClaw, Hermes, Claude Code, and CodexBar using or costing? |
 | Systems | `/systems` | Which agents, sessions, models, and runtimes are present? |
+| Ollama Runtime | `/ollama` | Is Ollama online, which models are available or running, and what resources are in use? |
 
 Settings and the governance archive are utility destinations. Calendar,
-Workshop, Digital Office, Team Structure, Ollama, Setup, and Diagnostics remain
+Workshop, Digital Office, Team Structure, Setup, and Diagnostics remain
 directly reachable without appearing in primary navigation.
 
 ## Quick start

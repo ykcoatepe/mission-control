@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Server, Activity, Boxes, Cpu, Gauge, HardDrive, RefreshCw, CircleAlert, Clock3, Settings2, Save, Wand2, Copy, ChevronDown, ChevronUp } from 'lucide-react'
+import { Server, Activity, Boxes, Cpu, Gauge, HardDrive, RefreshCw, CircleAlert, Clock3, ChevronDown, ChevronUp } from 'lucide-react'
 import PageTransition from '../components/PageTransition'
 import GlassCard from '../components/GlassCard'
 import StatusBadge from '../components/StatusBadge'
@@ -48,19 +48,6 @@ type OllamaGpu = {
   error?: string
   tried?: string[]
   devices?: OllamaGpuDevice[]
-}
-
-type OllamaOptimizationProfile = {
-  enabled: boolean
-  strategy: 'conservative' | 'balanced' | 'performance'
-  keepAlive: string
-  maxLoadedModels: number
-  numCtx: number
-  numParallel: number
-}
-
-type OllamaOptimizationRecommendation = OllamaOptimizationProfile & {
-  reasons: string[]
 }
 
 type OllamaAlert = {
@@ -154,14 +141,6 @@ type ModelTokenUsage = {
   costSources: string[]
 }
 
-type OllamaOptimizationPayload = {
-  enabled: boolean
-  current: OllamaOptimizationProfile
-  recommendation: OllamaOptimizationRecommendation
-  applyCommands: string[]
-  platform: string
-}
-
 type OllamaTelemetry = {
   generatedAt: string
   healthScore: number
@@ -187,7 +166,6 @@ type OllamaTelemetry = {
     canAcceptRequests: boolean
   }
   models: OllamaModel[]
-  optimization?: OllamaOptimizationPayload
   system: {
     cpu: {
       cores: number
@@ -295,10 +273,6 @@ function formatMetric(value?: number | null, digits = 2) {
   return Number(value).toFixed(digits)
 }
 
-function errorMessage(err: unknown, fallback: string) {
-  return err instanceof Error ? err.message : fallback
-}
-
 function formatErrorRate(rate?: number | null) {
   if (!Number.isFinite(rate as number)) return '0.0%'
   return (Number(rate) * 100).toFixed(1) + '%'
@@ -397,17 +371,6 @@ function summarizePercentTrend(values: number[]) {
   return `Now ${Math.round(current)}% · Min ${Math.round(min)}% · Max ${Math.round(max)}%`
 }
 
-function safeProfile(current: OllamaOptimizationProfile): OllamaOptimizationProfile {
-  return {
-    enabled: !!current?.enabled,
-    strategy: current?.strategy === 'conservative' || current?.strategy === 'performance' ? current.strategy : 'balanced',
-    keepAlive: String(current?.keepAlive || '5m').trim(),
-    maxLoadedModels: Number.isFinite(current?.maxLoadedModels as number) ? Number(current?.maxLoadedModels) : 2,
-    numCtx: Number.isFinite(current?.numCtx as number) ? Number(current?.numCtx) : 2048,
-    numParallel: Number.isFinite(current?.numParallel as number) ? Number(current?.numParallel) : 1,
-  }
-}
-
 function renderSparkline(values: number[], color: string, gradientId: string) {
   if (!values.length) {
     return <div className={styles.mutedSmall}>No metrics yet</div>
@@ -463,12 +426,10 @@ function OllamaLoadingState() {
     <PageTransition>
       <div className={styles.page}>
         <div className={styles.topBar}>
-          <div>
-            <div className={styles.titleRow}>
-              <span className={styles.titleIcon}><Server size={20} /></span>
-              <h1>Ollama Monitor</h1>
-            </div>
-            <p className={styles.subtitle}>Loading local model telemetry. Ollama is often a 10-15s check on first paint.</p>
+          <div className={styles.pageTitle}>
+            <span>System telemetry</span>
+            <h1>Ollama Runtime</h1>
+            <p className={styles.subtitle}>Loading Ollama runtime telemetry. Ollama is often a 10-15s check on first paint.</p>
           </div>
           <StatusBadge status="idle" label="Loading" />
         </div>
@@ -477,8 +438,8 @@ function OllamaLoadingState() {
           <div className={styles.loadingCard}>
             <div className={styles.loadingSpinner} />
             <div>
-              <strong>Checking local inference health</strong>
-              <small>Server, loaded models, GPU, memory, and optimization policy.</small>
+              <strong>Checking Ollama runtime health</strong>
+              <small>Server, available models, GPU, and memory telemetry.</small>
             </div>
           </div>
         </GlassCard>
@@ -532,11 +493,6 @@ export default function OllamaMonitor() {
     },
     refetchOnWindowFocus: false,
   })
-  const [optimizationProfile, setOptimizationProfile] = useState<OllamaOptimizationProfile | null>(null)
-  const [isSavingOptimization, setIsSavingOptimization] = useState(false)
-  const [optimizationMessage, setOptimizationMessage] = useState('')
-  const [optimizationDirty, setOptimizationDirty] = useState(false)
-  const [isRollingBackOptimization, setIsRollingBackOptimization] = useState(false)
   const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({})
 
   const tokenUsageData = tokenUsageQuery.data ?? null
@@ -613,26 +569,6 @@ export default function OllamaMonitor() {
         : 'Partial'
   const gpuBadgeStatus = !gpu?.available || !gpuHasDevices ? 'error' : gpu?.limited ? 'idle' : 'ok'
 
-  const optimization = data?.optimization
-  const optimizationCurrent = optimization?.current
-  const baseOptimizationProfile = useMemo(() => {
-    return optimizationCurrent ? safeProfile(optimizationCurrent) : null
-  }, [optimizationCurrent])
-  const activeOptimizationProfile = optimizationDirty ? optimizationProfile : baseOptimizationProfile
-  const recommendation = optimization?.recommendation
-  const platform = optimization?.platform || 'unknown'
-  const recommendationDiffers = useMemo(() => {
-    if (!recommendation || !baseOptimizationProfile) return false
-    const rec = safeProfile(recommendation)
-    const cur = baseOptimizationProfile
-    return (
-      rec.strategy !== cur.strategy ||
-      rec.keepAlive !== cur.keepAlive ||
-      rec.maxLoadedModels !== cur.maxLoadedModels ||
-      rec.numCtx !== cur.numCtx ||
-      rec.numParallel !== cur.numParallel
-    )
-  }, [recommendation, baseOptimizationProfile])
   const healthScore = Number.isFinite(Number(data?.healthScore)) ? Number(data?.healthScore) : 0
   const alertNotes = useMemo(() => {
     return data?.alerts || []
@@ -644,18 +580,6 @@ export default function OllamaMonitor() {
       .filter((score) => Number.isFinite(score))
       .slice(-20)
   }, [healthHistory])
-
-  const updateOptimizationProfile = (next: Partial<OllamaOptimizationProfile>) => {
-    setOptimizationProfile((prev) => {
-      const current = prev || activeOptimizationProfile
-      if (!current) {
-        return null
-      }
-      const updated = { ...current, ...next }
-      setOptimizationDirty(true)
-      return updated
-    })
-  }
 
   const toggleModelExpanded = (name: string) => {
     setExpandedModels((prev) => ({
@@ -670,21 +594,6 @@ export default function OllamaMonitor() {
     )
   }
 
-  const handleCopyCommands = async (commands: string[]) => {
-    if (!commands.length) return
-    await navigator.clipboard.writeText(commands.join('\n'))
-    setOptimizationMessage('Apply commands copied to clipboard.')
-    setTimeout(() => setOptimizationMessage(''), 2500)
-  }
-
-  const applyRecommendationToForm = () => {
-    if (!recommendation) return
-    setOptimizationProfile(recommendation)
-    setOptimizationDirty(true)
-    setOptimizationMessage('Recommendation loaded into the form. Save to apply.')
-    setTimeout(() => setOptimizationMessage(''), 2500)
-  }
-
   const handleRefresh = async () => {
     await Promise.all([
       refetchTelemetry(),
@@ -692,84 +601,6 @@ export default function OllamaMonitor() {
       refetchModelTelemetry(),
       tokenUsageQuery.refetch(),
     ])
-  }
-
-  const handleSaveOptimization = async () => {
-    if (!activeOptimizationProfile) return
-    setIsSavingOptimization(true)
-    setOptimizationMessage('')
-    try {
-      const dryRunResponse = await fetch('/api/ollama/optimization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'dry-run', profile: activeOptimizationProfile }),
-      })
-      if (!dryRunResponse.ok) {
-        const text = await dryRunResponse.text()
-        throw new Error(text || `HTTP ${dryRunResponse.status}`)
-      }
-      const dryRun = await dryRunResponse.json()
-      const changedKeys = Array.isArray(dryRun?.diff?.changed) ? dryRun.diff.changed : []
-      const confirmed = window.confirm(
-        changedKeys.length
-          ? `These settings will change: ${changedKeys.join(', ')}. Apply?`
-          : 'No changes detected. Apply anyway?'
-      )
-      if (!confirmed) {
-        setOptimizationMessage('Apply cancelled.')
-        return
-      }
-
-      const applyResponse = await fetch('/api/ollama/optimization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'apply', profile: activeOptimizationProfile, confirm: true }),
-      })
-      if (!applyResponse.ok) {
-        const text = await applyResponse.text()
-        throw new Error(text || `HTTP ${applyResponse.status}`)
-      }
-      const applied = await applyResponse.json()
-      const verifyOk = applied?.verification?.ok ? 'OK' : 'FAIL'
-      setOptimizationDirty(false)
-      setOptimizationMessage(`Settings applied. Post-apply verify: ${verifyOk}${applied?.verification?.latencyMs ? ` (${applied.verification.latencyMs}ms)` : ''}.`)
-      await handleRefresh()
-    } catch (err: unknown) {
-      setOptimizationMessage(errorMessage(err, 'Save failed'))
-    } finally {
-      setIsSavingOptimization(false)
-      setTimeout(() => setOptimizationMessage(''), 4000)
-    }
-  }
-
-  const handleRollbackOptimization = async () => {
-    setIsRollingBackOptimization(true)
-    setOptimizationMessage('')
-    try {
-      const confirmed = window.confirm('Roll back the last optimization change?')
-      if (!confirmed) {
-        setOptimizationMessage('Rollback cancelled.')
-        return
-      }
-      const response = await fetch('/api/ollama/optimization', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'rollback', confirm: true }),
-      })
-      if (!response.ok) {
-        const text = await response.text()
-        throw new Error(text || `HTTP ${response.status}`)
-      }
-      const rolled = await response.json()
-      setOptimizationDirty(false)
-      setOptimizationMessage(`Rollback complete. Verify: ${rolled?.verification?.ok ? 'OK' : 'FAIL'}`)
-      await handleRefresh()
-    } catch (err: unknown) {
-      setOptimizationMessage(errorMessage(err, 'Rollback failed'))
-    } finally {
-      setIsRollingBackOptimization(false)
-      setTimeout(() => setOptimizationMessage(''), 4000)
-    }
   }
 
   const visibleGpuUtilHistory = useMemo(() => {
@@ -863,12 +694,10 @@ export default function OllamaMonitor() {
     <PageTransition>
       <div className={styles.page}>
         <div className={styles.topBar}>
-          <div>
-            <div className={styles.titleRow}>
-              <span className={styles.titleIcon}><Server size={20} /></span>
-              <h1>Ollama Monitor</h1>
-            </div>
-            <p className={styles.subtitle}>Local inference health, loaded models, and hardware headroom in one operational surface.</p>
+          <div className={styles.pageTitle}>
+            <span>System telemetry</span>
+            <h1>Ollama Runtime</h1>
+            <p className={styles.subtitle}>Ollama runtime health, available models, and hardware headroom in one read-only surface. Model inventory may include cloud-backed entries.</p>
           </div>
           <button className={styles.refreshButton} onClick={handleRefresh}>
             <RefreshCw size={14} />
@@ -1042,128 +871,6 @@ export default function OllamaMonitor() {
             </div>
           </GlassCard>
 
-          <GlassCard delay={0.12} noPad>
-            <div className={styles.panelHeader}>
-              <div className={styles.panelTitle}><Settings2 size={15} /> Optimization</div>
-              <div className={styles.panelMeta}>{platform}{optimizationDirty ? ' · unsaved changes' : ''}</div>
-            </div>
-            <div className={styles.panelBody}>
-              {!optimization ? (
-                <p className={styles.muted}>No optimization data available.</p>
-              ) : (
-                <>
-                  <div className={styles.formGrid}>
-                    <label className={styles.field}>
-                      <span>Enabled</span>
-                      <span className={styles.checkboxBox}>
-                        <input
-                          type="checkbox"
-                          checked={!!activeOptimizationProfile?.enabled}
-                          onChange={(event) => updateOptimizationProfile({ enabled: event.target.checked })}
-                        />
-                        <span>{activeOptimizationProfile?.enabled ? 'Enabled' : 'Disabled'}</span>
-                      </span>
-                    </label>
-                    <label className={styles.field}>
-                      <span>Strategy</span>
-                      <select
-                        value={activeOptimizationProfile?.strategy || 'balanced'}
-                        onChange={(event) =>
-                          updateOptimizationProfile({
-                            strategy: (event.target.value === 'performance' || event.target.value === 'conservative'
-                              ? event.target.value
-                              : 'balanced') as OllamaOptimizationProfile['strategy'],
-                          })
-                        }
-                      >
-                        <option value="conservative">Conservative</option>
-                        <option value="balanced">Balanced</option>
-                        <option value="performance">Performance</option>
-                      </select>
-                    </label>
-                    <label className={styles.field}>
-                      <span>Keep-alive</span>
-                      <input
-                        value={activeOptimizationProfile?.keepAlive || ''}
-                        onChange={(event) => updateOptimizationProfile({ keepAlive: event.target.value })}
-                      />
-                    </label>
-                    <label className={styles.field}>
-                      <span>Max loaded models</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={16}
-                        value={activeOptimizationProfile?.maxLoadedModels ?? ''}
-                        onChange={(event) => updateOptimizationProfile({ maxLoadedModels: Number(event.target.value) })}
-                      />
-                    </label>
-                    <label className={styles.field}>
-                      <span>num_ctx</span>
-                      <input
-                        type="number"
-                        min={256}
-                        max={65536}
-                        step={256}
-                        value={activeOptimizationProfile?.numCtx ?? ''}
-                        onChange={(event) => updateOptimizationProfile({ numCtx: Number(event.target.value) })}
-                      />
-                    </label>
-                    <label className={styles.field}>
-                      <span>num_parallel</span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={16}
-                        value={activeOptimizationProfile?.numParallel ?? ''}
-                        onChange={(event) => updateOptimizationProfile({ numParallel: Number(event.target.value) })}
-                      />
-                    </label>
-                  </div>
-
-                  {recommendation && recommendationDiffers ? (
-                    <div
-                      className={styles.recommendStrip}
-                      title={recommendation.reasons?.length ? recommendation.reasons.join('\n') : undefined}
-                    >
-                      <Wand2 size={13} />
-                      <span>
-                        Recommended: {recommendation.strategy} · keep-alive {recommendation.keepAlive} · {recommendation.maxLoadedModels} models · ctx {recommendation.numCtx} · parallel {recommendation.numParallel}
-                      </span>
-                      <button type="button" onClick={applyRecommendationToForm}>Use</button>
-                    </div>
-                  ) : null}
-
-                  <div className={styles.buttonRow}>
-                    <button
-                      className={`${styles.btn} ${styles.btnGhost}`}
-                      onClick={() => handleCopyCommands(optimization?.applyCommands || [])}
-                      disabled={!optimization?.applyCommands?.length}
-                    >
-                      <Copy size={14} />
-                      Copy commands
-                    </button>
-                    <button
-                      className={`${styles.btn} ${styles.btnGhost} ${styles.btnDanger}`}
-                      onClick={handleRollbackOptimization}
-                      disabled={isRollingBackOptimization}
-                    >
-                      {isRollingBackOptimization ? 'Rolling back…' : 'Rollback'}
-                    </button>
-                    <button
-                      className={`${styles.btn} ${styles.btnPrimary}`}
-                      onClick={handleSaveOptimization}
-                      disabled={isSavingOptimization || !optimizationDirty}
-                    >
-                      <Save size={14} />
-                      {isSavingOptimization ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-                  {!!optimizationMessage && <p className={styles.formMessage}>{optimizationMessage}</p>}
-                </>
-              )}
-            </div>
-          </GlassCard>
         </div>
 
         <GlassCard delay={0.16} noPad>

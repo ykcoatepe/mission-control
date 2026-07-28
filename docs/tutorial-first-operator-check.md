@@ -95,9 +95,10 @@ unpriced routing aliases report the comparison as not applicable or unavailable.
 ## 5. Recognize secondary surfaces
 
 Settings and Governance Archive are utility destinations. `/workshop`,
-`/calendar`, `/office`, `/team`, `/ollama`, `/setup`, and `/diagnostics` are
+`/calendar`, `/office`, `/team`, `/setup`, and `/diagnostics` are
 reachable directly but intentionally absent from primary navigation. A module
 flag may hide a navigation item or Diagnostics tab; it does not block the URL.
+Ollama Runtime is a primary System destination at `/ollama`.
 
 Old bookmarks continue to redirect, including `/kanban`, `/cron`,
 `/conversations`, `/costs`, and `/agents`.

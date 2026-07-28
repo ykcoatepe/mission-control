@@ -52,7 +52,7 @@ describe('isRouteEnabled', () => {
 })
 
 describe('navigation hierarchy', () => {
-  it('exposes exactly seven primary destinations in the approved order', () => {
+  it('exposes the approved primary destinations in order, including Ollama runtime monitoring', () => {
     expect(primarySidebarRoutes.map((route) => route.path)).toEqual([
       '/',
       '/work',
@@ -61,7 +61,14 @@ describe('navigation hierarchy', () => {
       '/gbrain',
       '/usage',
       '/systems',
+      '/ollama',
     ])
+
+    expect(primarySidebarRoutes.find((route) => route.path === '/ollama')).toMatchObject({
+      label: 'Ollama Runtime',
+      section: 'system',
+      description: 'Runtime and model telemetry',
+    })
   })
 
   it('keeps settings and governance in utility navigation', () => {
@@ -69,7 +76,7 @@ describe('navigation hierarchy', () => {
   })
 
   it('keeps source-specific Phase 2 pages hidden but reachable', () => {
-    for (const path of ['/workshop', '/calendar', '/office', '/team', '/ollama']) {
+    for (const path of ['/workshop', '/calendar', '/office', '/team']) {
       expect(appRoutes.find((route) => route.path === path)?.nav).toBe(false)
     }
   })

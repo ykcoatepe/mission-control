@@ -91,6 +91,7 @@ export const appRoutes: AppRouteDefinition[] = [
   { path: '/gbrain', label: 'Explore', module: 'gbrain', component: GBrain, icon: Search, navPlacement: 'primary', section: 'intelligence', description: 'Memory and sources' },
   { path: '/usage', label: 'Usage', module: 'costs', component: Costs, icon: DollarSign, navPlacement: 'primary', section: 'intelligence', description: 'Spend and model mix' },
   { path: '/systems', label: 'Systems', module: 'agents', component: Agents, icon: Network, navPlacement: 'primary', section: 'system', description: 'Agents · Phase 1' },
+  { path: '/ollama', label: 'Ollama Runtime', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, navPlacement: 'primary', section: 'system', description: 'Runtime and model telemetry' },
   { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings, navPlacement: 'utility' },
   { path: '/councils', label: 'Audit', module: 'councils', component: Councils, icon: Landmark, navPlacement: 'utility' },
   // Phase 2 source pages remain directly reachable without crowding primary navigation.
@@ -98,7 +99,6 @@ export const appRoutes: AppRouteDefinition[] = [
   { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, nav: false, section: 'intelligence', description: 'Schedule' },
   { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2, nav: false, section: 'operate', description: 'Live desks' },
   { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, nav: false, section: 'system', description: 'Agent map' },
-  { path: '/ollama', label: 'Ollama Monitor', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, nav: false, section: 'system', description: 'Local models' },
   { path: '/diagnostics', label: 'Diagnostics', module: 'settings', anyModule: ['docs', 'scout', 'aws', 'skills'], component: Diagnostics, icon: Wrench, nav: false, section: 'system', description: 'Memory, docs, scout, AWS' },
   // Phase 1 compatibility redirects keep existing bookmarks one-to-one.
   { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectKanban, nav: false },

@@ -17,6 +17,7 @@ families, and action boundaries. `frontend/src/appRoutes.tsx` and
 | Explore | GBrain | `/gbrain` | `gbrain` | GBrain runtime and timeline |
 | Usage | Cost Tracker | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
 | Systems | Agent Hub | `/systems` | `agents` | agents, sessions, models |
+| Ollama Runtime | Ollama Runtime | `/ollama` | `ollamaMonitor` | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
 
 The title differences for Sessions/Conversations, Usage/Cost Tracker, and
 Systems/Agent Hub are intentional: navigation names describe the operator
@@ -33,7 +34,6 @@ destination while the page retains its established product title.
 | `/calendar` | direct | Schedule and local calendar entries |
 | `/office` | direct | Digital Office telemetry and triage |
 | `/team` | direct | Team structure and bootstrap suggestions |
-| `/ollama` | direct | Local inference telemetry and optimization |
 | `/diagnostics` | direct | Memory, Docs, Scout, AWS, and Skills tabs |
 
 Direct routes are mounted even when omitted from navigation. Module flags are
