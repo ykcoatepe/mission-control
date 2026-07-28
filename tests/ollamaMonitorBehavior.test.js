@@ -44,6 +44,13 @@ assert.ok(
 );
 
 assert.ok(
+  !pageSource.includes("fetch('/api/ollama/optimization'") &&
+    !pageSource.includes('Save to apply') &&
+    !pageSource.includes('Rolling back…'),
+  'Ollama Monitor should remain a read-only surface without optimization mutations',
+);
+
+assert.ok(
   routeSource.includes('let ollamaTelemetryRefresh = null') &&
     routeSource.includes('async function getOllamaTelemetryPayload') &&
     routeSource.includes('if (ollamaTelemetryRefresh)') &&

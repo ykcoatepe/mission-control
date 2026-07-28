@@ -33,7 +33,7 @@ destination while the page retains its established product title.
 | `/calendar` | direct | Schedule and local calendar entries |
 | `/office` | direct | Digital Office telemetry and triage |
 | `/team` | direct | Team structure and bootstrap suggestions |
-| `/ollama` | direct | Local inference telemetry and optimization |
+| `/ollama` | primary System navigation | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
 | `/diagnostics` | direct | Memory, Docs, Scout, AWS, and Skills tabs |
 
 Direct routes are mounted even when omitted from navigation. Module flags are
