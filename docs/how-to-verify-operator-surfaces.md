@@ -137,7 +137,8 @@ done
 An HTTP 200 only proves the SPA fallback returned `index.html`. Open the app in
 a browser and confirm:
 
-- exactly seven primary destinations, in the documented order;
+- exactly eight primary destinations, in the documented order, including
+  Ollama Runtime after Systems;
 - Settings and Audit/Governance as utility destinations;
 - no unexpected console errors;
 - the page content renders rather than remaining in a loading shell;

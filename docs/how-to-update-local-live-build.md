@@ -99,9 +99,9 @@ curl -fsS http://127.0.0.1:3333/ | sed -n 's/.*src="\([^"]*assets\/[^"]*\.js\)".
 sed -n 's/.*src="\([^"]*assets\/[^"]*\.js\)".*/\1/p' frontend/dist/index.html
 ```
 
-Then open the browser and confirm the seven primary destinations: Brain, Work,
-Automations, Sessions, Explore, Usage, and Systems. Diagnostics is directly
-reachable at `/diagnostics`; it is not a sidebar item.
+Then open the browser and confirm the eight primary destinations: Brain, Work,
+Automations, Sessions, Explore, Usage, Systems, and Ollama Runtime. Diagnostics
+is directly reachable at `/diagnostics`; it is not a sidebar item.
 
 For a higher-confidence check, run the API and browser steps in
 [How to Verify Operator Surfaces](how-to-verify-operator-surfaces.md).
