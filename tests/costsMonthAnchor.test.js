@@ -777,8 +777,19 @@ test('an explicit Hermes path is never silently replaced by discovery', () => {
 test('an empty Claude scan is settled, not retried', () => {
   const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
 
-  assert.match(routeSource, /let claudeScanEmpty = false;/);
-  assert.match(routeSource, /claudeScanEmpty = summary === null;/);
+  assert.doesNotMatch(routeSource, /let claudeScanEmpty/);
+  assert.match(routeSource, /const claudeScanEmpty = claudeCodeResult\?\.empty === true;/);
   assert.match(routeSource, /\(!claudeCodeData\s*&&\s*codexbarConfigured\(\)\s*&&\s*!claudeScanEmpty\)/);
   assert.match(routeSource, /claudeCodeStatus:[\s\S]{0,220}'no_usage'/);
+});
+
+test('the empty-Claude-scan outcome travels with its own result', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.doesNotMatch(routeSource, /let claudeScanEmpty/);
+  assert.match(routeSource, /return \{ data: null, empty: true \};/);
+  assert.match(routeSource, /return \{ data: summary, empty: summary === null \};/);
+  assert.match(routeSource, /return \{ data: null, empty: false \};/);
+  assert.match(routeSource, /const claudeScanEmpty = claudeCodeResult\?\.empty === true;/);
+  assert.match(routeSource, /let codexbarAvailable/);
 });

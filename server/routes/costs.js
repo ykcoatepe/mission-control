@@ -451,9 +451,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   // null = not probed yet. Set to false the first time an exec fails because the
   // binary is missing; a missing optional tool must not look like a flaky one.
   let codexbarAvailable = null;
-  // A scan that ran fine but carried no Claude rows is a settled "no usage"
-  // answer, not a failure — it must not keep the result retryable.
-  let claudeScanEmpty = false;
 
   function noteCodexbarExecError(error) {
     const message = String(error?.message || '');
@@ -593,18 +590,17 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       });
       surfaceChildStderr('Claude Code Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
-      if (!trimmed) {
-        claudeScanEmpty = true;
-        return null;
-      }
+      if (!trimmed) return { data: null, empty: true };
       const summary = buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
-      claudeScanEmpty = summary === null;
-      return summary;
+      // An empty-but-successful scan is a settled "no usage" answer; a failure is
+      // not. The distinction rides along with THIS result — the limiter runs two
+      // refreshes at once, so router-wide state would let one month's outcome
+      // decide another month's classification.
+      return { data: summary, empty: summary === null };
     } catch (error) {
-      claudeScanEmpty = false;
       noteCodexbarExecError(error);
       console.error('[Claude Code Usage Summary]', error.message);
-      return null;
+      return { data: null, empty: false };
     }
   }
 
@@ -1182,11 +1178,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     const refresh = refreshLimiter.run(() => new Promise((resolve) => {
       setImmediate(async () => {
         try {
-          const [openclawData, hermesData, claudeCodeData] = await Promise.all([
+          const [openclawData, hermesData, claudeCodeResult] = await Promise.all([
             openclawUsageSummary(period, monthAnchor),
             hermesUsageSummary(period, monthAnchor),
             claudeCodeUsageSummary(period, monthAnchor),
           ]);
+          const claudeCodeData = claudeCodeResult?.data ?? null;
+          const claudeScanEmpty = claudeCodeResult?.empty === true;
           const previous = costsCache.get(cacheKey)?.value;
           const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
           const hasPreviousClaudeCode = hasClaudeCodeAgent(previous);
