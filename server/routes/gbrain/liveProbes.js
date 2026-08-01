@@ -288,6 +288,8 @@ function parseTimestamp(value) {
 function isSyncTrackedSource(source) {
   const id = normalizeSourceKey(source?.id || source?.name || source?.source);
   const localPath = source?.local_path || source?.localPath || source?.path || source?.repoPath || source?.repo_path || null;
+  const syncEnabled = source?.sync_enabled ?? source?.syncEnabled;
+  if (syncEnabled === false) return false;
   if (id === 'default' && !localPath) return false;
   if (source?.federated === false && !localPath) return false;
   return true;
@@ -382,7 +384,8 @@ function liveSourceStatus(liveSources, sourcesUnavailable = false) {
   if (sourcesUnavailable) return 'warning';
   if (!liveSources) return 'warning';
   if (liveSources.freshness?.status === 'warning') return 'warning';
-  if (liveSources.count > 0 && liveSources.healthyCount === liveSources.count && liveSources.warningCount === 0) return 'healthy';
+  if (liveSources.warningCount > 0) return 'warning';
+  if (liveSources.count > 0) return 'healthy';
   return 'warning';
 }
 
@@ -534,9 +537,8 @@ function normalizeSourcesPayload(payload, checkedAt) {
     .filter((source) => source && typeof source === 'object')
     .map((source) => {
       const pages = Number.isFinite(Number(source.pages || source.page_count)) ? Number(source.pages || source.page_count) : null;
-      const status = source.status
-        || source.clone_state
-        || source.cloneState
+      const reportedStatus = source.status || source.clone_state || source.cloneState;
+      const status = reportedStatus
         || (source.last_sync_at ? 'synced' : source.federated === false ? 'isolated' : 'unknown');
       const lastSyncAt = parseTimestamp(
         source.last_sync_at
@@ -548,20 +550,28 @@ function normalizeSourcesPayload(payload, checkedAt) {
         || source.updated_at
         || source.updatedAt,
       );
+      const rawSyncEnabled = source.sync_enabled ?? source.syncEnabled;
+      const syncEnabled = typeof rawSyncEnabled === 'boolean' ? rawSyncEnabled : null;
       const freshness = sourceFreshnessStatus(source, lastSyncAt, checkedAt);
       return {
         id: String(source.id || source.name || source.source || 'unknown'),
         status: String(status),
+        statusReported: Boolean(reportedStatus),
         pages,
         chunks: Number.isFinite(Number(source.chunks || source.chunk_count)) ? Number(source.chunks || source.chunk_count) : null,
         lastSyncAt,
+        syncEnabled,
         freshness,
       };
     })
     .filter((source) => source.id && source.id !== 'unknown');
   const totalPages = sources.reduce((sum, source) => sum + (source.pages || 0), 0);
   const freshness = summarizeSourceFreshness(sources, checkedAt);
-  const statusWarningCount = sources.filter((source) => isWarningSourceStatus(source.status)).length;
+  const statusWarningCount = sources.filter(
+    (source) => source.freshness?.syncTracked === false
+      ? source.statusReported && isWarningSourceStatus(source.status)
+      : isWarningSourceStatus(source.status),
+  ).length;
 
   return {
     ok: true,
