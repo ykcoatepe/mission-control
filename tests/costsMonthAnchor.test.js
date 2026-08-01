@@ -676,3 +676,45 @@ test('a cold partial historical result is reported stale so polling continues', 
     'an unavailable producer must mark the combined result stale even with nothing preserved',
   );
 });
+
+test('a stale detailed entry falls back to the short TTL', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.match(
+    routeSource,
+    /const\s+ttl\s*=\s*cached\.detailed\s*&&\s*\!cached\.value\?\.meta\?\.stale\s*\?\s*costsCacheTtl\s*:\s*costsFallbackCacheTtl/,
+    'stale detailed entries must use the short fallback TTL',
+  );
+});
+
+test('scan truncation is propagated to the combined summary, not just stderr', () => {
+  const scriptSource = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'openclaw-usage-summary.js'), 'utf8');
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.ok(
+    scriptSource.split('scanTruncated,').length - 1 >= 3,
+    'the top-level and both agent summaries must carry scanTruncated',
+  );
+  assert.match(routeSource, /scanTruncated:\s*sources\.some\(/);
+  assert.match(routeSource, /OpenClaw scan TRUNCATED by the file cap/);
+});
+
+test('child tool stderr is surfaced, never swallowed', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  // execPromise captures stderr; destructuring only stdout drops every warning a
+  // child emits (scan truncation, degraded modes) — the diagnostic channel goes
+  // dark exactly when something is wrong.
+  assert.match(routeSource, /function surfaceChildStderr\(label, stderr\)/);
+  for (const label of ['OpenClaw Usage Summary', 'Claude Code Usage Summary', 'CodexBar', 'Hermes sqlite']) {
+    assert.ok(
+      routeSource.includes(`surfaceChildStderr('${label}', stderr)`),
+      `${label} must surface its child's stderr`,
+    );
+  }
+  assert.doesNotMatch(
+    routeSource,
+    /const \{ stdout \} = await execPromise/,
+    'no exec site may destructure stdout alone — that silently discards the child stderr',
+  );
+});

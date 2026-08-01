@@ -710,6 +710,7 @@ async function buildForPeriod(period, monthAnchor = null) {
       note: `Source: ${bucket.label} JSONL fast scan (${bucketAccumulators.get(bucket.key).recordsScanned} usage records)`,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     });
     const previousUsage = buildUsageFromAccumulator({
       accumulator: previousBucketAccumulators.get(bucket.key),
@@ -719,6 +720,7 @@ async function buildForPeriod(period, monthAnchor = null) {
       note: `Previous-period ${bucket.label} API-equivalent baseline`,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     });
     usage.summary.previousPeriodApiEquivalentUsd = previousUsage.summary.periodApiEquivalentUsd;
     usage.summary.previousPeriodApiEquivalentReliability = previousUsage.apiEquivalentReliability;

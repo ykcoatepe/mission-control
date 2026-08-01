@@ -463,11 +463,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     if (codexbarScans.has(key)) return codexbarScans.get(key);
 
     const scan = refreshLimiter.run(async () => {
-      const { stdout } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
+      const { stdout, stderr } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
         timeout: 30000,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,
       });
+      surfaceChildStderr('CodexBar', stderr);
       codexbarScanCache.set(key, { stdout, time: Date.now() });
       return stdout;
     }).finally(() => {
@@ -527,16 +528,25 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
   }
 
+  // execPromise captures the child's stderr and then it is dropped on the floor,
+  // so every warning a child tool emits (scan truncation, degraded modes) became
+  // invisible. Diagnostics must land somewhere a human can read.
+  function surfaceChildStderr(label, stderr) {
+    const text = String(stderr || '').trim();
+    if (text) console.warn(`[${label}][child stderr] ${text.slice(0, 2000)}`);
+  }
+
   async function openclawUsageSummary(period = 'month', monthAnchor = null) {
     try {
       const script = path.join(projectRoot, 'scripts', 'openclaw-usage-summary.js');
       const args = [String(period)];
       if (isValidMonthAnchor(monthAnchor)) args.push(String(monthAnchor));
-      const { stdout } = await execPromise(`node ${JSON.stringify(script)} ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
+      const { stdout, stderr } = await execPromise(`node ${JSON.stringify(script)} ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
         timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         env: { ...process.env, HOME: hostUserHome() },
       });
+      surfaceChildStderr('OpenClaw Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
       if (!trimmed) return null;
       const result = JSON.parse(trimmed);
@@ -553,11 +563,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   async function claudeCodeUsageSummary(period = 'month', monthAnchor = null) {
     try {
       const days = claudeCodeScanDays(monthAnchor);
-      const { stdout } = await execPromise(`codexbar cost --format json --provider claude --days ${days}`, {
+      const { stdout, stderr } = await execPromise(`codexbar cost --format json --provider claude --days ${days}`, {
         timeout: 30000,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,
       });
+      surfaceChildStderr('Claude Code Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
       if (!trimmed) return null;
       return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
@@ -569,11 +580,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
   async function sqliteJson(dbPath, sql) {
     const flatSql = String(sql || '').replace(/\s+/g, ' ').trim();
-    const { stdout } = await execPromise(`sqlite3 -json ${JSON.stringify(dbPath)} ${JSON.stringify(flatSql)}`, {
+    const { stdout, stderr } = await execPromise(`sqlite3 -json ${JSON.stringify(dbPath)} ${JSON.stringify(flatSql)}`, {
       timeout: 30000,
       maxBuffer: 20 * 1024 * 1024,
       env: process.env,
     });
+    surfaceChildStderr('Hermes sqlite', stderr);
     const trimmed = String(stdout || '').trim();
     return trimmed ? JSON.parse(trimmed) : [];
   }
@@ -854,7 +866,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         thisWeekTokens: sumSummary('thisWeekTokens'),
         thisMonthTokens: sumSummary('thisMonthTokens'),
         totalTokens: sumSummary('totalTokens'),
-        note: 'Combined view: OpenClaw session-cost-usage + Hermes profile state.db + Claude Code local CodexBar scan',
+        scanTruncated: sources.some((src) => src.summary?.scanTruncated === true),
+        note: `Combined view: OpenClaw session-cost-usage + Hermes profile state.db + Claude Code local CodexBar scan${sources.some((src) => src.summary?.scanTruncated === true) ? ' — OpenClaw scan TRUNCATED by the file cap, totals may be understated' : ''}`,
       },
       daily,
       dailyByModel,
@@ -1225,7 +1238,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
       if (cached) {
         const ageMs = Date.now() - cached.time;
-        const ttl = cached.detailed ? costsCacheTtl : costsFallbackCacheTtl;
+        // A stale detailed entry (some producer was unavailable) must not hold
+        // the long TTL: recovery would go unnoticed for a full minute. It gets
+        // the short fallback TTL instead — long enough that 2.5s polls mostly
+        // observe the deduplicated refresh rather than starting new scans.
+        const ttl = cached.detailed && !cached.value?.meta?.stale
+          ? costsCacheTtl
+          : costsFallbackCacheTtl;
         const isFresh = ageMs < ttl
           && !needsClaudeCodeCacheRefresh(cached.value)
           && !needsCurrentPeriodRefresh(cached.value);
