@@ -247,6 +247,12 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('wasPickerOpen') &&
+  source.includes('pickerOpen && !wasPickerOpen.current'),
+  'focus into the dialog fires only on the closed-to-open transition, never on re-renders',
+);
+
+assert.ok(
   source.includes('nextSelectableIndex(pickerMonths, index, delta)') &&
   source.includes('for (let index = from + step; index >= 0 && index < months.length; index += step)'),
   'arrow navigation must scan past disabled months instead of letting a gap block the grid',

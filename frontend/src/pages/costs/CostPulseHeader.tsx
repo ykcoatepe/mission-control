@@ -90,6 +90,7 @@ export default function CostPulseHeader({
   const monthPickerDialogRef = useRef<HTMLDivElement>(null)
   const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const gridButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const wasPickerOpen = useRef(false)
   const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
   const isPartialApiEquivalent = apiEquivalentReliability === 'partial'
   const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
@@ -190,10 +191,13 @@ export default function CostPulseHeader({
     }
   }, [pickerOpen, monthAvailability, monthAvailabilityKnown, m])
   useEffect(() => {
-    if (!pickerOpen) return
+    const justOpened = pickerOpen && !wasPickerOpen.current
+    wasPickerOpen.current = pickerOpen
+    if (!justOpened) return
     const selectedIndex = pickerMonths.findIndex(item => item.month === monthNav.activeMonth && item.selectable)
     const firstSelectableIndex = pickerMonths.findIndex(item => item.selectable)
     const focusIndex = selectedIndex >= 0 ? selectedIndex : firstSelectableIndex
+    // Focus is an open-transition side effect; re-running it on data re-renders steals focus from the year controls mid-navigation.
     if (focusIndex >= 0) gridButtonRefs.current[focusIndex]?.focus()
   }, [pickerMonths, pickerOpen, monthNav.activeMonth])
   const spendPeriodDescription = period === 'month'
