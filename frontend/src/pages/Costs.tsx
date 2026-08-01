@@ -235,15 +235,16 @@ export default function Costs() {
   const unknownBillingSourceCount = (tokenData?.byService || []).filter(item => (
     Number(item.tokens || 0) > 0 && String(item.costSource || '').toLowerCase() === 'unknown'
   )).length
+  const codexbarDailyRows = codexbarCosts?.daily
   const codexbarPeriodDays = useMemo(() => {
-    if (!codexbarCosts?.daily?.length) return []
+    if (!codexbarDailyRows?.length) return []
     return codexbarRowsForPeriod(
-      codexbarCosts.daily,
+      codexbarDailyRows,
       period,
       calendarNow,
       activeMonthAnchor,
     )
-  }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period])
+  }, [activeMonthAnchor, calendarNow, codexbarDailyRows, period])
   // A live 30-day summary of $0 must not suppress an anchored month that has
   // usage: codexbar activity follows the selected period's rows too.
   const codexbarActive = !!(codexbarCosts && (

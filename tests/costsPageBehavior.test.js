@@ -38,7 +38,7 @@ assert.ok(
   source.includes("window.addEventListener('focus'") &&
   source.includes('calendarRefreshQueryKeys(period, monthAnchor)') &&
   source.includes('queryClient.invalidateQueries({ queryKey })') &&
-  source.includes('codexbarRowsForPeriod(\n      codexbarCosts.daily,\n      period,\n      calendarNow,'),
+  source.includes('codexbarRowsForPeriod(\n      codexbarDailyRows,\n      period,\n      calendarNow,'),
   'Costs page should refresh period bounds and both usage queries after local midnight or focus',
 );
 
