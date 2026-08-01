@@ -27,6 +27,9 @@ const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 // Mirrors the frontend navigator floor (lib.ts monthAnchorFloor).
 const MONTH_ANCHOR_HISTORY_MONTHS = 24;
 
+// Confirmed-empty evidence decays: transcripts for a past month can be restored or appended after the scan, and the cheap availability probes never inspect OpenClaw. After the TTL the month falls back to "unknown" (selectable), and selecting it runs a fresh detailed scan that re-stamps the entry. Calibration: detailed rescans are user-triggered and cheap at this cadence; revisit if users report months flickering back on.
+const CONFIRMED_EMPTY_TTL_MS = 24 * 60 * 60 * 1000;
+
 function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
@@ -557,6 +560,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const raw = JSON.parse(fs.readFileSync(costsDiskCacheFile, 'utf8'));
       Object.entries(raw || {}).forEach(([key, entry]) => {
         if (entry?.value && Number.isFinite(Number(entry.time))) {
+          const legacyFingerprint = entry.value?.meta?.producerFingerprint;
+          if (legacyFingerprint !== undefined) {
+            if (entry.producerFingerprint === undefined) entry.producerFingerprint = legacyFingerprint;
+            delete entry.value.meta.producerFingerprint;
+          }
           costsCache.set(key, entry);
         }
       });
@@ -717,13 +725,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const meta = value.meta || {};
       const statuses = [meta.openclawStatus, meta.hermesStatus, meta.claudeCodeStatus];
       const fullCoverage = statuses.every((status) => status === 'ready' || status === 'no_usage');
-      const fingerprintMatches = typeof meta.producerFingerprint === 'string'
-        && meta.producerFingerprint.length > 0
-        && meta.producerFingerprint === currentProducerFingerprint;
+      const fingerprintMatches = typeof entry.producerFingerprint === 'string'
+        && entry.producerFingerprint.length > 0
+        && entry.producerFingerprint === currentProducerFingerprint;
+      const evidenceFresh = Date.now() - (entry.time || 0) <= CONFIRMED_EMPTY_TTL_MS;
       if (value.meta?.scanTruncated !== true
         && value.summary?.scanTruncated !== true
         && fullCoverage
-        && fingerprintMatches) {
+        && fingerprintMatches
+        && evidenceFresh) {
         confirmedEmpty.add(month);
       }
     }
@@ -1340,13 +1350,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   function detailedCostsResult(period, combinedUsage, meta = {}, monthAnchor = null) {
-    const detailedMeta = {
-      ...meta,
-      producerFingerprint: producerFingerprint(),
-    };
+    const detailedMeta = { ...meta };
+    delete detailedMeta.producerFingerprint;
+    const usageWithoutFingerprint = { ...combinedUsage };
+    delete usageWithoutFingerprint.producerFingerprint;
+    const combinedMeta = { ...(combinedUsage.meta || {}) };
+    delete combinedMeta.producerFingerprint;
     const normalizedUsage = normalizeUsageCosts({
-      ...combinedUsage,
-      meta: { ...(combinedUsage.meta || {}), ...detailedMeta },
+      ...usageWithoutFingerprint,
+      meta: { ...combinedMeta, ...detailedMeta },
     });
     const rangeRows = normalizedUsage.daily || [];
     return attachCostsMeta({
@@ -1434,7 +1446,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
               preservedPreviousClaudeCode,
               preservedPreviousHermes,
             }, monthAnchor);
-            setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
+            setCostsCache(cacheKey, {
+              value: costsResult,
+              time: Date.now(),
+              detailed: true,
+              producerFingerprint: producerFingerprint(),
+            });
             resolve(costsResult);
             return;
           }
@@ -1468,7 +1485,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
             // needsCurrentPeriodRefresh deliberately never fires for an anchored
             // month, the page would poll against a value the server considers
             // fresh — unable to retry even if the producers recovered at once.
-            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: preservedEntryIsDetailed(preserved) });
+            setCostsCache(cacheKey, {
+              value: preserved,
+              time: Date.now(),
+              detailed: preservedEntryIsDetailed(preserved),
+              producerFingerprint: previousEntry.producerFingerprint,
+            });
             resolve(preserved);
             return;
           }
@@ -1608,6 +1630,7 @@ module.exports = {
   buildCostsRouter,
   cachedUsageAgent,
   claudeCodeScanDays,
+  CONFIRMED_EMPTY_TTL_MS,
   costsCacheKey,
   createRefreshLimiter,
   preservedEntryIsDetailed,

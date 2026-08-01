@@ -5,7 +5,23 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildCostsRouter, producerFingerprint } = require('../server/routes/costs');
+const {
+  buildCostsRouter,
+  CONFIRMED_EMPTY_TTL_MS,
+  producerFingerprint,
+} = require('../server/routes/costs');
+
+const FIXED_CACHE_NOW = Date.parse('2026-08-15T12:00:00.000Z');
+
+async function withDateNow(now, run) {
+  const originalDateNow = Date.now;
+  Date.now = () => now;
+  try {
+    return await run();
+  } finally {
+    Date.now = originalDateNow;
+  }
+}
 
 function shiftMonth(month, delta) {
   const [year, number] = month.split('-').map(Number);
@@ -25,7 +41,7 @@ async function withCostsApp(monthAvailabilitySources, run) {
     const created = app.listen(0, '127.0.0.1', () => resolve(created));
   });
   try {
-    await run(`http://127.0.0.1:${server.address().port}`);
+    return await run(`http://127.0.0.1:${server.address().port}`);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -163,11 +179,11 @@ test('a not_configured producer blocks confirmed-empty evidence', async () => {
             openclawStatus: statuses.openclaw,
             hermesStatus: statuses.hermes,
             claudeCodeStatus: statuses.claude,
-            producerFingerprint: producerFingerprint(),
           },
         },
         time: Date.now(),
         detailed: true,
+        producerFingerprint: producerFingerprint(),
       },
     }));
   };
@@ -224,17 +240,18 @@ test('confirmed-empty evidence is bound to the producer configuration', async ()
       hermesStatus: 'ready',
       claudeCodeStatus: 'ready',
     };
-    if (includeFingerprint) meta.producerFingerprint = fingerprintValue;
-    fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
-      [`costs:month:${month}`]: {
-        value: {
-          source: 'combined.agent_usage',
-          summary: { periodTokens: 0, periodUsd: 0, scanTruncated: false },
-          meta,
-        },
-        time: Date.now(),
-        detailed: true,
+    const entry = {
+      value: {
+        source: 'combined.agent_usage',
+        summary: { periodTokens: 0, periodUsd: 0, scanTruncated: false },
+        meta,
       },
+      time: Date.now(),
+      detailed: true,
+    };
+    if (includeFingerprint) entry.producerFingerprint = fingerprintValue;
+    fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
+      [`costs:month:${month}`]: entry,
     }));
   };
 
@@ -259,6 +276,145 @@ test('confirmed-empty evidence is bound to the producer configuration', async ()
         assert.deepEqual(body.months.find((entry) => entry.month === month), testCase.expected, testCase.label);
       });
     }
+  } finally {
+    if (previousCacheDir === undefined) delete process.env.MC_COSTS_CACHE_DIR;
+    else process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('confirmed-empty evidence expires after CONFIRMED_EMPTY_TTL_MS', async () => {
+  const month = '2026-07';
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-months-cache-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+  const matchingFingerprint = producerFingerprint();
+  const sources = {
+    now: () => new Date(FIXED_CACHE_NOW),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+  };
+
+  const writeCachedEntry = ({ time, periodTokens = 0, periodUsd = 0 }) => {
+    fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
+      [`costs:month:${month}`]: {
+        value: {
+          source: 'combined.agent_usage',
+          summary: { periodTokens, periodUsd, scanTruncated: false },
+          meta: {
+            scanTruncated: false,
+            openclawStatus: 'ready',
+            hermesStatus: 'ready',
+            claudeCodeStatus: 'ready',
+          },
+        },
+        time,
+        detailed: true,
+        producerFingerprint: matchingFingerprint,
+      },
+    }));
+  };
+
+  const readMonth = async () => withCostsApp(sources, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    return body.months.find((entry) => entry.month === month);
+  });
+
+  try {
+    await withDateNow(FIXED_CACHE_NOW, async () => {
+      writeCachedEntry({ time: FIXED_CACHE_NOW - CONFIRMED_EMPTY_TTL_MS - 1 });
+      assert.deepEqual(await readMonth(), {
+        month,
+        hasData: false,
+        sources: [],
+        unknown: true,
+      });
+
+      writeCachedEntry({ time: FIXED_CACHE_NOW - CONFIRMED_EMPTY_TTL_MS + 1 });
+      assert.deepEqual(await readMonth(), {
+        month,
+        hasData: false,
+        sources: ['cached'],
+      });
+
+      writeCachedEntry({ time: FIXED_CACHE_NOW - CONFIRMED_EMPTY_TTL_MS - 1, periodTokens: 1 });
+      assert.deepEqual(await readMonth(), {
+        month,
+        hasData: true,
+        sources: ['cached'],
+      });
+    });
+  } finally {
+    if (previousCacheDir === undefined) delete process.env.MC_COSTS_CACHE_DIR;
+    else process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('producer paths never reach the API payload', async () => {
+  const month = '2026-07';
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-months-cache-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+  const matchingFingerprint = producerFingerprint();
+  fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
+    [`costs:month:${month}`]: {
+      value: {
+        source: 'combined.agent_usage',
+        period: {
+          key: 'month',
+          anchor: month,
+          start: '2026-07-01',
+          end: '2026-07-31',
+        },
+        summary: { periodTokens: 0, periodUsd: 0, scanTruncated: false },
+        daily: [],
+        dailyByModel: [],
+        modelKeys: [],
+        byService: [],
+        agents: [],
+        meta: {
+          scanTruncated: false,
+          openclawStatus: 'ready',
+          hermesStatus: 'ready',
+          claudeCodeStatus: 'no_usage',
+          producerFingerprint: matchingFingerprint,
+        },
+      },
+      time: FIXED_CACHE_NOW - 1000,
+      detailed: true,
+    },
+  }));
+
+  const sources = {
+    now: () => new Date(FIXED_CACHE_NOW),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+  };
+
+  try {
+    await withDateNow(FIXED_CACHE_NOW, async () => {
+      await withCostsApp(sources, async (base) => {
+        const monthsBody = await (await fetch(`${base}/api/costs/months`)).json();
+        assert.deepEqual(monthsBody.months.find((entry) => entry.month === month), {
+          month,
+          hasData: false,
+          sources: ['cached'],
+        }, 'legacy meta fingerprint must be hoisted to the cache entry for confirmation');
+
+        const response = await fetch(`${base}/api/costs?period=month&month=${month}`);
+        assert.equal(response.status, 200);
+        const result = await response.json();
+        const serialized = JSON.stringify(result);
+        assert.equal(Object.prototype.hasOwnProperty.call(result.meta || {}, 'producerFingerprint'), false);
+        assert.equal(serialized.includes('producerFingerprint'), false);
+        assert.equal(serialized.includes(matchingFingerprint), false);
+      });
+    });
   } finally {
     if (previousCacheDir === undefined) delete process.env.MC_COSTS_CACHE_DIR;
     else process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
@@ -375,6 +531,27 @@ test('month availability deduplicates concurrent source scans', async () => {
     assert.equal(secondResponse.status, 200);
     assert.equal(hermesCalls, 1);
   });
+});
+
+test('the producer fingerprint is stamped ONLY at the cache-entry level', () => {
+  // The route-level leak test above exercises the cached-serve path, but a
+  // fresh detailed scan serves its result object directly and the producers
+  // are exec-based, so that path cannot be driven from a unit test. Guard the
+  // regression avenue structurally instead: the only `producerFingerprint()`
+  // stamping site in the source must be the setCostsCache ENTRY literal —
+  // a second stamping site (e.g. back into response meta) turns this red.
+  const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+  const stampSites = routeSource.match(/producerFingerprint:\s*producerFingerprint\(\)/g) || [];
+  assert.equal(
+    stampSites.length,
+    1,
+    'exactly one fingerprint stamping site is allowed: the cache-entry literal; response meta must never carry it',
+  );
+  assert.match(
+    routeSource,
+    /setCostsCache\(cacheKey, \{\s*value: costsResult,\s*time: Date\.now\(\),\s*detailed: true,\s*producerFingerprint: producerFingerprint\(\),?\s*\}\)/,
+    'the sole stamping site must be the fresh-detailed cache entry, not a meta object',
+  );
 });
 
 test('Hermes month query excludes zero-token and zero-spend sessions', () => {
