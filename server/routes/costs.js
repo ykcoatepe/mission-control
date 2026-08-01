@@ -230,7 +230,12 @@ function createRefreshLimiter(maxConcurrent = 2) {
 
   const pump = () => {
     while (active < limit && queue.length > 0) {
-      const job = queue.shift();
+      // LIFO, deliberately: month navigation supersedes: the newest request is
+      // the month the user is actually looking at, and its page stops polling
+      // after a bounded window. Serving it first keeps bounded work from
+      // outliving its only consumer; superseded months still run as the queue
+      // drains, they just lose their place to the live selection.
+      const job = queue.pop();
       active += 1;
       Promise.resolve()
         .then(job.run)

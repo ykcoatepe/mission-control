@@ -69,6 +69,10 @@ import CostDriversSection from './costs/CostDriversSection'
 const STALE_COSTS_RETRY_INTERVAL_MS = 2500
 const STALE_COSTS_RETRY_LIMIT = 60
 const STALE_COSTS_RETRY_TIMEOUT_MS = STALE_COSTS_RETRY_INTERVAL_MS * STALE_COSTS_RETRY_LIMIT
+// A queued month can wait behind other scans for longer than the normal budget.
+// While the server still reports work in flight for this exact key, giving up
+// would strand a refresh that does land — but the wait stays bounded.
+const ACTIVE_REFRESH_RETRY_TIMEOUT_MS = 10 * 60 * 1000
 
 type CostsTokenData = TokenData & {
   meta?: TokenData['meta'] & {
@@ -178,7 +182,13 @@ export default function Costs() {
         staleCostsRetry.current = { key: retryKey, startedAt: now }
       }
 
-      return now - staleCostsRetry.current.startedAt < STALE_COSTS_RETRY_TIMEOUT_MS
+      // `meta.refreshing` stays true while the refresh for this key is queued or
+      // running, so the longer budget only applies while the server is actually
+      // still working on it.
+      const budget = tokens?.meta?.refreshing
+        ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS
+        : STALE_COSTS_RETRY_TIMEOUT_MS
+      return now - staleCostsRetry.current.startedAt < budget
         ? STALE_COSTS_RETRY_INTERVAL_MS
         : false
     },

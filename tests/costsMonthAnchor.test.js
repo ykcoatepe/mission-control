@@ -600,3 +600,26 @@ test('birthtime still promotes a genuinely late-appended anchored session', () =
     'positive birthtime evidence must still win the top slot',
   );
 });
+
+test('the newest queued month is served first so it outlives its poller', async () => {
+  const { createRefreshLimiter } = require('../server/routes/costs');
+  const limiter = createRefreshLimiter(1);
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  const order = [];
+  let releaseFirst;
+  // Occupies the only slot.
+  const running = limiter.run(() => new Promise((resolve) => { order.push('running'); releaseFirst = resolve; }));
+  await settle();
+
+  // Three months clicked through while the first scan is still busy.
+  const queued = ['superseded-a', 'superseded-b', 'currently-viewed'].map((name) =>
+    limiter.run(async () => { order.push(name); }));
+
+  releaseFirst();
+  await Promise.all([running, ...queued]);
+
+  assert.equal(order[0], 'running');
+  assert.equal(order[1], 'currently-viewed', `the month the user is looking at must not wait behind superseded ones (order: ${order.join(' -> ')})`);
+  assert.equal(order.length, 4, 'superseded months still run — work is deprioritized, never dropped');
+});
