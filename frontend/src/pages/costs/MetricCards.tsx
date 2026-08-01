@@ -40,6 +40,8 @@ interface MetricCardsProps {
   labels: { thisMonth: string; creditsLeft: string; dailyAvg: string; projected: string }
   activePeriodLabel: string
   apiEquivalentReliability: string
+  /** A finished calendar month: the third card shows the month TOTAL, not a projection. */
+  completePeriod?: boolean
 }
 
 export default function MetricCards({
@@ -60,11 +62,19 @@ export default function MetricCards({
   labels,
   activePeriodLabel,
   apiEquivalentReliability,
+  completePeriod = false,
 }: MetricCardsProps) {
   const isApiEquivalent = metricMode === 'api-equivalent'
   const estimateNote = apiEquivalentReliability === 'partial'
     ? 'Partial estimate · Public API prices; not your invoice'
     : 'Estimate · Public API prices; not your invoice'
+  // A month that has already ended is reported, not extrapolated.
+  const projectionLabel = isApiEquivalent
+    ? completePeriod ? 'API-Equivalent Month Total' : 'Projected API Equivalent'
+    : labels.projected
+  const projectionNote = isApiEquivalent
+    ? estimateNote
+    : completePeriod ? 'Final tracked spend for the month in view' : 'Projected if the current pace holds'
 
   return (
     <div
@@ -154,14 +164,14 @@ export default function MetricCards({
               <TrendingUp size={m ? 16 : 20} className={styles.iconOrange} />
             </div>
             <span className={m ? `${styles.cardLabel} ${styles.cardLabelMobile}` : styles.cardLabel}>
-              {isApiEquivalent ? 'Projected API Equivalent' : labels.projected}
+              {projectionLabel}
             </span>
           </div>
           <p className={m ? `${styles.cardValue} ${styles.cardValueMobile}` : styles.cardValue}>
             {projectedMonthly === null ? 'Unavailable' : <AnimatedCounter end={projectedMonthly} formatter={formatCurrency} />}
           </p>
           <div className={styles.cardNote}>
-            {isApiEquivalent ? estimateNote : 'Projected if the current pace holds'}
+            {projectionNote}
           </div>
         </div>
       </GlassCard>

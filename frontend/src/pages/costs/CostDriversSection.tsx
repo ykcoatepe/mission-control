@@ -39,6 +39,9 @@ export interface CostDriversSectionProps {
   codexbarActive: boolean
   codexbarCosts: CodexBarCostData | null
   codexbarLatest: CodexBarLatest | null
+  codexbarPeriodLabel: string
+  codexbarPeriodCost: number
+  codexbarPeriodTokens: number
   driverView: 'models' | 'sessions' | 'codexbar' | 'notes'
   setDriverView: (v: 'models' | 'sessions' | 'codexbar' | 'notes') => void
   tokenBreakdown: AggregatedBreakdownItem[]
@@ -60,6 +63,9 @@ export default function CostDriversSection({
   codexbarActive,
   codexbarCosts,
   codexbarLatest,
+  codexbarPeriodLabel,
+  codexbarPeriodCost,
+  codexbarPeriodTokens,
   driverView,
   setDriverView,
   tokenBreakdown,
@@ -217,7 +223,7 @@ export default function CostDriversSection({
                   >
                     {[
                       { label: 'Last 30 Days', value: formatCurrency(codexbarCosts.last30DaysCostUSD), sub: formatTokens(codexbarCosts.last30DaysTokens) + ' tokens', accent: '#FF9500' },
-                      { label: 'Session Today', value: formatCurrency(codexbarCosts.sessionCostUSD), sub: formatTokens(codexbarCosts.sessionTokens) + ' tokens', accent: '#FF9500' },
+                      { label: codexbarPeriodLabel, value: formatCurrency(codexbarPeriodCost), sub: formatTokens(codexbarPeriodTokens) + ' tokens', accent: '#FF9500' },
                       { label: 'Input', value: formatTokens(codexbarCosts.totals.inputTokens), sub: 'total', accent: '#007AFF' },
                       { label: 'Output', value: formatTokens(codexbarCosts.totals.outputTokens), sub: 'total', accent: '#32D74B' },
                     ].map(stat => (

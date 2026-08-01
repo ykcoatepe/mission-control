@@ -36,7 +36,7 @@ assert.ok(
   source.includes('setCalendarNow') &&
   source.includes('millisecondsUntilNextCalendarDay') &&
   source.includes("window.addEventListener('focus'") &&
-  source.includes('calendarRefreshQueryKeys(period)') &&
+  source.includes('calendarRefreshQueryKeys(period, monthAnchor)') &&
   source.includes('queryClient.invalidateQueries({ queryKey })') &&
   source.includes('codexbarRowsForPeriod(\n      codexbarCosts?.daily || [],\n      period,\n      calendarNow,'),
   'Costs page should refresh period bounds and both usage queries after local midnight or focus',
@@ -133,6 +133,55 @@ assert.ok(
 assert.ok(
   source.includes('budgetSpendValue({') && source.includes('hasAwsData'),
   'budget math should use the same selected tracked source as the cards and withhold incomplete coverage',
+);
+
+// --- Historical month navigation (month=YYYY-MM anchor) ---------------------
+
+assert.ok(
+  source.includes("const [monthAnchor, setMonthAnchor] = useState<string | null>(null)") &&
+  source.includes("const activeMonthAnchor = period === 'month' ? monthAnchor : null") &&
+  source.includes('const costsPath = costsQueryPath(period, activeMonthAnchor)') &&
+  source.includes("queryKey: ['api', costsPath]") &&
+  source.includes('queryFn: () => fetchJson<TokenData>(costsPath)'),
+  'Costs page should anchor the Monthly view through one query path that is also the react-query key',
+);
+
+assert.ok(
+  source.includes("return period === 'month' && monthAnchor\n    ? `/api/costs?period=${period}&month=${monthAnchor}`\n    : `/api/costs?period=${period}`"),
+  'the month anchor must only reach the API on the Monthly period',
+);
+
+assert.ok(
+  source.includes("if (period === 'month' && monthAnchor) return []"),
+  'anchored past months are immutable and must skip the calendar-day invalidation churn',
+);
+
+assert.ok(
+  source.includes('const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS)') &&
+  source.includes('disabled={!monthNav.canGoForward}') &&
+  source.includes('disabled={!monthNav.canGoBack}') &&
+  source.includes('canGoForward: active < current') &&
+  source.includes('canGoBack: active > floor'),
+  'the month navigator should stop at the current month going forward and at the history floor going back',
+);
+
+assert.ok(
+  source.includes('const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)'),
+  'stepping back onto the current month must clear the anchor so the live cache entry is reused',
+);
+
+assert.ok(
+  source.includes('const projectedMonthly = viewingPastMonth ? currentPeriodCost : dailyAvg * 30') &&
+  source.includes("{viewingPastMonth ? 'Month Total' : 'Projection'}") &&
+  source.includes("completePeriod ? current : dailyAverage * 30") &&
+  source.includes("? `${anchoredMonthLabel} tracked spend`"),
+  'a finished month must be reported as a total with its own name, never extrapolated as a projection',
+);
+
+assert.ok(
+  source.includes('const baseline = monthKeyLabel(previousMonthKey(monthAnchor as string))') &&
+  source.includes('return { period: `vs ${baseline}`, daily: `vs ${baseline} avg` }'),
+  'an anchored month should compare against the named previous month',
 );
 
 console.log('costs page behavior guards passed');

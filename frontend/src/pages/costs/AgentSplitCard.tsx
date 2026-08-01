@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { Loader2 } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
-import { formatApiEquivalentValue, formatCompactTokenValue, formatPreciseCurrency, formatTokens } from './lib'
+import { formatApiEquivalentValue, formatCompactTokenValue, formatPreciseCurrency, formatTokens, inlinePeriodLabel } from './lib'
 import type { AgentUsageData } from './types'
 import styles from './AgentSplitCard.module.css'
 
@@ -73,8 +73,8 @@ export default function AgentSplitCard({
             </h3>
             <div className={styles.subtitle}>
               {agentSplitPending
-                ? `Refreshing Agent Split for the selected ${activePeriodLabel.toLowerCase()} period…`
-                : `Showing agent/session split for the loaded ${agentSplitPeriodLabel.toLowerCase()} period.`}
+                ? `Refreshing Agent Split for the selected ${inlinePeriodLabel(activePeriodLabel)} period…`
+                : `Showing agent/session split for the loaded ${inlinePeriodLabel(agentSplitPeriodLabel)} period.`}
             </div>
             {!agentSplitPending && (
               <div className={styles.sourceNote}>
@@ -105,7 +105,7 @@ export default function AgentSplitCard({
                     Loading {activePeriodLabel} split
                   </div>
                   <div className={styles.pendingSubtitle}>
-                    Fetching fresh agent/session usage — old {agentSplitPeriodLabel.toLowerCase()} values are hidden.
+                    Fetching fresh agent/session usage — old {inlinePeriodLabel(agentSplitPeriodLabel)} values are hidden.
                   </div>
                 </div>
               </div>

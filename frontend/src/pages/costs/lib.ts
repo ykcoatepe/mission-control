@@ -389,6 +389,7 @@ export function apiEquivalentMetricValues({
   previousDayCount,
   reliability,
   previousReliability,
+  completePeriod = false,
 }: {
   periodCost: number | null
   previousPeriodCost: number | null
@@ -396,6 +397,8 @@ export function apiEquivalentMetricValues({
   previousDayCount: number
   reliability: string
   previousReliability: string
+  /** A finished calendar month: the "projection" is simply the actual month total. */
+  completePeriod?: boolean
 }): ApiEquivalentMetricValues {
   const available = reliability === 'estimated' || reliability === 'partial'
   const current = periodCost !== null && Number.isFinite(periodCost) ? Number(periodCost) : null
@@ -422,7 +425,7 @@ export function apiEquivalentMetricValues({
     previousPeriodCost: previous,
     dailyAverage,
     previousDailyAverage: previous === null ? null : previous / previousDays,
-    projectedMonthly: dailyAverage * 30,
+    projectedMonthly: completePeriod ? current : dailyAverage * 30,
   }
 }
 
@@ -506,11 +509,86 @@ export function millisecondsUntilNextCalendarDay(now = new Date()) {
   return Math.max(nextDay.getTime() - now.getTime(), 1)
 }
 
-export function calendarRefreshQueryKeys(period: 'day' | '7d' | 'month') {
+export function costsQueryPath(period: 'day' | '7d' | 'month', monthAnchor: string | null = null) {
+  return period === 'month' && monthAnchor
+    ? `/api/costs?period=${period}&month=${monthAnchor}`
+    : `/api/costs?period=${period}`
+}
+
+export function calendarRefreshQueryKeys(
+  period: 'day' | '7d' | 'month',
+  monthAnchor: string | null = null,
+): ReadonlyArray<readonly string[]> {
+  // A past month is immutable: crossing local midnight cannot change its numbers,
+  // so anchored views skip the calendar-day invalidation churn entirely.
+  if (period === 'month' && monthAnchor) return []
   return [
     ['api', '/api/costs/codexbar'],
-    ['api', `/api/costs?period=${period}`],
-  ] as const
+    ['api', costsQueryPath(period, monthAnchor)],
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Month anchor helpers (`YYYY-MM`, local calendar)
+// ---------------------------------------------------------------------------
+
+export const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/
+
+const monthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+
+export function isValidMonthKey(value: string | null | undefined): value is string {
+  return MONTH_ANCHOR_PATTERN.test(String(value ?? ''))
+}
+
+export function currentMonthKey(now = new Date()) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+export function shiftMonthKey(monthKey: string, delta: number) {
+  const [year, month] = monthKey.split('-').map(Number)
+  const shifted = new Date(year, month - 1 + delta, 1)
+  return currentMonthKey(shifted)
+}
+
+export function previousMonthKey(monthKey: string) {
+  return shiftMonthKey(monthKey, -1)
+}
+
+export function monthKeyLabel(monthKey: string) {
+  if (!isValidMonthKey(monthKey)) return monthKey
+  const [year, month] = monthKey.split('-').map(Number)
+  return monthLabelFormatter.format(new Date(year, month - 1, 1))
+}
+
+export function daysInMonthKey(monthKey: string) {
+  const [year, month] = monthKey.split('-').map(Number)
+  return new Date(year, month, 0).getDate()
+}
+
+/** True when the anchor names a calendar month that has already ended. */
+export function isPastMonthAnchor(monthAnchor: string | null | undefined, now = new Date()) {
+  return isValidMonthKey(monthAnchor) && monthAnchor < currentMonthKey(now)
+}
+
+/** Oldest month the navigator will walk back to. */
+export function monthAnchorFloor(now = new Date(), monthsBack = 24) {
+  return shiftMonthKey(currentMonthKey(now), -Math.abs(monthsBack))
+}
+
+export function monthNavigationState(monthAnchor: string | null, now = new Date(), monthsBack = 24) {
+  const current = currentMonthKey(now)
+  const active = isValidMonthKey(monthAnchor) ? monthAnchor : current
+  const floor = monthAnchorFloor(now, monthsBack)
+  return {
+    activeMonth: active,
+    currentMonth: current,
+    label: monthKeyLabel(active),
+    isCurrentMonth: active === current,
+    canGoBack: active > floor,
+    canGoForward: active < current,
+    previousMonth: previousMonthKey(active),
+    nextMonth: shiftMonthKey(active, 1),
+  }
 }
 
 function codexbarDateKey(date: Date) {
@@ -519,7 +597,23 @@ function codexbarDateKey(date: Date) {
   })
 }
 
-function codexbarPeriodBounds(period: 'day' | '7d' | 'month', now: Date, previous: boolean) {
+function codexbarPeriodBounds(
+  period: 'day' | '7d' | 'month',
+  now: Date,
+  previous: boolean,
+  monthAnchor: string | null = null,
+) {
+  // Anchored past month: the full calendar month, previous = the full month before it.
+  // Mirrors the backend rangeForPeriod anchored window.
+  if (period === 'month' && isPastMonthAnchor(monthAnchor, now)) {
+    const key = previous ? previousMonthKey(monthAnchor as string) : (monthAnchor as string)
+    const [year, month] = key.split('-').map(Number)
+    return {
+      start: codexbarDateKey(new Date(year, month - 1, 1)),
+      end: codexbarDateKey(new Date(year, month, 0)),
+    }
+  }
+
   if (period === 'month') {
     const end = new Date(now)
     if (previous) {
@@ -566,8 +660,9 @@ export function codexbarRowsForPeriod(
   days: CodexBarDailyEntry[] = [],
   period: 'day' | '7d' | 'month',
   now = new Date(),
+  monthAnchor: string | null = null,
 ) {
-  const bounds = codexbarPeriodBounds(period, now, false)
+  const bounds = codexbarPeriodBounds(period, now, false, monthAnchor)
   return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 
@@ -575,8 +670,9 @@ export function previousCodexbarRows(
   days: CodexBarDailyEntry[] = [],
   period: 'day' | '7d' | 'month',
   now = new Date(),
+  monthAnchor: string | null = null,
 ) {
-  const bounds = codexbarPeriodBounds(period, now, true)
+  const bounds = codexbarPeriodBounds(period, now, true, monthAnchor)
   return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 
@@ -603,10 +699,24 @@ export function buildCodexbarChartData(
   })
 }
 
-export function comparisonLabels(period: 'day' | '7d' | 'month') {
+export function comparisonLabels(
+  period: 'day' | '7d' | 'month',
+  monthAnchor: string | null = null,
+  now = new Date(),
+) {
   if (period === 'day') return { period: 'vs previous day', daily: 'vs previous day' }
   if (period === '7d') return { period: 'vs previous 7 days', daily: 'vs previous 7d avg' }
+  if (isPastMonthAnchor(monthAnchor, now)) {
+    const baseline = monthKeyLabel(previousMonthKey(monthAnchor as string))
+    return { period: `vs ${baseline}`, daily: `vs ${baseline} avg` }
+  }
   return { period: 'vs previous month', daily: 'vs previous month avg' }
+}
+
+// Generic period labels read naturally lowercased mid-sentence ("the loaded
+// monthly period"); month-name labels like "July 2026" must keep their casing.
+export function inlinePeriodLabel(label: string) {
+  return label === 'Daily' || label === '7 Days' || label === 'Monthly' ? label.toLowerCase() : label
 }
 
 // ---------------------------------------------------------------------------

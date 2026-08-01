@@ -24,6 +24,15 @@ import {
   awsBillingDataAvailable,
   apiEquivalentPeriodValue,
   awsIntegrationEnabled,
+  comparisonLabels,
+  costsQueryPath,
+  currentMonthKey,
+  daysInMonthKey,
+  isPastMonthAnchor,
+  monthKeyLabel,
+  monthNavigationState,
+  previousMonthKey,
+  shiftMonthKey,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -520,5 +529,167 @@ describe('CodexBar calendar periods', () => {
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=7d'],
     ])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Historical month anchor
+// ---------------------------------------------------------------------------
+
+describe('month anchor helpers', () => {
+  const now = new Date(2026, 7, 1, 14, 30) // 2026-08-01, local
+
+  it('formats and walks month keys across a year boundary', () => {
+    expect(currentMonthKey(now)).toBe('2026-08')
+    expect(monthKeyLabel('2026-07')).toBe('July 2026')
+    expect(previousMonthKey('2026-01')).toBe('2025-12')
+    expect(shiftMonthKey('2025-12', 1)).toBe('2026-01')
+    expect(shiftMonthKey('2026-08', -24)).toBe('2024-08')
+  })
+
+  it('knows the real length of each anchored month', () => {
+    expect(daysInMonthKey('2026-07')).toBe(31)
+    expect(daysInMonthKey('2026-06')).toBe(30)
+    expect(daysInMonthKey('2026-02')).toBe(28)
+    expect(daysInMonthKey('2024-02')).toBe(29)
+  })
+
+  it('treats only finished months as past anchors', () => {
+    expect(isPastMonthAnchor('2026-07', now)).toBe(true)
+    expect(isPastMonthAnchor('2026-08', now)).toBe(false)
+    expect(isPastMonthAnchor('2026-09', now)).toBe(false)
+    expect(isPastMonthAnchor(null, now)).toBe(false)
+    expect(isPastMonthAnchor('nonsense', now)).toBe(false)
+    expect(isPastMonthAnchor('2026-13', now)).toBe(false)
+  })
+
+  it('sends the anchor only on the Monthly period', () => {
+    expect(costsQueryPath('month', null)).toBe('/api/costs?period=month')
+    expect(costsQueryPath('month', '2026-07')).toBe('/api/costs?period=month&month=2026-07')
+    expect(costsQueryPath('7d', '2026-07')).toBe('/api/costs?period=7d')
+    expect(costsQueryPath('day', '2026-07')).toBe('/api/costs?period=day')
+  })
+
+  it('skips calendar-day invalidation for an immutable past month', () => {
+    expect(calendarRefreshQueryKeys('month', '2026-07')).toEqual([])
+    expect(calendarRefreshQueryKeys('month', null)).toEqual([
+      ['api', '/api/costs/codexbar'],
+      ['api', '/api/costs?period=month'],
+    ])
+    expect(calendarRefreshQueryKeys('7d', '2026-07')).toEqual([
+      ['api', '/api/costs/codexbar'],
+      ['api', '/api/costs?period=7d'],
+    ])
+  })
+
+  it('stops the navigator at the current month and at the history floor', () => {
+    const live = monthNavigationState(null, now, 24)
+    expect(live).toMatchObject({
+      activeMonth: '2026-08',
+      currentMonth: '2026-08',
+      label: 'August 2026',
+      isCurrentMonth: true,
+      canGoForward: false,
+      canGoBack: true,
+      previousMonth: '2026-07',
+    })
+
+    const anchored = monthNavigationState('2026-07', now, 24)
+    expect(anchored).toMatchObject({
+      activeMonth: '2026-07',
+      label: 'July 2026',
+      isCurrentMonth: false,
+      canGoForward: true,
+      canGoBack: true,
+      nextMonth: '2026-08',
+      previousMonth: '2026-06',
+    })
+
+    const floor = monthNavigationState('2024-08', now, 24)
+    expect(floor.canGoBack).toBe(false)
+    expect(floor.canGoForward).toBe(true)
+    expect(monthNavigationState('2024-09', now, 24).canGoBack).toBe(true)
+  })
+})
+
+describe('anchored CodexBar month rows', () => {
+  const rows = [
+    { date: '2026-06-11', totalCost: 1, totalTokens: 10, inputTokens: 0, outputTokens: 0, models: [] },
+    { date: '2026-07-01', totalCost: 2, totalTokens: 20, inputTokens: 0, outputTokens: 0, models: [] },
+    { date: '2026-07-31', totalCost: 4, totalTokens: 40, inputTokens: 0, outputTokens: 0, models: [] },
+    { date: '2026-08-05', totalCost: 8, totalTokens: 80, inputTokens: 0, outputTokens: 0, models: [] },
+  ]
+  const now = new Date('2026-08-14T12:00:00+03:00')
+
+  it('spans the whole anchored month regardless of today', () => {
+    const july = codexbarRowsForPeriod(rows, 'month', now, '2026-07')
+    expect(july).toHaveLength(31)
+    expect(july[0].date).toBe('2026-07-01')
+    expect(july.at(-1)?.date).toBe('2026-07-31')
+    expect(sumCostRows(july)).toBe(6)
+  })
+
+  it('uses the full previous calendar month as the anchored baseline', () => {
+    const june = previousCodexbarRows(rows, 'month', now, '2026-07')
+    expect(june).toHaveLength(30)
+    expect(june[0].date).toBe('2026-06-01')
+    expect(june.at(-1)?.date).toBe('2026-06-30')
+    expect(sumCostRows(june)).toBe(1)
+  })
+
+  it('leaves the live month and the other periods untouched', () => {
+    expect(codexbarRowsForPeriod(rows, 'month', now, '2026-08'))
+      .toEqual(codexbarRowsForPeriod(rows, 'month', now))
+    expect(codexbarRowsForPeriod(rows, '7d', now, '2026-07'))
+      .toEqual(codexbarRowsForPeriod(rows, '7d', now))
+    expect(previousCodexbarRows(rows, 'day', now, '2026-07'))
+      .toEqual(previousCodexbarRows(rows, 'day', now))
+  })
+
+  it('names the previous month in anchored comparison labels', () => {
+    expect(comparisonLabels('month', '2026-07', now)).toEqual({
+      period: 'vs June 2026',
+      daily: 'vs June 2026 avg',
+    })
+    expect(comparisonLabels('month', '2026-01', now)).toEqual({
+      period: 'vs December 2025',
+      daily: 'vs December 2025 avg',
+    })
+    expect(comparisonLabels('month', null, now)).toEqual({
+      period: 'vs previous month',
+      daily: 'vs previous month avg',
+    })
+    expect(comparisonLabels('month', '2026-08', now)).toEqual({
+      period: 'vs previous month',
+      daily: 'vs previous month avg',
+    })
+    expect(comparisonLabels('7d', '2026-07', now)).toEqual({
+      period: 'vs previous 7 days',
+      daily: 'vs previous 7d avg',
+    })
+  })
+
+  it('reports a finished month as a total instead of a projection', () => {
+    const complete = apiEquivalentMetricValues({
+      periodCost: 310,
+      previousPeriodCost: 300,
+      dayCount: 31,
+      previousDayCount: 30,
+      reliability: 'estimated',
+      previousReliability: 'estimated',
+      completePeriod: true,
+    })
+    expect(complete.projectedMonthly).toBe(310)
+    expect(complete.dailyAverage).toBeCloseTo(10)
+
+    const live = apiEquivalentMetricValues({
+      periodCost: 310,
+      previousPeriodCost: 300,
+      dayCount: 31,
+      previousDayCount: 30,
+      reliability: 'estimated',
+      previousReliability: 'estimated',
+    })
+    expect(live.projectedMonthly).toBeCloseTo(300)
   })
 })
