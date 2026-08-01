@@ -27,6 +27,9 @@ const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 // Mirrors the frontend navigator floor (lib.ts monthAnchorFloor).
 const MONTH_ANCHOR_HISTORY_MONTHS = 24;
 
+// Confirmed-empty evidence decays: transcripts for a past month can be restored or appended after the scan, and the cheap availability probes never inspect OpenClaw. After the TTL the month falls back to "unknown" (selectable), and selecting it runs a fresh detailed scan that re-stamps the entry. Calibration: detailed rescans are user-triggered and cheap at this cadence; revisit if users report months flickering back on.
+const CONFIRMED_EMPTY_TTL_MS = 24 * 60 * 60 * 1000;
+
 function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
@@ -64,6 +67,41 @@ function dayKeysBetween(start, end) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return keys;
+}
+
+function hostUserHome() {
+  const candidates = [
+    process.env.MC_USER_HOME,
+    '/Users/yordamkocatepe',
+    process.env.HOME,
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
+}
+
+function hermesProfileDbPath() {
+  const home = process.env.HOME || '/Users/yordamkocatepe';
+  const profile = process.env.HERMES_PROFILE || 'hmudur';
+  // An explicitly configured path WINS, even when it does not exist. Falling
+  // through to discovery would silently read a different profile's database
+  // than the operator asked for; a missing explicit path must surface as a
+  // failed producer instead (see hermesConfigured).
+  if (process.env.HERMES_STATE_DB) return process.env.HERMES_STATE_DB;
+  if (process.env.HERMES_PROFILE_DIR) return path.join(process.env.HERMES_PROFILE_DIR, 'state.db');
+  const candidates = [
+    process.env.HERMES_STATE_DB,
+    process.env.HERMES_PROFILE_DIR ? path.join(process.env.HERMES_PROFILE_DIR, 'state.db') : null,
+    path.join(home, '.hermes', 'profiles', profile, 'state.db'),
+    home.endsWith(path.join('.hermes', 'profiles', profile, 'home')) ? path.resolve(home, '..', 'state.db') : null,
+    '/Users/yordamkocatepe/.hermes/profiles/hmudur/state.db',
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
+}
+
+// Identity of the data sources a detailed scan actually read. Confirmed-empty
+// evidence is only valid under the SAME identity: pointing the server at a
+// different OpenClaw home or Hermes profile invalidates old emptiness.
+function producerFingerprint() {
+  return [hostUserHome(), hermesProfileDbPath()].join('|');
 }
 
 /**
@@ -441,7 +479,7 @@ function buildHermesUsageRows(rows, keys) {
   return { daily, byService, dailyByModel, periodTokens, periodUsd };
 }
 
-function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
+function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailabilitySources }) {
   const router = express.Router();
   const execPromise = util.promisify(exec);
   const costsCache = new Map();
@@ -499,6 +537,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
   const costsCacheTtl = 60000;
   const costsFallbackCacheTtl = 15000;
+  const monthsAvailabilityCacheTtl = 60000;
+  let monthsAvailabilityCache = null;
+  let monthsAvailabilityInFlight = null;
   const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
   // OpenClaw's session-cost-usage aggregation can take ~55s for 7d on Yordam's host.
   // A too-low timeout silently produced null OpenClaw data, which mergeUsage then rendered as 0 tokens.
@@ -519,6 +560,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       const raw = JSON.parse(fs.readFileSync(costsDiskCacheFile, 'utf8'));
       Object.entries(raw || {}).forEach(([key, entry]) => {
         if (entry?.value && Number.isFinite(Number(entry.time))) {
+          const legacyFingerprint = entry.value?.meta?.producerFingerprint;
+          if (legacyFingerprint !== undefined) {
+            if (entry.producerFingerprint === undefined) entry.producerFingerprint = legacyFingerprint;
+            delete entry.value.meta.producerFingerprint;
+          }
           costsCache.set(key, entry);
         }
       });
@@ -538,15 +584,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   loadCostsCache();
-
-  function hostUserHome() {
-    const candidates = [
-      process.env.MC_USER_HOME,
-      '/Users/yordamkocatepe',
-      process.env.HOME,
-    ].filter(Boolean);
-    return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
-  }
 
   // execPromise captures the child's stderr and then it is dropped on the floor,
   // so every warning a child tool emits (scan truncation, degraded modes) became
@@ -616,25 +653,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return trimmed ? JSON.parse(trimmed) : [];
   }
 
-  function hermesProfileDbPath() {
-    const home = process.env.HOME || '/Users/yordamkocatepe';
-    const profile = process.env.HERMES_PROFILE || 'hmudur';
-    // An explicitly configured path WINS, even when it does not exist. Falling
-    // through to discovery would silently read a different profile's database
-    // than the operator asked for; a missing explicit path must surface as a
-    // failed producer instead (see hermesConfigured).
-    if (process.env.HERMES_STATE_DB) return process.env.HERMES_STATE_DB;
-    if (process.env.HERMES_PROFILE_DIR) return path.join(process.env.HERMES_PROFILE_DIR, 'state.db');
-    const candidates = [
-      process.env.HERMES_STATE_DB,
-      process.env.HERMES_PROFILE_DIR ? path.join(process.env.HERMES_PROFILE_DIR, 'state.db') : null,
-      path.join(home, '.hermes', 'profiles', profile, 'state.db'),
-      home.endsWith(path.join('.hermes', 'profiles', profile, 'home')) ? path.resolve(home, '..', 'state.db') : null,
-      '/Users/yordamkocatepe/.hermes/profiles/hmudur/state.db',
-    ].filter(Boolean);
-    return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
-  }
-
   function hermesConfigured() {
     // An explicit path or profile name is a statement of intent: a db that is temporarily
     // missing or on an unmounted volume is a producer that FAILED, not one that
@@ -646,6 +664,192 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     } catch {
       return false;
     }
+  }
+
+  async function hermesUsageMonths() {
+    const rows = await sqliteJson(hermesProfileDbPath(), `
+      SELECT DISTINCT strftime('%Y-%m', date(started_at, 'unixepoch', 'localtime')) AS month
+      FROM sessions
+      WHERE started_at IS NOT NULL
+        AND (
+          COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+            + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) > 0
+          OR COALESCE(actual_cost_usd, estimated_cost_usd, 0) > 0
+        )
+      ORDER BY month DESC
+    `);
+    return rows.map((row) => row.month).filter(isValidMonthAnchor);
+  }
+
+  async function codexbarUsageMonths() {
+    // This deliberately stays at CodexBar's normal reliable lookback. The picker
+    // marks older gaps as unknown rather than performing an expensive OpenClaw scan.
+    // Use the shared scan path so this cheap availability request obeys the
+    // refresh limit and preserves the missing-binary classification used by the
+    // detailed costs producer.
+    const stdout = await codexbarScan(70);
+    const raw = mergeCodexBarReports(JSON.parse(stdout));
+    if (!raw || !Array.isArray(raw.daily)) {
+      throw new Error('CodexBar returned an invalid usage report');
+    }
+    return raw.daily
+      .filter((day) => Number(day.totalTokens || 0) > 0 || Number(day.totalCost || 0) > 0)
+      .map((day) => String(day.date || '').slice(0, 7))
+      .filter(isValidMonthAnchor);
+  }
+
+  /**
+   * Detailed month results include OpenClaw, unlike the cheap availability
+   * probes. They are the only evidence that can settle a month as empty.
+   */
+  function cachedDetailedMonths() {
+    const data = new Set();
+    const confirmedEmpty = new Set();
+    const currentProducerFingerprint = producerFingerprint();
+    let hasEntries = false;
+    for (const [key, entry] of costsCache.entries()) {
+      const match = /^costs:month:(\d{4}-(?:0[1-9]|1[0-2]))$/.exec(key);
+      const value = entry?.value;
+      if (!match || entry?.detailed !== true || value?.source !== 'combined.agent_usage') continue;
+      hasEntries = true;
+      const month = match[1];
+      const hasUsage = Number(value.summary?.periodTokens || 0) > 0
+        || Number(value.summary?.periodUsd || 0) > 0;
+      if (hasUsage) {
+        data.add(month);
+        continue;
+      }
+      // Confirmed-empty requires that the scan actually LOOKED everywhere:
+      // 'not_configured' means a producer was skipped, and evidence gathered
+      // without it cannot survive that tool being installed later.
+      const meta = value.meta || {};
+      const statuses = [meta.openclawStatus, meta.hermesStatus, meta.claudeCodeStatus];
+      const fullCoverage = statuses.every((status) => status === 'ready' || status === 'no_usage');
+      const fingerprintMatches = typeof entry.producerFingerprint === 'string'
+        && entry.producerFingerprint.length > 0
+        && entry.producerFingerprint === currentProducerFingerprint;
+      const evidenceFresh = Date.now() - (entry.time || 0) <= CONFIRMED_EMPTY_TTL_MS;
+      if (value.meta?.scanTruncated !== true
+        && value.summary?.scanTruncated !== true
+        && fullCoverage
+        && fingerprintMatches
+        && evidenceFresh) {
+        confirmedEmpty.add(month);
+      }
+    }
+    return { data, confirmedEmpty, hasEntries };
+  }
+
+  function sourceStatusFor({ configured, load }) {
+    if (!configured()) return Promise.resolve({ status: 'not_configured', months: new Set() });
+    return Promise.resolve()
+      .then(load)
+      .then((months) => ({
+        status: months.length > 0 ? 'ready' : 'no_usage',
+        months: new Set(months),
+      }))
+      .catch((error) => ({
+        status: configured() ? 'unavailable' : 'not_configured',
+        months: new Set(),
+        error,
+      }));
+  }
+
+  function codexbarMonthIsFullyCovered(month, scanStart) {
+    const scanStartMonth = monthKeyOf(scanStart);
+    return scanStartMonth < month
+      || (scanStartMonth === month && scanStart.getDate() === 1);
+  }
+
+  function monthAvailabilityHasUnavailable(value) {
+    return Object.values(value?.sourceStatus || {}).some((status) => status === 'unavailable');
+  }
+
+  async function monthAvailability() {
+    const nowForMonth = () => monthAvailabilitySources?.now?.() || new Date();
+    // A cache filled in the last minute of a month must not survive the rollover — a missing current month renders as confirmed empty.
+    if (monthsAvailabilityCache
+      && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl
+      && monthsAvailabilityCache.month === monthKeyOf(nowForMonth())) {
+      return monthsAvailabilityCache.value;
+    }
+    if (monthsAvailabilityInFlight) return monthsAvailabilityInFlight;
+
+    monthsAvailabilityInFlight = (async () => {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const now = nowForMonth();
+        const current = monthKeyOf(now);
+        const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
+        const months = [];
+        for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
+
+        const [hermes, codexbar, cached] = await Promise.all([
+          sourceStatusFor({
+            configured: monthAvailabilitySources?.hermesConfigured || hermesConfigured,
+            load: monthAvailabilitySources?.hermes || hermesUsageMonths,
+          }),
+          sourceStatusFor({
+            configured: monthAvailabilitySources?.codexbarConfigured || codexbarConfigured,
+            load: monthAvailabilitySources?.codexbar || codexbarUsageMonths,
+          }),
+          Promise.resolve((monthAvailabilitySources?.cachedDetailedMonths || cachedDetailedMonths)()),
+        ]);
+        if (hermes.error) console.warn('[Costs months hermes]', hermes.error.message || hermes.error);
+        if (codexbar.error) console.warn('[Costs months codexbar]', codexbar.error.message || codexbar.error);
+
+        // The scans can cross a month rollover; content built for the old month
+        // must never be cached under the new month's tag (TOCTOU). Rebuild once
+        // from a fresh clock; if a second rollover happens mid-rebuild (absurd),
+        // serve the result uncached.
+        const crossedMonth = monthKeyOf(nowForMonth()) !== current;
+        if (crossedMonth && attempt === 0) continue;
+
+        const cachedMonths = cached || { data: new Set(), confirmedEmpty: new Set(), hasEntries: false };
+        const sourceStatus = {
+          hermes: hermes.status,
+          codexbar: codexbar.status,
+          cached: cachedMonths.hasEntries ? 'ready' : 'no_usage',
+        };
+        const scanStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69);
+        const value = {
+          months: months.map((month) => {
+            const sources = [];
+            if (hermes.months.has(month)) sources.push('hermes');
+            if (codexbar.months.has(month)) sources.push('codexbar');
+            const cachedHasData = cachedMonths.data?.has(month);
+            // Confirmed-empty is only meaningful for COMPLETED months: the live
+            // month is mutable, and usage can start a minute from now.
+            const cachedConfirmsEmpty = month !== current && cachedMonths.confirmedEmpty?.has(month);
+            if (cachedHasData || cachedConfirmsEmpty) sources.push('cached');
+            const hasData = sources.some((source) => source !== 'cached') || Boolean(cachedHasData);
+            // Cheap probes do not inspect OpenClaw. Only a clean detailed cache
+            // entry can prove an otherwise empty month is actually empty.
+            const unknown = !hasData && !cachedConfirmsEmpty;
+            return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
+          }),
+          generatedAt: now.toISOString(),
+          sourceStatus,
+          partial: monthAvailabilityHasUnavailable({ sourceStatus })
+            || months.some((month) => !codexbarMonthIsFullyCovered(month, scanStart)),
+        };
+        if (crossedMonth) return value;
+
+        // A concurrent refresh may discover one temporarily failed producer after
+        // a healthy answer. Keep the fresh healthier answer until its TTL ends.
+        const cachedValue = monthsAvailabilityCache;
+        if (!cachedValue
+          || Date.now() - cachedValue.time >= monthsAvailabilityCacheTtl
+          || cachedValue.month !== monthKeyOf(nowForMonth())
+          || monthAvailabilityHasUnavailable(cachedValue.value)
+          || !monthAvailabilityHasUnavailable(value)) {
+          monthsAvailabilityCache = { time: Date.now(), month: current, value };
+        }
+        return monthsAvailabilityCache.value;
+      }
+    })().finally(() => {
+      monthsAvailabilityInFlight = null;
+    });
+    return monthsAvailabilityInFlight;
   }
 
   async function hermesUsageSummary(period = 'month', monthAnchor = null) {
@@ -1146,9 +1350,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   function detailedCostsResult(period, combinedUsage, meta = {}, monthAnchor = null) {
+    const detailedMeta = { ...meta };
+    delete detailedMeta.producerFingerprint;
+    const usageWithoutFingerprint = { ...combinedUsage };
+    delete usageWithoutFingerprint.producerFingerprint;
+    const combinedMeta = { ...(combinedUsage.meta || {}) };
+    delete combinedMeta.producerFingerprint;
     const normalizedUsage = normalizeUsageCosts({
-      ...combinedUsage,
-      meta: { ...(combinedUsage.meta || {}), ...meta },
+      ...usageWithoutFingerprint,
+      meta: { ...combinedMeta, ...detailedMeta },
     });
     const rangeRows = normalizedUsage.daily || [];
     return attachCostsMeta({
@@ -1173,7 +1383,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       costReliability: normalizedUsage.costReliability,
       apiEquivalentReliability: normalizedUsage.apiEquivalentReliability,
       budget: mcConfig.budget || { monthly: 0 },
-    }, meta);
+    }, detailedMeta);
   }
 
   function refreshCostsCache(cacheKey, period, monthAnchor = null) {
@@ -1236,7 +1446,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               preservedPreviousClaudeCode,
               preservedPreviousHermes,
             }, monthAnchor);
-            setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
+            setCostsCache(cacheKey, {
+              value: costsResult,
+              time: Date.now(),
+              detailed: true,
+              producerFingerprint: producerFingerprint(),
+            });
             resolve(costsResult);
             return;
           }
@@ -1270,7 +1485,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
             // needsCurrentPeriodRefresh deliberately never fires for an anchored
             // month, the page would poll against a value the server considers
             // fresh — unable to retry even if the producers recovered at once.
-            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: preservedEntryIsDetailed(preserved) });
+            setCostsCache(cacheKey, {
+              value: preserved,
+              time: Date.now(),
+              detailed: preservedEntryIsDetailed(preserved),
+              producerFingerprint: previousEntry.producerFingerprint,
+            });
             resolve(preserved);
             return;
           }
@@ -1392,6 +1612,17 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     }
   });
 
+  router.get('/api/costs/months', async (_req, res) => {
+    try {
+      return res.json(await monthAvailability());
+    } catch (error) {
+      // `monthAvailability` normally absorbs individual producer failures; this
+      // catches only unexpected endpoint-level failures without exposing internals.
+      console.error('[Costs months]', error.message);
+      return res.status(500).json({ error: 'Failed to load month availability' });
+    }
+  });
+
   return router;
 }
 
@@ -1399,6 +1630,7 @@ module.exports = {
   buildCostsRouter,
   cachedUsageAgent,
   claudeCodeScanDays,
+  CONFIRMED_EMPTY_TTL_MS,
   costsCacheKey,
   createRefreshLimiter,
   preservedEntryIsDetailed,
@@ -1407,4 +1639,5 @@ module.exports = {
   rangeForPeriod,
   shiftMonthAnchor,
   sumPreviousApiEquivalentUsd,
+  producerFingerprint,
 };

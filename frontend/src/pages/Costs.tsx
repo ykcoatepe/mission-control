@@ -57,6 +57,8 @@ import {
   budgetSpendValue,
   awsBillingDataAvailable,
   awsIntegrationEnabled,
+  currentMonthKey,
+  shouldClearMonthAnchor,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -89,6 +91,22 @@ type CostsTokenData = TokenData & {
   }
 }
 
+type MonthAvailabilityResponse = {
+  months: Array<{
+    month: string
+    hasData: boolean
+    sources: string[]
+    unknown?: boolean
+  }>
+  generatedAt: string
+  partial: boolean
+  sourceStatus: {
+    hermes: 'ready' | 'no_usage' | 'unavailable' | 'not_configured'
+    codexbar: 'ready' | 'no_usage' | 'unavailable' | 'not_configured'
+    cached: 'ready' | 'no_usage'
+  }
+}
+
 
 export default function Costs() {
   const m = useIsMobile()
@@ -103,6 +121,9 @@ export default function Costs() {
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
   const [calendarNow, setCalendarNow] = useState(() => new Date())
   const staleCostsRetry = useRef<{ key: string; startedAt: number; settleResets: number } | null>(null)
+  // React Compiler rejects reading/writing a useRef during render here, so keep
+  // the same render-phase sentinel semantics as the budget initialization below.
+  const [lastServerMonth, setLastServerMonth] = useState<string | null>(null)
 
   // Only Monthly honours the anchor; Daily / 7 Days always query the live window.
   const activeMonthAnchor = period === 'month' ? monthAnchor : null
@@ -139,6 +160,7 @@ export default function Costs() {
   const { data: configRaw } = useApi<ConfigData>('/api/config')
   const { data: sessionsRaw } = useApi<{ sessions: SessionData[] }>('/api/sessions')
   const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>(codexbarQueryPath(activeMonthAnchor, calendarNow))
+  const { data: monthAvailability } = useApi<MonthAvailabilityResponse>('/api/costs/months')
 
   const config: ConfigData = configRaw ?? { modules: {} }
   const sessions: SessionData[] = useMemo(() => sessionsRaw?.sessions ?? [], [sessionsRaw])
@@ -229,7 +251,25 @@ export default function Costs() {
   const tokenData: TokenData | null = costsQuery.data ?? null
   // The server's own calendar month: it normalizes anchors against its clock, so
   // past-vs-current classification must follow it, not the browser's time zone.
-  const serverMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  const payloadServerMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  // A query-key transition (uncached anchored month) momentarily has no data;
+  // collapsing to the browser clock here lets the anchor-clearing effect wipe
+  // a just-selected month at a timezone boundary. Retain the last known server
+  // month across transitions (render-phase sentinel, same style as
+  // the budget init below).
+  if (payloadServerMonth && payloadServerMonth !== lastServerMonth) {
+    setLastServerMonth(payloadServerMonth)
+  }
+  const serverMonth = payloadServerMonth ?? lastServerMonth
+  const currentServerMonth = currentMonthKey(calendarNow, serverMonth)
+
+  // A server-calendar rollover can turn a formerly anchored month into the
+  // live view. Clear it so React Query resumes using the unanchored cache key.
+  useEffect(() => {
+    if (!shouldClearMonthAnchor(monthAnchor, currentServerMonth)) return undefined
+    const clearAnchorTimer = window.setTimeout(() => setMonthAnchor(null), 0)
+    return () => window.clearTimeout(clearAnchorTimer)
+  }, [currentServerMonth, monthAnchor])
   // Classified by the SERVER's month, so a browser in another time zone cannot
   // label a live month-to-date payload as a completed month (or the reverse).
   // Falls back to the browser clock only before the first payload arrives.
@@ -975,6 +1015,8 @@ export default function Costs() {
           setMonthAnchor={setMonthAnchor}
           calendarNow={calendarNow}
           serverMonth={serverMonth}
+          monthAvailability={monthAvailability?.months ?? []}
+          monthAvailabilityKnown={Boolean(monthAvailability)}
           viewingPastMonth={viewingPastMonth}
           anchoredMonthLabel={anchoredMonthLabel}
           activePeriodLabel={activePeriodLabel}

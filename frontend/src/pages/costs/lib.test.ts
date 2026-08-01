@@ -32,7 +32,11 @@ import {
   isPastMonthAnchor,
   monthKeyLabel,
   monthNavigationState,
+  monthPickerGrid,
+  monthPickerYearBounds,
+  nextSelectableIndex,
   previousMonthKey,
+  shouldClearMonthAnchor,
   shiftMonthKey,
 } from './lib'
 
@@ -527,6 +531,7 @@ describe('CodexBar calendar periods', () => {
 
   it('refreshes CodexBar and the active usage period at a calendar boundary', () => {
     expect(calendarRefreshQueryKeys('7d')).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=7d'],
     ])
@@ -580,14 +585,17 @@ describe('month anchor helpers', () => {
 
   it('refreshes anchored calendar metadata across a day boundary', () => {
     expect(calendarRefreshQueryKeys('month', '2026-07', new Date(2026, 7, 1))).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar?month=2026-07'],
       ['api', '/api/costs?period=month&month=2026-07'],
     ])
     expect(calendarRefreshQueryKeys('month', null)).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=month'],
     ])
     expect(calendarRefreshQueryKeys('7d', '2026-07')).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=7d'],
     ])
@@ -763,5 +771,83 @@ describe('server-authoritative month classification', () => {
     expect(currentMonthKey(browserNow, null)).toBe('2026-09')
     expect(currentMonthKey(browserNow, undefined)).toBe('2026-09')
     expect(currentMonthKey(browserNow, 'garbage')).toBe('2026-09')
+  })
+})
+
+describe('month picker availability grid', () => {
+  const now = new Date('2026-08-14T12:00:00+03:00')
+  const browserNow = new Date(2026, 8, 1, 0, 30)
+
+  it('uses the same floor and current-year bounds as the arrow navigator', () => {
+    expect(monthPickerYearBounds(now, 24)).toEqual({
+      floor: '2024-08',
+      current: '2026-08',
+      minimumYear: 2024,
+      maximumYear: 2026,
+    })
+  })
+
+  it('uses the server-authoritative month for the grid ceiling and history floor', () => {
+    expect(monthPickerYearBounds(browserNow, 24, '2026-08')).toEqual({
+      floor: '2024-08',
+      current: '2026-08',
+      minimumYear: 2024,
+      maximumYear: 2026,
+    })
+    expect(monthPickerGrid(2026, [], false, browserNow, 24, '2026-08')[8])
+      .toMatchObject({ month: '2026-09', selectable: false, outsideRange: true })
+  })
+
+  it('keeps unknown months selectable and fades only confirmed empty or out-of-range months', () => {
+    const grid = monthPickerGrid(2026, [
+      { month: '2026-07', hasData: true, sources: ['hermes'] },
+      { month: '2026-06', hasData: false, sources: [] },
+      { month: '2026-05', hasData: false, sources: [], unknown: true },
+    ], true, now, 24)
+
+    expect(grid[6]).toMatchObject({ month: '2026-07', selectable: true, unknown: false })
+    expect(grid[5]).toMatchObject({ month: '2026-06', selectable: false, unknown: false })
+    expect(grid[4]).toMatchObject({ month: '2026-05', selectable: true, unknown: true })
+    expect(grid[8]).toMatchObject({ month: '2026-09', selectable: false, outsideRange: true })
+  })
+
+  it('keeps the live month selectable when availability reports no data', () => {
+    const grid = monthPickerGrid(2026, [
+      { month: '2026-08', hasData: false, sources: [] },
+    ], true, now, 24)
+
+    expect(grid[7]).toMatchObject({ month: '2026-08', selectable: true, unknown: false, outsideRange: false })
+  })
+
+  it('does not mistake an unavailable response for confirmed empty months', () => {
+    const grid = monthPickerGrid(2024, [], false, now, 24)
+    expect(grid[7]).toMatchObject({ month: '2024-08', selectable: true, unknown: true })
+    expect(grid[6]).toMatchObject({ month: '2024-07', selectable: false, outsideRange: true })
+  })
+})
+
+describe('month picker keyboard navigation', () => {
+  const months = Array.from({ length: 12 }, (_, index) => ({ selectable: index !== 1 && index !== 4 }))
+
+  it('skips disabled gaps in the pressed direction', () => {
+    expect(nextSelectableIndex(months, 0, 1)).toBe(2)
+    expect(nextSelectableIndex(months, 5, -1)).toBe(3)
+  })
+
+  it('clamps at a grid edge when no selectable month remains', () => {
+    expect(nextSelectableIndex(months, 0, -1)).toBe(0)
+    expect(nextSelectableIndex(months, 11, 1)).toBe(11)
+  })
+
+  it('is a no-op for an all-disabled row', () => {
+    expect(nextSelectableIndex([{ selectable: false }, { selectable: false }, { selectable: false }], 1, 1)).toBe(1)
+  })
+})
+
+describe('server month anchor clearing', () => {
+  it('clears an active anchor once it equals the server current month', () => {
+    expect(shouldClearMonthAnchor('2026-08', '2026-08')).toBe(true)
+    expect(shouldClearMonthAnchor('2026-07', '2026-08')).toBe(false)
+    expect(shouldClearMonthAnchor(null, '2026-08')).toBe(false)
   })
 })

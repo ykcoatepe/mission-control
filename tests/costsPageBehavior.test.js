@@ -17,6 +17,8 @@ const filesToCheck = [
   path.join(costsDir, 'types.ts'),
 ].filter(f => fs.existsSync(f));
 const source = filesToCheck.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+const costPulseHeaderSource = fs.readFileSync(path.join(costsDir, 'CostPulseHeader.tsx'), 'utf8');
+const costPulseHeaderStyles = fs.readFileSync(path.join(costsDir, 'CostPulseHeader.module.css'), 'utf8');
 
 assert.ok(
   source.includes("tokens?.source === 'sessions.fast_fallback'") && source.includes('tokens?.meta?.refreshing') && source.includes('tokens?.meta?.stale'),
@@ -32,6 +34,12 @@ assert.ok(
   source.includes('const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow, serverMonth)') &&
   source.includes('serverMonth={serverMonth}'),
   'past-vs-current classification must follow the server calendar, not the browser time zone',
+);
+
+assert.ok(
+  source.includes('setLastServerMonth(payloadServerMonth)') &&
+  source.includes('const serverMonth = payloadServerMonth ?? lastServerMonth'),
+  'the server month must survive query-key transitions or a timezone boundary wipes a just-selected anchor',
 );
 
 assert.ok(
@@ -82,6 +90,11 @@ assert.ok(
   source.includes('queryClient.invalidateQueries({ queryKey })') &&
   source.includes('codexbarRowsForPeriod(\n      codexbarDailyRows,\n      period,\n      calendarNow,'),
   'Costs page should refresh period bounds and both usage queries after local midnight or focus',
+);
+
+assert.ok(
+  source.includes("['api', '/api/costs/months'],"),
+  'the month picker\'s availability data must revalidate with the calendar flow',
 );
 
 assert.ok(
@@ -229,6 +242,57 @@ assert.ok(
 assert.ok(
   source.includes('const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)'),
   'stepping back onto the current month must clear the anchor so the live cache entry is reused',
+);
+
+assert.ok(
+  source.includes('const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)') &&
+  source.includes('ref={monthPickerTriggerRef}') &&
+  source.includes('monthPickerTriggerRef.current?.focus()') &&
+  source.includes('const closeMonthPicker = () =>'),
+  'the picker must return focus to its month-label trigger when it closes',
+);
+
+assert.ok(
+  source.includes('wasPickerOpen') &&
+  source.includes('pickerOpen && !wasPickerOpen.current'),
+  'focus into the dialog fires only on the closed-to-open transition, never on re-renders',
+);
+
+assert.ok(
+  source.includes('nextSelectableIndex(pickerMonths, index, delta)') &&
+  source.includes('for (let index = from + step; index >= 0 && index < months.length; index += step)'),
+  'arrow navigation must scan past disabled months instead of letting a gap block the grid',
+);
+
+assert.ok(
+  source.includes("if (key !== 'month') setPickerOpen(false)") &&
+  source.includes("document.removeEventListener('pointerdown', closeOnOutsideClick)"),
+  'leaving Monthly must close the picker so its document listeners are cleaned up',
+);
+
+assert.ok(
+  source.includes('shouldClearMonthAnchor(monthAnchor, currentServerMonth)') &&
+  source.includes('window.setTimeout(() => setMonthAnchor(null), 0)'),
+  'a server-calendar advance must clear an anchor that has become the live current month',
+);
+
+assert.ok(
+  source.includes("useApi<MonthAvailabilityResponse>('/api/costs/months')") &&
+  source.includes('aria-haspopup="dialog"') &&
+  source.includes('monthPickerGrid(') &&
+  source.includes('aria-disabled={!item.selectable}'),
+  'the month label should open an availability-aware, accessible picker rather than a static label',
+);
+
+assert.ok(
+  source.includes('<GlassCard delay={0} noPad overflowVisible={pickerOpen}>') &&
+  costPulseHeaderStyles.includes('max-width: min(292px, calc(100vw - 32px))') &&
+  source.includes('translateX(') &&
+  source.includes('window.innerWidth - 8 -') &&
+  costPulseHeaderSource.includes('ResizeObserver') &&
+  costPulseHeaderStyles.includes('translate: -50% 0;') &&
+  costPulseHeaderStyles.includes('grid-template-columns: repeat(3, minmax(0, 1fr));'),
+  'a one-shot clamp measurement goes stale when late-arriving data re-flows the layout; the picker must re-clamp on layout changes',
 );
 
 assert.ok(
