@@ -477,6 +477,21 @@ export default function Costs() {
           item.apiEquivalentStatus !== 'unavailable' && item.apiEquivalentStatus !== 'not_applicable',
         )
       })
+    } else if (viewingPastMonth) {
+      // The anchored ledger has not landed yet (fast fallback / refresh). Live
+      // sessions are NOT that month's models — the anchored codexbar rows are
+      // the only historical source; an empty result is the honest answer.
+      codexbarPeriodDays.forEach(day => {
+        ;(day.models || []).forEach(model => {
+          addBucket(
+            model.model || 'Unknown',
+            model.totalTokens || 0,
+            model.cost || 0,
+            model.cost || 0,
+            !isLocalModel(model.model || ''),
+          )
+        })
+      })
     } else {
       sessions.forEach(session => {
         addBucket(
@@ -508,7 +523,7 @@ export default function Costs() {
         share: total > 0 ? (item.tokens / total) * 100 : 0,
       }))
       .sort((a, b) => b.tokens - a.tokens)
-  }, [ledgerActive, modelColors, sessions, tokenData])
+  }, [codexbarPeriodDays, ledgerActive, modelColors, sessions, viewingPastMonth, tokenData])
   const tokenBreakdown = allTokenBreakdown.slice(0, 8)
 
   if (loading) {
@@ -741,8 +756,10 @@ export default function Costs() {
       : null,
     topSessions[0]
       ? {
-          title: 'Session pressure',
-          body: `${topSessions[0].sessionName} is the heaviest session at ${formatTokens(topSessions[0].tokens)} tokens.`,
+          // Session rows are live-only; on a historical page the signal says so
+          // rather than implying the anchored month produced them.
+          title: viewingPastMonth ? 'Session pressure (live)' : 'Session pressure',
+          body: `${topSessions[0].sessionName} is the heaviest session at ${formatTokens(topSessions[0].tokens)} tokens${viewingPastMonth ? ' right now — session history is not scoped to the selected month' : ''}.`,
           accent: topSessions[0].color,
           icon: TrendingUp,
         }

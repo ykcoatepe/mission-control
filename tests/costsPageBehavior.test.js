@@ -211,6 +211,19 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('if (viewingPastMonth) {') &&
+  source.includes('codexbarPeriodDays.forEach(day => {') &&
+  source.includes('viewingPastMonth, tokenData]'),
+  'the model breakdown must never fall back to live /api/sessions data while an anchored past month is displayed — anchored codexbar rows are the only valid historical source',
+);
+
+assert.ok(
+  source.includes("viewingPastMonth ? 'Session pressure (live)' : 'Session pressure'") &&
+  source.includes('session history is not scoped to the selected month'),
+  'the session-pressure signal is live data: on a historical page it must say so instead of reading as that month\'s pressure',
+);
+
+assert.ok(
   source.includes('sessionsLiveOnlyNotice') &&
   source.includes("sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live session pressure — not scoped to ${anchoredMonthLabel}` : null}"),
   'the By session view is live-only data: an anchored past month must carry an explicit notice so current sessions are not read as that month\'s drivers',
