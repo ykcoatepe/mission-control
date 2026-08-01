@@ -17,6 +17,8 @@ const filesToCheck = [
   path.join(costsDir, 'types.ts'),
 ].filter(f => fs.existsSync(f));
 const source = filesToCheck.map(f => fs.readFileSync(f, 'utf8')).join('\n');
+const costPulseHeaderSource = fs.readFileSync(path.join(costsDir, 'CostPulseHeader.tsx'), 'utf8');
+const costPulseHeaderStyles = fs.readFileSync(path.join(costsDir, 'CostPulseHeader.module.css'), 'utf8');
 
 assert.ok(
   source.includes("tokens?.source === 'sessions.fast_fallback'") && source.includes('tokens?.meta?.refreshing') && source.includes('tokens?.meta?.stale'),
@@ -268,6 +270,17 @@ assert.ok(
   source.includes('monthPickerGrid(') &&
   source.includes('aria-disabled={!item.selectable}'),
   'the month label should open an availability-aware, accessible picker rather than a static label',
+);
+
+assert.ok(
+  source.includes('<GlassCard delay={0} noPad overflowVisible={pickerOpen}>') &&
+  costPulseHeaderStyles.includes('max-width: min(292px, calc(100vw - 32px))') &&
+  source.includes('translateX(') &&
+  source.includes('window.innerWidth - 8 -') &&
+  costPulseHeaderSource.includes('ResizeObserver') &&
+  costPulseHeaderStyles.includes('translate: -50% 0;') &&
+  costPulseHeaderStyles.includes('grid-template-columns: repeat(3, minmax(0, 1fr));'),
+  'a one-shot clamp measurement goes stale when late-arriving data re-flows the layout; the picker must re-clamp on layout changes',
 );
 
 assert.ok(

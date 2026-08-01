@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronLeft, ChevronRight, DollarSign } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
 import {
@@ -87,6 +87,7 @@ export default function CostPulseHeader({
 }: CostPulseHeaderProps) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const monthPickerRef = useRef<HTMLDivElement>(null)
+  const monthPickerDialogRef = useRef<HTMLDivElement>(null)
   const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const gridButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
   const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
@@ -161,6 +162,33 @@ export default function CostPulseHeader({
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [pickerOpen])
+  useLayoutEffect(() => {
+    if (!pickerOpen) return undefined
+    const dialog = monthPickerDialogRef.current
+    if (!dialog) return undefined
+    let animationFrame: number | null = null
+    const reclamp = () => {
+      if (animationFrame !== null) return
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = null
+        const hadTransform = dialog.style.transform !== ''
+        if (hadTransform) dialog.style.transform = ''
+        const rect = dialog.getBoundingClientRect()
+        const shift = Math.max(8 - rect.left, Math.min(0, window.innerWidth - 8 - rect.right))
+        if (shift !== 0) dialog.style.transform = `translateX(${shift}px)`
+      })
+    }
+    const resizeObserver = new ResizeObserver(reclamp)
+    reclamp()
+    window.addEventListener('resize', reclamp)
+    resizeObserver.observe(document.body)
+    resizeObserver.observe(dialog)
+    return () => {
+      window.removeEventListener('resize', reclamp)
+      resizeObserver.disconnect()
+      if (animationFrame !== null) window.cancelAnimationFrame(animationFrame)
+    }
+  }, [pickerOpen, monthAvailability, monthAvailabilityKnown, m])
   useEffect(() => {
     if (!pickerOpen) return
     const selectedIndex = pickerMonths.findIndex(item => item.month === monthNav.activeMonth && item.selectable)
@@ -174,7 +202,7 @@ export default function CostPulseHeader({
       : 'Current month tracked spend'
     : `${activePeriodLabel} spend in view`
   return (
-    <GlassCard delay={0} noPad>
+    <GlassCard delay={0} noPad overflowVisible={pickerOpen}>
       <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
         <div className={styles.leftCol}>
           <div className={styles.titleRow}>
@@ -245,7 +273,8 @@ export default function CostPulseHeader({
                       id="costs-month-picker"
                       role="dialog"
                       aria-label="Choose month"
-                      className={m ? `${styles.monthPicker} ${styles.monthPickerMobile}` : styles.monthPicker}
+                      className={styles.monthPicker}
+                      ref={monthPickerDialogRef}
                     >
                       <div className={styles.monthPickerYearRow}>
                         <button

@@ -740,7 +740,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   async function monthAvailability() {
-    if (monthsAvailabilityCache && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl) {
+    // A cache filled in the last minute of a month must not survive the rollover — a missing current month renders as confirmed empty.
+    if (monthsAvailabilityCache
+      && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl
+      && monthsAvailabilityCache.month === monthKeyOf(new Date())) {
       return monthsAvailabilityCache.value;
     }
     if (monthsAvailabilityInFlight) return monthsAvailabilityInFlight;
@@ -797,9 +800,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const cachedValue = monthsAvailabilityCache;
       if (!cachedValue
         || Date.now() - cachedValue.time >= monthsAvailabilityCacheTtl
+        || cachedValue.month !== monthKeyOf(new Date())
         || monthAvailabilityHasUnavailable(cachedValue.value)
         || !monthAvailabilityHasUnavailable(value)) {
-        monthsAvailabilityCache = { time: Date.now(), value };
+        monthsAvailabilityCache = { time: Date.now(), month: monthKeyOf(new Date()), value };
       }
       return monthsAvailabilityCache.value;
     })().finally(() => {

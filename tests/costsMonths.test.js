@@ -236,3 +236,17 @@ test('Hermes month query excludes zero-token and zero-spend sessions', () => {
   const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
   assert.match(routeSource, /COALESCE\(input_tokens, 0\).*COALESCE\(actual_cost_usd, estimated_cost_usd, 0\) > 0/s);
 });
+
+test('month availability cache is invalidated when the server month rolls over', () => {
+  const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+  assert.match(
+    routeSource,
+    /monthsAvailabilityCache\.month === monthKeyOf\(new Date\(\)\)/,
+    'a cache generated just before a month rollover must not confirm the new current month empty',
+  );
+  assert.match(
+    routeSource,
+    /monthsAvailabilityCache = \{ time: Date\.now\(\), month: monthKeyOf\(new Date\(\)\), value \}/,
+    'the cache must record which server month generated its availability result',
+  );
+});
