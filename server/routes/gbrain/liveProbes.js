@@ -402,6 +402,10 @@ function isWarningSourceStatus(status) {
   return !isHealthySourceStatus(lower);
 }
 
+function isActionableWarningSourceStatus(status) {
+  return /warn|corrupt|dirty|missing|error|fail/i.test(String(status || ''));
+}
+
 function numberFromText(text, pattern) {
   const match = String(text || '').match(pattern);
   if (!match) return null;
@@ -568,7 +572,9 @@ function normalizeSourcesPayload(payload, checkedAt) {
   const totalPages = sources.reduce((sum, source) => sum + (source.pages || 0), 0);
   const freshness = summarizeSourceFreshness(sources, checkedAt);
   const statusWarningCount = sources.filter(
-    (source) => source.freshness?.syncTracked !== false && isWarningSourceStatus(source.status),
+    (source) => source.freshness?.syncTracked === false
+      ? isActionableWarningSourceStatus(source.status)
+      : isWarningSourceStatus(source.status),
   ).length;
 
   return {
