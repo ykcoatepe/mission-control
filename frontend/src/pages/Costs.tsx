@@ -560,9 +560,15 @@ export default function Costs() {
     unknownSourceCount: unknownBillingSourceCount,
     selectedSourceIsComplete: hasAwsData,
   })
+  // Live sessions are the fallback ONLY for the live view. On an anchored month
+  // (including while the ledger is still pending) the anchored codexbar rows are
+  // the only valid source — otherwise the Token Volume pill reports today's
+  // usage under a historical label.
   const totalTokens = ledgerActive
     ? tokenData?.summary?.periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0
-    : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
+    : viewingPastMonth
+      ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
+      : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
 
   const periodLabels = { day: 'Daily', '7d': '7 Days', month: 'Monthly' } as const
   // On an anchored past month the badge/subtitle names the month itself ("July 2026")

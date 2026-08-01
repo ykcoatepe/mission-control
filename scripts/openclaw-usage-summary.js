@@ -394,13 +394,27 @@ function listSessionFiles(startMs) {
   return files;
 }
 
+// The scan cap keeps the newest files, which silently evicts an anchored month
+// on installations with more recent files than the cap. Files are NOT filtered
+// by an mtime upper bound — a session opened in the anchored month and appended
+// to later still carries that month's records — they are RANKED: anything last
+// touched inside the window (plus a day of slack) is scanned first, and newer
+// files only fill whatever budget is left.
+function prioritizeScanFiles(files, range, maxFiles) {
+  const limit = Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : 20000;
+  const windowEnd = range.endMs + 24 * 60 * 60 * 1000;
+  return files
+    .map((file) => ({ file, outsideWindow: file.mtimeMs > windowEnd ? 1 : 0 }))
+    .sort((a, b) => a.outsideWindow - b.outsideWindow || b.file.mtimeMs - a.file.mtimeMs)
+    .slice(0, limit)
+    .map((entry) => entry.file);
+}
+
 async function scanUsageRecords(range) {
   const files = listSessionFiles(range.startMs);
   const records = [];
   const maxFiles = Number(process.env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
-  const scanFiles = files
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : 20000);
+  const scanFiles = prioritizeScanFiles(files, range, maxFiles);
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
@@ -703,6 +717,7 @@ module.exports = {
   extractUsageRecord,
   isValidMonthAnchor,
   listSessionFiles,
+  prioritizeScanFiles,
   rangeForPeriod,
   sessionBucketForKey,
 };

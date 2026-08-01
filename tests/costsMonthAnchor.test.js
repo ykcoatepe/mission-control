@@ -419,3 +419,54 @@ test('an anchored month never falls back to live session totals', async () => {
     fs.rmSync(cacheDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// The OpenClaw scan cap must not evict the anchored month
+// ---------------------------------------------------------------------------
+
+test('newer files cannot evict the anchored window from the OpenClaw scan cap', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  // An OLD anchor is where the cap actually bites: months of newer files exist
+  // between the anchored window and today.
+  const range = openclawRangeForPeriod('month', '2026-03', NOW);
+
+  const inWindow = [
+    { path: 'march-a.jsonl', mtimeMs: new Date(2026, 2, 5).getTime() },
+    { path: 'march-b.jsonl', mtimeMs: new Date(2026, 2, 20).getTime() },
+  ];
+  // The flood of files touched in the months AFTER the anchor — exactly the
+  // shape that used to evict March before any record timestamp was inspected.
+  const newer = Array.from({ length: 50 }, (_, index) => ({
+    path: `later-${index}.jsonl`,
+    mtimeMs: new Date(2026, 7, 1).getTime() - index * 60 * 1000,
+  }));
+
+  const scanned = prioritizeScanFiles([...newer, ...inWindow], range, 3);
+  const scannedPaths = scanned.map((file) => file.path);
+
+  assert.equal(scanned.length, 3, 'the cap is still respected');
+  for (const file of inWindow) {
+    assert.ok(
+      scannedPaths.includes(file.path),
+      `${file.path} falls inside the anchored window and must survive the cap (got ${scannedPaths.join(', ')})`,
+    );
+  }
+  assert.ok(
+    scannedPaths.some((name) => name.startsWith('later-')),
+    'files outside the window still fill the remaining budget — they may carry older records',
+  );
+});
+
+test('the unanchored scan order is unchanged (newest first)', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  const range = openclawRangeForPeriod('month', null, NOW);
+  const files = [
+    { path: 'old.jsonl', mtimeMs: NOW.getTime() - 3000 },
+    { path: 'newest.jsonl', mtimeMs: NOW.getTime() - 1000 },
+    { path: 'mid.jsonl', mtimeMs: NOW.getTime() - 2000 },
+  ];
+  assert.deepEqual(
+    prioritizeScanFiles(files, range, 10).map((file) => file.path),
+    ['newest.jsonl', 'mid.jsonl', 'old.jsonl'],
+  );
+});

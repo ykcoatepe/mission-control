@@ -29,6 +29,12 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('const totalTokens = ledgerActive') &&
+  source.includes('    : viewingPastMonth\n      ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)\n      : sessions.reduce('),
+  'the Token Volume pill must never fall back to live session totals while an anchored past month is displayed',
+);
+
+assert.ok(
   source.includes('STALE_COSTS_RETRY_LIMIT = 60') && source.includes('STALE_COSTS_RETRY_TIMEOUT_MS') && source.includes('preservedPreviousOpenClaw') && source.includes('preservedPreviousClaudeCode') && source.includes('preservedPreviousUsage'),
   'Costs page stale retry polling should be capped and stop on fresh preserved cache responses',
 );
