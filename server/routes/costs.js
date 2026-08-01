@@ -976,6 +976,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     const now = new Date().toISOString();
     return {
       ...costsResult,
+      // The server's calendar month is the authority for the anchor contract:
+      // parseMonthAnchor normalizes against THIS clock, so the UI must classify
+      // past-vs-current months by it too. A browser in another time zone would
+      // otherwise label a live month-to-date payload as a completed month.
+      serverMonth: monthKeyOf(new Date()),
       meta: {
         updatedAt: costsResult?.meta?.updatedAt || now,
         refreshing: false,

@@ -29,6 +29,12 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow, serverMonth)') &&
+  source.includes('serverMonth={serverMonth}'),
+  'past-vs-current classification must follow the server calendar, not the browser time zone',
+);
+
+assert.ok(
   source.includes("const preservedFreshCache =\n        tokens?.source !== 'anchored.pending' &&"),
   'preserving an empty anchored.pending entry must not stop polling — the month would stay at zero even after the producers recover',
 );
@@ -180,7 +186,7 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS)') &&
+  source.includes('const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS, serverMonth)') &&
   source.includes('disabled={!monthNav.canGoForward}') &&
   source.includes('disabled={!monthNav.canGoBack}') &&
   source.includes('canGoForward: active < current') &&

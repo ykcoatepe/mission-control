@@ -101,7 +101,6 @@ export default function Costs() {
   // Only Monthly honours the anchor; Daily / 7 Days always query the live window.
   const activeMonthAnchor = period === 'month' ? monthAnchor : null
   const costsPath = costsQueryPath(period, activeMonthAnchor)
-  const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow)
 
   useEffect(() => {
     let timerId = 0
@@ -196,6 +195,13 @@ export default function Costs() {
   })
 
   const tokenData: TokenData | null = costsQuery.data ?? null
+  // The server's own calendar month: it normalizes anchors against its clock, so
+  // past-vs-current classification must follow it, not the browser's time zone.
+  const serverMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  // Classified by the SERVER's month, so a browser in another time zone cannot
+  // label a live month-to-date payload as a completed month (or the reverse).
+  // Falls back to the browser clock only before the first payload arrives.
+  const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow, serverMonth)
   const loading = costsQuery.isLoading
   const error: string | null = costsQuery.error ? String(costsQuery.error.message || 'Unknown error') : null
 
@@ -930,6 +936,7 @@ export default function Costs() {
           monthAnchor={monthAnchor}
           setMonthAnchor={setMonthAnchor}
           calendarNow={calendarNow}
+          serverMonth={serverMonth}
           viewingPastMonth={viewingPastMonth}
           anchoredMonthLabel={anchoredMonthLabel}
           activePeriodLabel={activePeriodLabel}

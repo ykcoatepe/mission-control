@@ -23,6 +23,7 @@ interface CostPulseHeaderProps {
   monthAnchor: string | null
   setMonthAnchor: (anchor: string | null) => void
   calendarNow: Date
+  serverMonth: string | null
   viewingPastMonth: boolean
   anchoredMonthLabel: string | null
   activePeriodLabel: string
@@ -51,6 +52,7 @@ export default function CostPulseHeader({
   monthAnchor,
   setMonthAnchor,
   calendarNow,
+  serverMonth,
   viewingPastMonth,
   anchoredMonthLabel,
   activePeriodLabel,
@@ -76,7 +78,7 @@ export default function CostPulseHeader({
   const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
   const hasNoApiEquivalentUsage = apiEquivalentReliability === 'no_usage'
   const trackedCoverageNote = [trackedSpend.valueQualifier, trackedSpend.coverageLabel].filter(Boolean).join(' · ')
-  const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS)
+  const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS, serverMonth)
   // Stepping onto the current month clears the anchor so the request goes back to the
   // live (unanchored) window — the same cache entry as before this feature existed.
   const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)

@@ -701,3 +701,36 @@ describe('anchored CodexBar month rows', () => {
     expect(live.projectedMonthly).toBeCloseTo(300)
   })
 })
+
+describe('server-authoritative month classification', () => {
+  // Browser is already in September while the server clock is still in August.
+  const browserNow = new Date(2026, 8, 1, 0, 30)
+
+  it('does not call the server current month a completed past month', () => {
+    expect(isPastMonthAnchor('2026-08', browserNow)).toBe(true)
+    expect(isPastMonthAnchor('2026-08', browserNow, '2026-08')).toBe(false)
+  })
+
+  it('still classifies genuinely older months as past', () => {
+    expect(isPastMonthAnchor('2026-07', browserNow, '2026-08')).toBe(true)
+  })
+
+  it('treats the server month as current in the reverse skew', () => {
+    // Browser still in August while the server has rolled into September.
+    const laggingBrowser = new Date(2026, 7, 31, 23, 30)
+    expect(isPastMonthAnchor('2026-08', laggingBrowser, '2026-09')).toBe(true)
+    expect(isPastMonthAnchor('2026-09', laggingBrowser, '2026-09')).toBe(false)
+  })
+
+  it('stops the navigator at the server month, not the browser month', () => {
+    const nav = monthNavigationState('2026-08', browserNow, 24, '2026-08')
+    expect(nav.currentMonth).toBe('2026-08')
+    expect(nav.canGoForward).toBe(false)
+  })
+
+  it('falls back to the browser clock before any payload arrives', () => {
+    expect(currentMonthKey(browserNow, null)).toBe('2026-09')
+    expect(currentMonthKey(browserNow, undefined)).toBe('2026-09')
+    expect(currentMonthKey(browserNow, 'garbage')).toBe('2026-09')
+  })
+})

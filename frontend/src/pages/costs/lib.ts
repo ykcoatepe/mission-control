@@ -548,7 +548,14 @@ export function isValidMonthKey(value: string | null | undefined): value is stri
   return MONTH_ANCHOR_PATTERN.test(String(value ?? ''))
 }
 
-export function currentMonthKey(now = new Date()) {
+// The SERVER decides which month is "current" — /api/costs normalizes an anchor
+// against its own clock. With the browser in a different time zone, deriving it
+// from the browser clock around a month boundary makes the two sides disagree:
+// the UI can label a live month-to-date payload as a completed month total, or
+// vice versa. `serverMonth` is that authority; the browser clock is the fallback
+// for the first render, before any payload has arrived.
+export function currentMonthKey(now = new Date(), serverMonth?: string | null) {
+  if (isValidMonthKey(serverMonth)) return serverMonth as string
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 }
 
@@ -574,19 +581,28 @@ export function daysInMonthKey(monthKey: string) {
 }
 
 /** True when the anchor names a calendar month that has already ended. */
-export function isPastMonthAnchor(monthAnchor: string | null | undefined, now = new Date()) {
-  return isValidMonthKey(monthAnchor) && monthAnchor < currentMonthKey(now)
+export function isPastMonthAnchor(
+  monthAnchor: string | null | undefined,
+  now = new Date(),
+  serverMonth?: string | null,
+) {
+  return isValidMonthKey(monthAnchor) && monthAnchor < currentMonthKey(now, serverMonth)
 }
 
 /** Oldest month the navigator will walk back to. */
-export function monthAnchorFloor(now = new Date(), monthsBack = 24) {
-  return shiftMonthKey(currentMonthKey(now), -Math.abs(monthsBack))
+export function monthAnchorFloor(now = new Date(), monthsBack = 24, serverMonth?: string | null) {
+  return shiftMonthKey(currentMonthKey(now, serverMonth), -Math.abs(monthsBack))
 }
 
-export function monthNavigationState(monthAnchor: string | null, now = new Date(), monthsBack = 24) {
-  const current = currentMonthKey(now)
+export function monthNavigationState(
+  monthAnchor: string | null,
+  now = new Date(),
+  monthsBack = 24,
+  serverMonth?: string | null,
+) {
+  const current = currentMonthKey(now, serverMonth)
   const active = isValidMonthKey(monthAnchor) ? monthAnchor : current
-  const floor = monthAnchorFloor(now, monthsBack)
+  const floor = monthAnchorFloor(now, monthsBack, serverMonth)
   return {
     activeMonth: active,
     currentMonth: current,
