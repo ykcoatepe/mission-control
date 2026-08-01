@@ -32,6 +32,8 @@ import {
   isPastMonthAnchor,
   monthKeyLabel,
   monthNavigationState,
+  monthPickerGrid,
+  monthPickerYearBounds,
   previousMonthKey,
   shiftMonthKey,
 } from './lib'
@@ -763,5 +765,49 @@ describe('server-authoritative month classification', () => {
     expect(currentMonthKey(browserNow, null)).toBe('2026-09')
     expect(currentMonthKey(browserNow, undefined)).toBe('2026-09')
     expect(currentMonthKey(browserNow, 'garbage')).toBe('2026-09')
+  })
+})
+
+describe('month picker availability grid', () => {
+  const now = new Date('2026-08-14T12:00:00+03:00')
+  const browserNow = new Date(2026, 8, 1, 0, 30)
+
+  it('uses the same floor and current-year bounds as the arrow navigator', () => {
+    expect(monthPickerYearBounds(now, 24)).toEqual({
+      floor: '2024-08',
+      current: '2026-08',
+      minimumYear: 2024,
+      maximumYear: 2026,
+    })
+  })
+
+  it('uses the server-authoritative month for the grid ceiling and history floor', () => {
+    expect(monthPickerYearBounds(browserNow, 24, '2026-08')).toEqual({
+      floor: '2024-08',
+      current: '2026-08',
+      minimumYear: 2024,
+      maximumYear: 2026,
+    })
+    expect(monthPickerGrid(2026, [], false, browserNow, 24, '2026-08')[8])
+      .toMatchObject({ month: '2026-09', selectable: false, outsideRange: true })
+  })
+
+  it('keeps unknown months selectable and fades only confirmed empty or out-of-range months', () => {
+    const grid = monthPickerGrid(2026, [
+      { month: '2026-07', hasData: true, sources: ['hermes'] },
+      { month: '2026-06', hasData: false, sources: [] },
+      { month: '2026-05', hasData: false, sources: [], unknown: true },
+    ], true, now, 24)
+
+    expect(grid[6]).toMatchObject({ month: '2026-07', selectable: true, unknown: false })
+    expect(grid[5]).toMatchObject({ month: '2026-06', selectable: false, unknown: false })
+    expect(grid[4]).toMatchObject({ month: '2026-05', selectable: true, unknown: true })
+    expect(grid[8]).toMatchObject({ month: '2026-09', selectable: false, outsideRange: true })
+  })
+
+  it('does not mistake an unavailable response for confirmed empty months', () => {
+    const grid = monthPickerGrid(2024, [], false, now, 24)
+    expect(grid[7]).toMatchObject({ month: '2024-08', selectable: true, unknown: true })
+    expect(grid[6]).toMatchObject({ month: '2024-07', selectable: false, outsideRange: true })
   })
 })

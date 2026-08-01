@@ -232,6 +232,14 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes("useApi<MonthAvailabilityResponse>('/api/costs/months')") &&
+  source.includes('aria-haspopup="dialog"') &&
+  source.includes('monthPickerGrid(') &&
+  source.includes('aria-disabled={!item.selectable}'),
+  'the month label should open an availability-aware, accessible picker rather than a static label',
+);
+
+assert.ok(
   source.includes('const projectedMonthly = viewingPastMonth ? currentPeriodCost : dailyAvg * 30') &&
   source.includes("{viewingPastMonth ? 'Month Total' : 'Projection'}") &&
   source.includes("completePeriod ? current : dailyAverage * 30") &&

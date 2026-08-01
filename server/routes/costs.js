@@ -441,7 +441,7 @@ function buildHermesUsageRows(rows, keys) {
   return { daily, byService, dailyByModel, periodTokens, periodUsd };
 }
 
-function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
+function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailabilitySources }) {
   const router = express.Router();
   const execPromise = util.promisify(exec);
   const costsCache = new Map();
@@ -499,6 +499,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
   const costsCacheTtl = 60000;
   const costsFallbackCacheTtl = 15000;
+  const monthsAvailabilityCacheTtl = 60000;
+  let monthsAvailabilityCache = null;
   const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
   // OpenClaw's session-cost-usage aggregation can take ~55s for 7d on Yordam's host.
   // A too-low timeout silently produced null OpenClaw data, which mergeUsage then rendered as 0 tokens.
@@ -646,6 +648,72 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     } catch {
       return false;
     }
+  }
+
+  async function hermesUsageMonths() {
+    const rows = await sqliteJson(hermesProfileDbPath(), `
+      SELECT DISTINCT strftime('%Y-%m', date(started_at, 'unixepoch', 'localtime')) AS month
+      FROM sessions
+      WHERE started_at IS NOT NULL
+      ORDER BY month DESC
+    `);
+    return rows.map((row) => row.month).filter(isValidMonthAnchor);
+  }
+
+  async function codexbarUsageMonths() {
+    // This deliberately stays at CodexBar's normal reliable lookback. The picker
+    // marks older gaps as unknown rather than performing an expensive OpenClaw scan.
+    // Use the shared scan path so this cheap availability request obeys the
+    // refresh limit and preserves the missing-binary classification used by the
+    // detailed costs producer.
+    const stdout = await codexbarScan(70);
+    const raw = mergeCodexBarReports(JSON.parse(stdout));
+    if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
+    return (raw.daily || [])
+      .filter((day) => Number(day.totalTokens || 0) > 0 || Number(day.totalCost || 0) > 0)
+      .map((day) => String(day.date || '').slice(0, 7))
+      .filter(isValidMonthAnchor);
+  }
+
+  async function monthAvailability() {
+    if (monthsAvailabilityCache && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl) {
+      return monthsAvailabilityCache.value;
+    }
+
+    const now = new Date();
+    const current = monthKeyOf(now);
+    const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
+    const months = [];
+    for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
+
+    const sourceResults = await Promise.allSettled([
+      (monthAvailabilitySources?.hermes || hermesUsageMonths)(),
+      (monthAvailabilitySources?.codexbar || codexbarUsageMonths)(),
+    ]);
+    const sourceNames = ['hermes', 'codexbar'];
+    const availableBySource = sourceResults.map((result, index) => {
+      if (result.status === 'fulfilled') return new Set(result.value);
+      console.warn(`[Costs months ${sourceNames[index]}]`, result.reason?.message || result.reason);
+      return null;
+    });
+    const sourceFailed = availableBySource.some((monthsForSource) => monthsForSource === null);
+    const codexbarReliableFloor = monthKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69));
+
+    const value = {
+      months: months.map((month) => {
+        const sources = sourceNames.filter((_, index) => availableBySource[index]?.has(month));
+        const hasData = sources.length > 0;
+        // We do not scan OpenClaw JSONL here. For old CodexBar gaps (or any
+        // failed cheap source), `unknown` keeps the month selectable instead of
+        // claiming there was no usage when the endpoint did not look everywhere.
+        const unknown = !hasData && (sourceFailed || month < codexbarReliableFloor);
+        return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
+      }),
+      generatedAt: now.toISOString(),
+      partial: sourceFailed || months.some((month) => month < codexbarReliableFloor),
+    };
+    monthsAvailabilityCache = { time: Date.now(), value };
+    return value;
   }
 
   async function hermesUsageSummary(period = 'month', monthAnchor = null) {
@@ -1389,6 +1457,17 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     } catch (error) {
       console.error('CodexBar costs error:', error.message);
       return res.status(500).json({ error: `Failed to load CodexBar cost data: ${error.message}` });
+    }
+  });
+
+  router.get('/api/costs/months', async (_req, res) => {
+    try {
+      return res.json(await monthAvailability());
+    } catch (error) {
+      // `monthAvailability` normally absorbs individual producer failures; this
+      // catches only unexpected endpoint-level failures without exposing internals.
+      console.error('[Costs months]', error.message);
+      return res.status(500).json({ error: 'Failed to load month availability' });
     }
   });
 

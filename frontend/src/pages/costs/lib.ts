@@ -617,6 +617,64 @@ export function monthNavigationState(
   }
 }
 
+export interface MonthAvailability {
+  month: string
+  hasData: boolean
+  sources: string[]
+  /** The server did not inspect every source, so this month remains selectable. */
+  unknown?: boolean
+}
+
+export interface MonthPickerItem {
+  month: string
+  label: string
+  selectable: boolean
+  unknown: boolean
+  outsideRange: boolean
+}
+
+const shortMonthLabelFormatter = new Intl.DateTimeFormat('en-US', { month: 'short' })
+
+export function monthPickerYearBounds(now = new Date(), monthsBack = 24, serverMonth?: string | null) {
+  const floor = monthAnchorFloor(now, monthsBack, serverMonth)
+  const current = currentMonthKey(now, serverMonth)
+  return {
+    floor,
+    current,
+    minimumYear: Number(floor.slice(0, 4)),
+    maximumYear: Number(current.slice(0, 4)),
+  }
+}
+
+/** Builds the picker grid without treating an unfetched availability response as no data. */
+export function monthPickerGrid(
+  year: number,
+  availability: MonthAvailability[] = [],
+  availabilityKnown = false,
+  now = new Date(),
+  monthsBack = 24,
+  serverMonth?: string | null,
+): MonthPickerItem[] {
+  const { floor, current } = monthPickerYearBounds(now, monthsBack, serverMonth)
+  const byMonth = new Map(availability.map(item => [item.month, item]))
+
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = `${year}-${String(index + 1).padStart(2, '0')}`
+    const outsideRange = month < floor || month > current
+    const source = byMonth.get(month)
+    // Until availability loads (or when the server marks a source gap), keep the
+    // month selectable. A missing response must never masquerade as confirmed zero usage.
+    const unknown = !availabilityKnown || Boolean(source?.unknown)
+    return {
+      month,
+      label: shortMonthLabelFormatter.format(new Date(year, index, 1)),
+      selectable: !outsideRange && (unknown || Boolean(source?.hasData)),
+      unknown,
+      outsideRange,
+    }
+  })
+}
+
 function codexbarDateKey(date: Date) {
   return date.toLocaleDateString('en-CA', {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',

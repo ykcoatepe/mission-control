@@ -89,6 +89,17 @@ type CostsTokenData = TokenData & {
   }
 }
 
+type MonthAvailabilityResponse = {
+  months: Array<{
+    month: string
+    hasData: boolean
+    sources: string[]
+    unknown?: boolean
+  }>
+  generatedAt: string
+  partial: boolean
+}
+
 
 export default function Costs() {
   const m = useIsMobile()
@@ -139,6 +150,7 @@ export default function Costs() {
   const { data: configRaw } = useApi<ConfigData>('/api/config')
   const { data: sessionsRaw } = useApi<{ sessions: SessionData[] }>('/api/sessions')
   const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>(codexbarQueryPath(activeMonthAnchor, calendarNow))
+  const { data: monthAvailability } = useApi<MonthAvailabilityResponse>('/api/costs/months')
 
   const config: ConfigData = configRaw ?? { modules: {} }
   const sessions: SessionData[] = useMemo(() => sessionsRaw?.sessions ?? [], [sessionsRaw])
@@ -975,6 +987,8 @@ export default function Costs() {
           setMonthAnchor={setMonthAnchor}
           calendarNow={calendarNow}
           serverMonth={serverMonth}
+          monthAvailability={monthAvailability?.months ?? []}
+          monthAvailabilityKnown={Boolean(monthAvailability)}
           viewingPastMonth={viewingPastMonth}
           anchoredMonthLabel={anchoredMonthLabel}
           activePeriodLabel={activePeriodLabel}

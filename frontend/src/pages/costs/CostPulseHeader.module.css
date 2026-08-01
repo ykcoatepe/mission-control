@@ -132,12 +132,124 @@
 .monthNavLabel {
   min-width: 104px;
   text-align: center;
-  padding: 0 4px;
+  padding: 7px 4px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  cursor: pointer;
   font-size: 12px;
   font-weight: 700;
   color: rgba(255,255,255,0.9);
   white-space: nowrap;
   font-feature-settings: "tnum";
+}
+
+.monthNavLabel:hover,
+.monthNavLabel:focus-visible {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.98);
+  outline: none;
+}
+
+.monthPickerAnchor {
+  position: relative;
+}
+
+.monthPicker {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  left: 50%;
+  width: 292px;
+  max-width: calc(100vw - 32px);
+  transform: translateX(-50%);
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 14px;
+  background: rgba(28, 31, 43, 0.92);
+  box-shadow: 0 18px 42px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
+  backdrop-filter: blur(18px);
+}
+
+.monthPickerMobile {
+  left: 0;
+  transform: none;
+}
+
+.monthPickerYearRow {
+  display: grid;
+  grid-template-columns: 32px 1fr 32px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.monthPickerYearButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255,255,255,0.78);
+  cursor: pointer;
+}
+
+.monthPickerYearButton:hover:not(:disabled),
+.monthPickerYearButton:focus-visible {
+  background: rgba(255,255,255,0.09);
+  color: rgba(255,255,255,0.98);
+  outline: none;
+}
+
+.monthPickerYearButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+
+.monthPickerYear {
+  text-align: center;
+  font-size: 13px;
+  font-weight: 750;
+  color: rgba(255,255,255,0.94);
+  font-feature-settings: "tnum";
+}
+
+.monthPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.monthPickerMonth {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255,255,255,0.82);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.monthPickerMonth:hover:not(:disabled),
+.monthPickerMonth:focus-visible {
+  border-color: rgba(10,132,255,0.44);
+  background: rgba(10,132,255,0.18);
+  color: rgba(255,255,255,0.98);
+  outline: none;
+}
+
+.monthPickerMonthSelected {
+  border-color: rgba(50,215,75,0.45);
+  background: rgba(50,215,75,0.16);
+  color: rgba(223,255,230,0.98);
+}
+
+.monthPickerMonthDisabled {
+  cursor: not-allowed;
+  opacity: 0.38;
 }
 
 /* ── Overview pills grid ─────────────────────────────────────── */
