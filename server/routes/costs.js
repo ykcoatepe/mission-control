@@ -1003,6 +1003,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return key === 'claude_code' || source.startsWith('claude-code.');
   }
 
+  function isHermesAgent(agent) {
+    const key = String(agent?.key || '').toLowerCase();
+    const source = String(agent?.source || '').toLowerCase();
+    return key === 'hermes' || source.startsWith('hermes.');
+  }
+
   function cachedFilteredUsage(previous, period, predicate, source, note) {
     const agents = (previous?.agents || [])
       .filter(predicate)
@@ -1050,6 +1056,16 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       isOpenClawDerivedAgent,
       'openclaw.usage.cached',
       'Cached OpenClaw-derived usage split from previous detailed result',
+    );
+  }
+
+  function cachedHermesUsage(previous, period) {
+    return cachedFilteredUsage(
+      previous,
+      period,
+      isHermesAgent,
+      'hermes.state.db.cached',
+      'Cached Hermes usage from previous detailed result',
     );
   }
 
@@ -1112,21 +1128,28 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           const previous = costsCache.get(cacheKey)?.value;
           const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
           const hasPreviousClaudeCode = hasClaudeCodeAgent(previous);
+          // Hermes had no preservation path: a transient sqlite failure while
+          // another producer succeeded overwrote the cached result WITHOUT the
+          // Hermes slice, silently understating a month that cannot change.
+          const hasPreviousHermes = !!previous?.agents?.some((agent) => isHermesAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
           const preservedPreviousOpenClaw = !openclawData && hasPreviousOpenClaw;
           const preservedPreviousClaudeCode = !claudeCodeData && hasPreviousClaudeCode;
+          const preservedPreviousHermes = !hermesData && hasPreviousHermes;
           const effectiveOpenClawData = openclawData || (preservedPreviousOpenClaw ? cachedOpenClawUsage(previous, period) : null);
           const effectiveClaudeCodeData = claudeCodeData || (preservedPreviousClaudeCode ? cachedClaudeCodeUsage(previous, period) : null);
-          const combinedUsage = mergeUsage(effectiveOpenClawData, hermesData, effectiveClaudeCodeData, period, monthAnchor);
+          const effectiveHermesData = hermesData || (preservedPreviousHermes ? cachedHermesUsage(previous, period) : null);
+          const combinedUsage = mergeUsage(effectiveOpenClawData, effectiveHermesData, effectiveClaudeCodeData, period, monthAnchor);
           if (combinedUsage) {
             const costsResult = detailedCostsResult(period, combinedUsage, {
               refreshing: false,
-              stale: preservedPreviousOpenClaw || preservedPreviousClaudeCode,
+              stale: preservedPreviousOpenClaw || preservedPreviousClaudeCode || preservedPreviousHermes,
               refreshStartedAt: startedAt,
               openclawStatus: openclawData ? 'ready' : 'unavailable',
               hermesStatus: hermesData ? 'ready' : 'unavailable',
               claudeCodeStatus: claudeCodeData ? 'ready' : 'unavailable',
               preservedPreviousOpenClaw,
               preservedPreviousClaudeCode,
+              preservedPreviousHermes,
             }, monthAnchor);
             setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
             resolve(costsResult);

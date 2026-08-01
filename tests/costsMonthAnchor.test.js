@@ -642,3 +642,24 @@ test('a preserved anchored.pending entry keeps the short fallback TTL', () => {
   assert.equal(preservedEntryIsDetailed({ source: 'openclaw.usage' }), true);
   assert.equal(preservedEntryIsDetailed(undefined), true, 'absent source must not silently downgrade');
 });
+
+// ---------------------------------------------------------------------------
+// Every producer needs a preservation path, not just OpenClaw and Claude Code
+// ---------------------------------------------------------------------------
+
+test('a transient Hermes failure cannot silently drop its slice from a cached month', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  // Hermes previously had no cached-preservation path: if sqlite blipped while
+  // another producer succeeded, the merge rewrote the detailed cache without
+  // the Hermes agent and did not even mark the result stale.
+  assert.match(routeSource, /function isHermesAgent\(agent\)/);
+  assert.match(routeSource, /function cachedHermesUsage\(previous, period\)/);
+  assert.match(routeSource, /const effectiveHermesData = hermesData \|\| \(preservedPreviousHermes \? cachedHermesUsage\(previous, period\) : null\);/);
+  assert.match(routeSource, /mergeUsage\(effectiveOpenClawData, effectiveHermesData, effectiveClaudeCodeData/);
+  assert.match(
+    routeSource,
+    /stale: preservedPreviousOpenClaw \|\| preservedPreviousClaudeCode \|\| preservedPreviousHermes/,
+    'a Hermes-preserved result must be reported stale like the other producers',
+  );
+});

@@ -40,6 +40,11 @@ assert.ok(
 );
 
 assert.ok(
+  !source.includes("tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',"),
+  'the retry deadline must not include per-attempt refresh metadata — it would reset on every failed attempt and poll (and rescan) forever',
+);
+
+assert.ok(
   source.includes('ACTIVE_REFRESH_RETRY_TIMEOUT_MS') &&
   source.includes('const budget = tokens?.meta?.refreshing\n        ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS\n        : STALE_COSTS_RETRY_TIMEOUT_MS'),
   'a queued month may wait behind other scans, so polling must not expire while the server still reports work in flight for this key',

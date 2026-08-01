@@ -78,6 +78,7 @@ type CostsTokenData = TokenData & {
   meta?: TokenData['meta'] & {
     preservedPreviousOpenClaw?: boolean
     preservedPreviousClaudeCode?: boolean
+    preservedPreviousHermes?: boolean
     preservedPreviousUsage?: boolean
     refreshStartedAt?: string
   }
@@ -164,17 +165,21 @@ export default function Costs() {
         tokens?.source !== 'anchored.pending' &&
         tokens?.meta?.stale &&
         !tokens.meta.refreshing &&
-        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousUsage)
+        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousHermes || tokens.meta.preservedPreviousUsage)
       if (preservedFreshCache) {
         staleCostsRetry.current = null
         return false
       }
 
+      // Keyed by the SELECTION, never by per-attempt refresh metadata: each
+      // failed retry rewrites refreshStartedAt, which would reset the deadline
+      // every time and let a permanently failing month poll — and relaunch the
+      // expensive scans — forever. A changing source is real progress and does
+      // legitimately restart the budget.
       const retryKey = [
         period,
         activeMonthAnchor || 'live',
         tokens?.source || 'unknown',
-        tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',
       ].join(':')
       const now = Date.now()
       if (staleCostsRetry.current?.key !== retryKey) {
