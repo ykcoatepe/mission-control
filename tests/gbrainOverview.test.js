@@ -695,6 +695,44 @@ async function testDefaultSourceWithoutPathIsNotFreshnessStale() {
   assert.match(overview.cockpit.freshness.detail, /sync-tracked sources fresh/i);
 }
 
+async function testDisabledSourceIsNotFreshnessStale() {
+  const execFilePromise = async (bin, args) => {
+    assert.equal(bin, 'gbrain');
+    assert.deepEqual(args, ['sources', 'list', '--json']);
+    return {
+      stdout: JSON.stringify({
+        sources: [
+          {
+            id: 'brain-sync-remote-0fheow',
+            local_path: null,
+            federated: true,
+            page_count: 0,
+            last_sync_at: null,
+            sync_enabled: false,
+          },
+        ],
+      }),
+      stderr: '',
+    };
+  };
+
+  const sources = await buildLiveGBrainSources({ execFilePromise });
+  const overview = buildGBrainOverview({ sources });
+  const disabledSource = sources.sources[0];
+  const sourceNode = overview.nodes.find((node) => node.id === 'sources');
+
+  assert.equal(sources.warningCount, 0);
+  assert.equal(sources.freshness.staleCount, 0);
+  assert.equal(sources.freshness.untrackedCount, 1);
+  assert.equal(disabledSource.syncEnabled, false);
+  assert.equal(disabledSource.freshness.status, 'inactive');
+  assert.equal(disabledSource.freshness.syncTracked, false);
+  assert.match(disabledSource.freshness.label, /not applicable/i);
+  assert.equal(overview.cockpit.freshness.value, 'Fresh');
+  assert.equal(sourceNode.status, 'healthy');
+  assert.doesNotMatch(overview.cockpit.caveats.detail, /source/i);
+}
+
 async function testLiveSourcesCountsUnknownStatusesAsWarnings() {
   const freshAt = new Date().toISOString();
   const execFilePromise = async (bin, args) => {
@@ -1211,6 +1249,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent();
   await testLiveSourcesDoNotExposeLocalPaths();
   await testDefaultSourceWithoutPathIsNotFreshnessStale();
+  await testDisabledSourceIsNotFreshnessStale();
   await testLiveSourcesCountsUnknownStatusesAsWarnings();
   await testLiveSourcesFallsBackToTextOutput();
   await testLiveHealthFallsBackToTextOutput();

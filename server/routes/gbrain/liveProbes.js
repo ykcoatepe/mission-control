@@ -288,6 +288,8 @@ function parseTimestamp(value) {
 function isSyncTrackedSource(source) {
   const id = normalizeSourceKey(source?.id || source?.name || source?.source);
   const localPath = source?.local_path || source?.localPath || source?.path || source?.repoPath || source?.repo_path || null;
+  const syncEnabled = source?.sync_enabled ?? source?.syncEnabled;
+  if (syncEnabled === false) return false;
   if (id === 'default' && !localPath) return false;
   if (source?.federated === false && !localPath) return false;
   return true;
@@ -382,7 +384,8 @@ function liveSourceStatus(liveSources, sourcesUnavailable = false) {
   if (sourcesUnavailable) return 'warning';
   if (!liveSources) return 'warning';
   if (liveSources.freshness?.status === 'warning') return 'warning';
-  if (liveSources.count > 0 && liveSources.healthyCount === liveSources.count && liveSources.warningCount === 0) return 'healthy';
+  if (liveSources.warningCount > 0) return 'warning';
+  if (liveSources.count > 0) return 'healthy';
   return 'warning';
 }
 
@@ -548,6 +551,8 @@ function normalizeSourcesPayload(payload, checkedAt) {
         || source.updated_at
         || source.updatedAt,
       );
+      const rawSyncEnabled = source.sync_enabled ?? source.syncEnabled;
+      const syncEnabled = typeof rawSyncEnabled === 'boolean' ? rawSyncEnabled : null;
       const freshness = sourceFreshnessStatus(source, lastSyncAt, checkedAt);
       return {
         id: String(source.id || source.name || source.source || 'unknown'),
@@ -555,13 +560,16 @@ function normalizeSourcesPayload(payload, checkedAt) {
         pages,
         chunks: Number.isFinite(Number(source.chunks || source.chunk_count)) ? Number(source.chunks || source.chunk_count) : null,
         lastSyncAt,
+        syncEnabled,
         freshness,
       };
     })
     .filter((source) => source.id && source.id !== 'unknown');
   const totalPages = sources.reduce((sum, source) => sum + (source.pages || 0), 0);
   const freshness = summarizeSourceFreshness(sources, checkedAt);
-  const statusWarningCount = sources.filter((source) => isWarningSourceStatus(source.status)).length;
+  const statusWarningCount = sources.filter(
+    (source) => source.freshness?.syncTracked !== false && isWarningSourceStatus(source.status),
+  ).length;
 
   return {
     ok: true,
