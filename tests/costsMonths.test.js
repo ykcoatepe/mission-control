@@ -1,6 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 
 const { buildCostsRouter } = require('../server/routes/costs');
@@ -142,6 +144,69 @@ test('detailed cache supplies positive and the only confirmed-empty month eviden
     assert.equal(body.months.find((entry) => entry.month === stillUnknown).unknown, true);
     assert.equal(body.sourceStatus.cached, 'ready');
   });
+});
+
+test('a not_configured producer blocks confirmed-empty evidence', async () => {
+  const month = '2026-07';
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-months-cache-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+
+  const writeCachedEntry = (statuses) => {
+    fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
+      [`costs:month:${month}`]: {
+        value: {
+          source: 'combined.agent_usage',
+          summary: { periodTokens: 0, periodUsd: 0, scanTruncated: false },
+          meta: {
+            scanTruncated: false,
+            openclawStatus: statuses.openclaw,
+            hermesStatus: statuses.hermes,
+            claudeCodeStatus: statuses.claude,
+          },
+        },
+        time: Date.now(),
+        detailed: true,
+      },
+    }));
+  };
+
+  const sources = {
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+  };
+
+  try {
+    writeCachedEntry({ openclaw: 'ready', hermes: 'ready', claude: 'not_configured' });
+    await withCostsApp(sources, async (base) => {
+      const body = await (await fetch(`${base}/api/costs/months`)).json();
+      assert.deepEqual(body.months.find((entry) => entry.month === month), {
+        month,
+        hasData: false,
+        sources: [],
+        unknown: true,
+      });
+    });
+
+    for (const status of ['ready', 'no_usage']) {
+      writeCachedEntry({ openclaw: status, hermes: status, claude: status });
+      await withCostsApp(sources, async (base) => {
+        const body = await (await fetch(`${base}/api/costs/months`)).json();
+        assert.deepEqual(body.months.find((entry) => entry.month === month), {
+          month,
+          hasData: false,
+          sources: ['cached'],
+        });
+      });
+    }
+  } finally {
+    if (previousCacheDir === undefined) delete process.env.MC_COSTS_CACHE_DIR;
+    else process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
 });
 
 test('a cached confirmed-empty result never disables the mutable current month', async () => {

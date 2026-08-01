@@ -703,11 +703,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
         data.add(month);
         continue;
       }
-      const producerUnavailable = Object.entries(value.meta || {}).some(([field, status]) =>
-        field.endsWith('Status') && status === 'unavailable');
+      // Confirmed-empty requires that the scan actually LOOKED everywhere:
+      // 'not_configured' means a producer was skipped, and evidence gathered
+      // without it cannot survive that tool being installed later.
+      const meta = value.meta || {};
+      const statuses = [meta.openclawStatus, meta.hermesStatus, meta.claudeCodeStatus];
+      const fullCoverage = statuses.every((status) => status === 'ready' || status === 'no_usage');
       if (value.meta?.scanTruncated !== true
         && value.summary?.scanTruncated !== true
-        && !producerUnavailable) {
+        && fullCoverage) {
         confirmedEmpty.add(month);
       }
     }
