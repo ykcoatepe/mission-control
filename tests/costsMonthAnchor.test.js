@@ -623,3 +623,22 @@ test('the newest queued month is served first so it outlives its poller', async 
   assert.equal(order[1], 'currently-viewed', `the month the user is looking at must not wait behind superseded ones (order: ${order.join(' -> ')})`);
   assert.equal(order.length, 4, 'superseded months still run — work is deprioritized, never dropped');
 });
+
+test('a preserved anchored.pending entry keeps the short fallback TTL', () => {
+  const { preservedEntryIsDetailed } = require('../server/routes/costs');
+
+  // All producers failed for a cold historical month: the preserved value is
+  // the empty pending payload. Marking it detailed would grant it the long TTL
+  // while needsCurrentPeriodRefresh never fires for an anchored month, so the
+  // page could poll for a full minute unable to trigger a retry.
+  assert.equal(
+    preservedEntryIsDetailed({ source: 'anchored.pending', period: { anchor: '2026-03' } }),
+    false,
+    'an empty pending payload is not detailed data',
+  );
+
+  // Real preserved data keeps its detailed status and long TTL.
+  assert.equal(preservedEntryIsDetailed({ source: 'combined.agent_usage' }), true);
+  assert.equal(preservedEntryIsDetailed({ source: 'openclaw.usage' }), true);
+  assert.equal(preservedEntryIsDetailed(undefined), true, 'absent source must not silently downgrade');
+});

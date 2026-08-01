@@ -260,6 +260,19 @@ function createRefreshLimiter(maxConcurrent = 2) {
   };
 }
 
+/**
+ * Is a preserved cache entry real data, i.e. worth the long detailed TTL?
+ *
+ * An `anchored.pending` payload is empty by construction. Marking it detailed
+ * would make the server treat it as fresh for the detailed TTL while
+ * needsCurrentPeriodRefresh deliberately never fires for an anchored month, so
+ * the page would keep polling a value that can never trigger a retry — even if
+ * every producer recovered immediately.
+ */
+function preservedEntryIsDetailed(value) {
+  return value?.source !== 'anchored.pending';
+}
+
 function cachedUsageAgent(previous, agent) {
   if (!agent?.label) return null;
   const prefix = `${agent.label} / `;
@@ -1139,7 +1152,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               claudeCodeStatus: 'unavailable',
               preservedPreviousUsage: true,
             });
-            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: true });
+            // An empty anchored.pending payload is NOT detailed data: marking it
+            // so would give it the long detailed TTL, and since
+            // needsCurrentPeriodRefresh deliberately never fires for an anchored
+            // month, the page would poll against a value the server considers
+            // fresh — unable to retry even if the producers recovered at once.
+            setCostsCache(cacheKey, { value: preserved, time: Date.now(), detailed: preservedEntryIsDetailed(preserved) });
             resolve(preserved);
             return;
           }
@@ -1264,6 +1282,7 @@ module.exports = {
   claudeCodeScanDays,
   costsCacheKey,
   createRefreshLimiter,
+  preservedEntryIsDetailed,
   isValidMonthAnchor,
   parseMonthAnchor,
   rangeForPeriod,
