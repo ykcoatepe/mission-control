@@ -1142,7 +1142,16 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           if (combinedUsage) {
             const costsResult = detailedCostsResult(period, combinedUsage, {
               refreshing: false,
-              stale: preservedPreviousOpenClaw || preservedPreviousClaudeCode || preservedPreviousHermes,
+              // A cold month has no prior slice to preserve, so the
+              // preservedPrevious* flags stay false even when a producer just
+              // failed. Without this the incomplete result looks settled, the
+              // page stops polling, and an immutable month stays understated
+              // for the rest of the view. Any unavailable producer means the
+              // answer is not final yet — the retry loop is bounded either way.
+              stale: preservedPreviousOpenClaw
+                || preservedPreviousClaudeCode
+                || preservedPreviousHermes
+                || !openclawData || !hermesData || !claudeCodeData,
               refreshStartedAt: startedAt,
               openclawStatus: openclawData ? 'ready' : 'unavailable',
               hermesStatus: hermesData ? 'ready' : 'unavailable',

@@ -659,7 +659,20 @@ test('a transient Hermes failure cannot silently drop its slice from a cached mo
   assert.match(routeSource, /mergeUsage\(effectiveOpenClawData, effectiveHermesData, effectiveClaudeCodeData/);
   assert.match(
     routeSource,
-    /stale: preservedPreviousOpenClaw \|\| preservedPreviousClaudeCode \|\| preservedPreviousHermes/,
+    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes/,
     'a Hermes-preserved result must be reported stale like the other producers',
+  );
+});
+
+test('a cold partial historical result is reported stale so polling continues', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  // On an uncached month every preservedPrevious* flag is false (there is no
+  // prior slice), so staleness must come from the producer statuses themselves
+  // — otherwise a partial result looks settled and the page stops retrying.
+  assert.match(
+    routeSource,
+    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes\s*\|\| !openclawData \|\| !hermesData \|\| !claudeCodeData,/,
+    'an unavailable producer must mark the combined result stale even with nothing preserved',
   );
 });
