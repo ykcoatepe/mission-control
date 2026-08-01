@@ -241,12 +241,73 @@ test('month availability cache is invalidated when the server month rolls over',
   const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
   assert.match(
     routeSource,
-    /monthsAvailabilityCache\.month === monthKeyOf\(new Date\(\)\)/,
+    /monthsAvailabilityCache\.month === monthKeyOf\(nowForMonth\(\)\)/,
     'a cache generated just before a month rollover must not confirm the new current month empty',
   );
   assert.match(
     routeSource,
-    /monthsAvailabilityCache = \{ time: Date\.now\(\), month: monthKeyOf\(new Date\(\)\), value \}/,
+    /monthsAvailabilityCache = \{ time: Date\.now\(\), month: current, value \}/,
     'the cache must record which server month generated its availability result',
   );
+});
+
+test('a scan that crosses the month rollover is not cached under the new month', async () => {
+  const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+  assert.match(
+    routeSource,
+    /monthKeyOf\(nowForMonth\(\)\) !== current/,
+    'a scan that crosses the rollover must trigger a fresh computation',
+  );
+  assert.match(
+    routeSource,
+    /if \(crossedMonth\) return value;/,
+    'a second rollover during the rebuild must return without caching',
+  );
+  assert.match(
+    routeSource,
+    /monthsAvailabilityCache = \{ time: Date\.now\(\), month: current, value \}/,
+    'the cache tag must use the generation month rather than the completion clock',
+  );
+  assert.doesNotMatch(
+    routeSource,
+    /monthsAvailabilityCache = \{ time: Date\.now\(\), month: monthKeyOf\(new Date\(\)\), value \}/,
+    'a completion-time month must never tag the generated value',
+  );
+
+  let clock = new Date('2026-08-31T23:59:59');
+  let releaseFirstScan;
+  const firstScan = new Promise((resolve) => { releaseFirstScan = resolve; });
+  let hermesCalls = 0;
+
+  await withCostsApp({
+    now: () => new Date(clock),
+    hermes: async () => {
+      hermesCalls += 1;
+      if (hermesCalls === 1) await firstScan;
+      return [clock.toISOString().slice(0, 7)];
+    },
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const request = fetch(`${base}/api/costs/months`);
+    await new Promise((resolve) => {
+      const waitForScan = () => {
+        if (hermesCalls > 0) return resolve();
+        return setImmediate(waitForScan);
+      };
+      waitForScan();
+    });
+    clock = new Date('2026-09-01T00:00:01');
+    releaseFirstScan();
+
+    const body = await (await request).json();
+    assert.equal(body.months[0].month, '2026-09');
+    assert.equal(hermesCalls, 2, 'the rollover must rerun the source scan once');
+
+    const cachedBody = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.equal(cachedBody.months[0].month, '2026-09');
+    assert.equal(hermesCalls, 2, 'the rebuilt result must be cached under the generation month');
+  });
 });

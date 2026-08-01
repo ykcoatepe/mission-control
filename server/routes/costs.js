@@ -740,72 +740,84 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   async function monthAvailability() {
+    const nowForMonth = () => monthAvailabilitySources?.now?.() || new Date();
     // A cache filled in the last minute of a month must not survive the rollover — a missing current month renders as confirmed empty.
     if (monthsAvailabilityCache
       && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl
-      && monthsAvailabilityCache.month === monthKeyOf(new Date())) {
+      && monthsAvailabilityCache.month === monthKeyOf(nowForMonth())) {
       return monthsAvailabilityCache.value;
     }
     if (monthsAvailabilityInFlight) return monthsAvailabilityInFlight;
 
     monthsAvailabilityInFlight = (async () => {
-      const now = monthAvailabilitySources?.now?.() || new Date();
-      const current = monthKeyOf(now);
-      const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
-      const months = [];
-      for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const now = nowForMonth();
+        const current = monthKeyOf(now);
+        const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
+        const months = [];
+        for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
 
-      const [hermes, codexbar, cached] = await Promise.all([
-        sourceStatusFor({
-          configured: monthAvailabilitySources?.hermesConfigured || hermesConfigured,
-          load: monthAvailabilitySources?.hermes || hermesUsageMonths,
-        }),
-        sourceStatusFor({
-          configured: monthAvailabilitySources?.codexbarConfigured || codexbarConfigured,
-          load: monthAvailabilitySources?.codexbar || codexbarUsageMonths,
-        }),
-        Promise.resolve((monthAvailabilitySources?.cachedDetailedMonths || cachedDetailedMonths)()),
-      ]);
-      if (hermes.error) console.warn('[Costs months hermes]', hermes.error.message || hermes.error);
-      if (codexbar.error) console.warn('[Costs months codexbar]', codexbar.error.message || codexbar.error);
+        const [hermes, codexbar, cached] = await Promise.all([
+          sourceStatusFor({
+            configured: monthAvailabilitySources?.hermesConfigured || hermesConfigured,
+            load: monthAvailabilitySources?.hermes || hermesUsageMonths,
+          }),
+          sourceStatusFor({
+            configured: monthAvailabilitySources?.codexbarConfigured || codexbarConfigured,
+            load: monthAvailabilitySources?.codexbar || codexbarUsageMonths,
+          }),
+          Promise.resolve((monthAvailabilitySources?.cachedDetailedMonths || cachedDetailedMonths)()),
+        ]);
+        if (hermes.error) console.warn('[Costs months hermes]', hermes.error.message || hermes.error);
+        if (codexbar.error) console.warn('[Costs months codexbar]', codexbar.error.message || codexbar.error);
 
-      const cachedMonths = cached || { data: new Set(), confirmedEmpty: new Set(), hasEntries: false };
-      const sourceStatus = {
-        hermes: hermes.status,
-        codexbar: codexbar.status,
-        cached: cachedMonths.hasEntries ? 'ready' : 'no_usage',
-      };
-      const scanStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69);
-      const value = {
-        months: months.map((month) => {
-          const sources = [];
-          if (hermes.months.has(month)) sources.push('hermes');
-          if (codexbar.months.has(month)) sources.push('codexbar');
-          const cachedHasData = cachedMonths.data?.has(month);
-          const cachedConfirmsEmpty = cachedMonths.confirmedEmpty?.has(month);
-          if (cachedHasData || cachedConfirmsEmpty) sources.push('cached');
-          const hasData = sources.some((source) => source !== 'cached') || Boolean(cachedHasData);
-          // Cheap probes do not inspect OpenClaw. Only a clean detailed cache
-          // entry can prove an otherwise empty month is actually empty.
-          const unknown = !hasData && !cachedConfirmsEmpty;
-          return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
-        }),
-        generatedAt: now.toISOString(),
-        sourceStatus,
-        partial: monthAvailabilityHasUnavailable({ sourceStatus })
-          || months.some((month) => !codexbarMonthIsFullyCovered(month, scanStart)),
-      };
-      // A concurrent refresh may discover one temporarily failed producer after
-      // a healthy answer. Keep the fresh healthier answer until its TTL ends.
-      const cachedValue = monthsAvailabilityCache;
-      if (!cachedValue
-        || Date.now() - cachedValue.time >= monthsAvailabilityCacheTtl
-        || cachedValue.month !== monthKeyOf(new Date())
-        || monthAvailabilityHasUnavailable(cachedValue.value)
-        || !monthAvailabilityHasUnavailable(value)) {
-        monthsAvailabilityCache = { time: Date.now(), month: monthKeyOf(new Date()), value };
+        // The scans can cross a month rollover; content built for the old month
+        // must never be cached under the new month's tag (TOCTOU). Rebuild once
+        // from a fresh clock; if a second rollover happens mid-rebuild (absurd),
+        // serve the result uncached.
+        const crossedMonth = monthKeyOf(nowForMonth()) !== current;
+        if (crossedMonth && attempt === 0) continue;
+
+        const cachedMonths = cached || { data: new Set(), confirmedEmpty: new Set(), hasEntries: false };
+        const sourceStatus = {
+          hermes: hermes.status,
+          codexbar: codexbar.status,
+          cached: cachedMonths.hasEntries ? 'ready' : 'no_usage',
+        };
+        const scanStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69);
+        const value = {
+          months: months.map((month) => {
+            const sources = [];
+            if (hermes.months.has(month)) sources.push('hermes');
+            if (codexbar.months.has(month)) sources.push('codexbar');
+            const cachedHasData = cachedMonths.data?.has(month);
+            const cachedConfirmsEmpty = cachedMonths.confirmedEmpty?.has(month);
+            if (cachedHasData || cachedConfirmsEmpty) sources.push('cached');
+            const hasData = sources.some((source) => source !== 'cached') || Boolean(cachedHasData);
+            // Cheap probes do not inspect OpenClaw. Only a clean detailed cache
+            // entry can prove an otherwise empty month is actually empty.
+            const unknown = !hasData && !cachedConfirmsEmpty;
+            return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
+          }),
+          generatedAt: now.toISOString(),
+          sourceStatus,
+          partial: monthAvailabilityHasUnavailable({ sourceStatus })
+            || months.some((month) => !codexbarMonthIsFullyCovered(month, scanStart)),
+        };
+        if (crossedMonth) return value;
+
+        // A concurrent refresh may discover one temporarily failed producer after
+        // a healthy answer. Keep the fresh healthier answer until its TTL ends.
+        const cachedValue = monthsAvailabilityCache;
+        if (!cachedValue
+          || Date.now() - cachedValue.time >= monthsAvailabilityCacheTtl
+          || cachedValue.month !== monthKeyOf(nowForMonth())
+          || monthAvailabilityHasUnavailable(cachedValue.value)
+          || !monthAvailabilityHasUnavailable(value)) {
+          monthsAvailabilityCache = { time: Date.now(), month: current, value };
+        }
+        return monthsAvailabilityCache.value;
       }
-      return monthsAvailabilityCache.value;
     })().finally(() => {
       monthsAvailabilityInFlight = null;
     });
