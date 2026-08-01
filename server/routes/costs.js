@@ -14,6 +14,191 @@ const {
   sumUsageSummaries,
 } = require('../services/claudeCodeUsage');
 
+// ---------------------------------------------------------------------------
+// Month anchor + period window (single source of truth for the /api/costs range)
+//
+// The Monthly view can be anchored to a PAST calendar month via `?month=YYYY-MM`.
+// Three producers derive the same window (this file, scripts/openclaw-usage-summary.js,
+// server/services/claudeCodeUsage.js) and tests/costsMonthAnchor.test.js asserts they
+// agree — keep the anchored semantics identical if you touch any of them.
+// ---------------------------------------------------------------------------
+
+const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function dayKey(date) {
+  return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
+}
+
+function monthKeyOf(date) {
+  return dayKey(date).slice(0, 7);
+}
+
+function isValidMonthAnchor(value) {
+  return MONTH_ANCHOR_PATTERN.test(String(value ?? ''));
+}
+
+function shiftMonthAnchor(anchor, delta) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  const shifted = new Date(year, month - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function monthAnchorBounds(anchor) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  return {
+    start: new Date(year, month - 1, 1, 0, 0, 0, 0),
+    end: new Date(year, month, 0, 23, 59, 59, 999),
+  };
+}
+
+function dayKeysBetween(start, end) {
+  const keys = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const final = new Date(end);
+  final.setHours(0, 0, 0, 0);
+  while (cursor <= final) {
+    keys.push(dayKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
+
+/**
+ * Normalizes the `month` query param.
+ *  { ok: true, anchor: null }      -> absent, empty, or the CURRENT month (byte-identical legacy behavior)
+ *  { ok: true, anchor: 'YYYY-MM' } -> anchored past month
+ *  { ok: false, error }            -> route answers 400
+ */
+function parseMonthAnchor(value, now = new Date()) {
+  if (value === undefined || value === null || value === '') return { ok: true, anchor: null };
+  const raw = String(value);
+  if (!isValidMonthAnchor(raw)) {
+    return { ok: false, error: 'month must be formatted as YYYY-MM with a month between 01 and 12' };
+  }
+  const current = monthKeyOf(now);
+  if (raw > current) return { ok: false, error: 'month cannot be in the future' };
+  return { ok: true, anchor: raw === current ? null : raw };
+}
+
+function anchoredMonthRange(anchor) {
+  const { start, end } = monthAnchorBounds(anchor);
+  const previous = monthAnchorBounds(shiftMonthAnchor(anchor, -1));
+  const keys = dayKeysBetween(start, end);
+  const previousKeys = dayKeysBetween(previous.start, previous.end);
+  return {
+    startSec: Math.floor(start.getTime() / 1000),
+    endSec: Math.floor(end.getTime() / 1000),
+    keys,
+    startKey: keys[0],
+    endKey: keys[keys.length - 1],
+    previousStartSec: Math.floor(previous.start.getTime() / 1000),
+    previousEndSec: Math.floor(previous.end.getTime() / 1000),
+    previousKeys,
+    anchor,
+  };
+}
+
+function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
+  if (period === 'month' && isValidMonthAnchor(monthAnchor) && String(monthAnchor) < monthKeyOf(now)) {
+    return anchoredMonthRange(String(monthAnchor));
+  }
+
+  const start = new Date(now);
+  if (period === 'day') {
+    start.setHours(0, 0, 0, 0);
+    const previousStart = new Date(start);
+    previousStart.setDate(previousStart.getDate() - 1);
+    const previousEnd = new Date(start.getTime() - 1);
+    return {
+      startSec: Math.floor(start.getTime() / 1000),
+      endSec: Math.floor(now.getTime() / 1000),
+      keys: [dayKey(start)],
+      startKey: dayKey(start),
+      endKey: dayKey(now),
+      previousStartSec: Math.floor(previousStart.getTime() / 1000),
+      previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+      previousKeys: [dayKey(previousStart)],
+      anchor: null,
+    };
+  }
+  if (period === '7d') {
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - 6);
+    const keys = [];
+    const cursor = new Date(start);
+    while (cursor <= now) {
+      keys.push(dayKey(cursor));
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    const previousEnd = new Date(start.getTime() - 1);
+    const previousStart = new Date(previousEnd);
+    previousStart.setHours(0, 0, 0, 0);
+    previousStart.setDate(previousStart.getDate() - 6);
+    const previousKeys = [];
+    const previousCursor = new Date(previousStart);
+    while (previousCursor <= previousEnd) {
+      previousKeys.push(dayKey(previousCursor));
+      previousCursor.setDate(previousCursor.getDate() + 1);
+    }
+    return {
+      startSec: Math.floor(start.getTime() / 1000),
+      endSec: Math.floor(now.getTime() / 1000),
+      keys,
+      startKey: keys[0],
+      endKey: keys[keys.length - 1],
+      previousStartSec: Math.floor(previousStart.getTime() / 1000),
+      previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+      previousKeys,
+      anchor: null,
+    };
+  }
+  start.setHours(0, 0, 0, 0);
+  start.setDate(1);
+  const keys = [];
+  const cursor = new Date(start);
+  while (cursor <= now) {
+    keys.push(dayKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const previousEnd = new Date(start);
+  previousEnd.setDate(0);
+  const previousStart = new Date(previousEnd);
+  previousStart.setDate(1);
+  previousEnd.setDate(Math.min(now.getDate(), previousEnd.getDate()));
+  previousEnd.setHours(23, 59, 59, 999);
+  const previousKeys = [];
+  const previousCursor = new Date(previousStart);
+  while (previousCursor <= previousEnd) {
+    previousKeys.push(dayKey(previousCursor));
+    previousCursor.setDate(previousCursor.getDate() + 1);
+  }
+  return {
+    startSec: Math.floor(start.getTime() / 1000),
+    endSec: Math.floor(now.getTime() / 1000),
+    keys,
+    startKey: keys[0],
+    endKey: keys[keys.length - 1],
+    previousStartSec: Math.floor(previousStart.getTime() / 1000),
+    previousEndSec: Math.floor(previousEnd.getTime() / 1000),
+    previousKeys,
+    anchor: null,
+  };
+}
+
+// `codexbar cost --days N` only reaches N days back, so an anchored past month
+// needs a window wide enough to cover its first day.
+function claudeCodeScanDays(monthAnchor, now = new Date()) {
+  if (!isValidMonthAnchor(monthAnchor)) return 70;
+  const { start } = monthAnchorBounds(String(monthAnchor));
+  const days = Math.ceil((now.getTime() - start.getTime()) / 86400000) + 2;
+  return Math.min(Math.max(days, 70), 400);
+}
+
+function costsCacheKey(period, monthAnchor) {
+  return monthAnchor ? `costs:month:${monthAnchor}` : `costs:${period}`;
+}
+
 function cachedUsageAgent(previous, agent) {
   if (!agent?.label) return null;
   const prefix = `${agent.label} / `;
@@ -238,10 +423,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
   }
 
-  async function openclawUsageSummary(period = 'month') {
+  async function openclawUsageSummary(period = 'month', monthAnchor = null) {
     try {
       const script = path.join(projectRoot, 'scripts', 'openclaw-usage-summary.js');
-      const { stdout } = await execPromise(`node ${JSON.stringify(script)} ${JSON.stringify(String(period))}`, {
+      const args = [String(period)];
+      if (isValidMonthAnchor(monthAnchor)) args.push(String(monthAnchor));
+      const { stdout } = await execPromise(`node ${JSON.stringify(script)} ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
         timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         env: { ...process.env, HOME: hostUserHome() },
@@ -259,105 +446,21 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     }
   }
 
-  async function claudeCodeUsageSummary(period = 'month') {
+  async function claudeCodeUsageSummary(period = 'month', monthAnchor = null) {
     try {
-      const { stdout } = await execPromise('codexbar cost --format json --provider claude --days 70', {
+      const days = claudeCodeScanDays(monthAnchor);
+      const { stdout } = await execPromise(`codexbar cost --format json --provider claude --days ${days}`, {
         timeout: 30000,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,
       });
       const trimmed = String(stdout || '').trim();
       if (!trimmed) return null;
-      return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period);
+      return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
     } catch (error) {
       console.error('[Claude Code Usage Summary]', error.message);
       return null;
     }
-  }
-
-  function dayKey(date) {
-    return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
-  }
-
-  function rangeForPeriod(period) {
-    const now = new Date();
-    const start = new Date(now);
-    if (period === 'day') {
-      start.setHours(0, 0, 0, 0);
-      const previousStart = new Date(start);
-      previousStart.setDate(previousStart.getDate() - 1);
-      const previousEnd = new Date(start.getTime() - 1);
-      return {
-        startSec: Math.floor(start.getTime() / 1000),
-        endSec: Math.floor(now.getTime() / 1000),
-        keys: [dayKey(start)],
-        startKey: dayKey(start),
-        endKey: dayKey(now),
-        previousStartSec: Math.floor(previousStart.getTime() / 1000),
-        previousEndSec: Math.floor(previousEnd.getTime() / 1000),
-        previousKeys: [dayKey(previousStart)],
-      };
-    }
-    if (period === '7d') {
-      start.setHours(0, 0, 0, 0);
-      start.setDate(start.getDate() - 6);
-      const keys = [];
-      const cursor = new Date(start);
-      while (cursor <= now) {
-        keys.push(dayKey(cursor));
-        cursor.setDate(cursor.getDate() + 1);
-      }
-      const previousEnd = new Date(start.getTime() - 1);
-      const previousStart = new Date(previousEnd);
-      previousStart.setHours(0, 0, 0, 0);
-      previousStart.setDate(previousStart.getDate() - 6);
-      const previousKeys = [];
-      const previousCursor = new Date(previousStart);
-      while (previousCursor <= previousEnd) {
-        previousKeys.push(dayKey(previousCursor));
-        previousCursor.setDate(previousCursor.getDate() + 1);
-      }
-      return {
-        startSec: Math.floor(start.getTime() / 1000),
-        endSec: Math.floor(now.getTime() / 1000),
-        keys,
-        startKey: keys[0],
-        endKey: keys[keys.length - 1],
-        previousStartSec: Math.floor(previousStart.getTime() / 1000),
-        previousEndSec: Math.floor(previousEnd.getTime() / 1000),
-        previousKeys,
-      };
-    }
-    start.setHours(0, 0, 0, 0);
-    start.setDate(1);
-    const keys = [];
-    const cursor = new Date(start);
-    while (cursor <= now) {
-      keys.push(dayKey(cursor));
-      cursor.setDate(cursor.getDate() + 1);
-    }
-    const previousEnd = new Date(start);
-    previousEnd.setDate(0);
-    const previousStart = new Date(previousEnd);
-    previousStart.setDate(1);
-    previousEnd.setDate(Math.min(now.getDate(), previousEnd.getDate()));
-    previousEnd.setHours(23, 59, 59, 999);
-    const previousKeys = [];
-    const previousCursor = new Date(previousStart);
-    while (previousCursor <= previousEnd) {
-      previousKeys.push(dayKey(previousCursor));
-      previousCursor.setDate(previousCursor.getDate() + 1);
-    }
-    return {
-      startSec: Math.floor(start.getTime() / 1000),
-      endSec: Math.floor(now.getTime() / 1000),
-      keys,
-      startKey: keys[0],
-      endKey: keys[keys.length - 1],
-      previousStartSec: Math.floor(previousStart.getTime() / 1000),
-      previousEndSec: Math.floor(previousEnd.getTime() / 1000),
-      previousKeys,
-    };
   }
 
   async function sqliteJson(dbPath, sql) {
@@ -384,10 +487,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
   }
 
-  async function hermesUsageSummary(period = 'month') {
+  async function hermesUsageSummary(period = 'month', monthAnchor = null) {
     const dbPath = hermesProfileDbPath();
     try {
-      const r = rangeForPeriod(period);
+      const r = rangeForPeriod(period, monthAnchor);
       const rows = await sqliteJson(dbPath, `
         SELECT
           date(started_at, 'unixepoch', 'localtime') AS date,
@@ -526,8 +629,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return [namespaceUsage(data, fallbackAgent)];
   }
 
-  function emptyUsage(period, source) {
-    const r = rangeForPeriod(period);
+  function emptyUsage(period, source, monthAnchor = null) {
+    const r = rangeForPeriod(period, monthAnchor);
     const daily = r.keys.map((date) => ({ date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0 }));
     const dailyByModel = r.keys.map((date) => ({ date, totalCost: 0, totalTokens: 0 }));
     return {
@@ -556,7 +659,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
-  function mergeUsage(openclawData, hermesData, claudeCodeData, period) {
+  function mergeUsage(openclawData, hermesData, claudeCodeData, period, monthAnchor = null) {
     if (!openclawData && !hermesData && !claudeCodeData) return null;
 
     const sources = [
@@ -630,6 +733,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return {
       source: 'combined.agent_usage',
       period,
+      periodAnchor: monthAnchor || null,
       periodRange: { start: keys[0] || null, end: keys[keys.length - 1] || null },
       summary: {
         periodUsd: sumSummary('periodUsd'),
@@ -656,7 +760,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
-  async function buildSessionsFallbackCost(period) {
+  async function buildSessionsFallbackCost(period, monthAnchor = null) {
     const sessionData = await sessionsService.listVisibleSessions(50);
     const sessions = sessionData.sessions || [];
     const totalTokens = sessions.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
@@ -698,7 +802,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
     return {
       source: 'sessions.fast_fallback',
-      period: { key: period, start: daily[0]?.date || null, end: daily[daily.length - 1]?.date || null },
+      period: {
+        key: period,
+        anchor: monthAnchor || null,
+        start: daily[0]?.date || null,
+        end: daily[daily.length - 1]?.date || null,
+      },
       daily,
       summary: {
         periodUsd: 0,
@@ -807,7 +916,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     );
   }
 
-  function detailedCostsResult(period, combinedUsage, meta = {}) {
+  function detailedCostsResult(period, combinedUsage, meta = {}, monthAnchor = null) {
     const normalizedUsage = normalizeUsageCosts({
       ...combinedUsage,
       meta: { ...(combinedUsage.meta || {}), ...meta },
@@ -817,6 +926,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       source: normalizedUsage.source,
       period: {
         key: period,
+        // Anchored past months are immutable, so needsCurrentPeriodRefresh must not
+        // treat "period.end !== today" as staleness. The anchor tag is that signal.
+        anchor: monthAnchor || combinedUsage.periodAnchor || null,
         start: normalizedUsage.periodRange?.start || (rangeRows[0]?.date || null),
         end: normalizedUsage.periodRange?.end || (rangeRows[rangeRows.length - 1]?.date || null),
       },
@@ -835,7 +947,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     }, meta);
   }
 
-  function refreshCostsCache(cacheKey, period) {
+  function refreshCostsCache(cacheKey, period, monthAnchor = null) {
     if (costsRefreshes.has(cacheKey)) return costsRefreshes.get(cacheKey);
 
     const startedAt = new Date().toISOString();
@@ -843,9 +955,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       setImmediate(async () => {
         try {
           const [openclawData, hermesData, claudeCodeData] = await Promise.all([
-            openclawUsageSummary(period),
-            hermesUsageSummary(period),
-            claudeCodeUsageSummary(period),
+            openclawUsageSummary(period, monthAnchor),
+            hermesUsageSummary(period, monthAnchor),
+            claudeCodeUsageSummary(period, monthAnchor),
           ]);
           const previous = costsCache.get(cacheKey)?.value;
           const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
@@ -854,7 +966,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           const preservedPreviousClaudeCode = !claudeCodeData && hasPreviousClaudeCode;
           const effectiveOpenClawData = openclawData || (preservedPreviousOpenClaw ? cachedOpenClawUsage(previous, period) : null);
           const effectiveClaudeCodeData = claudeCodeData || (preservedPreviousClaudeCode ? cachedClaudeCodeUsage(previous, period) : null);
-          const combinedUsage = mergeUsage(effectiveOpenClawData, hermesData, effectiveClaudeCodeData, period);
+          const combinedUsage = mergeUsage(effectiveOpenClawData, hermesData, effectiveClaudeCodeData, period, monthAnchor);
           if (combinedUsage) {
             const costsResult = detailedCostsResult(period, combinedUsage, {
               refreshing: false,
@@ -865,14 +977,14 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               claudeCodeStatus: claudeCodeData ? 'ready' : 'unavailable',
               preservedPreviousOpenClaw,
               preservedPreviousClaudeCode,
-            });
+            }, monthAnchor);
             setCostsCache(cacheKey, { value: costsResult, time: Date.now(), detailed: true });
             resolve(costsResult);
             return;
           }
 
           if (!costsCache.has(cacheKey)) {
-            const fallback = attachCostsMeta(await buildSessionsFallbackCost(period), {
+            const fallback = attachCostsMeta(await buildSessionsFallbackCost(period, monthAnchor), {
               refreshing: false,
               stale: false,
               openclawStatus: 'unavailable',
@@ -916,7 +1028,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   router.get('/api/costs', async (req, res) => {
     try {
       const period = String(req.query.period || 'month');
-      const cacheKey = `costs:${period}`;
+      const parsedAnchor = parseMonthAnchor(req.query.month);
+      if (!parsedAnchor.ok) return res.status(400).json({ error: parsedAnchor.error });
+      // The anchor only shapes the Monthly window; day/7d ignore it entirely.
+      const monthAnchor = period === 'month' ? parsedAnchor.anchor : null;
+      const cacheKey = costsCacheKey(period, monthAnchor);
       const cached = costsCache.get(cacheKey);
       const refreshing = costsRefreshes.has(cacheKey);
 
@@ -926,7 +1042,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         const isFresh = ageMs < ttl
           && !needsClaudeCodeCacheRefresh(cached.value)
           && !needsCurrentPeriodRefresh(cached.value);
-        if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period);
+        if (!isFresh && !refreshing) refreshCostsCache(cacheKey, period, monthAnchor);
         const normalizedCachedValue = normalizeUsageCosts(cached.value);
         return res.json(attachCostsMeta(normalizedCachedValue, {
           refreshing: refreshing || !isFresh,
@@ -935,8 +1051,8 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
         }));
       }
 
-      if (!refreshing) refreshCostsCache(cacheKey, period);
-      const fallback = attachCostsMeta(await buildSessionsFallbackCost(period), {
+      if (!refreshing) refreshCostsCache(cacheKey, period, monthAnchor);
+      const fallback = attachCostsMeta(await buildSessionsFallbackCost(period, monthAnchor), {
         refreshing: true,
         stale: false,
         openclawStatus: 'refreshing',
@@ -1005,5 +1121,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 module.exports = {
   buildCostsRouter,
   cachedUsageAgent,
+  claudeCodeScanDays,
+  costsCacheKey,
+  isValidMonthAnchor,
+  parseMonthAnchor,
+  rangeForPeriod,
+  shiftMonthAnchor,
   sumPreviousApiEquivalentUsd,
 };

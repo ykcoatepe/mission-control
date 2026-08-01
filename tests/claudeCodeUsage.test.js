@@ -303,7 +303,12 @@ test('preserves daily model token totals when merged CodexBar reports omit them'
 
 test('cost routes use fixed local Claude and combined provider commands', () => {
   const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
-  assert.match(routeSource, /codexbar cost --format json --provider claude --days 70/);
+  // The Claude scan window is widened for anchored past months, but the value is
+  // always derived server-side by claudeCodeScanDays (bounded 70..400) — never
+  // interpolated from the request.
+  assert.match(routeSource, /codexbar cost --format json --provider claude --days \$\{days\}/);
+  assert.match(routeSource, /const days = claudeCodeScanDays\(monthAnchor\);/);
+  assert.doesNotMatch(routeSource, /req\.query[^\n]*days/);
   assert.match(routeSource, /codexbar cost --format json --provider both --days 70/);
   assert.match(
     routeSource,

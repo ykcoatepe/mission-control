@@ -17,7 +17,41 @@ function dateKeys(start, end) {
   return keys;
 }
 
-function rangeForPeriod(period, now) {
+const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function isValidMonthAnchor(value) {
+  return MONTH_ANCHOR_PATTERN.test(String(value ?? ''));
+}
+
+function monthAnchorBounds(anchor) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  return {
+    start: new Date(year, month - 1, 1, 0, 0, 0, 0),
+    end: new Date(year, month, 0, 23, 59, 59, 999),
+  };
+}
+
+function shiftMonthAnchor(anchor, delta) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  const shifted = new Date(year, month - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+// Anchored past months use the FULL calendar month plus the FULL preceding month —
+// both windows are complete, so no day-of-month clipping applies.
+// Mirrors server/routes/costs.js rangeForPeriod and scripts/openclaw-usage-summary.js.
+function rangeForPeriod(period, now, monthAnchor = null) {
+  if (period === 'month' && isValidMonthAnchor(monthAnchor) && String(monthAnchor) < dayKey(new Date(now)).slice(0, 7)) {
+    const anchor = String(monthAnchor);
+    const current = monthAnchorBounds(anchor);
+    const previous = monthAnchorBounds(shiftMonthAnchor(anchor, -1));
+    return {
+      keys: dateKeys(current.start, current.end),
+      previousKeys: dateKeys(previous.start, previous.end),
+      anchor,
+    };
+  }
+
   const end = new Date(now);
   const start = new Date(now);
   const previousEnd = new Date(now);
@@ -47,6 +81,7 @@ function rangeForPeriod(period, now) {
   return {
     keys: dateKeys(start, end),
     previousKeys: dateKeys(previousStart, previousEnd),
+    anchor: null,
   };
 }
 
@@ -128,7 +163,17 @@ function needsClaudeCodeCacheRefresh(value) {
   return !Object.prototype.hasOwnProperty.call(value?.meta || {}, 'claudeCodeStatus');
 }
 
+// A cached result whose `period.anchor` names a month that has already ended is
+// immutable: its `period.end` can never equal today, so the plain end-of-day check
+// would mark it stale forever and re-refresh on every single request. Anchored past
+// months fall back to the normal cache TTL instead.
+function isAnchoredPastMonth(value, now = new Date()) {
+  const anchor = String(value?.period?.anchor || '');
+  return MONTH_ANCHOR_PATTERN.test(anchor) && anchor < dayKey(now).slice(0, 7);
+}
+
 function needsCurrentPeriodRefresh(value, now = new Date()) {
+  if (isAnchoredPastMonth(value, now)) return false;
   return String(value?.period?.end || '') !== dayKey(now);
 }
 
@@ -168,7 +213,7 @@ function claudeCodeBillingState(payload = {}) {
   return 'unknown';
 }
 
-function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
+function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date(), monthAnchor = null) {
   const payload = Array.isArray(raw)
     ? raw.find((item) => String(item?.provider || '').toLowerCase() === 'claude')
     : raw;
@@ -179,7 +224,7 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
   const costSource = billingState === 'metered' ? 'api' : billingState;
   const costStatus = billingState === 'metered' ? 'metered' : billingState;
   const billingModes = billingState === 'metered' ? 'api_metered' : billingState === 'included' ? 'subscription_included' : 'unknown';
-  const range = rangeForPeriod(period, now);
+  const range = rangeForPeriod(period, now, monthAnchor);
   const rowsByDate = new Map(
     (Array.isArray(payload.daily) ? payload.daily : [])
       .filter((row) => row?.date)
@@ -243,8 +288,17 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
   const yesterdayDate = new Date(now);
   yesterdayDate.setDate(yesterdayDate.getDate() - 1);
   const yesterday = dayKey(yesterdayDate);
-  const monthPrefix = today.slice(0, 7);
-  const lastSevenKeys = new Set(rangeForPeriod('7d', now).keys);
+  // "this month" follows the anchored month so thisMonthUsd/thisMonthTokens stay the
+  // budget-relevant totals for the month actually being viewed.
+  const monthPrefix = range.anchor || today.slice(0, 7);
+  // An anchored past month has no live "today"/"yesterday"/trailing week: those
+  // wall-clock fields are scoped to the anchored window so a past-month view never
+  // reports live-day numbers. The OpenClaw and Hermes producers behave the same way
+  // (they read those rows out of the window-restricted daily series).
+  const wallClockRows = range.anchor ? daily : allRows;
+  const lastSevenKeys = range.anchor
+    ? new Set(range.keys.slice(-7))
+    : new Set(rangeForPeriod('7d', now).keys);
   const costForKeys = (keys) => {
     const set = keys instanceof Set ? keys : new Set(keys);
     return allRows.filter((row) => set.has(row.date)).reduce((sum, row) => sum + row.cost, 0);
@@ -255,13 +309,14 @@ function buildClaudeCodeUsageSummary(raw, period = 'month', now = new Date()) {
   };
   const periodApiEquivalentUsd = daily.reduce((sum, row) => sum + row.cost, 0);
   const periodUsd = trackedCost(periodApiEquivalentUsd);
-  const todayRow = allRows.find((row) => row.date === today) || normalizedDailyRow(null, today);
-  const yesterdayRow = allRows.find((row) => row.date === yesterday) || normalizedDailyRow(null, yesterday);
+  const todayRow = wallClockRows.find((row) => row.date === today) || normalizedDailyRow(null, today);
+  const yesterdayRow = wallClockRows.find((row) => row.date === yesterday) || normalizedDailyRow(null, yesterday);
   const monthRows = allRows.filter((row) => row.date.startsWith(monthPrefix));
 
   return {
     source: 'claude-code.codexbar',
     period,
+    periodAnchor: range.anchor || null,
     periodRange: { start: range.keys[0] || null, end: range.keys.at(-1) || null },
     summary: {
       periodUsd,
@@ -367,8 +422,10 @@ function mergeCodexBarReports(raw) {
 module.exports = {
   buildClaudeCodeUsageSummary,
   hasClaudeCodeAgent,
+  isAnchoredPastMonth,
   mergeCodexBarReports,
   needsClaudeCodeCacheRefresh,
   needsCurrentPeriodRefresh,
+  rangeForPeriod,
   sumUsageSummaries,
 };

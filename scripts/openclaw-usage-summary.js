@@ -14,6 +14,7 @@ const readline = require('node:readline');
 const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
+const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const SESSION_BUCKETS = [
   {
     key: 'openclaw',
@@ -33,8 +34,66 @@ function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
 
-function rangeForPeriod(period) {
-  const now = new Date();
+function isValidMonthAnchor(value) {
+  return MONTH_ANCHOR_PATTERN.test(String(value ?? ''));
+}
+
+function monthAnchorBounds(anchor) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  return {
+    start: new Date(year, month - 1, 1, 0, 0, 0, 0),
+    end: new Date(year, month, 0, 23, 59, 59, 999),
+  };
+}
+
+function shiftMonthAnchor(anchor, delta) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  const shifted = new Date(year, month - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function dayKeysBetween(start, end) {
+  const keys = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const final = new Date(end);
+  final.setHours(0, 0, 0, 0);
+  while (cursor <= final) {
+    keys.push(dayKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
+
+// Anchored past month: FULL calendar month, previous = FULL preceding month.
+// Must stay identical to server/routes/costs.js and server/services/claudeCodeUsage.js.
+function anchoredMonthRange(anchor) {
+  const current = monthAnchorBounds(anchor);
+  const previous = monthAnchorBounds(shiftMonthAnchor(anchor, -1));
+  const keys = dayKeysBetween(current.start, current.end);
+  const previousKeys = dayKeysBetween(previous.start, previous.end);
+  return {
+    startMs: current.start.getTime(),
+    endMs: current.end.getTime(),
+    keys,
+    startKey: keys[0],
+    endKey: keys[keys.length - 1],
+    anchor,
+    previous: {
+      startMs: previous.start.getTime(),
+      endMs: previous.end.getTime(),
+      keys: previousKeys,
+      startKey: previousKeys[0],
+      endKey: previousKeys[previousKeys.length - 1],
+      anchor: shiftMonthAnchor(anchor, -1),
+    },
+  };
+}
+
+function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
+  if (period === 'month' && isValidMonthAnchor(monthAnchor) && String(monthAnchor) < dayKey(now).slice(0, 7)) {
+    return anchoredMonthRange(String(monthAnchor));
+  }
   const start = new Date(now);
   if (period === 'day') {
     start.setHours(0, 0, 0, 0);
@@ -509,13 +568,16 @@ function buildUsageFromAccumulator({
   const yesterdayKey = dayKey(yesterday);
   const todayRow = daily.find((d) => d.date === todayKey) || {};
   const yesterdayRow = daily.find((d) => d.date === yesterdayKey) || {};
-  const monthPrefix = todayKey.slice(0, 7);
+  // With an anchored past month there is no "today" inside the window, so the
+  // this-month totals follow the anchor instead (budget/monthly consumers read them).
+  const monthPrefix = range.anchor || todayKey.slice(0, 7);
   const thisMonthRows = daily.filter((d) => String(d.date || '').startsWith(monthPrefix));
   const thisWeekRows = daily.slice(-7);
 
   return costSanity.normalizeUsageCosts({
     source,
     period,
+    periodAnchor: range.anchor || null,
     periodRange: { start: range.startKey, end: range.endKey },
     summary: {
       periodUsd: daily.reduce((sum, d) => sum + Number(d.cost || 0), 0),
@@ -542,8 +604,8 @@ function buildUsageFromAccumulator({
   });
 }
 
-async function buildForPeriod(period) {
-  const r = rangeForPeriod(period);
+async function buildForPeriod(period, monthAnchor = null) {
+  const r = rangeForPeriod(period, monthAnchor);
   const { records, filesScanned, filesAvailable } = await scanUsageRecords({
     startMs: r.previous.startMs,
     endMs: r.endMs,
@@ -622,8 +684,10 @@ async function buildForPeriod(period) {
 }
 
 async function main() {
-  const period = process.argv.slice(2).find((arg) => VALID_PERIODS.has(String(arg))) || 'month';
-  const data = await buildForPeriod(period);
+  const args = process.argv.slice(2).map(String);
+  const period = args.find((arg) => VALID_PERIODS.has(arg)) || 'month';
+  const monthAnchor = args.find((arg) => isValidMonthAnchor(arg)) || null;
+  const data = await buildForPeriod(period, monthAnchor);
   process.stdout.write(JSON.stringify(data));
 }
 
@@ -637,6 +701,8 @@ if (require.main === module) {
 module.exports = {
   buildForPeriod,
   extractUsageRecord,
+  isValidMonthAnchor,
   listSessionFiles,
+  rangeForPeriod,
   sessionBucketForKey,
 };
