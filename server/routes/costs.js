@@ -774,7 +774,45 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     };
   }
 
+  // The sessions fast fallback is derived from CURRENT visible sessions: rolling
+  // dates, live token totals. Wearing an anchored month's label it would report
+  // today's usage as that month's. A pending anchored month gets an empty window
+  // instead — the detailed producers are the only valid historical source.
+  function buildAnchoredPendingCost(period, monthAnchor) {
+    const range = rangeForPeriod(period, monthAnchor);
+    const daily = range.keys.map((date) => ({ date, cost: 0, totalCost: 0, tokens: 0, totalTokens: 0 }));
+    return {
+      source: 'anchored.pending',
+      period: {
+        key: period,
+        anchor: monthAnchor,
+        start: range.startKey,
+        end: range.endKey,
+      },
+      daily,
+      summary: {
+        periodUsd: 0,
+        periodTokens: 0,
+        todayUsd: 0,
+        thisWeekUsd: 0,
+        thisMonthUsd: 0,
+        totalUsd: 0,
+        todayTokens: 0,
+        thisWeekTokens: 0,
+        thisMonthTokens: 0,
+        totalTokens: 0,
+        note: `Historical month ${monthAnchor} is still loading; live session data is not a valid substitute`,
+        budget: mcConfig.budget || { monthly: 0, warning: 0 },
+      },
+      byService: [],
+      budget: mcConfig.budget || { monthly: 0 },
+      dailyByModel: [],
+      modelKeys: [],
+    };
+  }
+
   async function buildSessionsFallbackCost(period, monthAnchor = null) {
+    if (monthAnchor) return buildAnchoredPendingCost(period, monthAnchor);
     const sessionData = await sessionsService.listVisibleSessions(50);
     const sessions = sessionData.sessions || [];
     const totalTokens = sessions.reduce((sum, session) => sum + (session.totalTokens || 0), 0);

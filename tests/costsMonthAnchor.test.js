@@ -352,3 +352,70 @@ test('GET /api/costs/codexbar validates the month anchor like /api/costs', async
     fs.rmSync(cacheDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// The fast fallback must never attach an anchor to live session data
+// ---------------------------------------------------------------------------
+
+test('an anchored month never falls back to live session totals', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-fallback-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+
+  const express = require('express');
+  const { buildCostsRouter } = require('../server/routes/costs');
+  const LIVE_TOKENS = 987654;
+  const app = express();
+  app.use(buildCostsRouter({
+    mcConfig: { budget: { monthly: 0 } },
+    projectRoot: path.join(__dirname, '..'),
+    sessionsService: {
+      listVisibleSessions: async () => ({
+        sessions: [{ key: 'agent:live', channel: 'agent', totalTokens: LIVE_TOKENS, updatedAt: new Date().toISOString() }],
+      }),
+    },
+  }));
+
+  const server = await new Promise((resolve) => {
+    const created = app.listen(0, '127.0.0.1', () => resolve(created));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    // Anchored past month, cold cache: the detailed producers have not answered
+    // yet, so the payload must be an EMPTY anchored window — never the live
+    // rolling-7-day session totals wearing the historical month's label.
+    const now = new Date();
+    const anchorDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const anchor = `${anchorDate.getFullYear()}-${String(anchorDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const response = await fetch(`${base}/api/costs?period=month&month=${anchor}`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+
+    assert.equal(body.period?.anchor, anchor, 'the anchor must still be reported');
+    assert.notEqual(
+      body.summary?.periodTokens,
+      LIVE_TOKENS,
+      'live session tokens must not be served as the anchored month total',
+    );
+    assert.equal(body.summary?.periodTokens || 0, 0, 'a pending anchored month reports no tokens');
+    assert.equal(body.summary?.totalTokens || 0, 0);
+    for (const row of body.daily || []) {
+      assert.ok(
+        String(row.date || '').startsWith(anchor),
+        `fallback row ${row.date} must fall inside the anchored month`,
+      );
+    }
+    assert.equal(body.meta?.refreshing, true, 'a pending anchored month must be marked refreshing');
+
+    // The live (unanchored) fallback keeps its existing behaviour.
+    const liveResponse = await fetch(`${base}/api/costs?period=day`);
+    const liveBody = await liveResponse.json();
+    assert.equal(liveBody.summary?.periodTokens, LIVE_TOKENS, 'the live fast fallback is unchanged');
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});

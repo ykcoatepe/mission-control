@@ -142,6 +142,9 @@ export default function Costs() {
       const tokens = query.state.data as CostsTokenData | undefined
       const stale =
         tokens?.source === 'sessions.fast_fallback' ||
+        // A pending anchored month: empty by design until the detailed
+        // producers answer, so it must keep polling like the live fallback.
+        tokens?.source === 'anchored.pending' ||
         tokens?.meta?.refreshing ||
         tokens?.meta?.stale
       if (!stale) {

@@ -24,6 +24,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes("tokens?.source === 'anchored.pending'"),
+  'a pending anchored month is empty by design and must keep polling like the live fast fallback',
+);
+
+assert.ok(
   source.includes('STALE_COSTS_RETRY_LIMIT = 60') && source.includes('STALE_COSTS_RETRY_TIMEOUT_MS') && source.includes('preservedPreviousOpenClaw') && source.includes('preservedPreviousClaudeCode') && source.includes('preservedPreviousUsage'),
   'Costs page stale retry polling should be capped and stop on fresh preserved cache responses',
 );
