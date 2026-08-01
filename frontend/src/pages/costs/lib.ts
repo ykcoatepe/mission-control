@@ -644,15 +644,26 @@ function codexbarPeriodBounds(
   }
 
   if (period === 'month') {
-    const end = new Date(now)
+    // The live month is the SERVER's current month; the browser clock is only
+    // the pre-payload fallback. Bounds span the whole server month — days the
+    // server has not reached yet simply have no rows, so the wide end is
+    // harmless, while a narrow browser-based end can drop server-dated rows.
+    const liveKey = currentMonthKey(now, serverMonth)
+    const [liveYear, liveMonthNum] = liveKey.split('-').map(Number)
     if (previous) {
-      end.setDate(0)
-      const previousMonthLastDay = end.getDate()
-      end.setDate(Math.min(now.getDate(), previousMonthLastDay))
+      const prevKey = previousMonthKey(liveKey)
+      const [prevYear, prevMonthNum] = prevKey.split('-').map(Number)
+      const prevEnd = new Date(prevYear, prevMonthNum, 0)
+      prevEnd.setDate(Math.min(now.getDate(), prevEnd.getDate()))
+      return {
+        start: codexbarDateKey(new Date(prevYear, prevMonthNum - 1, 1)),
+        end: codexbarDateKey(prevEnd),
+      }
     }
-    const start = new Date(end)
-    start.setDate(1)
-    return { start: codexbarDateKey(start), end: codexbarDateKey(end) }
+    return {
+      start: codexbarDateKey(new Date(liveYear, liveMonthNum - 1, 1)),
+      end: codexbarDateKey(new Date(liveYear, liveMonthNum, 0)),
+    }
   }
 
   const days = period === 'day' ? 1 : period === '7d' ? 7 : 30

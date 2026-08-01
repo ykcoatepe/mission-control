@@ -74,6 +74,10 @@ const STALE_COSTS_RETRY_TIMEOUT_MS = STALE_COSTS_RETRY_INTERVAL_MS * STALE_COSTS
 // While the server still reports work in flight for this exact key, giving up
 // would strand a refresh that does land — but the wait stays bounded.
 const ACTIVE_REFRESH_RETRY_TIMEOUT_MS = 10 * 60 * 1000
+// serverMonth is authoritative but only refreshes with a costs payload; the
+// server can cross a month boundary long before browser midnight, so the
+// calendar metadata is revalidated on a fixed cadence too (cache-served, cheap).
+const CALENDAR_METADATA_REVALIDATE_MS = 30 * 60 * 1000
 
 type CostsTokenData = TokenData & {
   meta?: TokenData['meta'] & {
@@ -98,7 +102,7 @@ export default function Costs() {
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
   const [calendarNow, setCalendarNow] = useState(() => new Date())
-  const staleCostsRetry = useRef<{ key: string; startedAt: number } | null>(null)
+  const staleCostsRetry = useRef<{ key: string; startedAt: number; settleResets: number } | null>(null)
 
   // Only Monthly honours the anchor; Daily / 7 Days always query the live window.
   const activeMonthAnchor = period === 'month' ? monthAnchor : null
@@ -121,9 +125,11 @@ export default function Costs() {
     }
 
     scheduleNextCalendarRefresh()
+    const revalidateId = window.setInterval(refreshCalendarNow, CALENDAR_METADATA_REVALIDATE_MS)
     window.addEventListener('focus', refreshCalendarNow)
     return () => {
       window.clearTimeout(timerId)
+      window.clearInterval(revalidateId)
       window.removeEventListener('focus', refreshCalendarNow)
     }
   }, [monthAnchor, period, queryClient])
@@ -193,13 +199,24 @@ export default function Costs() {
       ].join(':')
       const now = Date.now()
       if (staleCostsRetry.current?.key !== retryKey) {
-        staleCostsRetry.current = { key: retryKey, startedAt: now }
+        staleCostsRetry.current = { key: retryKey, startedAt: now, settleResets: 0 }
       }
 
       // `meta.refreshing` stays true while the refresh for this key is queued or
       // running, so the longer budget only applies while the server is actually
       // still working on it.
-      const budget = tokens?.meta?.refreshing
+      const refreshing = tokens?.meta?.refreshing === true
+      // A refresh that ran longer than the idle budget and then settled into a
+      // partial result would otherwise flip to an ALREADY-EXPIRED deadline and
+      // stop polling instantly. Grant the settled result one fresh idle window
+      // — once per selection, so a permanently failing month cannot re-arm
+      // itself forever (that eternal loop was fixed in an earlier round).
+      if (!refreshing
+        && staleCostsRetry.current.settleResets === 0
+        && now - staleCostsRetry.current.startedAt >= STALE_COSTS_RETRY_TIMEOUT_MS) {
+        staleCostsRetry.current = { key: retryKey, startedAt: now, settleResets: 1 }
+      }
+      const budget = refreshing
         ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS
         : STALE_COSTS_RETRY_TIMEOUT_MS
       return now - staleCostsRetry.current.startedAt < budget

@@ -485,9 +485,9 @@ describe('CodexBar calendar periods', () => {
     expect(week.at(-1)?.date).toBe('2026-07-13')
     expect(sumCostRows(week) / week.length).toBeCloseTo(3 / 7)
     const month = codexbarRowsForPeriod(rows, 'month', now)
-    expect(month).toHaveLength(13)
+    expect(month).toHaveLength(31)
     expect(month[0].date).toBe('2026-07-01')
-    expect(month.at(-1)?.date).toBe('2026-07-13')
+    expect(month.at(-1)?.date).toBe('2026-07-31')
     expect(sumCostRows(month)).toBe(5)
   })
 
@@ -733,8 +733,24 @@ describe('server-authoritative month classification', () => {
     expect(withServerCalendar).toHaveLength(31)
     expect(withServerCalendar[0].date).toBe('2026-08-01')
     expect(withServerCalendar.at(-1)?.date).toBe('2026-08-31')
-    expect(browserOnly).toHaveLength(15)
-    expect(browserOnly.at(-1)?.date).toBe('2026-08-15')
+    expect(browserOnly).toHaveLength(31)
+    expect(browserOnly.at(-1)?.date).toBe('2026-08-31')
+  })
+
+  it('uses the server month for live bounds and the browser month before payload arrival', () => {
+    const browserNow = new Date('2026-08-31T12:00:00+03:00')
+    const days = [{ date: '2026-09-01', totalCost: 9, totalTokens: 90, inputTokens: 0, outputTokens: 0, models: [] }]
+
+    const serverCalendar = codexbarRowsForPeriod(days, 'month', browserNow, null, '2026-09')
+    expect(serverCalendar).toHaveLength(30)
+    expect(serverCalendar[0].date).toBe('2026-09-01')
+    expect(serverCalendar.at(-1)?.date).toBe('2026-09-30')
+    expect(serverCalendar.find(row => row.date === '2026-09-01')).toMatchObject({ totalCost: 9 })
+
+    const browserFallback = codexbarRowsForPeriod(days, 'month', browserNow)
+    expect(browserFallback).toHaveLength(31)
+    expect(browserFallback[0].date).toBe('2026-08-01')
+    expect(browserFallback.at(-1)?.date).toBe('2026-08-31')
   })
 
   it('stops the navigator at the server month, not the browser month', () => {

@@ -45,8 +45,16 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('const staleCostsRetry = useRef<{ key: string; startedAt: number; settleResets: number } | null>(null)') &&
+  source.includes('settleResets: 0') &&
+  source.includes('staleCostsRetry.current.settleResets === 0'),
+  'a long-running refresh that settles partial gets exactly ONE fresh idle window — never zero (instant stop) and never unlimited (eternal retry)',
+);
+
+assert.ok(
   source.includes('ACTIVE_REFRESH_RETRY_TIMEOUT_MS') &&
-  source.includes('const budget = tokens?.meta?.refreshing\n        ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS\n        : STALE_COSTS_RETRY_TIMEOUT_MS'),
+  source.includes('const refreshing = tokens?.meta?.refreshing === true') &&
+  source.includes('const budget = refreshing\n        ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS\n        : STALE_COSTS_RETRY_TIMEOUT_MS'),
   'a queued month may wait behind other scans, so polling must not expire while the server still reports work in flight for this key',
 );
 
@@ -74,6 +82,13 @@ assert.ok(
   source.includes('queryClient.invalidateQueries({ queryKey })') &&
   source.includes('codexbarRowsForPeriod(\n      codexbarDailyRows,\n      period,\n      calendarNow,'),
   'Costs page should refresh period bounds and both usage queries after local midnight or focus',
+);
+
+assert.ok(
+  source.includes('CALENDAR_METADATA_REVALIDATE_MS = 30 * 60 * 1000') &&
+  source.includes('window.setInterval(refreshCalendarNow, CALENDAR_METADATA_REVALIDATE_MS)') &&
+  source.includes('window.clearInterval(revalidateId)'),
+  'calendar metadata must revalidate independently of browser midnight so server month rollover cannot strand the navigator',
 );
 
 assert.ok(
