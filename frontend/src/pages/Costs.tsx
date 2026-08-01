@@ -235,16 +235,21 @@ export default function Costs() {
   const unknownBillingSourceCount = (tokenData?.byService || []).filter(item => (
     Number(item.tokens || 0) > 0 && String(item.costSource || '').toLowerCase() === 'unknown'
   )).length
-  const codexbarActive = !!(codexbarCosts && codexbarCosts.last30DaysCostUSD > 0)
   const codexbarPeriodDays = useMemo(() => {
-    if (!codexbarActive) return []
+    if (!codexbarCosts?.daily?.length) return []
     return codexbarRowsForPeriod(
-      codexbarCosts?.daily || [],
+      codexbarCosts.daily,
       period,
       calendarNow,
       activeMonthAnchor,
     )
-  }, [activeMonthAnchor, calendarNow, codexbarActive, codexbarCosts?.daily, period])
+  }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period])
+  // A live 30-day summary of $0 must not suppress an anchored month that has
+  // usage: codexbar activity follows the selected period's rows too.
+  const codexbarActive = !!(codexbarCosts && (
+    codexbarCosts.last30DaysCostUSD > 0 ||
+    codexbarPeriodDays.some(day => Number(day.totalCost || 0) > 0 || Number(day.totalTokens || 0) > 0)
+  ))
   const codexbarLatest = useMemo(() => {
     for (let index = codexbarPeriodDays.length - 1; index >= 0; index -= 1) {
       const row = codexbarPeriodDays[index]

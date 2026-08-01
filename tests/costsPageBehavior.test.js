@@ -38,7 +38,7 @@ assert.ok(
   source.includes("window.addEventListener('focus'") &&
   source.includes('calendarRefreshQueryKeys(period, monthAnchor)') &&
   source.includes('queryClient.invalidateQueries({ queryKey })') &&
-  source.includes('codexbarRowsForPeriod(\n      codexbarCosts?.daily || [],\n      period,\n      calendarNow,'),
+  source.includes('codexbarRowsForPeriod(\n      codexbarCosts.daily,\n      period,\n      calendarNow,'),
   'Costs page should refresh period bounds and both usage queries after local midnight or focus',
 );
 
@@ -192,6 +192,13 @@ assert.ok(
 assert.ok(
   source.includes('codexbarQueryPath(activeMonthAnchor, calendarNow)'),
   'the codexbar fetch must follow the month anchor so past-month codexbar cells are not zero-filled by the default 70-day scan',
+);
+
+assert.ok(
+  !source.includes('if (!codexbarActive) return []') &&
+  source.includes('codexbarPeriodDays.some(') &&
+  source.includes('last30DaysCostUSD > 0 ||'),
+  'codexbar activity must be derived from the selected period rows too — a live last30DaysCostUSD of 0 must not suppress an anchored month that has usage',
 );
 
 console.log('costs page behavior guards passed');
