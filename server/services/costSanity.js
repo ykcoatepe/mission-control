@@ -350,7 +350,14 @@ function normalizeUsageCosts(usage) {
   if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
     normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
   }
-  normalized.costReliability = sourceCoveragePartial || byService.some((item) => item.costSource === 'unknown')
+  // A truncated scan means we KNOW the totals are understated: the file cap cut
+  // the candidate set before any record was read. That is partial coverage no matter
+  // how clean the producer statuses look, and the frontend gates budget progress
+  // and projections on this field alone.
+  const scanTruncated = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
+  normalized.costReliability = scanTruncated
+    || sourceCoveragePartial
+    || byService.some((item) => item.costSource === 'unknown')
     ? 'partial_unknown'
     : 'normalized';
   normalized.apiEquivalentReliability = apiEquivalentReliability;
