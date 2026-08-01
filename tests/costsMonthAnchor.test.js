@@ -738,3 +738,38 @@ test('costSanity only treats an explicitly unavailable producer as partial', () 
   assert.match(costSanitySource, /sourceStatuses\.includes\('unavailable'\)/);
   assert.ok(!costSanitySource.includes("'not_configured'"));
 });
+
+test('an explicitly configured Hermes path stays retryable when the db is missing', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  const functionStart = routeSource.indexOf('function hermesConfigured()');
+  assert.ok(functionStart >= 0, 'hermesConfigured must exist');
+  const functionEnd = routeSource.indexOf('\n  }', functionStart);
+  assert.ok(functionEnd > functionStart, 'hermesConfigured body must be readable');
+
+  const functionSource = routeSource.slice(functionStart, functionEnd);
+  assert.match(functionSource, /if \(process\.env\.HERMES_STATE_DB \|\| process\.env\.HERMES_PROFILE_DIR\) return true;/);
+  const envCheckIndex = functionSource.indexOf('if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR) return true;');
+  const existsSyncIndex = functionSource.indexOf('fs.existsSync(hermesProfileDbPath())');
+  assert.ok(envCheckIndex >= 0, 'explicit Hermes configuration must stay retryable');
+  assert.ok(existsSyncIndex >= 0, 'hermesConfigured must still support discovery by existence');
+  assert.ok(envCheckIndex < existsSyncIndex, 'explicit configuration must be checked before discovery by existence');
+});
+
+test('an explicit Hermes path is never silently replaced by discovery', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  // Falling through to the candidate list when an explicit path is missing made
+  // the server read a DIFFERENT profile's database than the operator configured
+  // — and it also made the configured-but-failed state unreachable, so the
+  // retryable/not_configured distinction could never fire.
+  const start = routeSource.indexOf('function hermesProfileDbPath()');
+  assert.ok(start > -1, 'hermesProfileDbPath must exist');
+  const body = routeSource.slice(start, start + 900);
+  assert.match(body, /if \(process\.env\.HERMES_STATE_DB\) return process\.env\.HERMES_STATE_DB;/);
+  assert.match(body, /if \(process\.env\.HERMES_PROFILE_DIR\) return path\.join\(process\.env\.HERMES_PROFILE_DIR, 'state\.db'\);/);
+  assert.ok(
+    body.indexOf('HERMES_STATE_DB) return') < body.indexOf('const candidates'),
+    'the explicit paths must short-circuit BEFORE the discovery candidate list',
+  );
+});

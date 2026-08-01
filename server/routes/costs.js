@@ -614,6 +614,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   function hermesProfileDbPath() {
     const home = process.env.HOME || '/Users/yordamkocatepe';
     const profile = process.env.HERMES_PROFILE || 'hmudur';
+    // An explicitly configured path WINS, even when it does not exist. Falling
+    // through to discovery would silently read a different profile's database
+    // than the operator asked for; a missing explicit path must surface as a
+    // failed producer instead (see hermesConfigured).
+    if (process.env.HERMES_STATE_DB) return process.env.HERMES_STATE_DB;
+    if (process.env.HERMES_PROFILE_DIR) return path.join(process.env.HERMES_PROFILE_DIR, 'state.db');
     const candidates = [
       process.env.HERMES_STATE_DB,
       process.env.HERMES_PROFILE_DIR ? path.join(process.env.HERMES_PROFILE_DIR, 'state.db') : null,
@@ -625,6 +631,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   function hermesConfigured() {
+    // An explicit path is a statement of intent: a db that is temporarily
+    // missing or on an unmounted volume is a producer that FAILED, not one that
+    // was never set up — and only a configured-but-failed producer stays
+    // retryable. Discovery-by-existence applies only when nothing was set.
+    if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR) return true;
     try {
       return fs.existsSync(hermesProfileDbPath());
     } catch {
