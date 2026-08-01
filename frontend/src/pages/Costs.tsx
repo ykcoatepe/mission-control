@@ -37,11 +37,17 @@ import {
   summarizeCostReliability,
   sumCostRows,
   calendarRefreshQueryKeys,
+  codexbarQueryPath,
+  costsQueryPath,
   millisecondsUntilNextCalendarDay,
   codexbarRowsForPeriod,
   previousCodexbarRows,
   buildCodexbarChartData,
   comparisonLabels,
+  daysInMonthKey,
+  previousMonthKey,
+  isPastMonthAnchor,
+  monthKeyLabel,
   readNumericField,
   hasUsableAgentSplitData,
   parseMonthlyBudgetInput,
@@ -64,11 +70,20 @@ import CostDriversSection from './costs/CostDriversSection'
 const STALE_COSTS_RETRY_INTERVAL_MS = 2500
 const STALE_COSTS_RETRY_LIMIT = 60
 const STALE_COSTS_RETRY_TIMEOUT_MS = STALE_COSTS_RETRY_INTERVAL_MS * STALE_COSTS_RETRY_LIMIT
+// A queued month can wait behind other scans for longer than the normal budget.
+// While the server still reports work in flight for this exact key, giving up
+// would strand a refresh that does land — but the wait stays bounded.
+const ACTIVE_REFRESH_RETRY_TIMEOUT_MS = 10 * 60 * 1000
+// serverMonth is authoritative but only refreshes with a costs payload; the
+// server can cross a month boundary long before browser midnight, so the
+// calendar metadata is revalidated on a fixed cadence too (cache-served, cheap).
+const CALENDAR_METADATA_REVALIDATE_MS = 30 * 60 * 1000
 
 type CostsTokenData = TokenData & {
   meta?: TokenData['meta'] & {
     preservedPreviousOpenClaw?: boolean
     preservedPreviousClaudeCode?: boolean
+    preservedPreviousHermes?: boolean
     preservedPreviousUsage?: boolean
     refreshStartedAt?: string
   }
@@ -79,18 +94,26 @@ export default function Costs() {
   const m = useIsMobile()
   const queryClient = useQueryClient()
   const [period, setPeriod] = useState<'day' | '7d' | 'month'>('month')
+  // `null` = the live current month. The anchor survives a trip through the Daily /
+  // 7 Days tabs (it is simply not sent while those periods are active) and is
+  // restored the moment Monthly comes back.
+  const [monthAnchor, setMonthAnchor] = useState<string | null>(null)
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
   const [calendarNow, setCalendarNow] = useState(() => new Date())
-  const staleCostsRetry = useRef<{ key: string; startedAt: number } | null>(null)
+  const staleCostsRetry = useRef<{ key: string; startedAt: number; settleResets: number } | null>(null)
+
+  // Only Monthly honours the anchor; Daily / 7 Days always query the live window.
+  const activeMonthAnchor = period === 'month' ? monthAnchor : null
+  const costsPath = costsQueryPath(period, activeMonthAnchor)
 
   useEffect(() => {
     let timerId = 0
     const refreshCalendarNow = () => {
       const next = new Date()
       setCalendarNow(current => current.toDateString() === next.toDateString() ? current : next)
-      calendarRefreshQueryKeys(period).forEach(queryKey => {
+      calendarRefreshQueryKeys(period, monthAnchor).forEach(queryKey => {
         void queryClient.invalidateQueries({ queryKey })
       })
     }
@@ -102,18 +125,20 @@ export default function Costs() {
     }
 
     scheduleNextCalendarRefresh()
+    const revalidateId = window.setInterval(refreshCalendarNow, CALENDAR_METADATA_REVALIDATE_MS)
     window.addEventListener('focus', refreshCalendarNow)
     return () => {
       window.clearTimeout(timerId)
+      window.clearInterval(revalidateId)
       window.removeEventListener('focus', refreshCalendarNow)
     }
-  }, [period, queryClient])
+  }, [monthAnchor, period, queryClient])
 
-  // ---- Four period-independent fetches ----
+  // ---- Period-independent fetches (codexbar additionally follows the month anchor) ----
   const { data: awsCosts } = useApi<AWSSCostData>('/api/aws/costs')
   const { data: configRaw } = useApi<ConfigData>('/api/config')
   const { data: sessionsRaw } = useApi<{ sessions: SessionData[] }>('/api/sessions')
-  const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>('/api/costs/codexbar')
+  const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>(codexbarQueryPath(activeMonthAnchor, calendarNow))
 
   const config: ConfigData = configRaw ?? { modules: {} }
   const sessions: SessionData[] = useMemo(() => sessionsRaw?.sessions ?? [], [sessionsRaw])
@@ -122,12 +147,15 @@ export default function Costs() {
 
   // ---- Costs query with stale-retry ----
   const costsQuery = useQuery<TokenData, Error>({
-    queryKey: ['api', `/api/costs?period=${period}`],
-    queryFn: () => fetchJson<TokenData>(`/api/costs?period=${period}`),
+    queryKey: ['api', costsPath],
+    queryFn: () => fetchJson<TokenData>(costsPath),
     refetchInterval: (query) => {
       const tokens = query.state.data as CostsTokenData | undefined
       const stale =
         tokens?.source === 'sessions.fast_fallback' ||
+        // A pending anchored month: empty by design until the detailed
+        // producers answer, so it must keep polling like the live fallback.
+        tokens?.source === 'anchored.pending' ||
         tokens?.meta?.refreshing ||
         tokens?.meta?.stale
       if (!stale) {
@@ -135,26 +163,63 @@ export default function Costs() {
         return false
       }
 
+      // A preserved cache entry is worth settling on only when it actually holds
+      // data. `anchored.pending` is empty by construction, so preserving it (all
+      // producers failed on the first refresh) must NOT stop the polling —
+      // otherwise the month stays at zero for the whole mounted session even
+      // after the producers recover.
+      // A configured producer that is still unavailable means the answer is not
+      // final, no matter that some other slice was preserved. 'not_configured'
+      // does NOT count — an absent optional integration will never recover.
+      const producerStillUnavailable = [
+        tokens?.meta?.openclawStatus,
+        tokens?.meta?.hermesStatus,
+        tokens?.meta?.claudeCodeStatus,
+      ].includes('unavailable')
       const preservedFreshCache =
+        tokens?.source !== 'anchored.pending' &&
         tokens?.meta?.stale &&
         !tokens.meta.refreshing &&
-        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousUsage)
+        !producerStillUnavailable &&
+        (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousHermes || tokens.meta.preservedPreviousUsage)
       if (preservedFreshCache) {
         staleCostsRetry.current = null
         return false
       }
 
+      // Keyed by the SELECTION, never by per-attempt refresh metadata: each
+      // failed retry rewrites refreshStartedAt, which would reset the deadline
+      // every time and let a permanently failing month poll — and relaunch the
+      // expensive scans — forever. A changing source is real progress and does
+      // legitimately restart the budget.
       const retryKey = [
         period,
+        activeMonthAnchor || 'live',
         tokens?.source || 'unknown',
-        tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',
       ].join(':')
       const now = Date.now()
       if (staleCostsRetry.current?.key !== retryKey) {
-        staleCostsRetry.current = { key: retryKey, startedAt: now }
+        staleCostsRetry.current = { key: retryKey, startedAt: now, settleResets: 0 }
       }
 
-      return now - staleCostsRetry.current.startedAt < STALE_COSTS_RETRY_TIMEOUT_MS
+      // `meta.refreshing` stays true while the refresh for this key is queued or
+      // running, so the longer budget only applies while the server is actually
+      // still working on it.
+      const refreshing = tokens?.meta?.refreshing === true
+      // A refresh that ran longer than the idle budget and then settled into a
+      // partial result would otherwise flip to an ALREADY-EXPIRED deadline and
+      // stop polling instantly. Grant the settled result one fresh idle window
+      // — once per selection, so a permanently failing month cannot re-arm
+      // itself forever (that eternal loop was fixed in an earlier round).
+      if (!refreshing
+        && staleCostsRetry.current.settleResets === 0
+        && now - staleCostsRetry.current.startedAt >= STALE_COSTS_RETRY_TIMEOUT_MS) {
+        staleCostsRetry.current = { key: retryKey, startedAt: now, settleResets: 1 }
+      }
+      const budget = refreshing
+        ? ACTIVE_REFRESH_RETRY_TIMEOUT_MS
+        : STALE_COSTS_RETRY_TIMEOUT_MS
+      return now - staleCostsRetry.current.startedAt < budget
         ? STALE_COSTS_RETRY_INTERVAL_MS
         : false
     },
@@ -162,6 +227,13 @@ export default function Costs() {
   })
 
   const tokenData: TokenData | null = costsQuery.data ?? null
+  // The server's own calendar month: it normalizes anchors against its clock, so
+  // past-vs-current classification must follow it, not the browser's time zone.
+  const serverMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  // Classified by the SERVER's month, so a browser in another time zone cannot
+  // label a live month-to-date payload as a completed month (or the reverse).
+  // Falls back to the browser clock only before the first payload arrives.
+  const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow, serverMonth)
   const loading = costsQuery.isLoading
   const error: string | null = costsQuery.error ? String(costsQuery.error.message || 'Unknown error') : null
 
@@ -191,7 +263,7 @@ export default function Costs() {
       }),
     onSuccess: (_data, monthly) => {
       setBudget(monthly)
-      void queryClient.invalidateQueries({ queryKey: ['api', `/api/costs?period=${period}`] })
+      void queryClient.invalidateQueries({ queryKey: ['api', costsPath] })
     },
   })
 
@@ -205,30 +277,48 @@ export default function Costs() {
     saveBudgetMutation.mutate(budgetValidation.monthly)
   }
 
+  // A finished month is not projected — it is simply totalled.
+  const anchoredMonthLabel = activeMonthAnchor ? monthKeyLabel(activeMonthAnchor) : null
   const labels = {
-    thisMonth: m ? 'Month' : 'This Month',
+    thisMonth: viewingPastMonth && anchoredMonthLabel ? (m ? 'Month' : anchoredMonthLabel) : (m ? 'Month' : 'This Month'),
     creditsLeft: m ? 'Credits' : 'Credits Left',
     dailyAvg: m ? 'Tracked Avg' : 'Tracked Daily Average',
-    projected: m ? 'Tracked Proj.' : 'Projected Tracked Spend',
+    projected: viewingPastMonth
+      ? (m ? 'Tracked Total' : 'Tracked Month Total')
+      : (m ? 'Tracked Proj.' : 'Projected Tracked Spend'),
   }
 
   const ledgerActive = !!(tokenData && ['token-usage.csv', 'openclaw.usage', 'combined.agent_usage'].includes(tokenData.source || '') && tokenData.summary)
   const unknownBillingSourceCount = (tokenData?.byService || []).filter(item => (
     Number(item.tokens || 0) > 0 && String(item.costSource || '').toLowerCase() === 'unknown'
   )).length
-  const codexbarActive = !!(codexbarCosts && codexbarCosts.last30DaysCostUSD > 0)
-  const codexbarLatest = codexbarCosts?.daily?.[codexbarCosts.daily.length - 1] || null
+  const codexbarDailyRows = codexbarCosts?.daily
   const codexbarPeriodDays = useMemo(() => {
-    if (!codexbarActive) return []
+    if (!codexbarDailyRows?.length) return []
     return codexbarRowsForPeriod(
-      codexbarCosts?.daily || [],
+      codexbarDailyRows,
       period,
       calendarNow,
+      activeMonthAnchor,
+      serverMonth,
     )
-  }, [calendarNow, codexbarActive, codexbarCosts?.daily, period])
+  }, [activeMonthAnchor, calendarNow, codexbarDailyRows, period, serverMonth])
+  // A live 30-day summary of $0 must not suppress an anchored month that has
+  // usage: codexbar activity follows the selected period's rows too.
+  const codexbarActive = !!(codexbarCosts && (
+    codexbarCosts.last30DaysCostUSD > 0 ||
+    codexbarPeriodDays.some(day => Number(day.totalCost || 0) > 0 || Number(day.totalTokens || 0) > 0)
+  ))
+  const codexbarLatest = useMemo(() => {
+    for (let index = codexbarPeriodDays.length - 1; index >= 0; index -= 1) {
+      const row = codexbarPeriodDays[index]
+      if ((row.models || []).length > 0 || Number(row.totalTokens || 0) > 0) return row
+    }
+    return null
+  }, [codexbarPeriodDays])
   const codexbarPreviousPeriodDays = useMemo(() => {
-    return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow)
-  }, [calendarNow, codexbarCosts?.daily, period])
+    return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow, activeMonthAnchor, serverMonth)
+  }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period, serverMonth])
 
   const activeModelNames = useMemo(() => {
     const names: string[] = []
@@ -445,6 +535,21 @@ export default function Costs() {
           item.apiEquivalentStatus !== 'unavailable' && item.apiEquivalentStatus !== 'not_applicable',
         )
       })
+    } else if (viewingPastMonth) {
+      // The anchored ledger has not landed yet (fast fallback / refresh). Live
+      // sessions are NOT that month's models — the anchored codexbar rows are
+      // the only historical source; an empty result is the honest answer.
+      codexbarPeriodDays.forEach(day => {
+        ;(day.models || []).forEach(model => {
+          addBucket(
+            model.model || 'Unknown',
+            model.totalTokens || 0,
+            model.cost || 0,
+            model.cost || 0,
+            !isLocalModel(model.model || ''),
+          )
+        })
+      })
     } else {
       sessions.forEach(session => {
         addBucket(
@@ -476,7 +581,7 @@ export default function Costs() {
         share: total > 0 ? (item.tokens / total) * 100 : 0,
       }))
       .sort((a, b) => b.tokens - a.tokens)
-  }, [ledgerActive, modelColors, sessions, tokenData])
+  }, [codexbarPeriodDays, ledgerActive, modelColors, sessions, viewingPastMonth, tokenData])
   const tokenBreakdown = allTokenBreakdown.slice(0, 8)
 
   if (loading) {
@@ -501,26 +606,45 @@ export default function Costs() {
   }
 
   const isAwsEnabled = awsIntegrationEnabled(config)
-  const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts)
+  // /api/aws/costs always reports the CURRENT month; while an anchored past
+  // month is displayed, AWS live billing must not be relabeled as that month —
+  // the anchored ledger sources drive every metric instead.
+  const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts) && !viewingPastMonth
   const trackedSpend = trackedSpendPresentation({
     reliability: ledgerActive ? tokenData?.costReliability : undefined,
     unknownSourceCount: unknownBillingSourceCount,
     selectedSourceIsComplete: hasAwsData,
   })
+  // Live sessions are the fallback ONLY for the live view. On an anchored month
+  // (including while the ledger is still pending) the anchored codexbar rows are
+  // the only valid source — otherwise the Token Volume pill reports today's
+  // usage under a historical label.
   const totalTokens = ledgerActive
     ? tokenData?.summary?.periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0
-    : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
+    : viewingPastMonth
+      ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
+      : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
 
   const periodLabels = { day: 'Daily', '7d': '7 Days', month: 'Monthly' } as const
-  const activePeriodLabel = periodLabels[period]
+  // On an anchored past month the badge/subtitle names the month itself ("July 2026")
+  // instead of the generic "Monthly".
+  const activePeriodLabel = viewingPastMonth && anchoredMonthLabel ? anchoredMonthLabel : periodLabels[period]
   const loadedCostsPeriodKey = tokenData?.period?.key
-  const costsPeriodPending = !!loadedCostsPeriodKey && loadedCostsPeriodKey !== period
+  const loadedCostsAnchor = tokenData?.period?.anchor || null
+  // A payload for a different month is just as pending as one for a different period —
+  // otherwise the previous month's agent split lingers while the new one loads.
+  const costsPeriodPending = !!loadedCostsPeriodKey && (
+    loadedCostsPeriodKey !== period
+    || (period === 'month' && loadedCostsAnchor !== activeMonthAnchor)
+  )
   const hasUsableAgentSplit = !costsPeriodPending && hasUsableAgentSplitData(tokenData)
   const agentSplitRefreshing = !!tokenData?.meta?.refreshing && !hasUsableAgentSplit
   const agentSplitPending = costsPeriodPending || agentSplitRefreshing
-  const agentSplitPeriodLabel = loadedCostsPeriodKey && loadedCostsPeriodKey in periodLabels
-    ? periodLabels[loadedCostsPeriodKey as keyof typeof periodLabels]
-    : activePeriodLabel
+  const agentSplitPeriodLabel = isPastMonthAnchor(loadedCostsAnchor, calendarNow)
+    ? monthKeyLabel(loadedCostsAnchor as string)
+    : loadedCostsPeriodKey && loadedCostsPeriodKey in periodLabels
+      ? periodLabels[loadedCostsPeriodKey as keyof typeof periodLabels]
+      : activePeriodLabel
   const codexbarPeriodCost = sumCostRows(codexbarPeriodDays)
   const codexbarPeriodTokens = codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
 
@@ -562,27 +686,39 @@ export default function Costs() {
     : codexbarActive
       ? codexbarPeriodDays
       : trackedDays
+  // A complete past month always divides by its real length, even if a fast fallback
+  // payload briefly delivers fewer rows than the month has days.
+  const trackedDayCount = viewingPastMonth && activeMonthAnchor
+    ? daysInMonthKey(activeMonthAnchor)
+    : Math.max(trackedDays.length, 1)
   const dailyAvg = hasAwsData
       ? (awsCosts?.daily || []).reduce((sum, d) => sum + (d.cost || 0), 0) / Math.max(awsCosts?.daily?.length || 0, 1)
       : ledgerActive
-        ? currentPeriodCost / Math.max(trackedDays.length, 1)
+        ? currentPeriodCost / Math.max(trackedDayCount, 1)
         : 0
 
   const apiEquivalentMetrics = apiEquivalentMetricValues({
     periodCost: apiEquivalentPeriodCost,
     previousPeriodCost: previousApiEquivalentPeriodCost,
-    dayCount: apiEquivalentDays.length,
-    previousDayCount: codexbarPreviousPeriodDays.length,
+    dayCount: viewingPastMonth && activeMonthAnchor ? daysInMonthKey(activeMonthAnchor) : apiEquivalentDays.length,
+    // The anchored baseline is the FULL previous calendar month; codexbar rows
+    // may be absent (codexbar inactive) while the ledger still supplies the
+    // baseline total — an empty row set must not collapse the divisor to 1 day.
+    previousDayCount: viewingPastMonth && activeMonthAnchor
+      ? daysInMonthKey(previousMonthKey(activeMonthAnchor))
+      : codexbarPreviousPeriodDays.length,
     reliability: apiEquivalentReliability,
     previousReliability: previousApiEquivalentReliability,
+    completePeriod: viewingPastMonth,
   })
   const apiEquivalentDailyAvg = apiEquivalentMetrics.dailyAverage
 
   const previousPeriodCost = hasAwsData ? null : tokenData?.summary?.previousPeriodUsd ?? null
   const previousDailyAvg = hasAwsData ? null : tokenData?.summary?.yesterdayUsd ?? null
-  const compareLabel = comparisonLabels(period)
+  const compareLabel = comparisonLabels(period, activeMonthAnchor, calendarNow)
 
-  const projectedMonthly = dailyAvg * 30
+  // For a finished month the "projection" IS the month total — never extrapolate it.
+  const projectedMonthly = viewingPastMonth ? currentPeriodCost : dailyAvg * 30
   const apiEquivalentProjectedMonthly = apiEquivalentMetrics.projectedMonthly
   const metricMode = hasAwsData ? 'tracked' : 'api-equivalent'
   const metricPeriodCost = hasAwsData ? currentPeriodCost : apiEquivalentMetrics.periodCost
@@ -674,19 +810,25 @@ export default function Costs() {
         local: item.local,
         }))
 
+  const periodPhrase = viewingPastMonth && anchoredMonthLabel
+    ? `in ${anchoredMonthLabel}`
+    : `this ${activePeriodLabel.toLowerCase()}`
+
   const costSignals = [
     dominantModel
       ? {
           title: 'Dominant model',
-          body: `${dominantModel.name} is carrying ${dominantModel.share.toFixed(1)}% of the token load this ${activePeriodLabel.toLowerCase()}.`,
+          body: `${dominantModel.name} is carrying ${dominantModel.share.toFixed(1)}% of the token load ${periodPhrase}.`,
           accent: dominantModel.color,
           icon: Cpu,
         }
       : null,
     topSessions[0]
       ? {
-          title: 'Session pressure',
-          body: `${topSessions[0].sessionName} is the heaviest session at ${formatTokens(topSessions[0].tokens)} tokens.`,
+          // Session rows are live-only; on a historical page the signal says so
+          // rather than implying the anchored month produced them.
+          title: viewingPastMonth ? 'Session pressure (live)' : 'Session pressure',
+          body: `${topSessions[0].sessionName} is the heaviest session at ${formatTokens(topSessions[0].tokens)} tokens${viewingPastMonth ? ' right now — session history is not scoped to the selected month' : ''}.`,
           accent: topSessions[0].color,
           icon: TrendingUp,
         }
@@ -698,7 +840,9 @@ export default function Costs() {
           ? 'Monthly budget progress is unavailable while tracked billing coverage is incomplete.'
           : `${budgetUsagePct}% of the monthly cap is already used. ${formatCurrency(Math.max(budgetRemaining, 0))} remains.`
         : trackedSpend.projectionAvailable && trackedValueAvailable
-          ? `No budget cap set. Current projected month is ${formatCurrency(projectedMonthly)}.`
+          ? viewingPastMonth && anchoredMonthLabel
+            ? `No budget cap set. ${anchoredMonthLabel} finished at ${formatCurrency(projectedMonthly)}.`
+            : `No budget cap set. Current projected month is ${formatCurrency(projectedMonthly)}.`
           : 'No budget cap set. Tracked spend projection is unavailable while billing coverage is partial.',
       accent: budget > 0 && budgetUsage !== null && budgetUsage > 0.9 ? '#FF453A' : '#32D74B',
       icon: Target,
@@ -798,7 +942,8 @@ export default function Costs() {
     },
     {
       label: 'CodexBar API Eq.',
-      value: formatCurrency(codexbarCosts?.sessionCostUSD || 0),
+      value: formatCurrency(codexbarPeriodCost),
+      title: `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
       accent: codexbarActive ? '#FF9500' : '#8E8E93',
     },
     {
@@ -826,6 +971,12 @@ export default function Costs() {
           m={m}
           period={period}
           setPeriod={setPeriod}
+          monthAnchor={monthAnchor}
+          setMonthAnchor={setMonthAnchor}
+          calendarNow={calendarNow}
+          serverMonth={serverMonth}
+          viewingPastMonth={viewingPastMonth}
+          anchoredMonthLabel={anchoredMonthLabel}
           activePeriodLabel={activePeriodLabel}
           hasAwsData={hasAwsData}
           ledgerActive={ledgerActive}
@@ -866,7 +1017,9 @@ export default function Costs() {
                 Budget alert
               </div>
               <div className={m ? `${costsStyles.budgetAlertBody} ${costsStyles.budgetAlertBodyMobile}` : costsStyles.budgetAlertBody}>
-                You have used {budgetUsagePct ?? 0}% of the {formatCurrency(budget)} monthly target.
+                {viewingPastMonth && anchoredMonthLabel
+                  ? `${anchoredMonthLabel} used ${budgetUsagePct ?? 0}% of the ${formatCurrency(budget)} monthly target.`
+                  : `You have used ${budgetUsagePct ?? 0}% of the ${formatCurrency(budget)} monthly target.`}
               </div>
             </div>
           </div>
@@ -890,6 +1043,7 @@ export default function Costs() {
           labels={labels}
           activePeriodLabel={activePeriodLabel}
           apiEquivalentReliability={apiEquivalentDisplayReliability}
+          completePeriod={viewingPastMonth}
         />
 
         <BudgetCard
@@ -906,6 +1060,7 @@ export default function Costs() {
           budgetRemaining={budgetRemaining}
           budgetBadgeClass={budgetBadgeClass}
           monthlyBudgetBase={monthlyBudgetBase}
+          spendLabel={viewingPastMonth && anchoredMonthLabel ? `${anchoredMonthLabel} spend vs budget` : 'Current spend vs budget'}
         />
 
         <DailySpendSection
@@ -937,6 +1092,11 @@ export default function Costs() {
           codexbarActive={codexbarActive}
           codexbarCosts={codexbarCosts}
           codexbarLatest={codexbarLatest}
+          codexbarPeriodLabel={period === 'day' ? 'Today' : period === '7d' ? 'Last 7 Days' : viewingPastMonth && anchoredMonthLabel ? anchoredMonthLabel : 'This Month'}
+          codexbarPeriodCost={codexbarPeriodCost}
+          codexbarPeriodTokens={codexbarPeriodTokens}
+          codexbarPeriodDaysList={codexbarPeriodDays}
+          sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live session pressure — not scoped to ${anchoredMonthLabel}` : null}
           driverView={driverView}
           setDriverView={setDriverView}
           tokenBreakdown={tokenBreakdown}

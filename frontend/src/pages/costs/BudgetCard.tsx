@@ -16,6 +16,8 @@ interface BudgetCardProps {
   budgetRemaining: number | null
   budgetBadgeClass: string
   monthlyBudgetBase: number | null
+  /** Names the month the progress bar is about ("July 2026 spend vs budget"). */
+  spendLabel?: string
 }
 
 export default function BudgetCard({
@@ -32,6 +34,7 @@ export default function BudgetCard({
   budgetRemaining,
   budgetBadgeClass,
   monthlyBudgetBase,
+  spendLabel = 'Current spend vs budget',
 }: BudgetCardProps) {
   return (
     <GlassCard delay={0.18} noPad>
@@ -89,7 +92,7 @@ export default function BudgetCard({
         {budget > 0 && monthlyBudgetBase !== null && budgetUsage !== null && budgetRemaining !== null && budgetUsagePct !== null ? (
           <div className={styles.progressSection}>
             <div className={styles.progressHeader}>
-              <span className={styles.progressHeaderLabel}>Current spend vs budget</span>
+              <span className={styles.progressHeaderLabel}>{spendLabel}</span>
               <span className={styles.progressHeaderValue}>
                 {formatCurrency(monthlyBudgetBase)} / {formatCurrency(budget)}
               </span>

@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
-import { DollarSign } from 'lucide-react'
+import { ChevronLeft, ChevronRight, DollarSign } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
-import { formatCurrency, formatTokens, formatCompactTokenValue } from './lib'
+import { formatCurrency, formatTokens, formatCompactTokenValue, monthNavigationState } from './lib'
 import type { TrackedSpendPresentation } from './lib'
 import type { CodexBarCostData } from './types'
 import styles from './CostPulseHeader.module.css'
@@ -13,10 +13,19 @@ interface OverviewPill {
   title?: string
 }
 
+/** How far back the month navigator will walk from the current month. */
+const MONTH_ANCHOR_HISTORY_MONTHS = 24
+
 interface CostPulseHeaderProps {
   m: boolean
   period: 'day' | '7d' | 'month'
   setPeriod: (p: 'day' | '7d' | 'month') => void
+  monthAnchor: string | null
+  setMonthAnchor: (anchor: string | null) => void
+  calendarNow: Date
+  serverMonth: string | null
+  viewingPastMonth: boolean
+  anchoredMonthLabel: string | null
   activePeriodLabel: string
   hasAwsData: boolean
   ledgerActive: boolean
@@ -40,6 +49,12 @@ export default function CostPulseHeader({
   m,
   period,
   setPeriod,
+  monthAnchor,
+  setMonthAnchor,
+  calendarNow,
+  serverMonth,
+  viewingPastMonth,
+  anchoredMonthLabel,
   activePeriodLabel,
   hasAwsData,
   ledgerActive,
@@ -63,6 +78,15 @@ export default function CostPulseHeader({
   const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
   const hasNoApiEquivalentUsage = apiEquivalentReliability === 'no_usage'
   const trackedCoverageNote = [trackedSpend.valueQualifier, trackedSpend.coverageLabel].filter(Boolean).join(' · ')
+  const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS, serverMonth)
+  // Stepping onto the current month clears the anchor so the request goes back to the
+  // live (unanchored) window — the same cache entry as before this feature existed.
+  const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)
+  const spendPeriodDescription = period === 'month'
+    ? viewingPastMonth && anchoredMonthLabel
+      ? `${anchoredMonthLabel} tracked spend`
+      : 'Current month tracked spend'
+    : `${activePeriodLabel} spend in view`
   return (
     <GlassCard delay={0} noPad>
       <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
@@ -85,20 +109,48 @@ export default function CostPulseHeader({
             </div>
           </div>
 
-          <div className={styles.tabStrip}>
-            {([
-              ['day', 'Daily'],
-              ['7d', '7 Days'],
-              ['month', 'Monthly'],
-            ] as const).map(([key, label]) => (
-              <button
-                key={key}
-                onClick={() => setPeriod(key)}
-                className={period === key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
-              >
-                {label}
-              </button>
-            ))}
+          <div className={styles.periodRow}>
+            <div className={styles.tabStrip}>
+              {([
+                ['day', 'Daily'],
+                ['7d', '7 Days'],
+                ['month', 'Monthly'],
+              ] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  onClick={() => setPeriod(key)}
+                  className={period === key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {period === 'month' && (
+              <div className={styles.monthNav} role="group" aria-label="Month navigation">
+                <button
+                  type="button"
+                  onClick={() => goToMonth(monthNav.previousMonth)}
+                  disabled={!monthNav.canGoBack}
+                  aria-label={`Show ${monthNav.previousMonth}`}
+                  title={monthNav.canGoBack ? 'Previous month' : 'No further history available'}
+                  className={monthNav.canGoBack ? styles.monthNavBtn : `${styles.monthNavBtn} ${styles.monthNavBtnDisabled}`}
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className={styles.monthNavLabel} aria-live="polite">{monthNav.label}</span>
+                <button
+                  type="button"
+                  onClick={() => goToMonth(monthNav.nextMonth)}
+                  disabled={!monthNav.canGoForward}
+                  aria-label={`Show ${monthNav.nextMonth}`}
+                  title={monthNav.canGoForward ? 'Next month' : 'Already viewing the current month'}
+                  className={monthNav.canGoForward ? styles.monthNavBtn : `${styles.monthNavBtn} ${styles.monthNavBtnDisabled}`}
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
           </div>
 
           <div
@@ -160,7 +212,8 @@ export default function CostPulseHeader({
                   </div>
                 </div>
                 <div className={styles.codexbarMiniCell}>
-                  <div className={styles.codexbarCellLabel}>API Projection</div>
+                  {/* A finished month is a total, not a projection. */}
+                  <div className={styles.codexbarCellLabel}>{viewingPastMonth ? 'API Month Total' : 'API Projection'}</div>
                   <div className={m ? `${styles.codexbarCellValue} ${styles.codexbarCellValueMobile}` : styles.codexbarCellValue}>
                     {formatApiEquivalent(apiEquivalentProjectedMonthly)}
                   </div>
@@ -188,9 +241,7 @@ export default function CostPulseHeader({
                     {trackedValueAvailable ? formatCurrency(currentPeriodCost) : 'Unavailable'}
                   </div>
                   <div className={styles.pulseDesc}>
-                    {trackedValueAvailable
-                      ? period === 'month' ? 'Current month tracked spend' : `${activePeriodLabel} spend in view`
-                      : 'No tracked billing source is available'}
+                    {trackedValueAvailable ? spendPeriodDescription : 'No tracked billing source is available'}
                   </div>
                 </div>
 
@@ -200,7 +251,8 @@ export default function CostPulseHeader({
                     <div className={styles.pulseCellValue}>{trackedValueAvailable ? formatCurrency(dailyAvg) : 'Unavailable'}</div>
                   </div>
                   <div className={styles.pulseMiniCell}>
-                    <div className={styles.pulseCellLabel}>Projection</div>
+                    {/* A finished month is a total, not a projection. */}
+                    <div className={styles.pulseCellLabel}>{viewingPastMonth ? 'Month Total' : 'Projection'}</div>
                     <div className={styles.pulseCellValue}>{trackedValueAvailable ? formatCurrency(projectedMonthly) : 'Unavailable'}</div>
                   </div>
                 </div>
@@ -216,7 +268,11 @@ export default function CostPulseHeader({
                       {formatCurrency(0)}
                     </div>
                     <div className={styles.inactiveDesc}>
-                      {period === 'month' ? 'Current month local usage estimate' : `${activePeriodLabel} local usage estimate`}
+                      {period === 'month'
+                        ? viewingPastMonth && anchoredMonthLabel
+                          ? `${anchoredMonthLabel} local usage estimate`
+                          : 'Current month local usage estimate'
+                        : `${activePeriodLabel} local usage estimate`}
                     </div>
                   </div>
                   <span className={`macos-badge ${styles.badgeDimmed}`}>

@@ -61,7 +61,14 @@
   justify-content: flex-start;
 }
 
-/* ── Period tab strip ────────────────────────────────────────── */
+/* ── Period tab strip + month navigator ──────────────────────── */
+
+.periodRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 
 .tabStrip {
   display: inline-flex;
@@ -87,6 +94,50 @@
 .tabBtnActive {
   background: linear-gradient(180deg, rgba(10,132,255,0.32) 0%, rgba(10,132,255,0.18) 100%);
   color: rgba(255,255,255,0.96);
+}
+
+.monthNav {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+  align-self: flex-start;
+}
+
+.monthNavBtn {
+  border: none;
+  cursor: pointer;
+  border-radius: 9px;
+  padding: 7px 8px;
+  background: transparent;
+  color: rgba(255,255,255,0.72);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.monthNavBtn:hover:not(:disabled) {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.96);
+}
+
+.monthNavBtnDisabled {
+  cursor: not-allowed;
+  opacity: 0.3;
+}
+
+.monthNavLabel {
+  min-width: 104px;
+  text-align: center;
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255,255,255,0.9);
+  white-space: nowrap;
+  font-feature-settings: "tnum";
 }
 
 /* ── Overview pills grid ─────────────────────────────────────── */

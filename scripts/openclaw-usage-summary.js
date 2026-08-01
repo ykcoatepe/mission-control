@@ -14,6 +14,7 @@ const readline = require('node:readline');
 const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
+const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 const SESSION_BUCKETS = [
   {
     key: 'openclaw',
@@ -33,8 +34,66 @@ function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
 
-function rangeForPeriod(period) {
-  const now = new Date();
+function isValidMonthAnchor(value) {
+  return MONTH_ANCHOR_PATTERN.test(String(value ?? ''));
+}
+
+function monthAnchorBounds(anchor) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  return {
+    start: new Date(year, month - 1, 1, 0, 0, 0, 0),
+    end: new Date(year, month, 0, 23, 59, 59, 999),
+  };
+}
+
+function shiftMonthAnchor(anchor, delta) {
+  const [year, month] = String(anchor).split('-').map(Number);
+  const shifted = new Date(year, month - 1 + delta, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function dayKeysBetween(start, end) {
+  const keys = [];
+  const cursor = new Date(start);
+  cursor.setHours(0, 0, 0, 0);
+  const final = new Date(end);
+  final.setHours(0, 0, 0, 0);
+  while (cursor <= final) {
+    keys.push(dayKey(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return keys;
+}
+
+// Anchored past month: FULL calendar month, previous = FULL preceding month.
+// Must stay identical to server/routes/costs.js and server/services/claudeCodeUsage.js.
+function anchoredMonthRange(anchor) {
+  const current = monthAnchorBounds(anchor);
+  const previous = monthAnchorBounds(shiftMonthAnchor(anchor, -1));
+  const keys = dayKeysBetween(current.start, current.end);
+  const previousKeys = dayKeysBetween(previous.start, previous.end);
+  return {
+    startMs: current.start.getTime(),
+    endMs: current.end.getTime(),
+    keys,
+    startKey: keys[0],
+    endKey: keys[keys.length - 1],
+    anchor,
+    previous: {
+      startMs: previous.start.getTime(),
+      endMs: previous.end.getTime(),
+      keys: previousKeys,
+      startKey: previousKeys[0],
+      endKey: previousKeys[previousKeys.length - 1],
+      anchor: shiftMonthAnchor(anchor, -1),
+    },
+  };
+}
+
+function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
+  if (period === 'month' && isValidMonthAnchor(monthAnchor) && String(monthAnchor) < dayKey(now).slice(0, 7)) {
+    return anchoredMonthRange(String(monthAnchor));
+  }
   const start = new Date(now);
   if (period === 'day') {
     start.setHours(0, 0, 0, 0);
@@ -282,10 +341,18 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
       const stat = fs.statSync(fullPath);
       // mtime is a coarse prefilter only; each usage record is checked by timestamp below.
       if (stat.mtimeMs >= startMs - 24 * 60 * 60 * 1000) {
+        // birthtime bounds the OLDEST record a file can hold: a session created
+        // after the anchored window cannot contain that month's records, while a
+        // session created inside it can — even if it was appended much later.
+        // Not every filesystem reports it, so 0/absent means "unknown".
+        const birthtimeMs = Number.isFinite(stat.birthtimeMs) && stat.birthtimeMs > 0
+          ? stat.birthtimeMs
+          : null;
         files.push({
           agentId,
           path: fullPath,
           mtimeMs: stat.mtimeMs,
+          birthtimeMs,
           sessionKey: path.relative(agentsBase, fullPath),
         });
       }
@@ -335,13 +402,46 @@ function listSessionFiles(startMs) {
   return files;
 }
 
+// The scan cap keeps the newest files, which silently evicts an anchored month
+// on installations with more recent files than the cap. Files are NOT filtered
+// by an mtime upper bound — a session opened in the anchored month and appended
+// to later still carries that month's records — they are RANKED: anything last
+// touched inside the window (plus a day of slack) is scanned first, and newer
+// files only fill whatever budget is left.
+// Ranks decide who survives the scan cap; nothing is dropped outright.
+//
+// Filesystem timestamps are only ever POSITIVE evidence here. mtime inside the
+// window, or a birthtime at//before it, means the file can plausibly hold the
+// anchored month's records — that promotes it. The reverse is NOT true: copying
+// or restoring a `.openclaw` tree rewrites birthtime to the copy time, so a
+// transcript full of March records can legitimately carry an August birthtime.
+// Treating that as proof of irrelevance would silently understate the month, so
+// there is no "proven irrelevant" rank — everything unproven shares rank 1 and
+// is ordered by recency, and truncation is reported (see scanTruncated) rather
+// than hidden.
+//   0 — plausibly overlaps the anchored window
+//   1 — cannot be ruled in or out
+function scanFileRank(file, windowEnd) {
+  if (file.mtimeMs <= windowEnd) return 0;
+  if (file.birthtimeMs === null || file.birthtimeMs === undefined) return 1;
+  return file.birthtimeMs <= windowEnd ? 0 : 1;
+}
+
+function prioritizeScanFiles(files, range, maxFiles) {
+  const limit = Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : 20000;
+  const windowEnd = range.endMs + 24 * 60 * 60 * 1000;
+  return files
+    .map((file) => ({ file, rank: scanFileRank(file, windowEnd) }))
+    .sort((a, b) => a.rank - b.rank || b.file.mtimeMs - a.file.mtimeMs)
+    .slice(0, limit)
+    .map((entry) => entry.file);
+}
+
 async function scanUsageRecords(range) {
   const files = listSessionFiles(range.startMs);
   const records = [];
   const maxFiles = Number(process.env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
-  const scanFiles = files
-    .sort((a, b) => b.mtimeMs - a.mtimeMs)
-    .slice(0, Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : 20000);
+  const scanFiles = prioritizeScanFiles(files, range, maxFiles);
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
@@ -373,7 +473,15 @@ async function scanUsageRecords(range) {
       records.push(record);
     }
   }
-  return { records, filesScanned: scanFiles.length, filesAvailable: files.length };
+  // No silent caps: when the budget truncated the candidate set the totals may
+  // be understated, and that has to be visible rather than inferred from a
+  // filesScanned/filesAvailable comparison nobody is obliged to make.
+  return {
+    records,
+    filesScanned: scanFiles.length,
+    filesAvailable: files.length,
+    scanTruncated: scanFiles.length < files.length,
+  };
 }
 
 function createTotalsBucket(name) {
@@ -457,6 +565,7 @@ function buildUsageFromAccumulator({
   note,
   filesScanned,
   filesAvailable,
+  scanTruncated = false,
 }) {
   const daily = range.keys.map((date) => accumulator.dailyMap.get(date));
   let byServiceList = Array.from(accumulator.modelTotals.values())
@@ -509,13 +618,16 @@ function buildUsageFromAccumulator({
   const yesterdayKey = dayKey(yesterday);
   const todayRow = daily.find((d) => d.date === todayKey) || {};
   const yesterdayRow = daily.find((d) => d.date === yesterdayKey) || {};
-  const monthPrefix = todayKey.slice(0, 7);
+  // With an anchored past month there is no "today" inside the window, so the
+  // this-month totals follow the anchor instead (budget/monthly consumers read them).
+  const monthPrefix = range.anchor || todayKey.slice(0, 7);
   const thisMonthRows = daily.filter((d) => String(d.date || '').startsWith(monthPrefix));
   const thisWeekRows = daily.slice(-7);
 
   return costSanity.normalizeUsageCosts({
     source,
     period,
+    periodAnchor: range.anchor || null,
     periodRange: { start: range.startKey, end: range.endKey },
     summary: {
       periodUsd: daily.reduce((sum, d) => sum + Number(d.cost || 0), 0),
@@ -534,6 +646,7 @@ function buildUsageFromAccumulator({
       recordsScanned: accumulator.recordsScanned,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     },
     daily,
     dailyByModel,
@@ -542,12 +655,17 @@ function buildUsageFromAccumulator({
   });
 }
 
-async function buildForPeriod(period) {
-  const r = rangeForPeriod(period);
-  const { records, filesScanned, filesAvailable } = await scanUsageRecords({
+async function buildForPeriod(period, monthAnchor = null) {
+  const r = rangeForPeriod(period, monthAnchor);
+  const { records, filesScanned, filesAvailable, scanTruncated } = await scanUsageRecords({
     startMs: r.previous.startMs,
     endMs: r.endMs,
   });
+  if (scanTruncated) {
+    // stderr, not stdout: stdout is the JSON contract. Visible in the server log
+    // so an understated month is never a silent zero.
+    console.error(`[openclaw-usage-summary] scan truncated by MC_OPENCLAW_USAGE_MAX_FILES: ${filesScanned}/${filesAvailable} files${monthAnchor ? ` for anchor ${monthAnchor}` : ''}; totals may be understated`);
+  }
   const combinedAccumulator = createAccumulator(r.keys);
   const previousCombinedAccumulator = createAccumulator(r.previous.keys);
   const bucketAccumulators = new Map(SESSION_BUCKETS.map((bucket) => [bucket.key, createAccumulator(r.keys)]));
@@ -566,9 +684,10 @@ async function buildForPeriod(period) {
     period,
     range: r,
     source: 'openclaw.session_jsonl_fast_scan',
-    note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files)`,
+    note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files${scanTruncated ? ', TRUNCATED — totals may be understated' : ''})`,
     filesScanned,
     filesAvailable,
+    scanTruncated,
   });
   const previousCombined = buildUsageFromAccumulator({
     accumulator: previousCombinedAccumulator,
@@ -591,6 +710,7 @@ async function buildForPeriod(period) {
       note: `Source: ${bucket.label} JSONL fast scan (${bucketAccumulators.get(bucket.key).recordsScanned} usage records)`,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     });
     const previousUsage = buildUsageFromAccumulator({
       accumulator: previousBucketAccumulators.get(bucket.key),
@@ -600,6 +720,7 @@ async function buildForPeriod(period) {
       note: `Previous-period ${bucket.label} API-equivalent baseline`,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     });
     usage.summary.previousPeriodApiEquivalentUsd = previousUsage.summary.periodApiEquivalentUsd;
     usage.summary.previousPeriodApiEquivalentReliability = previousUsage.apiEquivalentReliability;
@@ -622,8 +743,10 @@ async function buildForPeriod(period) {
 }
 
 async function main() {
-  const period = process.argv.slice(2).find((arg) => VALID_PERIODS.has(String(arg))) || 'month';
-  const data = await buildForPeriod(period);
+  const args = process.argv.slice(2).map(String);
+  const period = args.find((arg) => VALID_PERIODS.has(arg)) || 'month';
+  const monthAnchor = args.find((arg) => isValidMonthAnchor(arg)) || null;
+  const data = await buildForPeriod(period, monthAnchor);
   process.stdout.write(JSON.stringify(data));
 }
 
@@ -637,6 +760,9 @@ if (require.main === module) {
 module.exports = {
   buildForPeriod,
   extractUsageRecord,
+  isValidMonthAnchor,
   listSessionFiles,
+  prioritizeScanFiles,
+  rangeForPeriod,
   sessionBucketForKey,
 };

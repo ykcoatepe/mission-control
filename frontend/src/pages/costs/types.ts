@@ -65,7 +65,8 @@ export interface AgentUsageData {
 
 export interface TokenData {
   source?: string
-  period?: { key?: 'day' | '7d' | 'month'; start?: string; end?: string }
+  /** `anchor` is the `YYYY-MM` month this payload was anchored to, or null for the live period. */
+  period?: { key?: 'day' | '7d' | 'month'; anchor?: string | null; start?: string; end?: string }
   daily: TokenDailyEntry[]
   dailyByModel?: ModelDailyEntry[]
   modelKeys?: string[]

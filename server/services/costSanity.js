@@ -43,7 +43,7 @@ function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
 
-function costSummaryFromDaily(daily = [], fallbackCost = 0) {
+function costSummaryFromDaily(daily = [], fallbackCost = 0, anchorMonthPrefix = null) {
   const periodUsd = daily.length
     ? daily.reduce((sum, row) => sum + Number(row.cost || row.totalCost || 0), 0)
     : Number(fallbackCost || 0);
@@ -52,7 +52,9 @@ function costSummaryFromDaily(daily = [], fallbackCost = 0) {
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = dayKey(yesterday);
-  const monthPrefix = todayKey.slice(0, 7);
+  // An anchored past-month payload must keep ITS month as "this month" — the
+  // wall-clock prefix matches none of its rows and would zero the budget spend.
+  const monthPrefix = anchorMonthPrefix || todayKey.slice(0, 7);
   const thisWeekRows = daily.slice(-7);
   return {
     periodUsd,
@@ -312,7 +314,9 @@ function normalizeUsageCosts(usage) {
   });
 
   const fallbackServiceCost = byService.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-  const costSummary = costSummaryFromDaily(normalized.daily || [], fallbackServiceCost);
+  const periodAnchor = usage.period?.anchor || usage.periodAnchor || null;
+  const anchorMonthPrefix = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(periodAnchor || '')) ? String(periodAnchor) : null;
+  const costSummary = costSummaryFromDaily(normalized.daily || [], fallbackServiceCost, anchorMonthPrefix);
   normalized.summary = { ...(usage.summary || {}) };
   SUMMARY_COST_FIELDS.forEach((field) => {
     if (field in normalized.summary) normalized.summary[field] = costSummary[field];
@@ -337,16 +341,28 @@ function normalizeUsageCosts(usage) {
     usage.meta?.claudeCodeStatus,
   ].filter(Boolean);
   const sourceCoveragePartial = sourceStatuses.includes('unavailable');
+  // A truncated scan understates the API-equivalent estimate exactly as much as
+  // it understates tracked cost, and the headline/month-total/trend labels read
+  // this field — not costReliability.
+  const truncatedScan = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
+  const coverageIncomplete = sourceCoveragePartial || truncatedScan;
   const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
-  if (sourceCoveragePartial && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
+  if (coverageIncomplete && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
   const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
   const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
-  if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
+  if (coverageIncomplete && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
     normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
   }
-  normalized.costReliability = sourceCoveragePartial || byService.some((item) => item.costSource === 'unknown')
+  // A truncated scan means we KNOW the totals are understated: the file cap cut
+  // the candidate set before any record was read. That is partial coverage no matter
+  // how clean the producer statuses look, and the frontend gates budget progress
+  // and projections on this field alone.
+  const scanTruncated = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
+  normalized.costReliability = scanTruncated
+    || sourceCoveragePartial
+    || byService.some((item) => item.costSource === 'unknown')
     ? 'partial_unknown'
     : 'normalized';
   normalized.apiEquivalentReliability = apiEquivalentReliability;
