@@ -1008,6 +1008,7 @@ export default function Costs() {
           codexbarPeriodLabel={period === 'day' ? 'Today' : period === '7d' ? 'Last 7 Days' : viewingPastMonth && anchoredMonthLabel ? anchoredMonthLabel : 'This Month'}
           codexbarPeriodCost={codexbarPeriodCost}
           codexbarPeriodTokens={codexbarPeriodTokens}
+          codexbarPeriodDaysList={codexbarPeriodDays}
           driverView={driverView}
           setDriverView={setDriverView}
           tokenBreakdown={tokenBreakdown}

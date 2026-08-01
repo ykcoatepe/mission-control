@@ -9,6 +9,7 @@ const costsDir = path.join(pagesDir, 'costs');
 const filesToCheck = [
   path.join(pagesDir, 'Costs.tsx'),
   path.join(costsDir, 'AgentSplitCard.tsx'),
+  path.join(costsDir, 'CostDriversSection.tsx'),
   path.join(costsDir, 'CostPulseHeader.tsx'),
   path.join(costsDir, 'DailySpendSection.tsx'),
   path.join(costsDir, 'MetricCards.tsx'),
@@ -199,6 +200,14 @@ assert.ok(
   source.includes('codexbarPeriodDays.some(') &&
   source.includes('last30DaysCostUSD > 0 ||'),
   'codexbar activity must be derived from the selected period rows too — a live last30DaysCostUSD of 0 must not suppress an anchored month that has usage',
+);
+
+assert.ok(
+  !source.includes('codexbarCosts.daily.slice().reverse()') &&
+  !source.includes('formatTokens(codexbarCosts.totals.inputTokens)') &&
+  !source.includes('formatTokens(codexbarCosts.totals.outputTokens)') &&
+  source.includes('codexbarPeriodDaysList'),
+  'the Cost Drivers codexbar panel must render the selected period rows and totals, never the full widened scan payload',
 );
 
 console.log('costs page behavior guards passed');

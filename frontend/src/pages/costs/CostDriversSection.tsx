@@ -1,7 +1,7 @@
 import { Cpu, Zap } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
 import { formatApiEquivalentValue, formatCurrency, formatTokens, formatSessionTimestamp } from './lib'
-import type { AWSSCostData, AggregatedBreakdownItem, CodexBarCostData } from './types'
+import type { AWSSCostData, AggregatedBreakdownItem, CodexBarCostData, CodexBarDailyEntry } from './types'
 import styles from './CostDriversSection.module.css'
 
 interface TopSession {
@@ -42,6 +42,7 @@ export interface CostDriversSectionProps {
   codexbarPeriodLabel: string
   codexbarPeriodCost: number
   codexbarPeriodTokens: number
+  codexbarPeriodDaysList: CodexBarDailyEntry[]
   driverView: 'models' | 'sessions' | 'codexbar' | 'notes'
   setDriverView: (v: 'models' | 'sessions' | 'codexbar' | 'notes') => void
   tokenBreakdown: AggregatedBreakdownItem[]
@@ -66,6 +67,7 @@ export default function CostDriversSection({
   codexbarPeriodLabel,
   codexbarPeriodCost,
   codexbarPeriodTokens,
+  codexbarPeriodDaysList,
   driverView,
   setDriverView,
   tokenBreakdown,
@@ -216,7 +218,8 @@ export default function CostDriversSection({
             <div className={styles.codexbarList}>
               {codexbarActive && codexbarCosts ? (
                 <>
-                  {/* Summary stats */}
+                  {/* Summary stats — Input/Output and the history below stay scoped to the
+                      selected period; the widened scan payload may reach months past it. */}
                   <div
                     className={styles.codexbarStatGrid}
                     style={{ gridTemplateColumns: m ? '1fr 1fr' : 'repeat(4, 1fr)' }}
@@ -224,8 +227,8 @@ export default function CostDriversSection({
                     {[
                       { label: 'Last 30 Days', value: formatCurrency(codexbarCosts.last30DaysCostUSD), sub: formatTokens(codexbarCosts.last30DaysTokens) + ' tokens', accent: '#FF9500' },
                       { label: codexbarPeriodLabel, value: formatCurrency(codexbarPeriodCost), sub: formatTokens(codexbarPeriodTokens) + ' tokens', accent: '#FF9500' },
-                      { label: 'Input', value: formatTokens(codexbarCosts.totals.inputTokens), sub: 'total', accent: '#007AFF' },
-                      { label: 'Output', value: formatTokens(codexbarCosts.totals.outputTokens), sub: 'total', accent: '#32D74B' },
+                      { label: 'Input', value: formatTokens(codexbarPeriodDaysList.reduce((sum, day) => sum + (day.inputTokens || 0), 0)), sub: 'selected period', accent: '#007AFF' },
+                      { label: 'Output', value: formatTokens(codexbarPeriodDaysList.reduce((sum, day) => sum + (day.outputTokens || 0), 0)), sub: 'selected period', accent: '#32D74B' },
                     ].map(stat => (
                       <div
                         key={stat.label}
@@ -286,11 +289,11 @@ export default function CostDriversSection({
                     </>
                   )}
 
-                  {/* Daily history */}
-                  {codexbarCosts.daily.length > 0 && (
+                  {/* Daily history — selected period only, days with usage */}
+                  {codexbarPeriodDaysList.some(day => (day.totalTokens || 0) > 0 || (day.totalCost || 0) > 0) && (
                     <>
                       <div className={styles.codexbarSectionLabel}>Daily History</div>
-                      {codexbarCosts.daily.slice().reverse().map((day) => {
+                      {codexbarPeriodDaysList.filter(day => (day.totalTokens || 0) > 0 || (day.totalCost || 0) > 0).slice().reverse().map((day) => {
                         const dayTotal = day.totalCost || 0
                         const dayTokens = day.totalTokens || 0
                         const isLatest = day.date === codexbarLatest?.date
@@ -307,7 +310,7 @@ export default function CostDriversSection({
                             <div className={styles.codexbarDayInner}>
                               <div className={styles.codexbarDayLeft}>
                                 <span className={styles.codexbarDayDate}>{day.date}</span>
-                                {isLatest && <span className="macos-badge macos-badge-orange">TODAY</span>}
+                                {isLatest && <span className="macos-badge macos-badge-orange">LATEST</span>}
                               </div>
                               <div className={styles.codexbarDayRight}>
                                 <span className={styles.codexbarDayCost}>{formatCurrency(dayTotal)}</span>
