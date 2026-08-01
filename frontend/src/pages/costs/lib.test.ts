@@ -811,6 +811,14 @@ describe('month picker availability grid', () => {
     expect(grid[8]).toMatchObject({ month: '2026-09', selectable: false, outsideRange: true })
   })
 
+  it('keeps the live month selectable when availability reports no data', () => {
+    const grid = monthPickerGrid(2026, [
+      { month: '2026-08', hasData: false, sources: [] },
+    ], true, now, 24)
+
+    expect(grid[7]).toMatchObject({ month: '2026-08', selectable: true, unknown: false, outsideRange: false })
+  })
+
   it('does not mistake an unavailable response for confirmed empty months', () => {
     const grid = monthPickerGrid(2024, [], false, now, 24)
     expect(grid[7]).toMatchObject({ month: '2024-08', selectable: true, unknown: true })

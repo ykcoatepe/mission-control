@@ -685,10 +685,11 @@ export function monthPickerGrid(
     // Until availability loads (or when the server marks a source gap), keep the
     // month selectable. A missing response must never masquerade as confirmed zero usage.
     const unknown = !availabilityKnown || Boolean(source?.unknown)
+    // The live month is always selectable so the picker can return to live view.
     return {
       month,
       label: shortMonthLabelFormatter.format(new Date(year, index, 1)),
-      selectable: !outsideRange && (unknown || Boolean(source?.hasData)),
+      selectable: !outsideRange && (month === current || unknown || Boolean(source?.hasData)),
       unknown,
       outsideRange,
     }

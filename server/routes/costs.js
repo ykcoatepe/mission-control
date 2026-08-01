@@ -791,7 +791,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
             if (hermes.months.has(month)) sources.push('hermes');
             if (codexbar.months.has(month)) sources.push('codexbar');
             const cachedHasData = cachedMonths.data?.has(month);
-            const cachedConfirmsEmpty = cachedMonths.confirmedEmpty?.has(month);
+            // Confirmed-empty is only meaningful for COMPLETED months: the live
+            // month is mutable, and usage can start a minute from now.
+            const cachedConfirmsEmpty = month !== current && cachedMonths.confirmedEmpty?.has(month);
             if (cachedHasData || cachedConfirmsEmpty) sources.push('cached');
             const hasData = sources.some((source) => source !== 'cached') || Boolean(cachedHasData);
             // Cheap probes do not inspect OpenClaw. Only a clean detailed cache

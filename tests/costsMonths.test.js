@@ -144,6 +144,29 @@ test('detailed cache supplies positive and the only confirmed-empty month eviden
   });
 });
 
+test('a cached confirmed-empty result never disables the mutable current month', async () => {
+  const current = '2026-08';
+
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: () => cleanCachedDetailedMonths({ confirmedEmpty: [current] }),
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    const currentEntry = body.months.find((entry) => entry.month === current);
+
+    assert.deepEqual(currentEntry, {
+      month: current,
+      hasData: false,
+      sources: [],
+      unknown: true,
+    });
+  });
+});
+
 test('the partially covered CodexBar floor month remains unknown and marks the response partial', async () => {
   await withCostsApp({
     now: () => new Date('2026-08-15T12:00:00'),
