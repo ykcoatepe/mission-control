@@ -1083,8 +1083,16 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
 
 
   router.get('/api/costs/codexbar', async (req, res) => {
+    // Same anchor contract as /api/costs: an anchored past month widens the
+    // scan so the codexbar-derived UI cells aren't zero-filled for months
+    // older than the default 70-day window. Validation runs before the exec.
+    const parsedAnchor = parseMonthAnchor(req.query.month);
+    if (!parsedAnchor.ok) {
+      return res.status(400).json({ error: parsedAnchor.error });
+    }
     try {
-      const { stdout } = await execPromise('codexbar cost --format json --provider both --days 70', {
+      const scanDays = claudeCodeScanDays(parsedAnchor.anchor);
+      const { stdout } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
         timeout: 30000,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,

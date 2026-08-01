@@ -309,10 +309,14 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
   assert.match(routeSource, /codexbar cost --format json --provider claude --days \$\{days\}/);
   assert.match(routeSource, /const days = claudeCodeScanDays\(monthAnchor\);/);
   assert.doesNotMatch(routeSource, /req\.query[^\n]*days/);
-  assert.match(routeSource, /codexbar cost --format json --provider both --days 70/);
+  // The combined-provider scan window is anchor-aware too, but the day count
+  // is always derived server-side from the validated anchor — never from the
+  // raw request.
+  assert.match(routeSource, /codexbar cost --format json --provider both --days \$\{scanDays\}/);
+  assert.match(routeSource, /const scanDays = claudeCodeScanDays\(parsedAnchor\.anchor\);/);
   assert.match(
     routeSource,
-    /codexbar cost --format json --provider both --days 70', \{\s*timeout: 30000,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
+    /codexbar cost --format json --provider both --days \$\{scanDays\}`, \{\s*timeout: 30000,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
   );
   assert.doesNotMatch(routeSource, /req\.query[^\n]*provider/);
   assert.match(routeSource, /existing\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);

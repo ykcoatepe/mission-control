@@ -189,4 +189,9 @@ assert.ok(
   'AWS live billing always reports the current month, so it must never be preferred while an anchored past month is displayed',
 );
 
+assert.ok(
+  source.includes('codexbarQueryPath(activeMonthAnchor, calendarNow)'),
+  'the codexbar fetch must follow the month anchor so past-month codexbar cells are not zero-filled by the default 70-day scan',
+);
+
 console.log('costs page behavior guards passed');

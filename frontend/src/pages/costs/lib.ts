@@ -515,6 +515,14 @@ export function costsQueryPath(period: 'day' | '7d' | 'month', monthAnchor: stri
     : `/api/costs?period=${period}`
 }
 
+// The codexbar scan defaults to ~70 days; an anchored past month asks the
+// endpoint to widen the window so codexbar-derived cells aren't zero-filled.
+export function codexbarQueryPath(monthAnchor: string | null = null, now = new Date()) {
+  return isPastMonthAnchor(monthAnchor, now)
+    ? `/api/costs/codexbar?month=${monthAnchor}`
+    : '/api/costs/codexbar'
+}
+
 export function calendarRefreshQueryKeys(
   period: 'day' | '7d' | 'month',
   monthAnchor: string | null = null,

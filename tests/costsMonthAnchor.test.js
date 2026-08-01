@@ -315,3 +315,40 @@ test('normalizeUsageCosts honors a pre-normalization periodAnchor tag too', () =
   });
   assert.equal(normalized.summary.thisMonthUsd, 5);
 });
+
+// ---------------------------------------------------------------------------
+// /api/costs/codexbar must honor the same anchor contract
+// ---------------------------------------------------------------------------
+
+test('GET /api/costs/codexbar validates the month anchor like /api/costs', async () => {
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-codexbar-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+
+  const express = require('express');
+  const { buildCostsRouter } = require('../server/routes/costs');
+  const app = express();
+  app.use(buildCostsRouter({
+    mcConfig: { budget: { monthly: 0 } },
+    projectRoot: path.join(__dirname, '..'),
+    sessionsService: { listVisibleSessions: async () => ({ sessions: [] }) },
+  }));
+
+  const server = await new Promise((resolve) => {
+    const created = app.listen(0, '127.0.0.1', () => resolve(created));
+  });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  try {
+    // Validation must run BEFORE the codexbar exec: these answer 400 whether
+    // or not the codexbar binary exists on the host.
+    for (const month of ['2026-13', 'july', '2020-01']) {
+      const response = await fetch(`${base}/api/costs/codexbar?month=${encodeURIComponent(month)}`);
+      assert.equal(response.status, 400, `codexbar month=${month} must be rejected`);
+    }
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});

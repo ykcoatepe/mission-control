@@ -37,6 +37,7 @@ import {
   summarizeCostReliability,
   sumCostRows,
   calendarRefreshQueryKeys,
+  codexbarQueryPath,
   costsQueryPath,
   millisecondsUntilNextCalendarDay,
   codexbarRowsForPeriod,
@@ -122,11 +123,11 @@ export default function Costs() {
     }
   }, [monthAnchor, period, queryClient])
 
-  // ---- Four period-independent fetches ----
+  // ---- Period-independent fetches (codexbar additionally follows the month anchor) ----
   const { data: awsCosts } = useApi<AWSSCostData>('/api/aws/costs')
   const { data: configRaw } = useApi<ConfigData>('/api/config')
   const { data: sessionsRaw } = useApi<{ sessions: SessionData[] }>('/api/sessions')
-  const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>('/api/costs/codexbar')
+  const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>(codexbarQueryPath(activeMonthAnchor, calendarNow))
 
   const config: ConfigData = configRaw ?? { modules: {} }
   const sessions: SessionData[] = useMemo(() => sessionsRaw?.sessions ?? [], [sessionsRaw])

@@ -25,6 +25,7 @@ import {
   apiEquivalentPeriodValue,
   awsIntegrationEnabled,
   comparisonLabels,
+  codexbarQueryPath,
   costsQueryPath,
   currentMonthKey,
   daysInMonthKey,
@@ -568,6 +569,13 @@ describe('month anchor helpers', () => {
     expect(costsQueryPath('month', '2026-07')).toBe('/api/costs?period=month&month=2026-07')
     expect(costsQueryPath('7d', '2026-07')).toBe('/api/costs?period=7d')
     expect(costsQueryPath('day', '2026-07')).toBe('/api/costs?period=day')
+  })
+
+  it('widens the codexbar request only for an anchored past month', () => {
+    const now = new Date(2026, 7, 1)
+    expect(codexbarQueryPath('2026-07', now)).toBe('/api/costs/codexbar?month=2026-07')
+    expect(codexbarQueryPath('2026-08', now)).toBe('/api/costs/codexbar')
+    expect(codexbarQueryPath(null, now)).toBe('/api/costs/codexbar')
   })
 
   it('skips calendar-day invalidation for an immutable past month', () => {
