@@ -24,6 +24,8 @@ const {
 // ---------------------------------------------------------------------------
 
 const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+// Mirrors the frontend navigator floor (lib.ts monthAnchorFloor).
+const MONTH_ANCHOR_HISTORY_MONTHS = 24;
 
 function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
@@ -78,6 +80,12 @@ function parseMonthAnchor(value, now = new Date()) {
   }
   const current = monthKeyOf(now);
   if (raw > current) return { ok: false, error: 'month cannot be in the future' };
+  // Same floor as the UI navigator (monthAnchorFloor): keeps the codexbar scan
+  // window bounded without ever silently truncating an accepted request.
+  const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
+  if (raw < floor) {
+    return { ok: false, error: `month is older than the ${MONTH_ANCHOR_HISTORY_MONTHS}-month history window` };
+  }
   return { ok: true, anchor: raw === current ? null : raw };
 }
 
@@ -187,12 +195,18 @@ function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
 }
 
 // `codexbar cost --days N` only reaches N days back, so an anchored past month
-// needs a window wide enough to cover its first day.
+// needs a window wide enough to cover its first day — AND the first day of the
+// month before it: buildClaudeCodeUsageSummary derives the comparison baseline
+// (previousPeriodApiEquivalentUsd) from that previous month's rows. With the
+// MONTH_ANCHOR_HISTORY_MONTHS floor on anchors, the widest valid window is
+// ~25 months, so the safety cap below is unreachable for accepted requests.
+const CLAUDE_CODE_SCAN_MAX_DAYS = 800;
+
 function claudeCodeScanDays(monthAnchor, now = new Date()) {
   if (!isValidMonthAnchor(monthAnchor)) return 70;
-  const { start } = monthAnchorBounds(String(monthAnchor));
+  const { start } = monthAnchorBounds(shiftMonthAnchor(String(monthAnchor), -1));
   const days = Math.ceil((now.getTime() - start.getTime()) / 86400000) + 2;
-  return Math.min(Math.max(days, 70), 400);
+  return Math.min(Math.max(days, 70), CLAUDE_CODE_SCAN_MAX_DAYS);
 }
 
 function costsCacheKey(period, monthAnchor) {

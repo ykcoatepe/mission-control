@@ -43,7 +43,7 @@ function dayKey(date) {
   return date.toLocaleDateString('en-CA', { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC' });
 }
 
-function costSummaryFromDaily(daily = [], fallbackCost = 0) {
+function costSummaryFromDaily(daily = [], fallbackCost = 0, anchorMonthPrefix = null) {
   const periodUsd = daily.length
     ? daily.reduce((sum, row) => sum + Number(row.cost || row.totalCost || 0), 0)
     : Number(fallbackCost || 0);
@@ -52,7 +52,9 @@ function costSummaryFromDaily(daily = [], fallbackCost = 0) {
   const yesterday = new Date(today);
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = dayKey(yesterday);
-  const monthPrefix = todayKey.slice(0, 7);
+  // An anchored past-month payload must keep ITS month as "this month" — the
+  // wall-clock prefix matches none of its rows and would zero the budget spend.
+  const monthPrefix = anchorMonthPrefix || todayKey.slice(0, 7);
   const thisWeekRows = daily.slice(-7);
   return {
     periodUsd,
@@ -312,7 +314,9 @@ function normalizeUsageCosts(usage) {
   });
 
   const fallbackServiceCost = byService.reduce((sum, item) => sum + Number(item.cost || 0), 0);
-  const costSummary = costSummaryFromDaily(normalized.daily || [], fallbackServiceCost);
+  const periodAnchor = usage.period?.anchor || usage.periodAnchor || null;
+  const anchorMonthPrefix = /^\d{4}-(0[1-9]|1[0-2])$/.test(String(periodAnchor || '')) ? String(periodAnchor) : null;
+  const costSummary = costSummaryFromDaily(normalized.daily || [], fallbackServiceCost, anchorMonthPrefix);
   normalized.summary = { ...(usage.summary || {}) };
   SUMMARY_COST_FIELDS.forEach((field) => {
     if (field in normalized.summary) normalized.summary[field] = costSummary[field];

@@ -147,12 +147,32 @@ test('claudeCodeScanDays widens the codexbar window to reach the anchored month'
   assert.equal(claudeCodeScanDays(null, NOW), 70, 'unanchored behaviour is unchanged');
   assert.equal(claudeCodeScanDays('2026-08', NOW), 70, 'current month needs no widening');
 
+  // The scan must reach the start of the month BEFORE the anchor: the
+  // previous month is the comparison baseline and buildClaudeCodeUsageSummary
+  // needs every one of its days for previousPeriodApiEquivalentUsd.
   const january = claudeCodeScanDays('2026-01', NOW);
-  const daysSinceJanuaryStart = Math.ceil((NOW.getTime() - new Date(2026, 0, 1).getTime()) / 86400000);
-  assert.equal(january, daysSinceJanuaryStart + 2);
+  const daysSincePreviousMonthStart = Math.ceil((NOW.getTime() - new Date(2025, 11, 1).getTime()) / 86400000);
+  assert.equal(january, daysSincePreviousMonthStart + 2);
   assert.ok(january > 70, 'an older anchor must widen past the default 70 days');
+});
 
-  assert.equal(claudeCodeScanDays('2020-01', NOW), 400, 'the window is capped at 400 days');
+test('claudeCodeScanDays covers the full previous-month comparison window', () => {
+  // Viewing June 2026 on 2026-08-01: the baseline is May, so the scan must
+  // reach 2026-05-01 (92 days back) — the old anchor-start math stopped at
+  // June 1 and the 70-day default silently dropped May 1-23.
+  const june = claudeCodeScanDays('2026-06', NOW);
+  const daysSinceMayStart = Math.ceil((NOW.getTime() - new Date(2026, 4, 1).getTime()) / 86400000);
+  assert.equal(june, daysSinceMayStart + 2);
+  assert.ok(june >= 92, `scan must reach 2026-05-01, got ${june} days`);
+});
+
+test('parseMonthAnchor rejects months older than the 24-month history window', () => {
+  // The UI navigator floors at 24 months (monthAnchorFloor); the API enforces
+  // the same floor so the codexbar scan window stays bounded without ever
+  // silently truncating a valid request.
+  assert.equal(parseMonthAnchor('2024-08', NOW).ok, true, 'exactly at the floor is allowed');
+  assert.equal(parseMonthAnchor('2024-07', NOW).ok, false, 'older than the floor is rejected');
+  assert.equal(parseMonthAnchor('2020-01', NOW).ok, false, 'far past is rejected');
 });
 
 // ---------------------------------------------------------------------------
@@ -257,4 +277,41 @@ test('GET /api/costs rejects malformed and future month anchors with 400', async
     process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
     fs.rmSync(cacheDir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// Normalization must not zero out an anchored month's budget spend
+// ---------------------------------------------------------------------------
+
+test('normalizeUsageCosts keeps the anchored month spend as thisMonthUsd', () => {
+  const { normalizeUsageCosts } = require('../server/services/costSanity');
+  // An anchored July payload normalized during a later wall-clock month:
+  // costSummaryFromDaily's month prefix must follow the anchor, not "now",
+  // or the historical budget card and alerts read $0 for every past month.
+  const normalized = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    period: { key: 'month', anchor: '2026-07', start: '2026-07-01', end: '2026-07-31' },
+    summary: { periodUsd: 31, thisMonthUsd: 31, totalUsd: 31 },
+    daily: [
+      { date: '2026-07-01', cost: 10, totalCost: 10, tokens: 100, totalTokens: 100 },
+      { date: '2026-07-15', cost: 21, totalCost: 21, tokens: 210, totalTokens: 210 },
+    ],
+    dailyByModel: [],
+    byService: [],
+  });
+  assert.equal(normalized.summary.thisMonthUsd, 31, 'anchored month spend must survive normalization');
+  assert.equal(normalized.summary.periodUsd, 31);
+});
+
+test('normalizeUsageCosts honors a pre-normalization periodAnchor tag too', () => {
+  const { normalizeUsageCosts } = require('../server/services/costSanity');
+  const normalized = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    periodAnchor: '2026-07',
+    summary: { periodUsd: 5, thisMonthUsd: 5 },
+    daily: [{ date: '2026-07-03', cost: 5, totalCost: 5 }],
+    dailyByModel: [],
+    byService: [],
+  });
+  assert.equal(normalized.summary.thisMonthUsd, 5);
 });
