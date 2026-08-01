@@ -402,10 +402,6 @@ function isWarningSourceStatus(status) {
   return !isHealthySourceStatus(lower);
 }
 
-function isActionableWarningSourceStatus(status) {
-  return /warn|corrupt|dirty|missing|error|fail/i.test(String(status || ''));
-}
-
 function numberFromText(text, pattern) {
   const match = String(text || '').match(pattern);
   if (!match) return null;
@@ -541,9 +537,8 @@ function normalizeSourcesPayload(payload, checkedAt) {
     .filter((source) => source && typeof source === 'object')
     .map((source) => {
       const pages = Number.isFinite(Number(source.pages || source.page_count)) ? Number(source.pages || source.page_count) : null;
-      const status = source.status
-        || source.clone_state
-        || source.cloneState
+      const reportedStatus = source.status || source.clone_state || source.cloneState;
+      const status = reportedStatus
         || (source.last_sync_at ? 'synced' : source.federated === false ? 'isolated' : 'unknown');
       const lastSyncAt = parseTimestamp(
         source.last_sync_at
@@ -561,6 +556,7 @@ function normalizeSourcesPayload(payload, checkedAt) {
       return {
         id: String(source.id || source.name || source.source || 'unknown'),
         status: String(status),
+        statusReported: Boolean(reportedStatus),
         pages,
         chunks: Number.isFinite(Number(source.chunks || source.chunk_count)) ? Number(source.chunks || source.chunk_count) : null,
         lastSyncAt,
@@ -573,7 +569,7 @@ function normalizeSourcesPayload(payload, checkedAt) {
   const freshness = summarizeSourceFreshness(sources, checkedAt);
   const statusWarningCount = sources.filter(
     (source) => source.freshness?.syncTracked === false
-      ? isActionableWarningSourceStatus(source.status)
+      ? source.statusReported && isWarningSourceStatus(source.status)
       : isWarningSourceStatus(source.status),
   ).length;
 

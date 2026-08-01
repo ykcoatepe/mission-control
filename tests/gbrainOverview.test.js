@@ -733,13 +733,13 @@ async function testDisabledSourceIsNotFreshnessStale() {
   assert.doesNotMatch(overview.cockpit.caveats.detail, /source/i);
 }
 
-async function testDisabledSourcePreservesExplicitCorruptionWarning() {
+async function testDisabledSourcePreservesExplicitFailureWarning() {
   const execFilePromise = async () => ({
     stdout: JSON.stringify({
       sources: [
         {
           id: 'brain-sync-remote-0fheow',
-          status: 'corrupt',
+          status: 'critical',
           local_path: null,
           federated: true,
           page_count: 0,
@@ -1281,7 +1281,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   await testLiveSourcesDoNotExposeLocalPaths();
   await testDefaultSourceWithoutPathIsNotFreshnessStale();
   await testDisabledSourceIsNotFreshnessStale();
-  await testDisabledSourcePreservesExplicitCorruptionWarning();
+  await testDisabledSourcePreservesExplicitFailureWarning();
   await testLiveSourcesCountsUnknownStatusesAsWarnings();
   await testLiveSourcesFallsBackToTextOutput();
   await testLiveHealthFallsBackToTextOutput();
