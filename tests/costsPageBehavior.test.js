@@ -210,4 +210,10 @@ assert.ok(
   'the Cost Drivers codexbar panel must render the selected period rows and totals, never the full widened scan payload',
 );
 
+assert.ok(
+  source.includes('sessionsLiveOnlyNotice') &&
+  source.includes("sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live session pressure — not scoped to ${anchoredMonthLabel}` : null}"),
+  'the By session view is live-only data: an anchored past month must carry an explicit notice so current sessions are not read as that month\'s drivers',
+);
+
 console.log('costs page behavior guards passed');

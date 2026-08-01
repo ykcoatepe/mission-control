@@ -1009,6 +1009,7 @@ export default function Costs() {
           codexbarPeriodCost={codexbarPeriodCost}
           codexbarPeriodTokens={codexbarPeriodTokens}
           codexbarPeriodDaysList={codexbarPeriodDays}
+          sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live session pressure — not scoped to ${anchoredMonthLabel}` : null}
           driverView={driverView}
           setDriverView={setDriverView}
           tokenBreakdown={tokenBreakdown}

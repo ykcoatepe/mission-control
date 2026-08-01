@@ -43,6 +43,7 @@ export interface CostDriversSectionProps {
   codexbarPeriodCost: number
   codexbarPeriodTokens: number
   codexbarPeriodDaysList: CodexBarDailyEntry[]
+  sessionsLiveOnlyNotice: string | null
   driverView: 'models' | 'sessions' | 'codexbar' | 'notes'
   setDriverView: (v: 'models' | 'sessions' | 'codexbar' | 'notes') => void
   tokenBreakdown: AggregatedBreakdownItem[]
@@ -68,6 +69,7 @@ export default function CostDriversSection({
   codexbarPeriodCost,
   codexbarPeriodTokens,
   codexbarPeriodDaysList,
+  sessionsLiveOnlyNotice,
   driverView,
   setDriverView,
   tokenBreakdown,
@@ -167,6 +169,12 @@ export default function CostDriversSection({
             </div>
           ) : driverView === 'sessions' ? (
             <div className={styles.sessionList}>
+              {sessionsLiveOnlyNotice && (
+                <div className={styles.emptyNote} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span className="macos-badge macos-badge-orange">LIVE</span>
+                  {sessionsLiveOnlyNotice}
+                </div>
+              )}
               {topSessions.length > 0 ? topSessions.map((session, i) => (
                 <div
                   key={session.sessionId}
