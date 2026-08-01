@@ -531,6 +531,7 @@ describe('CodexBar calendar periods', () => {
 
   it('refreshes CodexBar and the active usage period at a calendar boundary', () => {
     expect(calendarRefreshQueryKeys('7d')).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=7d'],
     ])
@@ -584,14 +585,17 @@ describe('month anchor helpers', () => {
 
   it('refreshes anchored calendar metadata across a day boundary', () => {
     expect(calendarRefreshQueryKeys('month', '2026-07', new Date(2026, 7, 1))).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar?month=2026-07'],
       ['api', '/api/costs?period=month&month=2026-07'],
     ])
     expect(calendarRefreshQueryKeys('month', null)).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=month'],
     ])
     expect(calendarRefreshQueryKeys('7d', '2026-07')).toEqual([
+      ['api', '/api/costs/months'],
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=7d'],
     ])

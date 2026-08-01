@@ -533,6 +533,9 @@ export function calendarRefreshQueryKeys(
   // Crossing a calendar day must refresh that metadata too — the server answers
   // an anchored refetch from cache, so this is cheap.
   return [
+    // Month availability ages the same way the calendar metadata does: the
+    // 30-minute cadence / midnight / focus refresh must revalidate it too.
+    ['api', '/api/costs/months'],
     ['api', codexbarQueryPath(period === 'month' ? monthAnchor : null, now)],
     ['api', costsQueryPath(period, period === 'month' ? monthAnchor : null)],
   ]

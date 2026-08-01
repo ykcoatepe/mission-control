@@ -85,6 +85,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes("['api', '/api/costs/months'],"),
+  'the month picker\'s availability data must revalidate with the calendar flow',
+);
+
+assert.ok(
   source.includes('CALENDAR_METADATA_REVALIDATE_MS = 30 * 60 * 1000') &&
   source.includes('window.setInterval(refreshCalendarNow, CALENDAR_METADATA_REVALIDATE_MS)') &&
   source.includes('window.clearInterval(revalidateId)'),
