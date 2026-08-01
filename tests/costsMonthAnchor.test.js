@@ -793,3 +793,17 @@ test('the empty-Claude-scan outcome travels with its own result', () => {
   assert.match(routeSource, /const claudeScanEmpty = claudeCodeResult\?\.empty === true;/);
   assert.match(routeSource, /let codexbarAvailable/);
 });
+
+test('cost-only cached slices are preserved, not just token-bearing ones', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.match(routeSource, /function agentHasUsage\(agent\)/);
+  assert.match(routeSource, /periodUsd \|\| 0\) > 0/);
+  assert.ok(routeSource.includes('isOpenClawDerivedAgent(agent) && agentHasUsage(agent)'));
+  assert.ok(routeSource.includes('isHermesAgent(agent) && agentHasUsage(agent)'));
+  assert.doesNotMatch(
+    routeSource,
+    /isHermesAgent\(agent\) && Number\(agent\.summary\?\.periodTokens/,
+    'Hermes cache preservation must not use the old tokens-only predicate',
+  );
+});

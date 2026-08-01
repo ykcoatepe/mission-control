@@ -722,6 +722,18 @@ describe('server-authoritative month classification', () => {
     expect(isPastMonthAnchor('2026-09', laggingBrowser, '2026-09')).toBe(false)
   })
 
+  it('uses the server month to span a lagging browser\'s full anchored month', () => {
+    const laggingBrowser = new Date('2026-08-15T12:00:00+03:00')
+    const withServerCalendar = codexbarRowsForPeriod([], 'month', laggingBrowser, '2026-08', '2026-09')
+    const browserOnly = codexbarRowsForPeriod([], 'month', laggingBrowser, '2026-08')
+
+    expect(withServerCalendar).toHaveLength(31)
+    expect(withServerCalendar[0].date).toBe('2026-08-01')
+    expect(withServerCalendar.at(-1)?.date).toBe('2026-08-31')
+    expect(browserOnly).toHaveLength(15)
+    expect(browserOnly.at(-1)?.date).toBe('2026-08-15')
+  })
+
   it('stops the navigator at the server month, not the browser month', () => {
     const nav = monthNavigationState('2026-08', browserNow, 24, '2026-08')
     expect(nav.currentMonth).toBe('2026-08')

@@ -1067,6 +1067,14 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     return key === 'hermes' || source.startsWith('hermes.');
   }
 
+  // A cached slice is worth preserving if it carries ANY usage signal — tokens
+  // OR spend. Hermes keeps cost-only services (cost > 0, zero tokens), so a
+  // tokens-only predicate silently drops real money from an immutable month.
+  function agentHasUsage(agent) {
+    return Number(agent?.summary?.periodTokens || 0) > 0
+      || Number(agent?.summary?.periodUsd || 0) > 0;
+  }
+
   function cachedFilteredUsage(previous, period, predicate, source, note) {
     const agents = (previous?.agents || [])
       .filter(predicate)
@@ -1186,12 +1194,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           const claudeCodeData = claudeCodeResult?.data ?? null;
           const claudeScanEmpty = claudeCodeResult?.empty === true;
           const previous = costsCache.get(cacheKey)?.value;
-          const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
+          const hasPreviousOpenClaw = !!previous?.agents?.some((agent) => isOpenClawDerivedAgent(agent) && agentHasUsage(agent));
           const hasPreviousClaudeCode = hasClaudeCodeAgent(previous);
           // Hermes had no preservation path: a transient sqlite failure while
           // another producer succeeded overwrote the cached result WITHOUT the
           // Hermes slice, silently understating a month that cannot change.
-          const hasPreviousHermes = !!previous?.agents?.some((agent) => isHermesAgent(agent) && Number(agent.summary?.periodTokens || 0) > 0);
+          const hasPreviousHermes = !!previous?.agents?.some((agent) => isHermesAgent(agent) && agentHasUsage(agent));
           const preservedPreviousOpenClaw = !openclawData && hasPreviousOpenClaw;
           const preservedPreviousClaudeCode = !claudeCodeData && hasPreviousClaudeCode;
           const preservedPreviousHermes = !hermesData && hasPreviousHermes;

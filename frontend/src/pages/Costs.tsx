@@ -282,8 +282,9 @@ export default function Costs() {
       period,
       calendarNow,
       activeMonthAnchor,
+      serverMonth,
     )
-  }, [activeMonthAnchor, calendarNow, codexbarDailyRows, period])
+  }, [activeMonthAnchor, calendarNow, codexbarDailyRows, period, serverMonth])
   // A live 30-day summary of $0 must not suppress an anchored month that has
   // usage: codexbar activity follows the selected period's rows too.
   const codexbarActive = !!(codexbarCosts && (
@@ -298,8 +299,8 @@ export default function Costs() {
     return null
   }, [codexbarPeriodDays])
   const codexbarPreviousPeriodDays = useMemo(() => {
-    return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow, activeMonthAnchor)
-  }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period])
+    return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow, activeMonthAnchor, serverMonth)
+  }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period, serverMonth])
 
   const activeModelNames = useMemo(() => {
     const names: string[] = []

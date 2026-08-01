@@ -626,10 +626,13 @@ function codexbarPeriodBounds(
   now: Date,
   previous: boolean,
   monthAnchor: string | null = null,
+  serverMonth: string | null = null,
 ) {
   // Anchored past month: the full calendar month, previous = the full month before it.
   // Mirrors the backend rangeForPeriod anchored window.
-  if (period === 'month' && isPastMonthAnchor(monthAnchor, now)) {
+  // The server calendar decides past-vs-current, same as viewingPastMonth; the
+  // browser clock is only the fallback before the first payload arrives.
+  if (period === 'month' && isPastMonthAnchor(monthAnchor, now, serverMonth)) {
     const key = previous ? previousMonthKey(monthAnchor as string) : (monthAnchor as string)
     const [year, month] = key.split('-').map(Number)
     return {
@@ -685,8 +688,9 @@ export function codexbarRowsForPeriod(
   period: 'day' | '7d' | 'month',
   now = new Date(),
   monthAnchor: string | null = null,
+  serverMonth: string | null = null,
 ) {
-  const bounds = codexbarPeriodBounds(period, now, false, monthAnchor)
+  const bounds = codexbarPeriodBounds(period, now, false, monthAnchor, serverMonth)
   return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 
@@ -695,8 +699,9 @@ export function previousCodexbarRows(
   period: 'day' | '7d' | 'month',
   now = new Date(),
   monthAnchor: string | null = null,
+  serverMonth: string | null = null,
 ) {
-  const bounds = codexbarPeriodBounds(period, now, true, monthAnchor)
+  const bounds = codexbarPeriodBounds(period, now, true, monthAnchor, serverMonth)
   return codexbarRowsInBounds(days, bounds.start, bounds.end)
 }
 

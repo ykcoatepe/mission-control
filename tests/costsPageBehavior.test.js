@@ -77,6 +77,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('codexbarRowsForPeriod(\n      codexbarDailyRows,\n      period,\n      calendarNow,\n      activeMonthAnchor,\n      serverMonth,'),
+  'codexbar bounds must share the server-calendar authority with viewingPastMonth',
+);
+
+assert.ok(
   source.includes("return { period: 'vs previous month', daily: 'vs previous month avg' }"),
   'CodexBar month labels should describe the calendar-month baseline shared by Agent Split',
 );
