@@ -8,6 +8,7 @@ import {
   monthNavigationState,
   monthPickerGrid,
   monthPickerYearBounds,
+  nextSelectableIndex,
 } from './lib'
 import type { MonthAvailability, TrackedSpendPresentation } from './lib'
 import type { CodexBarCostData } from './types'
@@ -86,6 +87,7 @@ export default function CostPulseHeader({
 }: CostPulseHeaderProps) {
   const [pickerOpen, setPickerOpen] = useState(false)
   const monthPickerRef = useRef<HTMLDivElement>(null)
+  const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const gridButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
   const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
   const isPartialApiEquivalent = apiEquivalentReliability === 'partial'
@@ -108,16 +110,24 @@ export default function CostPulseHeader({
   const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)
   const openMonthPicker = () => {
     setPickerYear(Number(monthNav.activeMonth.slice(0, 4)))
-    setPickerOpen(open => !open)
+    if (pickerOpen) {
+      setPickerOpen(false)
+      monthPickerTriggerRef.current?.focus()
+    } else {
+      setPickerOpen(true)
+    }
+  }
+  const closeMonthPicker = () => {
+    setPickerOpen(false)
+    monthPickerTriggerRef.current?.focus()
   }
   const chooseMonth = (month: string) => {
     goToMonth(month)
-    setPickerOpen(false)
+    closeMonthPicker()
   }
   const moveGridFocus = (index: number, delta: number) => {
-    const next = index + delta
-    if (next < 0 || next >= pickerMonths.length || !pickerMonths[next].selectable) return
-    gridButtonRefs.current[next]?.focus()
+    const next = nextSelectableIndex(pickerMonths, index, delta)
+    if (next !== index) gridButtonRefs.current[next]?.focus()
   }
   const onMonthGridKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
     const column = index % 3
@@ -139,10 +149,10 @@ export default function CostPulseHeader({
   useEffect(() => {
     if (!pickerOpen) return undefined
     const closeOnOutsideClick = (event: PointerEvent) => {
-      if (!monthPickerRef.current?.contains(event.target as Node)) setPickerOpen(false)
+      if (!monthPickerRef.current?.contains(event.target as Node)) closeMonthPicker()
     }
     const closeOnEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') setPickerOpen(false)
+      if (event.key === 'Escape') closeMonthPicker()
     }
     document.addEventListener('pointerdown', closeOnOutsideClick)
     document.addEventListener('keydown', closeOnEscape)
@@ -151,6 +161,13 @@ export default function CostPulseHeader({
       document.removeEventListener('keydown', closeOnEscape)
     }
   }, [pickerOpen])
+  useEffect(() => {
+    if (!pickerOpen) return
+    const selectedIndex = pickerMonths.findIndex(item => item.month === monthNav.activeMonth && item.selectable)
+    const firstSelectableIndex = pickerMonths.findIndex(item => item.selectable)
+    const focusIndex = selectedIndex >= 0 ? selectedIndex : firstSelectableIndex
+    if (focusIndex >= 0) gridButtonRefs.current[focusIndex]?.focus()
+  }, [pickerMonths, pickerOpen, monthNav.activeMonth])
   const spendPeriodDescription = period === 'month'
     ? viewingPastMonth && anchoredMonthLabel
       ? `${anchoredMonthLabel} tracked spend`
@@ -187,7 +204,10 @@ export default function CostPulseHeader({
               ] as const).map(([key, label]) => (
                 <button
                   key={key}
-                  onClick={() => setPeriod(key)}
+                  onClick={() => {
+                    if (key !== 'month') setPickerOpen(false)
+                    setPeriod(key)
+                  }}
                   className={period === key ? `${styles.tabBtn} ${styles.tabBtnActive}` : styles.tabBtn}
                 >
                   {label}
@@ -211,6 +231,7 @@ export default function CostPulseHeader({
                   <button
                     type="button"
                     onClick={openMonthPicker}
+                    ref={monthPickerTriggerRef}
                     className={styles.monthNavLabel}
                     aria-live="polite"
                     aria-haspopup="dialog"

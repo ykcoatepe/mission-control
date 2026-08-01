@@ -617,6 +617,23 @@ export function monthNavigationState(
   }
 }
 
+/** Return the next selectable grid index, or keep focus where it is at an edge. */
+export function nextSelectableIndex(
+  months: Array<Pick<MonthPickerItem, 'selectable'>>,
+  from: number,
+  step: number,
+) {
+  for (let index = from + step; index >= 0 && index < months.length; index += step) {
+    if (months[index].selectable) return index
+  }
+  return from
+}
+
+/** A server calendar advance makes an equal anchor a live, unanchored view. */
+export function shouldClearMonthAnchor(monthAnchor: string | null, currentMonth: string) {
+  return isValidMonthKey(monthAnchor) && monthAnchor === currentMonth
+}
+
 export interface MonthAvailability {
   month: string
   hasData: boolean

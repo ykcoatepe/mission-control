@@ -232,6 +232,32 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)') &&
+  source.includes('ref={monthPickerTriggerRef}') &&
+  source.includes('monthPickerTriggerRef.current?.focus()') &&
+  source.includes('const closeMonthPicker = () =>'),
+  'the picker must return focus to its month-label trigger when it closes',
+);
+
+assert.ok(
+  source.includes('nextSelectableIndex(pickerMonths, index, delta)') &&
+  source.includes('for (let index = from + step; index >= 0 && index < months.length; index += step)'),
+  'arrow navigation must scan past disabled months instead of letting a gap block the grid',
+);
+
+assert.ok(
+  source.includes("if (key !== 'month') setPickerOpen(false)") &&
+  source.includes("document.removeEventListener('pointerdown', closeOnOutsideClick)"),
+  'leaving Monthly must close the picker so its document listeners are cleaned up',
+);
+
+assert.ok(
+  source.includes('shouldClearMonthAnchor(monthAnchor, currentServerMonth)') &&
+  source.includes('window.setTimeout(() => setMonthAnchor(null), 0)'),
+  'a server-calendar advance must clear an anchor that has become the live current month',
+);
+
+assert.ok(
   source.includes("useApi<MonthAvailabilityResponse>('/api/costs/months')") &&
   source.includes('aria-haspopup="dialog"') &&
   source.includes('monthPickerGrid(') &&

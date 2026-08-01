@@ -34,7 +34,9 @@ import {
   monthNavigationState,
   monthPickerGrid,
   monthPickerYearBounds,
+  nextSelectableIndex,
   previousMonthKey,
+  shouldClearMonthAnchor,
   shiftMonthKey,
 } from './lib'
 
@@ -809,5 +811,31 @@ describe('month picker availability grid', () => {
     const grid = monthPickerGrid(2024, [], false, now, 24)
     expect(grid[7]).toMatchObject({ month: '2024-08', selectable: true, unknown: true })
     expect(grid[6]).toMatchObject({ month: '2024-07', selectable: false, outsideRange: true })
+  })
+})
+
+describe('month picker keyboard navigation', () => {
+  const months = Array.from({ length: 12 }, (_, index) => ({ selectable: index !== 1 && index !== 4 }))
+
+  it('skips disabled gaps in the pressed direction', () => {
+    expect(nextSelectableIndex(months, 0, 1)).toBe(2)
+    expect(nextSelectableIndex(months, 5, -1)).toBe(3)
+  })
+
+  it('clamps at a grid edge when no selectable month remains', () => {
+    expect(nextSelectableIndex(months, 0, -1)).toBe(0)
+    expect(nextSelectableIndex(months, 11, 1)).toBe(11)
+  })
+
+  it('is a no-op for an all-disabled row', () => {
+    expect(nextSelectableIndex([{ selectable: false }, { selectable: false }, { selectable: false }], 1, 1)).toBe(1)
+  })
+})
+
+describe('server month anchor clearing', () => {
+  it('clears an active anchor once it equals the server current month', () => {
+    expect(shouldClearMonthAnchor('2026-08', '2026-08')).toBe(true)
+    expect(shouldClearMonthAnchor('2026-07', '2026-08')).toBe(false)
+    expect(shouldClearMonthAnchor(null, '2026-08')).toBe(false)
   })
 })

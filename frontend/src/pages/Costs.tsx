@@ -57,6 +57,8 @@ import {
   budgetSpendValue,
   awsBillingDataAvailable,
   awsIntegrationEnabled,
+  currentMonthKey,
+  shouldClearMonthAnchor,
 } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
@@ -98,6 +100,11 @@ type MonthAvailabilityResponse = {
   }>
   generatedAt: string
   partial: boolean
+  sourceStatus: {
+    hermes: 'ready' | 'no_usage' | 'unavailable' | 'not_configured'
+    codexbar: 'ready' | 'no_usage' | 'unavailable' | 'not_configured'
+    cached: 'ready' | 'no_usage'
+  }
 }
 
 
@@ -242,6 +249,15 @@ export default function Costs() {
   // The server's own calendar month: it normalizes anchors against its clock, so
   // past-vs-current classification must follow it, not the browser's time zone.
   const serverMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  const currentServerMonth = currentMonthKey(calendarNow, serverMonth)
+
+  // A server-calendar rollover can turn a formerly anchored month into the
+  // live view. Clear it so React Query resumes using the unanchored cache key.
+  useEffect(() => {
+    if (!shouldClearMonthAnchor(monthAnchor, currentServerMonth)) return undefined
+    const clearAnchorTimer = window.setTimeout(() => setMonthAnchor(null), 0)
+    return () => window.clearTimeout(clearAnchorTimer)
+  }, [currentServerMonth, monthAnchor])
   // Classified by the SERVER's month, so a browser in another time zone cannot
   // label a live month-to-date payload as a completed month (or the reverse).
   // Falls back to the browser clock only before the first payload arrives.

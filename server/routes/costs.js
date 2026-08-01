@@ -501,6 +501,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   const costsFallbackCacheTtl = 15000;
   const monthsAvailabilityCacheTtl = 60000;
   let monthsAvailabilityCache = null;
+  let monthsAvailabilityInFlight = null;
   const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
   // OpenClaw's session-cost-usage aggregation can take ~55s for 7d on Yordam's host.
   // A too-low timeout silently produced null OpenClaw data, which mergeUsage then rendered as 0 tokens.
@@ -655,6 +656,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       SELECT DISTINCT strftime('%Y-%m', date(started_at, 'unixepoch', 'localtime')) AS month
       FROM sessions
       WHERE started_at IS NOT NULL
+        AND (
+          COALESCE(input_tokens, 0) + COALESCE(output_tokens, 0)
+            + COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) > 0
+          OR COALESCE(actual_cost_usd, estimated_cost_usd, 0) > 0
+        )
       ORDER BY month DESC
     `);
     return rows.map((row) => row.month).filter(isValidMonthAnchor);
@@ -668,52 +674,138 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
     // detailed costs producer.
     const stdout = await codexbarScan(70);
     const raw = mergeCodexBarReports(JSON.parse(stdout));
-    if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
-    return (raw.daily || [])
+    if (!raw || !Array.isArray(raw.daily)) {
+      throw new Error('CodexBar returned an invalid usage report');
+    }
+    return raw.daily
       .filter((day) => Number(day.totalTokens || 0) > 0 || Number(day.totalCost || 0) > 0)
       .map((day) => String(day.date || '').slice(0, 7))
       .filter(isValidMonthAnchor);
+  }
+
+  /**
+   * Detailed month results include OpenClaw, unlike the cheap availability
+   * probes. They are the only evidence that can settle a month as empty.
+   */
+  function cachedDetailedMonths() {
+    const data = new Set();
+    const confirmedEmpty = new Set();
+    let hasEntries = false;
+    for (const [key, entry] of costsCache.entries()) {
+      const match = /^costs:month:(\d{4}-(?:0[1-9]|1[0-2]))$/.exec(key);
+      const value = entry?.value;
+      if (!match || entry?.detailed !== true || value?.source !== 'combined.agent_usage') continue;
+      hasEntries = true;
+      const month = match[1];
+      const hasUsage = Number(value.summary?.periodTokens || 0) > 0
+        || Number(value.summary?.periodUsd || 0) > 0;
+      if (hasUsage) {
+        data.add(month);
+        continue;
+      }
+      const producerUnavailable = Object.entries(value.meta || {}).some(([field, status]) =>
+        field.endsWith('Status') && status === 'unavailable');
+      if (value.meta?.scanTruncated !== true
+        && value.summary?.scanTruncated !== true
+        && !producerUnavailable) {
+        confirmedEmpty.add(month);
+      }
+    }
+    return { data, confirmedEmpty, hasEntries };
+  }
+
+  function sourceStatusFor({ configured, load }) {
+    if (!configured()) return Promise.resolve({ status: 'not_configured', months: new Set() });
+    return Promise.resolve()
+      .then(load)
+      .then((months) => ({
+        status: months.length > 0 ? 'ready' : 'no_usage',
+        months: new Set(months),
+      }))
+      .catch((error) => ({
+        status: configured() ? 'unavailable' : 'not_configured',
+        months: new Set(),
+        error,
+      }));
+  }
+
+  function codexbarMonthIsFullyCovered(month, scanStart) {
+    const scanStartMonth = monthKeyOf(scanStart);
+    return scanStartMonth < month
+      || (scanStartMonth === month && scanStart.getDate() === 1);
+  }
+
+  function monthAvailabilityHasUnavailable(value) {
+    return Object.values(value?.sourceStatus || {}).some((status) => status === 'unavailable');
   }
 
   async function monthAvailability() {
     if (monthsAvailabilityCache && Date.now() - monthsAvailabilityCache.time < monthsAvailabilityCacheTtl) {
       return monthsAvailabilityCache.value;
     }
+    if (monthsAvailabilityInFlight) return monthsAvailabilityInFlight;
 
-    const now = new Date();
-    const current = monthKeyOf(now);
-    const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
-    const months = [];
-    for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
+    monthsAvailabilityInFlight = (async () => {
+      const now = monthAvailabilitySources?.now?.() || new Date();
+      const current = monthKeyOf(now);
+      const floor = shiftMonthAnchor(current, -MONTH_ANCHOR_HISTORY_MONTHS);
+      const months = [];
+      for (let month = current; month >= floor; month = shiftMonthAnchor(month, -1)) months.push(month);
 
-    const sourceResults = await Promise.allSettled([
-      (monthAvailabilitySources?.hermes || hermesUsageMonths)(),
-      (monthAvailabilitySources?.codexbar || codexbarUsageMonths)(),
-    ]);
-    const sourceNames = ['hermes', 'codexbar'];
-    const availableBySource = sourceResults.map((result, index) => {
-      if (result.status === 'fulfilled') return new Set(result.value);
-      console.warn(`[Costs months ${sourceNames[index]}]`, result.reason?.message || result.reason);
-      return null;
+      const [hermes, codexbar, cached] = await Promise.all([
+        sourceStatusFor({
+          configured: monthAvailabilitySources?.hermesConfigured || hermesConfigured,
+          load: monthAvailabilitySources?.hermes || hermesUsageMonths,
+        }),
+        sourceStatusFor({
+          configured: monthAvailabilitySources?.codexbarConfigured || codexbarConfigured,
+          load: monthAvailabilitySources?.codexbar || codexbarUsageMonths,
+        }),
+        Promise.resolve((monthAvailabilitySources?.cachedDetailedMonths || cachedDetailedMonths)()),
+      ]);
+      if (hermes.error) console.warn('[Costs months hermes]', hermes.error.message || hermes.error);
+      if (codexbar.error) console.warn('[Costs months codexbar]', codexbar.error.message || codexbar.error);
+
+      const cachedMonths = cached || { data: new Set(), confirmedEmpty: new Set(), hasEntries: false };
+      const sourceStatus = {
+        hermes: hermes.status,
+        codexbar: codexbar.status,
+        cached: cachedMonths.hasEntries ? 'ready' : 'no_usage',
+      };
+      const scanStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69);
+      const value = {
+        months: months.map((month) => {
+          const sources = [];
+          if (hermes.months.has(month)) sources.push('hermes');
+          if (codexbar.months.has(month)) sources.push('codexbar');
+          const cachedHasData = cachedMonths.data?.has(month);
+          const cachedConfirmsEmpty = cachedMonths.confirmedEmpty?.has(month);
+          if (cachedHasData || cachedConfirmsEmpty) sources.push('cached');
+          const hasData = sources.some((source) => source !== 'cached') || Boolean(cachedHasData);
+          // Cheap probes do not inspect OpenClaw. Only a clean detailed cache
+          // entry can prove an otherwise empty month is actually empty.
+          const unknown = !hasData && !cachedConfirmsEmpty;
+          return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
+        }),
+        generatedAt: now.toISOString(),
+        sourceStatus,
+        partial: monthAvailabilityHasUnavailable({ sourceStatus })
+          || months.some((month) => !codexbarMonthIsFullyCovered(month, scanStart)),
+      };
+      // A concurrent refresh may discover one temporarily failed producer after
+      // a healthy answer. Keep the fresh healthier answer until its TTL ends.
+      const cachedValue = monthsAvailabilityCache;
+      if (!cachedValue
+        || Date.now() - cachedValue.time >= monthsAvailabilityCacheTtl
+        || monthAvailabilityHasUnavailable(cachedValue.value)
+        || !monthAvailabilityHasUnavailable(value)) {
+        monthsAvailabilityCache = { time: Date.now(), value };
+      }
+      return monthsAvailabilityCache.value;
+    })().finally(() => {
+      monthsAvailabilityInFlight = null;
     });
-    const sourceFailed = availableBySource.some((monthsForSource) => monthsForSource === null);
-    const codexbarReliableFloor = monthKeyOf(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 69));
-
-    const value = {
-      months: months.map((month) => {
-        const sources = sourceNames.filter((_, index) => availableBySource[index]?.has(month));
-        const hasData = sources.length > 0;
-        // We do not scan OpenClaw JSONL here. For old CodexBar gaps (or any
-        // failed cheap source), `unknown` keeps the month selectable instead of
-        // claiming there was no usage when the endpoint did not look everywhere.
-        const unknown = !hasData && (sourceFailed || month < codexbarReliableFloor);
-        return unknown ? { month, hasData, sources, unknown: true } : { month, hasData, sources };
-      }),
-      generatedAt: now.toISOString(),
-      partial: sourceFailed || months.some((month) => month < codexbarReliableFloor),
-    };
-    monthsAvailabilityCache = { time: Date.now(), value };
-    return value;
+    return monthsAvailabilityInFlight;
   }
 
   async function hermesUsageSummary(period = 'month', monthAnchor = null) {

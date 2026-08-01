@@ -29,6 +29,14 @@ async function withCostsApp(monthAvailabilitySources, run) {
   }
 }
 
+function emptyCachedDetailedMonths() {
+  return { data: new Set(), confirmedEmpty: new Set(), hasEntries: false };
+}
+
+function cleanCachedDetailedMonths({ data = [], confirmedEmpty = [] } = {}) {
+  return { data: new Set(data), confirmedEmpty: new Set(confirmedEmpty), hasEntries: true };
+}
+
 test('GET /api/costs/months returns bounded newest-first availability', async () => {
   const current = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   const prior = shiftMonth(current, -1);
@@ -36,6 +44,9 @@ test('GET /api/costs/months returns bounded newest-first availability', async ()
   await withCostsApp({
     hermes: async () => [current, prior],
     codexbar: async () => [current],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
   }, async (base) => {
     const response = await fetch(`${base}/api/costs/months`);
     assert.equal(response.status, 200);
@@ -43,6 +54,7 @@ test('GET /api/costs/months returns bounded newest-first availability', async ()
 
     assert.equal(typeof body.generatedAt, 'string');
     assert.equal(typeof body.partial, 'boolean');
+    assert.deepEqual(body.sourceStatus, { hermes: 'ready', codexbar: 'ready', cached: 'no_usage' });
     assert.equal(body.months.length, 25);
     assert.equal(body.months[0].month, current, 'the current month is first');
     assert.equal(body.months.at(-1).month, shiftMonth(current, -24), 'the 24-month floor is included');
@@ -60,12 +72,16 @@ test('GET /api/costs/months degrades to unknown selectable months when a source 
   await withCostsApp({
     hermes: async () => { throw new Error('Hermes database unavailable'); },
     codexbar: async () => [current],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
   }, async (base) => {
     const response = await fetch(`${base}/api/costs/months`);
     assert.equal(response.status, 200);
     const body = await response.json();
 
     assert.equal(body.partial, true);
+    assert.deepEqual(body.sourceStatus, { hermes: 'unavailable', codexbar: 'ready', cached: 'no_usage' });
     assert.deepEqual(body.months[0], { month: current, hasData: true, sources: ['codexbar'] });
     assert.deepEqual(body.months.find((entry) => entry.month === prior), {
       month: prior,
@@ -74,4 +90,149 @@ test('GET /api/costs/months degrades to unknown selectable months when a source 
       unknown: true,
     });
   });
+});
+
+test('OpenClaw-only months remain unknown until detailed cache evidence is available', async () => {
+  const current = '2026-08';
+  const openclawOnly = '2026-05';
+
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.deepEqual(body.months.find((entry) => entry.month === openclawOnly), {
+      month: openclawOnly,
+      hasData: false,
+      sources: [],
+      unknown: true,
+    });
+    assert.equal(body.sourceStatus.cached, 'no_usage');
+  });
+});
+
+test('detailed cache supplies positive and the only confirmed-empty month evidence', async () => {
+  const current = '2026-08';
+  const confirmedEmpty = '2026-07';
+  const stillUnknown = '2026-06';
+
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: () => cleanCachedDetailedMonths({ data: [current], confirmedEmpty: [confirmedEmpty] }),
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.deepEqual(body.months.find((entry) => entry.month === current), {
+      month: current,
+      hasData: true,
+      sources: ['cached'],
+    });
+    assert.deepEqual(body.months.find((entry) => entry.month === confirmedEmpty), {
+      month: confirmedEmpty,
+      hasData: false,
+      sources: ['cached'],
+    });
+    assert.equal(body.months.find((entry) => entry.month === stillUnknown).unknown, true);
+    assert.equal(body.sourceStatus.cached, 'ready');
+  });
+});
+
+test('the partially covered CodexBar floor month remains unknown and marks the response partial', async () => {
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.equal(body.partial, true);
+    assert.equal(body.months.find((entry) => entry.month === '2026-06').unknown, true);
+  });
+});
+
+test('month availability distinguishes unconfigured producers from unavailable ones', async () => {
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => { throw new Error('must not run'); },
+    codexbar: async () => { throw new Error('schema drift'); },
+    hermesConfigured: () => false,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.deepEqual(body.sourceStatus, { hermes: 'not_configured', codexbar: 'unavailable', cached: 'no_usage' });
+    assert.equal(body.months[0].unknown, true);
+  });
+});
+
+test('an unconfigured CodexBar producer is not reported as a flaky unavailable source', async () => {
+  let codexbarCalls = 0;
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => { codexbarCalls += 1; return []; },
+    hermesConfigured: () => true,
+    codexbarConfigured: () => false,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.equal(body.sourceStatus.codexbar, 'not_configured');
+    assert.equal(codexbarCalls, 0);
+  });
+});
+
+test('malformed CodexBar results are unavailable rather than settled no_usage', async () => {
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => { throw new Error('CodexBar returned an invalid usage report'); },
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const body = await (await fetch(`${base}/api/costs/months`)).json();
+    assert.equal(body.sourceStatus.codexbar, 'unavailable');
+    assert.notEqual(body.sourceStatus.codexbar, 'no_usage');
+  });
+});
+
+test('month availability deduplicates concurrent source scans', async () => {
+  let hermesCalls = 0;
+  let releaseHermes;
+  const hermesGate = new Promise((resolve) => { releaseHermes = resolve; });
+  await withCostsApp({
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => {
+      hermesCalls += 1;
+      await hermesGate;
+      return [];
+    },
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+    cachedDetailedMonths: emptyCachedDetailedMonths,
+  }, async (base) => {
+    const first = fetch(`${base}/api/costs/months`);
+    const second = fetch(`${base}/api/costs/months`);
+    await new Promise((resolve) => setImmediate(resolve));
+    releaseHermes();
+    const [firstResponse, secondResponse] = await Promise.all([first, second]);
+    assert.equal(firstResponse.status, 200);
+    assert.equal(secondResponse.status, 200);
+    assert.equal(hermesCalls, 1);
+  });
+});
+
+test('Hermes month query excludes zero-token and zero-spend sessions', () => {
+  const routeSource = require('node:fs').readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+  assert.match(routeSource, /COALESCE\(input_tokens, 0\).*COALESCE\(actual_cost_usd, estimated_cost_usd, 0\) > 0/s);
 });
