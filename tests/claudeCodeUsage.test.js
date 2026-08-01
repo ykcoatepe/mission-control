@@ -319,6 +319,12 @@ test('cost routes use fixed local Claude and combined provider commands', () => 
     /codexbar cost --format json --provider both --days \$\{scanDays\}`, \{\s*timeout: 30000,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
   );
   assert.doesNotMatch(routeSource, /req\.query[^\n]*provider/);
+  // The codexbar child must be reached through the shared scan helper so month
+  // navigation cannot spawn one process per selection (limiter + dedup + TTL).
+  assert.match(routeSource, /const stdout = await codexbarScan\(scanDays\);/);
+  assert.match(routeSource, /function codexbarScan\(scanDays\)/);
+  assert.match(routeSource, /const scan = refreshLimiter\.run\(async \(\) => \{/);
+
   assert.match(routeSource, /existing\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
   assert.match(routeSource, /dayModel\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
   assert.match(routeSource, /out\[`\$\{svc\.name\}_reasoning`\] = b\.reasoning \|\| 0/);

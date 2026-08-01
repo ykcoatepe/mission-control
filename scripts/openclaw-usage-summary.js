@@ -408,18 +408,23 @@ function listSessionFiles(startMs) {
 // to later still carries that month's records — they are RANKED: anything last
 // touched inside the window (plus a day of slack) is scanned first, and newer
 // files only fill whatever budget is left.
-// A file can only hold records written between its creation and its last write,
-// so [birthtime, mtime] is the interval of records it can possibly contain.
-// Rank by whether that interval can reach the anchored window:
-//   0 — it overlaps the window (includes a session opened in the anchored month
-//       and appended long afterwards: mtime is post-window but birthtime is not)
-//   1 — birthtime is unknown, so overlap cannot be ruled out
-//   2 — created after the window ended; it cannot contain those records
-// Nothing is dropped outright — the ranks only decide who survives the cap.
+// Ranks decide who survives the scan cap; nothing is dropped outright.
+//
+// Filesystem timestamps are only ever POSITIVE evidence here. mtime inside the
+// window, or a birthtime at//before it, means the file can plausibly hold the
+// anchored month's records — that promotes it. The reverse is NOT true: copying
+// or restoring a `.openclaw` tree rewrites birthtime to the copy time, so a
+// transcript full of March records can legitimately carry an August birthtime.
+// Treating that as proof of irrelevance would silently understate the month, so
+// there is no "proven irrelevant" rank — everything unproven shares rank 1 and
+// is ordered by recency, and truncation is reported (see scanTruncated) rather
+// than hidden.
+//   0 — plausibly overlaps the anchored window
+//   1 — cannot be ruled in or out
 function scanFileRank(file, windowEnd) {
   if (file.mtimeMs <= windowEnd) return 0;
   if (file.birthtimeMs === null || file.birthtimeMs === undefined) return 1;
-  return file.birthtimeMs <= windowEnd ? 0 : 2;
+  return file.birthtimeMs <= windowEnd ? 0 : 1;
 }
 
 function prioritizeScanFiles(files, range, maxFiles) {
@@ -468,7 +473,15 @@ async function scanUsageRecords(range) {
       records.push(record);
     }
   }
-  return { records, filesScanned: scanFiles.length, filesAvailable: files.length };
+  // No silent caps: when the budget truncated the candidate set the totals may
+  // be understated, and that has to be visible rather than inferred from a
+  // filesScanned/filesAvailable comparison nobody is obliged to make.
+  return {
+    records,
+    filesScanned: scanFiles.length,
+    filesAvailable: files.length,
+    scanTruncated: scanFiles.length < files.length,
+  };
 }
 
 function createTotalsBucket(name) {
@@ -552,6 +565,7 @@ function buildUsageFromAccumulator({
   note,
   filesScanned,
   filesAvailable,
+  scanTruncated = false,
 }) {
   const daily = range.keys.map((date) => accumulator.dailyMap.get(date));
   let byServiceList = Array.from(accumulator.modelTotals.values())
@@ -632,6 +646,7 @@ function buildUsageFromAccumulator({
       recordsScanned: accumulator.recordsScanned,
       filesScanned,
       filesAvailable,
+      scanTruncated,
     },
     daily,
     dailyByModel,
@@ -642,10 +657,15 @@ function buildUsageFromAccumulator({
 
 async function buildForPeriod(period, monthAnchor = null) {
   const r = rangeForPeriod(period, monthAnchor);
-  const { records, filesScanned, filesAvailable } = await scanUsageRecords({
+  const { records, filesScanned, filesAvailable, scanTruncated } = await scanUsageRecords({
     startMs: r.previous.startMs,
     endMs: r.endMs,
   });
+  if (scanTruncated) {
+    // stderr, not stdout: stdout is the JSON contract. Visible in the server log
+    // so an understated month is never a silent zero.
+    console.error(`[openclaw-usage-summary] scan truncated by MC_OPENCLAW_USAGE_MAX_FILES: ${filesScanned}/${filesAvailable} files${monthAnchor ? ` for anchor ${monthAnchor}` : ''}; totals may be understated`);
+  }
   const combinedAccumulator = createAccumulator(r.keys);
   const previousCombinedAccumulator = createAccumulator(r.previous.keys);
   const bucketAccumulators = new Map(SESSION_BUCKETS.map((bucket) => [bucket.key, createAccumulator(r.keys)]));
@@ -664,9 +684,10 @@ async function buildForPeriod(period, monthAnchor = null) {
     period,
     range: r,
     source: 'openclaw.session_jsonl_fast_scan',
-    note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files)`,
+    note: `Source: OpenClaw session JSONL fast scan (${records.length} usage records, ${filesScanned}/${filesAvailable} files${scanTruncated ? ', TRUNCATED — totals may be understated' : ''})`,
     filesScanned,
     filesAvailable,
+    scanTruncated,
   });
   const previousCombined = buildUsageFromAccumulator({
     accumulator: previousCombinedAccumulator,

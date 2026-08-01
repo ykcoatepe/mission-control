@@ -497,15 +497,27 @@ test('a session opened inside the anchored month survives the cap even when appe
   );
 });
 
-test('an unknown birthtime is never treated as proof the file is irrelevant', () => {
+test('a post-window birthtime is not evidence against a file', () => {
   const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
   const range = openclawRangeForPeriod('month', '2026-03', NOW);
 
-  const unknownBirth = { path: 'unknown-birth.jsonl', birthtimeMs: null, mtimeMs: new Date(2026, 7, 1).getTime() };
+  // A copied/restored tree gives a transcript full of March records an August
+  // birthtime, so birthtime may only ever PROMOTE a file. A post-window
+  // birthtime and an unknown one are therefore peers, ordered by recency —
+  // neither may sink below the other on provenance grounds.
+  const unknownBirth = { path: 'unknown-birth.jsonl', birthtimeMs: null, mtimeMs: new Date(2026, 7, 1).getTime() - 1000 };
   const createdAfter = { path: 'created-after.jsonl', birthtimeMs: new Date(2026, 5, 1).getTime(), mtimeMs: new Date(2026, 7, 1).getTime() };
 
-  const scanned = prioritizeScanFiles([createdAfter, unknownBirth], range, 1).map((file) => file.path);
-  assert.deepEqual(scanned, [unknownBirth.path], 'unknown provenance outranks a file proven to post-date the window');
+  const both = prioritizeScanFiles([createdAfter, unknownBirth], range, 2).map((file) => file.path);
+  assert.deepEqual(both, ['created-after.jsonl', 'unknown-birth.jsonl'], 'same rank, newest first');
+
+  // Swapping which one is newer flips the order: rank does not depend on birthtime.
+  const flipped = prioritizeScanFiles(
+    [{ ...createdAfter, mtimeMs: new Date(2026, 7, 1).getTime() - 2000 }, unknownBirth],
+    range,
+    2,
+  ).map((file) => file.path);
+  assert.deepEqual(flipped, ['unknown-birth.jsonl', 'created-after.jsonl']);
 });
 
 // ---------------------------------------------------------------------------
@@ -552,4 +564,39 @@ test('a failing refresh releases its slot', async () => {
   await assert.rejects(limiter.run(() => Promise.reject(new Error('scan blew up'))), /scan blew up/);
   assert.equal(limiter.stats().active, 0, 'a rejected job must not leak its slot');
   assert.equal(await limiter.run(() => Promise.resolve('next month')), 'next month');
+});
+
+test('a restored transcript is never ranked irrelevant on birthtime alone', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  const range = openclawRangeForPeriod('month', '2026-03', NOW);
+
+  // A `.openclaw` tree copied/restored after the anchored month: the inode was
+  // created in July, but the transcript inside holds March records. birthtime
+  // must never be read as proof that this file can be skipped.
+  const restored = {
+    path: 'restored-march-transcript.jsonl',
+    birthtimeMs: new Date(2026, 6, 15).getTime(),
+    mtimeMs: new Date(2026, 6, 15).getTime(),
+  };
+  const newerUnknown = {
+    path: 'newer-unknown.jsonl',
+    birthtimeMs: null,
+    mtimeMs: new Date(2026, 6, 10).getTime(),
+  };
+
+  const ranked = prioritizeScanFiles([newerUnknown, restored], range, 2).map((file) => file.path);
+  assert.equal(ranked.length, 2, 'neither file may be discarded');
+  // Same rank: ordering falls back to recency, and the restored file is newer.
+  assert.equal(ranked[0], restored.path, 'a restored transcript must not sink below unknown-provenance files');
+});
+
+test('birthtime still promotes a genuinely late-appended anchored session', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  const range = openclawRangeForPeriod('month', '2026-03', NOW);
+  const lateAppended = { path: 'opened-in-march.jsonl', birthtimeMs: new Date(2026, 2, 12).getTime(), mtimeMs: new Date(2026, 7, 1).getTime() };
+  const newer = Array.from({ length: 20 }, (_, i) => ({ path: `newer-${i}.jsonl`, birthtimeMs: new Date(2026, 5, 1).getTime(), mtimeMs: new Date(2026, 7, 1).getTime() - i * 1000 }));
+  assert.ok(
+    prioritizeScanFiles([...newer, lateAppended], range, 1).map((f) => f.path).includes(lateAppended.path),
+    'positive birthtime evidence must still win the top slot',
+  );
 });

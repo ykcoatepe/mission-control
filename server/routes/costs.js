@@ -429,6 +429,35 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const costsCache = new Map();
   const costsRefreshes = new Map();
   const refreshLimiter = createRefreshLimiter(Number(process.env.MC_COSTS_REFRESH_CONCURRENCY || 2));
+  const codexbarScans = new Map();
+  const codexbarScanCache = new Map();
+  const codexbarScanTtlMs = 30000;
+
+  /**
+   * One codexbar child per distinct scan depth: concurrent callers share the
+   * in-flight promise, a recent result is reused for a short TTL, and the work
+   * itself waits behind the same limiter as the detailed refreshes.
+   */
+  function codexbarScan(scanDays) {
+    const key = `codexbar:${scanDays}`;
+    const cached = codexbarScanCache.get(key);
+    if (cached && Date.now() - cached.time < codexbarScanTtlMs) return Promise.resolve(cached.stdout);
+    if (codexbarScans.has(key)) return codexbarScans.get(key);
+
+    const scan = refreshLimiter.run(async () => {
+      const { stdout } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
+        timeout: 30000,
+        maxBuffer: 20 * 1024 * 1024,
+        env: process.env,
+      });
+      codexbarScanCache.set(key, { stdout, time: Date.now() });
+      return stdout;
+    }).finally(() => {
+      codexbarScans.delete(key);
+    });
+    codexbarScans.set(key, scan);
+    return scan;
+  }
   const costsCacheTtl = 60000;
   const costsFallbackCacheTtl = 15000;
   const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
@@ -1176,11 +1205,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     }
     try {
       const scanDays = claudeCodeScanDays(parsedAnchor.anchor);
-      const { stdout } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
-        timeout: 30000,
-        maxBuffer: 20 * 1024 * 1024,
-        env: process.env,
-      });
+      // Navigating months would otherwise spawn one codexbar child per selection,
+      // outside the refresh limiter. Same scan depth = same work, so requests are
+      // de-duplicated by depth, share one in-flight process, briefly cached, and
+      // queued behind the same concurrency bound as the detailed refreshes.
+      const stdout = await codexbarScan(scanDays);
       const data = JSON.parse(stdout);
       const raw = mergeCodexBarReports(data);
       if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
