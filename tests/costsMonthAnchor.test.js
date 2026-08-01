@@ -470,3 +470,86 @@ test('the unanchored scan order is unchanged (newest first)', () => {
     ['newest.jsonl', 'mid.jsonl', 'old.jsonl'],
   );
 });
+
+test('a session opened inside the anchored month survives the cap even when appended later', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  const range = openclawRangeForPeriod('month', '2026-03', NOW);
+
+  // Opened during the anchored month, last appended in August: its mtime is far
+  // outside the window but it still carries March records.
+  const lateAppended = {
+    path: 'march-session-appended-in-august.jsonl',
+    birthtimeMs: new Date(2026, 2, 12).getTime(),
+    mtimeMs: new Date(2026, 7, 1).getTime(),
+  };
+  // Sessions created AFTER the window: they cannot hold March records.
+  const createdAfter = Array.from({ length: 50 }, (_, index) => ({
+    path: `after-${index}.jsonl`,
+    birthtimeMs: new Date(2026, 5, 1).getTime() + index * 1000,
+    mtimeMs: new Date(2026, 7, 1).getTime() - index * 1000,
+  }));
+
+  const scanned = prioritizeScanFiles([...createdAfter, lateAppended], range, 2)
+    .map((file) => file.path);
+  assert.ok(
+    scanned.includes(lateAppended.path),
+    `a late-appended anchored session must outrank files created after the window (got ${scanned.join(', ')})`,
+  );
+});
+
+test('an unknown birthtime is never treated as proof the file is irrelevant', () => {
+  const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
+  const range = openclawRangeForPeriod('month', '2026-03', NOW);
+
+  const unknownBirth = { path: 'unknown-birth.jsonl', birthtimeMs: null, mtimeMs: new Date(2026, 7, 1).getTime() };
+  const createdAfter = { path: 'created-after.jsonl', birthtimeMs: new Date(2026, 5, 1).getTime(), mtimeMs: new Date(2026, 7, 1).getTime() };
+
+  const scanned = prioritizeScanFiles([createdAfter, unknownBirth], range, 1).map((file) => file.path);
+  assert.deepEqual(scanned, [unknownBirth.path], 'unknown provenance outranks a file proven to post-date the window');
+});
+
+// ---------------------------------------------------------------------------
+// Navigating months must not fan out unbounded detailed refreshes
+// ---------------------------------------------------------------------------
+
+test('detailed refreshes are bounded while months queue up', async () => {
+  const { createRefreshLimiter } = require('../server/routes/costs');
+  const limiter = createRefreshLimiter(2);
+
+  let active = 0;
+  let peak = 0;
+  const releases = [];
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+  // Ten months clicked through before any scan finishes.
+  const jobs = Array.from({ length: 10 }, () => limiter.run(() => {
+    active += 1;
+    peak = Math.max(peak, active);
+    return new Promise((resolve) => {
+      releases.push(() => { active -= 1; resolve(); });
+    });
+  }));
+
+  await settle();
+  assert.equal(peak, 2, 'at most two scans may run at once');
+  assert.equal(limiter.stats().queued, 8, 'the rest wait their turn instead of spawning');
+
+  // Drain: every queued month must still run — work is delayed, never dropped.
+  while (releases.length > 0) {
+    releases.shift()();
+    await settle();
+  }
+  await Promise.all(jobs);
+  assert.equal(peak, 2, 'the ceiling holds for the whole drain');
+  assert.equal(limiter.stats().queued, 0);
+  assert.equal(limiter.stats().active, 0);
+});
+
+test('a failing refresh releases its slot', async () => {
+  const { createRefreshLimiter } = require('../server/routes/costs');
+  const limiter = createRefreshLimiter(1);
+
+  await assert.rejects(limiter.run(() => Promise.reject(new Error('scan blew up'))), /scan blew up/);
+  assert.equal(limiter.stats().active, 0, 'a rejected job must not leak its slot');
+  assert.equal(await limiter.run(() => Promise.resolve('next month')), 'next month');
+});

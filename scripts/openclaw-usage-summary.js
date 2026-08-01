@@ -341,10 +341,18 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
       const stat = fs.statSync(fullPath);
       // mtime is a coarse prefilter only; each usage record is checked by timestamp below.
       if (stat.mtimeMs >= startMs - 24 * 60 * 60 * 1000) {
+        // birthtime bounds the OLDEST record a file can hold: a session created
+        // after the anchored window cannot contain that month's records, while a
+        // session created inside it can — even if it was appended much later.
+        // Not every filesystem reports it, so 0/absent means "unknown".
+        const birthtimeMs = Number.isFinite(stat.birthtimeMs) && stat.birthtimeMs > 0
+          ? stat.birthtimeMs
+          : null;
         files.push({
           agentId,
           path: fullPath,
           mtimeMs: stat.mtimeMs,
+          birthtimeMs,
           sessionKey: path.relative(agentsBase, fullPath),
         });
       }
@@ -400,12 +408,26 @@ function listSessionFiles(startMs) {
 // to later still carries that month's records — they are RANKED: anything last
 // touched inside the window (plus a day of slack) is scanned first, and newer
 // files only fill whatever budget is left.
+// A file can only hold records written between its creation and its last write,
+// so [birthtime, mtime] is the interval of records it can possibly contain.
+// Rank by whether that interval can reach the anchored window:
+//   0 — it overlaps the window (includes a session opened in the anchored month
+//       and appended long afterwards: mtime is post-window but birthtime is not)
+//   1 — birthtime is unknown, so overlap cannot be ruled out
+//   2 — created after the window ended; it cannot contain those records
+// Nothing is dropped outright — the ranks only decide who survives the cap.
+function scanFileRank(file, windowEnd) {
+  if (file.mtimeMs <= windowEnd) return 0;
+  if (file.birthtimeMs === null || file.birthtimeMs === undefined) return 1;
+  return file.birthtimeMs <= windowEnd ? 0 : 2;
+}
+
 function prioritizeScanFiles(files, range, maxFiles) {
   const limit = Number.isFinite(maxFiles) && maxFiles > 0 ? maxFiles : 20000;
   const windowEnd = range.endMs + 24 * 60 * 60 * 1000;
   return files
-    .map((file) => ({ file, outsideWindow: file.mtimeMs > windowEnd ? 1 : 0 }))
-    .sort((a, b) => a.outsideWindow - b.outsideWindow || b.file.mtimeMs - a.file.mtimeMs)
+    .map((file) => ({ file, rank: scanFileRank(file, windowEnd) }))
+    .sort((a, b) => a.rank - b.rank || b.file.mtimeMs - a.file.mtimeMs)
     .slice(0, limit)
     .map((entry) => entry.file);
 }

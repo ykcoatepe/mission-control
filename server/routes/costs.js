@@ -213,6 +213,48 @@ function costsCacheKey(period, monthAnchor) {
   return monthAnchor ? `costs:month:${monthAnchor}` : `costs:${period}`;
 }
 
+/**
+ * Bounds how many detailed refreshes may run at once.
+ *
+ * Every refresh launches an OpenClaw JSONL scan (tens of seconds, up to
+ * MC_OPENCLAW_USAGE_MAX_FILES files), a Hermes sqlite query and a codexbar
+ * child process. Anchored months each own a distinct cache key, so clicking
+ * through the navigator would otherwise start one full fan-out per month with
+ * nothing holding them back. Work is queued, never dropped: the caller still
+ * gets the promise for its own key, it just may wait its turn.
+ */
+function createRefreshLimiter(maxConcurrent = 2) {
+  const limit = Math.max(1, Number(maxConcurrent) || 1);
+  let active = 0;
+  const queue = [];
+
+  const pump = () => {
+    while (active < limit && queue.length > 0) {
+      const job = queue.shift();
+      active += 1;
+      Promise.resolve()
+        .then(job.run)
+        .then(job.resolve, job.reject)
+        .finally(() => {
+          active -= 1;
+          pump();
+        });
+    }
+  };
+
+  return {
+    run(task) {
+      return new Promise((resolve, reject) => {
+        queue.push({ run: task, resolve, reject });
+        pump();
+      });
+    },
+    stats() {
+      return { active, queued: queue.length, limit };
+    },
+  };
+}
+
 function cachedUsageAgent(previous, agent) {
   if (!agent?.label) return null;
   const prefix = `${agent.label} / `;
@@ -386,6 +428,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const execPromise = util.promisify(exec);
   const costsCache = new Map();
   const costsRefreshes = new Map();
+  const refreshLimiter = createRefreshLimiter(Number(process.env.MC_COSTS_REFRESH_CONCURRENCY || 2));
   const costsCacheTtl = 60000;
   const costsFallbackCacheTtl = 15000;
   const costsDiskCacheFile = path.join(process.env.MC_COSTS_CACHE_DIR || path.join(os.tmpdir(), 'mission-control'), 'costs-cache.json');
@@ -1003,7 +1046,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     if (costsRefreshes.has(cacheKey)) return costsRefreshes.get(cacheKey);
 
     const startedAt = new Date().toISOString();
-    const refresh = new Promise((resolve) => {
+    // The queue is entered here, not around the whole function: the cacheKey
+    // guard above must still de-duplicate concurrent requests for the SAME
+    // month immediately, while distinct months line up behind the limiter.
+    const refresh = refreshLimiter.run(() => new Promise((resolve) => {
       setImmediate(async () => {
         try {
           const [openclawData, hermesData, claudeCodeData] = await Promise.all([
@@ -1072,7 +1118,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
           costsRefreshes.delete(cacheKey);
         }
       });
-    });
+    }));
     costsRefreshes.set(cacheKey, refresh);
     return refresh;
   }
@@ -1183,6 +1229,7 @@ module.exports = {
   cachedUsageAgent,
   claudeCodeScanDays,
   costsCacheKey,
+  createRefreshLimiter,
   isValidMonthAnchor,
   parseMonthAnchor,
   rangeForPeriod,
