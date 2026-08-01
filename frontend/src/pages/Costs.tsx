@@ -152,7 +152,13 @@ export default function Costs() {
         return false
       }
 
+      // A preserved cache entry is worth settling on only when it actually holds
+      // data. `anchored.pending` is empty by construction, so preserving it (all
+      // producers failed on the first refresh) must NOT stop the polling —
+      // otherwise the month stays at zero for the whole mounted session even
+      // after the producers recover.
       const preservedFreshCache =
+        tokens?.source !== 'anchored.pending' &&
         tokens?.meta?.stale &&
         !tokens.meta.refreshing &&
         (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousUsage)

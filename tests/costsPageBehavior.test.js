@@ -29,6 +29,11 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes("const preservedFreshCache =\n        tokens?.source !== 'anchored.pending' &&"),
+  'preserving an empty anchored.pending entry must not stop polling — the month would stay at zero even after the producers recover',
+);
+
+assert.ok(
   source.includes('const totalTokens = ledgerActive') &&
   source.includes('    : viewingPastMonth\n      ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)\n      : sessions.reduce('),
   'the Token Volume pill must never fall back to live session totals while an anchored past month is displayed',
