@@ -251,14 +251,6 @@ export default function Costs() {
     }
     return null
   }, [codexbarPeriodDays])
-  const codexbarPeriodScanCost = useMemo(
-    () => codexbarPeriodDays.reduce((sum, day) => sum + Number(day.totalCost || 0), 0),
-    [codexbarPeriodDays],
-  )
-  const codexbarPeriodScanTokens = useMemo(
-    () => codexbarPeriodDays.reduce((sum, day) => sum + Number(day.totalTokens || 0), 0),
-    [codexbarPeriodDays],
-  )
   const codexbarPreviousPeriodDays = useMemo(() => {
     return previousCodexbarRows(codexbarCosts?.daily || [], period, calendarNow, activeMonthAnchor)
   }, [activeMonthAnchor, calendarNow, codexbarCosts?.daily, period])
@@ -534,7 +526,10 @@ export default function Costs() {
   }
 
   const isAwsEnabled = awsIntegrationEnabled(config)
-  const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts)
+  // /api/aws/costs always reports the CURRENT month; while an anchored past
+  // month is displayed, AWS live billing must not be relabeled as that month —
+  // the anchored ledger sources drive every metric instead.
+  const hasAwsData = awsBillingDataAvailable(isAwsEnabled, awsCosts) && !viewingPastMonth
   const trackedSpend = trackedSpendPresentation({
     reliability: ledgerActive ? tokenData?.costReliability : undefined,
     unknownSourceCount: unknownBillingSourceCount,
@@ -854,7 +849,7 @@ export default function Costs() {
     },
     {
       label: 'CodexBar API Eq.',
-      value: formatCurrency(codexbarPeriodScanCost),
+      value: formatCurrency(codexbarPeriodCost),
       title: `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
       accent: codexbarActive ? '#FF9500' : '#8E8E93',
     },
@@ -1004,8 +999,8 @@ export default function Costs() {
           codexbarCosts={codexbarCosts}
           codexbarLatest={codexbarLatest}
           codexbarPeriodLabel={period === 'day' ? 'Today' : period === '7d' ? 'Last 7 Days' : viewingPastMonth && anchoredMonthLabel ? anchoredMonthLabel : 'This Month'}
-          codexbarPeriodCost={codexbarPeriodScanCost}
-          codexbarPeriodTokens={codexbarPeriodScanTokens}
+          codexbarPeriodCost={codexbarPeriodCost}
+          codexbarPeriodTokens={codexbarPeriodTokens}
           driverView={driverView}
           setDriverView={setDriverView}
           tokenBreakdown={tokenBreakdown}

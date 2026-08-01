@@ -184,4 +184,9 @@ assert.ok(
   'an anchored month should compare against the named previous month',
 );
 
+assert.ok(
+  source.includes('awsBillingDataAvailable(isAwsEnabled, awsCosts) && !viewingPastMonth'),
+  'AWS live billing always reports the current month, so it must never be preferred while an anchored past month is displayed',
+);
+
 console.log('costs page behavior guards passed');
