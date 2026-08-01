@@ -578,8 +578,11 @@ describe('month anchor helpers', () => {
     expect(codexbarQueryPath(null, now)).toBe('/api/costs/codexbar')
   })
 
-  it('skips calendar-day invalidation for an immutable past month', () => {
-    expect(calendarRefreshQueryKeys('month', '2026-07')).toEqual([])
+  it('refreshes anchored calendar metadata across a day boundary', () => {
+    expect(calendarRefreshQueryKeys('month', '2026-07', new Date(2026, 7, 1))).toEqual([
+      ['api', '/api/costs/codexbar?month=2026-07'],
+      ['api', '/api/costs?period=month&month=2026-07'],
+    ])
     expect(calendarRefreshQueryKeys('month', null)).toEqual([
       ['api', '/api/costs/codexbar'],
       ['api', '/api/costs?period=month'],

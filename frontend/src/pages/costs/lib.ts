@@ -526,13 +526,15 @@ export function codexbarQueryPath(monthAnchor: string | null = null, now = new D
 export function calendarRefreshQueryKeys(
   period: 'day' | '7d' | 'month',
   monthAnchor: string | null = null,
+  now = new Date(),
 ): ReadonlyArray<readonly string[]> {
-  // A past month is immutable: crossing local midnight cannot change its numbers,
-  // so anchored views skip the calendar-day invalidation churn entirely.
-  if (period === 'month' && monthAnchor) return []
+  // A past month's TOTALS are immutable, but its payload also carries the
+  // calendar metadata (serverMonth) that the navigator treats as authoritative.
+  // Crossing a calendar day must refresh that metadata too — the server answers
+  // an anchored refetch from cache, so this is cheap.
   return [
-    ['api', '/api/costs/codexbar'],
-    ['api', costsQueryPath(period, monthAnchor)],
+    ['api', codexbarQueryPath(period === 'month' ? monthAnchor : null, now)],
+    ['api', costsQueryPath(period, period === 'month' ? monthAnchor : null)],
   ]
 }
 

@@ -191,8 +191,15 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes("if (period === 'month' && monthAnchor) return []"),
-  'anchored past months are immutable and must skip the calendar-day invalidation churn',
+  !source.includes("if (period === 'month' && monthAnchor) return []") &&
+  source.includes("codexbarQueryPath(period === 'month' ? monthAnchor : null, now)"),
+  'anchored views must keep refreshing serverMonth or the navigator strands the user in the old month',
+);
+
+assert.ok(
+  source.includes('previousDayCount: viewingPastMonth && activeMonthAnchor') &&
+  source.includes('daysInMonthKey(previousMonthKey(activeMonthAnchor))'),
+  'an anchored baseline divides by its real calendar length even when codexbar rows are absent',
 );
 
 assert.ok(

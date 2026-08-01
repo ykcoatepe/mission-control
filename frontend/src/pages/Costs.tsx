@@ -45,6 +45,7 @@ import {
   buildCodexbarChartData,
   comparisonLabels,
   daysInMonthKey,
+  previousMonthKey,
   isPastMonthAnchor,
   monthKeyLabel,
   readNumericField,
@@ -683,7 +684,12 @@ export default function Costs() {
     periodCost: apiEquivalentPeriodCost,
     previousPeriodCost: previousApiEquivalentPeriodCost,
     dayCount: viewingPastMonth && activeMonthAnchor ? daysInMonthKey(activeMonthAnchor) : apiEquivalentDays.length,
-    previousDayCount: codexbarPreviousPeriodDays.length,
+    // The anchored baseline is the FULL previous calendar month; codexbar rows
+    // may be absent (codexbar inactive) while the ledger still supplies the
+    // baseline total — an empty row set must not collapse the divisor to 1 day.
+    previousDayCount: viewingPastMonth && activeMonthAnchor
+      ? daysInMonthKey(previousMonthKey(activeMonthAnchor))
+      : codexbarPreviousPeriodDays.length,
     reliability: apiEquivalentReliability,
     previousReliability: previousApiEquivalentReliability,
     completePeriod: viewingPastMonth,
