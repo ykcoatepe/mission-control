@@ -451,6 +451,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   // null = not probed yet. Set to false the first time an exec fails because the
   // binary is missing; a missing optional tool must not look like a flaky one.
   let codexbarAvailable = null;
+  // A scan that ran fine but carried no Claude rows is a settled "no usage"
+  // answer, not a failure — it must not keep the result retryable.
+  let claudeScanEmpty = false;
 
   function noteCodexbarExecError(error) {
     const message = String(error?.message || '');
@@ -590,9 +593,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       });
       surfaceChildStderr('Claude Code Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
-      if (!trimmed) return null;
-      return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
+      if (!trimmed) {
+        claudeScanEmpty = true;
+        return null;
+      }
+      const summary = buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
+      claudeScanEmpty = summary === null;
+      return summary;
     } catch (error) {
+      claudeScanEmpty = false;
       noteCodexbarExecError(error);
       console.error('[Claude Code Usage Summary]', error.message);
       return null;
@@ -1208,11 +1217,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
                 // absent optional integration is a settled state, not a fault.
                 || !openclawData
                 || (!hermesData && hermesConfigured())
-                || (!claudeCodeData && codexbarConfigured()),
+                || (!claudeCodeData && codexbarConfigured() && !claudeScanEmpty),
               refreshStartedAt: startedAt,
               openclawStatus: openclawData ? 'ready' : 'unavailable',
               hermesStatus: hermesData ? 'ready' : (hermesConfigured() ? 'unavailable' : 'not_configured'),
-              claudeCodeStatus: claudeCodeData ? 'ready' : (codexbarConfigured() ? 'unavailable' : 'not_configured'),
+              claudeCodeStatus: claudeCodeData
+                ? 'ready'
+                : claudeScanEmpty
+                  ? 'no_usage'
+                  : (codexbarConfigured() ? 'unavailable' : 'not_configured'),
               preservedPreviousOpenClaw,
               preservedPreviousClaudeCode,
               preservedPreviousHermes,

@@ -341,13 +341,18 @@ function normalizeUsageCosts(usage) {
     usage.meta?.claudeCodeStatus,
   ].filter(Boolean);
   const sourceCoveragePartial = sourceStatuses.includes('unavailable');
+  // A truncated scan understates the API-equivalent estimate exactly as much as
+  // it understates tracked cost, and the headline/month-total/trend labels read
+  // this field — not costReliability.
+  const truncatedScan = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
+  const coverageIncomplete = sourceCoveragePartial || truncatedScan;
   const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
-  if (sourceCoveragePartial && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
+  if (coverageIncomplete && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
   const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
   const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
-  if (sourceCoveragePartial && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
+  if (coverageIncomplete && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {
     normalized.summary.previousPeriodApiEquivalentReliability = 'partial';
   }
   // A truncated scan means we KNOW the totals are understated: the file cap cut

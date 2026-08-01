@@ -674,7 +674,7 @@ test('a cold partial historical result is reported stale so polling continues', 
   // continue polling.
   assert.match(
     routeSource,
-    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes[\s\S]*?\|\| !openclawData\s*\|\| \(!hermesData && hermesConfigured\(\)\)\s*\|\| \(!claudeCodeData && codexbarConfigured\(\)\),/,
+    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes[\s\S]*?\|\| !openclawData\s*\|\| \(!hermesData && hermesConfigured\(\)\)\s*\|\| \(!claudeCodeData && codexbarConfigured\(\) && !claudeScanEmpty\),/,
     'a configured unavailable producer must mark the combined result stale even with nothing preserved',
   );
 });
@@ -727,9 +727,9 @@ test('an absent optional producer is not retried forever', () => {
   assert.match(routeSource, /function\s+hermesConfigured\(\)/);
   assert.match(routeSource, /function\s+codexbarConfigured\(\)/);
   assert.match(routeSource, /\(!hermesData\s*&&\s*hermesConfigured\(\)\)/);
-  assert.match(routeSource, /\(!claudeCodeData\s*&&\s*codexbarConfigured\(\)\)/);
+  assert.match(routeSource, /\(!claudeCodeData\s*&&\s*codexbarConfigured\(\)\s*&&\s*!claudeScanEmpty\)/);
   assert.match(routeSource, /hermesStatus:\s*hermesData\s*\?\s*'ready'\s*:\s*\(hermesConfigured\(\)\s*\?\s*'unavailable'\s*:\s*'not_configured'\)/);
-  assert.match(routeSource, /claudeCodeStatus:\s*claudeCodeData\s*\?\s*'ready'\s*:\s*\(codexbarConfigured\(\)\s*\?\s*'unavailable'\s*:\s*'not_configured'\)/);
+  assert.match(routeSource, /claudeCodeStatus:\s*claudeCodeData\s*\?\s*'ready'\s*:\s*claudeScanEmpty\s*\?\s*'no_usage'\s*:\s*\(codexbarConfigured\(\)\s*\?\s*'unavailable'\s*:\s*'not_configured'\)/);
 });
 
 test('costSanity only treats an explicitly unavailable producer as partial', () => {
@@ -772,4 +772,13 @@ test('an explicit Hermes path is never silently replaced by discovery', () => {
     body.indexOf('HERMES_STATE_DB) return') < body.indexOf('const candidates'),
     'the explicit paths must short-circuit BEFORE the discovery candidate list',
   );
+});
+
+test('an empty Claude scan is settled, not retried', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.match(routeSource, /let claudeScanEmpty = false;/);
+  assert.match(routeSource, /claudeScanEmpty = summary === null;/);
+  assert.match(routeSource, /\(!claudeCodeData\s*&&\s*codexbarConfigured\(\)\s*&&\s*!claudeScanEmpty\)/);
+  assert.match(routeSource, /claudeCodeStatus:[\s\S]{0,220}'no_usage'/);
 });

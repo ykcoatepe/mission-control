@@ -29,6 +29,23 @@ test('a truncated scan is reported as partial coverage', () => {
   assert.equal(normalizeUsageCosts({ ...base, scanTruncated: true }).costReliability, 'partial_unknown');
 });
 
+test('a truncated scan also downgrades the API-equivalent reliability', () => {
+  const base = {
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 1 },
+    daily: [{ date: '2026-07-01', cost: 1, totalCost: 1, tokens: 1000, totalTokens: 1000 }],
+    dailyByModel: [],
+    byService: [{ name: 'openai/gpt-5.6-sol', tokens: 1000, input: 600, output: 400, cost: 1, costSource: 'api' }],
+  };
+
+  const truncated = normalizeUsageCosts({ ...base, summary: { ...base.summary, scanTruncated: true } });
+  const complete = normalizeUsageCosts({ ...base, summary: { ...base.summary, scanTruncated: false } });
+
+  assert.equal(truncated.apiEquivalentReliability, 'partial');
+  assert.equal(complete.apiEquivalentReliability, 'estimated');
+});
+
 (function testCombinedApiEquivalentReliabilityPreservesPartialCoverage() {
   assert.equal(combineApiEquivalentReliability(['estimated', 'unavailable']), 'partial');
   assert.equal(combineApiEquivalentReliability(['estimated', 'partial']), 'partial');
