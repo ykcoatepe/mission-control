@@ -670,10 +670,12 @@ test('a cold partial historical result is reported stale so polling continues', 
   // On an uncached month every preservedPrevious* flag is false (there is no
   // prior slice), so staleness must come from the producer statuses themselves
   // — otherwise a partial result looks settled and the page stops retrying.
+  // Optional integrations that are absent are settled; only configured failures
+  // continue polling.
   assert.match(
     routeSource,
-    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes\s*\|\| !openclawData \|\| !hermesData \|\| !claudeCodeData,/,
-    'an unavailable producer must mark the combined result stale even with nothing preserved',
+    /stale: preservedPreviousOpenClaw\s*\|\| preservedPreviousClaudeCode\s*\|\| preservedPreviousHermes[\s\S]*?\|\| !openclawData\s*\|\| \(!hermesData && hermesConfigured\(\)\)\s*\|\| \(!claudeCodeData && codexbarConfigured\(\)\),/,
+    'a configured unavailable producer must mark the combined result stale even with nothing preserved',
   );
 });
 
@@ -717,4 +719,22 @@ test('child tool stderr is surfaced, never swallowed', () => {
     /const \{ stdout \} = await execPromise/,
     'no exec site may destructure stdout alone — that silently discards the child stderr',
   );
+});
+
+test('an absent optional producer is not retried forever', () => {
+  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+
+  assert.match(routeSource, /function\s+hermesConfigured\(\)/);
+  assert.match(routeSource, /function\s+codexbarConfigured\(\)/);
+  assert.match(routeSource, /\(!hermesData\s*&&\s*hermesConfigured\(\)\)/);
+  assert.match(routeSource, /\(!claudeCodeData\s*&&\s*codexbarConfigured\(\)\)/);
+  assert.match(routeSource, /hermesStatus:\s*hermesData\s*\?\s*'ready'\s*:\s*\(hermesConfigured\(\)\s*\?\s*'unavailable'\s*:\s*'not_configured'\)/);
+  assert.match(routeSource, /claudeCodeStatus:\s*claudeCodeData\s*\?\s*'ready'\s*:\s*\(codexbarConfigured\(\)\s*\?\s*'unavailable'\s*:\s*'not_configured'\)/);
+});
+
+test('costSanity only treats an explicitly unavailable producer as partial', () => {
+  const costSanitySource = fs.readFileSync(path.join(__dirname, '..', 'server', 'services', 'costSanity.js'), 'utf8');
+
+  assert.match(costSanitySource, /sourceStatuses\.includes\('unavailable'\)/);
+  assert.ok(!costSanitySource.includes("'not_configured'"));
 });

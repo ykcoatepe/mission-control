@@ -262,4 +262,10 @@ assert.ok(
   'the By session view is live-only data: an anchored past month must carry an explicit notice so current sessions are not read as that month\'s drivers',
 );
 
+assert.ok(
+  source.includes('const producerStillUnavailable = [') &&
+  source.includes('!producerStillUnavailable &&'),
+  'a preserved slice must not settle polling while another configured producer is still unavailable',
+);
+
 console.log('costs page behavior guards passed');

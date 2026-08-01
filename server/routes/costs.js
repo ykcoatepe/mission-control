@@ -448,6 +448,19 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   const costsRefreshes = new Map();
   const refreshLimiter = createRefreshLimiter(Number(process.env.MC_COSTS_REFRESH_CONCURRENCY || 2));
   const codexbarScans = new Map();
+  // null = not probed yet. Set to false the first time an exec fails because the
+  // binary is missing; a missing optional tool must not look like a flaky one.
+  let codexbarAvailable = null;
+
+  function noteCodexbarExecError(error) {
+    const message = String(error?.message || '');
+    if (error?.code === 127 || /not found|ENOENT/i.test(message)) codexbarAvailable = false;
+  }
+
+  function codexbarConfigured() {
+    return codexbarAvailable !== false;
+  }
+
   const codexbarScanCache = new Map();
   const codexbarScanTtlMs = 30000;
 
@@ -463,11 +476,18 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
     if (codexbarScans.has(key)) return codexbarScans.get(key);
 
     const scan = refreshLimiter.run(async () => {
-      const { stdout, stderr } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
-        timeout: 30000,
-        maxBuffer: 20 * 1024 * 1024,
-        env: process.env,
-      });
+      let stdout;
+      let stderr;
+      try {
+        ({ stdout, stderr } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
+          timeout: 30000,
+          maxBuffer: 20 * 1024 * 1024,
+          env: process.env,
+        }));
+      } catch (error) {
+        noteCodexbarExecError(error);
+        throw error;
+      }
       surfaceChildStderr('CodexBar', stderr);
       codexbarScanCache.set(key, { stdout, time: Date.now() });
       return stdout;
@@ -573,6 +593,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       if (!trimmed) return null;
       return buildClaudeCodeUsageSummary(JSON.parse(trimmed), period, new Date(), monthAnchor);
     } catch (error) {
+      noteCodexbarExecError(error);
       console.error('[Claude Code Usage Summary]', error.message);
       return null;
     }
@@ -601,6 +622,14 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
       '/Users/yordamkocatepe/.hermes/profiles/hmudur/state.db',
     ].filter(Boolean);
     return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
+  }
+
+  function hermesConfigured() {
+    try {
+      return fs.existsSync(hermesProfileDbPath());
+    } catch {
+      return false;
+    }
   }
 
   async function hermesUsageSummary(period = 'month', monthAnchor = null) {
@@ -1164,11 +1193,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
               stale: preservedPreviousOpenClaw
                 || preservedPreviousClaudeCode
                 || preservedPreviousHermes
-                || !openclawData || !hermesData || !claudeCodeData,
+                // Only a CONFIGURED producer that failed is worth retrying. An
+                // absent optional integration is a settled state, not a fault.
+                || !openclawData
+                || (!hermesData && hermesConfigured())
+                || (!claudeCodeData && codexbarConfigured()),
               refreshStartedAt: startedAt,
               openclawStatus: openclawData ? 'ready' : 'unavailable',
-              hermesStatus: hermesData ? 'ready' : 'unavailable',
-              claudeCodeStatus: claudeCodeData ? 'ready' : 'unavailable',
+              hermesStatus: hermesData ? 'ready' : (hermesConfigured() ? 'unavailable' : 'not_configured'),
+              claudeCodeStatus: claudeCodeData ? 'ready' : (codexbarConfigured() ? 'unavailable' : 'not_configured'),
               preservedPreviousOpenClaw,
               preservedPreviousClaudeCode,
               preservedPreviousHermes,

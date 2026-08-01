@@ -161,10 +161,19 @@ export default function Costs() {
       // producers failed on the first refresh) must NOT stop the polling —
       // otherwise the month stays at zero for the whole mounted session even
       // after the producers recover.
+      // A configured producer that is still unavailable means the answer is not
+      // final, no matter that some other slice was preserved. 'not_configured'
+      // does NOT count — an absent optional integration will never recover.
+      const producerStillUnavailable = [
+        tokens?.meta?.openclawStatus,
+        tokens?.meta?.hermesStatus,
+        tokens?.meta?.claudeCodeStatus,
+      ].includes('unavailable')
       const preservedFreshCache =
         tokens?.source !== 'anchored.pending' &&
         tokens?.meta?.stale &&
         !tokens.meta.refreshing &&
+        !producerStillUnavailable &&
         (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousClaudeCode || tokens.meta.preservedPreviousHermes || tokens.meta.preservedPreviousUsage)
       if (preservedFreshCache) {
         staleCostsRetry.current = null
