@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { buildCostsRouter } = require('../server/routes/costs');
+const { buildCostsRouter, producerFingerprint } = require('../server/routes/costs');
 
 function shiftMonth(month, delta) {
   const [year, number] = month.split('-').map(Number);
@@ -163,6 +163,7 @@ test('a not_configured producer blocks confirmed-empty evidence', async () => {
             openclawStatus: statuses.openclaw,
             hermesStatus: statuses.hermes,
             claudeCodeStatus: statuses.claude,
+            producerFingerprint: producerFingerprint(),
           },
         },
         time: Date.now(),
@@ -200,6 +201,62 @@ test('a not_configured producer blocks confirmed-empty evidence', async () => {
           hasData: false,
           sources: ['cached'],
         });
+      });
+    }
+  } finally {
+    if (previousCacheDir === undefined) delete process.env.MC_COSTS_CACHE_DIR;
+    else process.env.MC_COSTS_CACHE_DIR = previousCacheDir;
+    fs.rmSync(cacheDir, { recursive: true, force: true });
+  }
+});
+
+test('confirmed-empty evidence is bound to the producer configuration', async () => {
+  const month = '2026-07';
+  const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-costs-months-cache-'));
+  const previousCacheDir = process.env.MC_COSTS_CACHE_DIR;
+  process.env.MC_COSTS_CACHE_DIR = cacheDir;
+  const matchingFingerprint = producerFingerprint();
+
+  const writeCachedEntry = (fingerprintValue, includeFingerprint = true) => {
+    const meta = {
+      scanTruncated: false,
+      openclawStatus: 'ready',
+      hermesStatus: 'ready',
+      claudeCodeStatus: 'ready',
+    };
+    if (includeFingerprint) meta.producerFingerprint = fingerprintValue;
+    fs.writeFileSync(path.join(cacheDir, 'costs-cache.json'), JSON.stringify({
+      [`costs:month:${month}`]: {
+        value: {
+          source: 'combined.agent_usage',
+          summary: { periodTokens: 0, periodUsd: 0, scanTruncated: false },
+          meta,
+        },
+        time: Date.now(),
+        detailed: true,
+      },
+    }));
+  };
+
+  const sources = {
+    now: () => new Date('2026-08-15T12:00:00'),
+    hermes: async () => [],
+    codexbar: async () => [],
+    hermesConfigured: () => true,
+    codexbarConfigured: () => true,
+  };
+
+  try {
+    const cases = [
+      { label: 'matching', fingerprintValue: matchingFingerprint, expected: { month, hasData: false, sources: ['cached'] } },
+      { label: 'different', fingerprintValue: `${matchingFingerprint}|different`, expected: { month, hasData: false, sources: [], unknown: true } },
+      { label: 'missing', includeFingerprint: false, expected: { month, hasData: false, sources: [], unknown: true } },
+    ];
+    for (const testCase of cases) {
+      writeCachedEntry(testCase.fingerprintValue, testCase.includeFingerprint);
+      await withCostsApp(sources, async (base) => {
+        const body = await (await fetch(`${base}/api/costs/months`)).json();
+        assert.deepEqual(body.months.find((entry) => entry.month === month), testCase.expected, testCase.label);
       });
     }
   } finally {

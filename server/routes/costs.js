@@ -66,6 +66,41 @@ function dayKeysBetween(start, end) {
   return keys;
 }
 
+function hostUserHome() {
+  const candidates = [
+    process.env.MC_USER_HOME,
+    '/Users/yordamkocatepe',
+    process.env.HOME,
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
+}
+
+function hermesProfileDbPath() {
+  const home = process.env.HOME || '/Users/yordamkocatepe';
+  const profile = process.env.HERMES_PROFILE || 'hmudur';
+  // An explicitly configured path WINS, even when it does not exist. Falling
+  // through to discovery would silently read a different profile's database
+  // than the operator asked for; a missing explicit path must surface as a
+  // failed producer instead (see hermesConfigured).
+  if (process.env.HERMES_STATE_DB) return process.env.HERMES_STATE_DB;
+  if (process.env.HERMES_PROFILE_DIR) return path.join(process.env.HERMES_PROFILE_DIR, 'state.db');
+  const candidates = [
+    process.env.HERMES_STATE_DB,
+    process.env.HERMES_PROFILE_DIR ? path.join(process.env.HERMES_PROFILE_DIR, 'state.db') : null,
+    path.join(home, '.hermes', 'profiles', profile, 'state.db'),
+    home.endsWith(path.join('.hermes', 'profiles', profile, 'home')) ? path.resolve(home, '..', 'state.db') : null,
+    '/Users/yordamkocatepe/.hermes/profiles/hmudur/state.db',
+  ].filter(Boolean);
+  return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
+}
+
+// Identity of the data sources a detailed scan actually read. Confirmed-empty
+// evidence is only valid under the SAME identity: pointing the server at a
+// different OpenClaw home or Hermes profile invalidates old emptiness.
+function producerFingerprint() {
+  return [hostUserHome(), hermesProfileDbPath()].join('|');
+}
+
 /**
  * Normalizes the `month` query param.
  *  { ok: true, anchor: null }      -> absent, empty, or the CURRENT month (byte-identical legacy behavior)
@@ -542,15 +577,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
 
   loadCostsCache();
 
-  function hostUserHome() {
-    const candidates = [
-      process.env.MC_USER_HOME,
-      '/Users/yordamkocatepe',
-      process.env.HOME,
-    ].filter(Boolean);
-    return candidates.find((candidate) => fs.existsSync(path.join(candidate, '.openclaw'))) || process.env.HOME || candidates[0];
-  }
-
   // execPromise captures the child's stderr and then it is dropped on the floor,
   // so every warning a child tool emits (scan truncation, degraded modes) became
   // invisible. Diagnostics must land somewhere a human can read.
@@ -619,25 +645,6 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
     return trimmed ? JSON.parse(trimmed) : [];
   }
 
-  function hermesProfileDbPath() {
-    const home = process.env.HOME || '/Users/yordamkocatepe';
-    const profile = process.env.HERMES_PROFILE || 'hmudur';
-    // An explicitly configured path WINS, even when it does not exist. Falling
-    // through to discovery would silently read a different profile's database
-    // than the operator asked for; a missing explicit path must surface as a
-    // failed producer instead (see hermesConfigured).
-    if (process.env.HERMES_STATE_DB) return process.env.HERMES_STATE_DB;
-    if (process.env.HERMES_PROFILE_DIR) return path.join(process.env.HERMES_PROFILE_DIR, 'state.db');
-    const candidates = [
-      process.env.HERMES_STATE_DB,
-      process.env.HERMES_PROFILE_DIR ? path.join(process.env.HERMES_PROFILE_DIR, 'state.db') : null,
-      path.join(home, '.hermes', 'profiles', profile, 'state.db'),
-      home.endsWith(path.join('.hermes', 'profiles', profile, 'home')) ? path.resolve(home, '..', 'state.db') : null,
-      '/Users/yordamkocatepe/.hermes/profiles/hmudur/state.db',
-    ].filter(Boolean);
-    return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
-  }
-
   function hermesConfigured() {
     // An explicit path or profile name is a statement of intent: a db that is temporarily
     // missing or on an unmounted volume is a producer that FAILED, not one that
@@ -690,6 +697,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   function cachedDetailedMonths() {
     const data = new Set();
     const confirmedEmpty = new Set();
+    const currentProducerFingerprint = producerFingerprint();
     let hasEntries = false;
     for (const [key, entry] of costsCache.entries()) {
       const match = /^costs:month:(\d{4}-(?:0[1-9]|1[0-2]))$/.exec(key);
@@ -709,9 +717,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const meta = value.meta || {};
       const statuses = [meta.openclawStatus, meta.hermesStatus, meta.claudeCodeStatus];
       const fullCoverage = statuses.every((status) => status === 'ready' || status === 'no_usage');
+      const fingerprintMatches = typeof meta.producerFingerprint === 'string'
+        && meta.producerFingerprint.length > 0
+        && meta.producerFingerprint === currentProducerFingerprint;
       if (value.meta?.scanTruncated !== true
         && value.summary?.scanTruncated !== true
-        && fullCoverage) {
+        && fullCoverage
+        && fingerprintMatches) {
         confirmedEmpty.add(month);
       }
     }
@@ -1328,9 +1340,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   function detailedCostsResult(period, combinedUsage, meta = {}, monthAnchor = null) {
+    const detailedMeta = {
+      ...meta,
+      producerFingerprint: producerFingerprint(),
+    };
     const normalizedUsage = normalizeUsageCosts({
       ...combinedUsage,
-      meta: { ...(combinedUsage.meta || {}), ...meta },
+      meta: { ...(combinedUsage.meta || {}), ...detailedMeta },
     });
     const rangeRows = normalizedUsage.daily || [];
     return attachCostsMeta({
@@ -1355,7 +1371,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       costReliability: normalizedUsage.costReliability,
       apiEquivalentReliability: normalizedUsage.apiEquivalentReliability,
       budget: mcConfig.budget || { monthly: 0 },
-    }, meta);
+    }, detailedMeta);
   }
 
   function refreshCostsCache(cacheKey, period, monthAnchor = null) {
@@ -1600,4 +1616,5 @@ module.exports = {
   rangeForPeriod,
   shiftMonthAnchor,
   sumPreviousApiEquivalentUsd,
+  producerFingerprint,
 };
