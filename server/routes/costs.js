@@ -636,11 +636,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService }) {
   }
 
   function hermesConfigured() {
-    // An explicit path is a statement of intent: a db that is temporarily
+    // An explicit path or profile name is a statement of intent: a db that is temporarily
     // missing or on an unmounted volume is a producer that FAILED, not one that
     // was never set up — and only a configured-but-failed producer stays
     // retryable. Discovery-by-existence applies only when nothing was set.
-    if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR) return true;
+    if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR || process.env.HERMES_PROFILE) return true;
     try {
       return fs.existsSync(hermesProfileDbPath());
     } catch {

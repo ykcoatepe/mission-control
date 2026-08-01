@@ -748,8 +748,8 @@ test('an explicitly configured Hermes path stays retryable when the db is missin
   assert.ok(functionEnd > functionStart, 'hermesConfigured body must be readable');
 
   const functionSource = routeSource.slice(functionStart, functionEnd);
-  assert.match(functionSource, /if \(process\.env\.HERMES_STATE_DB \|\| process\.env\.HERMES_PROFILE_DIR\) return true;/);
-  const envCheckIndex = functionSource.indexOf('if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR) return true;');
+  assert.match(functionSource, /if \(process\.env\.HERMES_STATE_DB \|\| process\.env\.HERMES_PROFILE_DIR \|\| process\.env\.HERMES_PROFILE\) return true;/);
+  const envCheckIndex = functionSource.indexOf('if (process.env.HERMES_STATE_DB || process.env.HERMES_PROFILE_DIR || process.env.HERMES_PROFILE) return true;');
   const existsSyncIndex = functionSource.indexOf('fs.existsSync(hermesProfileDbPath())');
   assert.ok(envCheckIndex >= 0, 'explicit Hermes configuration must stay retryable');
   assert.ok(existsSyncIndex >= 0, 'hermesConfigured must still support discovery by existence');
