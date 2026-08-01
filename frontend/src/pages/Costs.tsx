@@ -121,6 +121,9 @@ export default function Costs() {
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
   const [calendarNow, setCalendarNow] = useState(() => new Date())
   const staleCostsRetry = useRef<{ key: string; startedAt: number; settleResets: number } | null>(null)
+  // React Compiler rejects reading/writing a useRef during render here, so keep
+  // the same render-phase sentinel semantics as the budget initialization below.
+  const [lastServerMonth, setLastServerMonth] = useState<string | null>(null)
 
   // Only Monthly honours the anchor; Daily / 7 Days always query the live window.
   const activeMonthAnchor = period === 'month' ? monthAnchor : null
@@ -248,7 +251,16 @@ export default function Costs() {
   const tokenData: TokenData | null = costsQuery.data ?? null
   // The server's own calendar month: it normalizes anchors against its clock, so
   // past-vs-current classification must follow it, not the browser's time zone.
-  const serverMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  const payloadServerMonth = (costsQuery.data as (TokenData & { serverMonth?: string }) | undefined)?.serverMonth ?? null
+  // A query-key transition (uncached anchored month) momentarily has no data;
+  // collapsing to the browser clock here lets the anchor-clearing effect wipe
+  // a just-selected month at a timezone boundary. Retain the last known server
+  // month across transitions (render-phase sentinel, same style as
+  // the budget init below).
+  if (payloadServerMonth && payloadServerMonth !== lastServerMonth) {
+    setLastServerMonth(payloadServerMonth)
+  }
+  const serverMonth = payloadServerMonth ?? lastServerMonth
   const currentServerMonth = currentMonthKey(calendarNow, serverMonth)
 
   // A server-calendar rollover can turn a formerly anchored month into the

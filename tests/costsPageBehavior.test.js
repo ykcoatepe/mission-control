@@ -37,6 +37,12 @@ assert.ok(
 );
 
 assert.ok(
+  source.includes('setLastServerMonth(payloadServerMonth)') &&
+  source.includes('const serverMonth = payloadServerMonth ?? lastServerMonth'),
+  'the server month must survive query-key transitions or a timezone boundary wipes a just-selected anchor',
+);
+
+assert.ok(
   source.includes("const preservedFreshCache =\n        tokens?.source !== 'anchored.pending' &&"),
   'preserving an empty anchored.pending entry must not stop polling — the month would stay at zero even after the producers recover',
 );
