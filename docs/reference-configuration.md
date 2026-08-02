@@ -59,8 +59,9 @@ own implicit module behavior.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MC_OPENCLAW_USAGE_TIMEOUT_MS` | `120000` | Detailed OpenClaw usage timeout |
-| `MC_OPENCLAW_USAGE_MAX_FILES` | `20000` | Maximum OpenClaw usage files scanned |
+| `MC_OPENCLAW_USAGE_MAX_FILES` | `20000` | Maximum session files scanned per usage refresh (OpenClaw + standalone `~/.codex` rollouts combined) |
 | `MC_OPENCLAW_DEFAULT_MODEL` | `openai/gpt-5.5` | Fallback model label for incomplete usage records |
+| `MC_CODEX_HOME` | `~/.codex` (host user) | Codex home whose `sessions/` rollouts feed the Codex App / Codex CLI buckets; pinned into the usage-script env so an inherited `CODEX_HOME` cannot redirect the scan |
 | `MC_COSTS_CACHE_DIR` | OS temp | Directory for `costs-cache.json` |
 | `MC_EXECUTE_RECONCILE_TIMEOUT_MS` | `120000` | Task execution reconciliation timeout |
 | `MC_EXECUTE_RECONCILE_MIN_MS` | `30000` | Minimum reconciliation timeout |

@@ -97,11 +97,20 @@ function hermesProfileDbPath() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
 }
 
+// The codex home the usage script must scan. Resolved HERE and pinned into the
+// child env as MC_CODEX_HOME (an explicit configuration signal) so a stray
+// CODEX_HOME inherited from whichever agent launched the server cannot
+// silently redirect the Codex buckets.
+function codexHomePath() {
+  return process.env.MC_CODEX_HOME || path.join(hostUserHome(), '.codex');
+}
+
 // Identity of the data sources a detailed scan actually read. Confirmed-empty
 // evidence is only valid under the SAME identity: pointing the server at a
-// different OpenClaw home or Hermes profile invalidates old emptiness.
+// different OpenClaw home, Hermes profile, or Codex home invalidates old
+// emptiness.
 function producerFingerprint() {
-  return [hostUserHome(), hermesProfileDbPath()].join('|');
+  return [hostUserHome(), hermesProfileDbPath(), codexHomePath()].join('|');
 }
 
 /**
@@ -601,7 +610,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const { stdout, stderr } = await execPromise(`node ${JSON.stringify(script)} ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
         timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
-        env: { ...process.env, HOME: hostUserHome() },
+        // HOME and MC_CODEX_HOME are pinned: the script must scan the host
+        // user's homes even when the server was launched by an agent whose
+        // environment carries its own HOME/CODEX_HOME.
+        env: { ...process.env, HOME: hostUserHome(), MC_CODEX_HOME: codexHomePath() },
       });
       surfaceChildStderr('OpenClaw Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
@@ -1254,9 +1266,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   function isOpenClawDerivedAgent(agent) {
+    // "Derived" means "produced by the openclaw-usage-summary fast scan": the
+    // codex_app/codex_cli buckets ride the same producer, so cache preservation
+    // must keep them together when that producer fails transiently.
     const key = String(agent?.key || '').toLowerCase();
     const source = String(agent?.source || '').toLowerCase();
-    return key === 'openclaw' || key === 'codex_app' || source.startsWith('openclaw.');
+    return key === 'openclaw' || key === 'codex_app' || key === 'codex_cli'
+      || source.startsWith('openclaw.') || source.startsWith('codex.');
   }
 
   function isClaudeCodeAgent(agent) {

@@ -968,6 +968,8 @@ export default function Costs() {
         : (agent.byService || []).some(service => service.apiEquivalentStatus === 'estimated'),
       topModel: topModel?.name
         ?.replace(/^OpenClaw \/ /, '')
+        .replace(/^Codex App Sessions \/ /, '')
+        .replace(/^Codex CLI \/ /, '')
         .replace(/^Hermes \/ /, '')
         .replace(/^Claude Code \/ /, '') || 'No model data',
     }

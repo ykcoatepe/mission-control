@@ -15,11 +15,19 @@ assert.ok(source.includes('VALID_PERIODS'), 'script should ignore non-period fla
 async function withTempHome(fn) {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-openclaw-usage-'));
   const previousHome = process.env.HOME;
+  // The scan follows CODEX_HOME/MC_CODEX_HOME when set; a leaked developer
+  // value would point the test at the real ~/.codex corpus.
+  const previousCodexHome = process.env.CODEX_HOME;
+  const previousMcCodexHome = process.env.MC_CODEX_HOME;
   process.env.HOME = tempHome;
+  delete process.env.CODEX_HOME;
+  delete process.env.MC_CODEX_HOME;
   try {
     await fn(tempHome);
   } finally {
     process.env.HOME = previousHome;
+    if (previousCodexHome !== undefined) process.env.CODEX_HOME = previousCodexHome;
+    if (previousMcCodexHome !== undefined) process.env.MC_CODEX_HOME = previousMcCodexHome;
     fs.rmSync(tempHome, { recursive: true, force: true });
   }
 }
@@ -129,9 +137,11 @@ async function runBehaviorTests() {
     assert.ok(summary.summary.previousPeriodApiEquivalentUsd > 0, 'previous-day API equivalent should be available for trend baselines');
     assert.equal(summary.byService[0].sessions, 1, 'multiple usage records in one file should count as one session');
     const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
     const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
-    assert.equal(codexAppAgent.summary.periodTokens, 41, 'nested codex-home sessions should be split into Codex App Sessions');
-    assert.equal(openclawAgent.summary.periodTokens, 0, 'nested codex-home sessions should not inflate direct OpenClaw usage');
+    assert.equal(openclawAgent.summary.periodTokens, 41, 'nested codex-home sessions belong to the OpenClaw bucket');
+    assert.equal(codexAppAgent.summary.periodTokens, 0, 'nested codex-home sessions must not surface as Codex App usage');
+    assert.equal(codexCliAgent.summary.periodTokens, 0, 'nested codex-home sessions must not surface as Codex CLI usage');
   });
 
   await withTempHome(async (home) => {
@@ -162,11 +172,11 @@ async function runBehaviorTests() {
     writeTokenCountLine(sessionFile, timestamp, 23);
 
     const summary = await buildForPeriod('day');
-    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
     assert.deepEqual(
-      codexAppAgent.byService.map((service) => [service.name, service.tokens]),
+      openclawAgent.byService.map((service) => [service.name, service.tokens]),
       [['openai/gpt-5.6-sol', 42]],
-      'Codex App usage should use preceding thread settings and turn context model metadata',
+      'nested codex-home usage should use preceding thread settings and turn context model metadata',
     );
   });
 
@@ -197,9 +207,9 @@ async function runBehaviorTests() {
     writeTokenCountLine(sessionFile, timestamp, 23);
 
     const summary = await buildForPeriod('day');
-    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
     assert.deepEqual(
-      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      Object.fromEntries(openclawAgent.byService.map((service) => [service.name, service.tokens])),
       {
         'openai/gpt-5.6-sol': 23,
         'openai/unknown': 19,
@@ -238,9 +248,9 @@ async function runBehaviorTests() {
     writeTokenCountLine(sessionFile, timestamp, 17);
 
     const summary = await buildForPeriod('day');
-    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
     assert.deepEqual(
-      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      Object.fromEntries(openclawAgent.byService.map((service) => [service.name, service.tokens])),
       {
         'anthropic/unknown': 17,
         'openai/gpt-5.6-sol': 13,
@@ -281,9 +291,9 @@ async function runBehaviorTests() {
     writeProviderOnlyUsageLine(sessionFile, timestamp, 17, 'anthropic');
 
     const summary = await buildForPeriod('day');
-    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
     assert.deepEqual(
-      Object.fromEntries(codexAppAgent.byService.map((service) => [service.name, service.tokens])),
+      Object.fromEntries(openclawAgent.byService.map((service) => [service.name, service.tokens])),
       {
         'openai/gpt-5.6-sol': 71,
         'openai-codex/gpt-5.6-sol': 31,
@@ -315,10 +325,10 @@ async function runBehaviorTests() {
     writeProviderOnlyUsageLine(sessionFile, timestamp, 37, 'openai-codex');
 
     const summary = await buildForPeriod('day');
-    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
-    assert.equal(codexAppAgent.byService[0].name, 'openai/gpt-5.6-sol');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
+    assert.equal(openclawAgent.byService[0].name, 'openai/gpt-5.6-sol');
     assert.equal(
-      codexAppAgent.byService[0].costSource,
+      openclawAgent.byService[0].costSource,
       'included',
       'an explicit openai-codex provider should preserve subscription billing evidence',
     );
@@ -366,6 +376,157 @@ async function runBehaviorTests() {
     const summary = await buildForPeriod('day');
     assert.equal(summary.byService[0].costSource, 'unknown', 'zero persisted cost without subscription metadata must remain unknown');
     assert.equal(summary.byService[0].costStatus, 'unknown', 'unknown metered billing must not be relabeled as included');
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    const desktopFile = path.join(codexDay, 'rollout-desktop.jsonl');
+    fs.appendFileSync(desktopFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'Codex Desktop', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(desktopFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(desktopFile, timestamp, 29);
+
+    const execFile = path.join(codexDay, 'rollout-exec.jsonl');
+    fs.appendFileSync(execFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'codex_exec', source: 'exec', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(execFile, 'gpt-5.6-terra', 'openai');
+    writeTokenCountLine(execFile, timestamp, 31);
+
+    const files = listSessionFiles(today.getTime() - 60_000);
+    assert.equal(files.length, 2, 'standalone Codex home rollouts should be discovered');
+    assert.ok(
+      files.every((file) => file.origin === 'codex' && file.sessionKey.startsWith('codex-sessions/')),
+      'standalone Codex rollouts should carry the codex origin and a collision-safe session key prefix',
+    );
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    const openclawAgent = summary.agents.find((agent) => agent.key === 'openclaw');
+    assert.equal(codexAppAgent.summary.periodTokens, 29, 'Codex Desktop originator sessions belong to Codex App Sessions');
+    assert.equal(codexCliAgent.summary.periodTokens, 31, 'codex_exec originator sessions belong to Codex CLI');
+    assert.equal(openclawAgent.summary.periodTokens, 0, 'standalone Codex rollouts must not inflate OpenClaw');
+    assert.deepEqual(
+      codexAppAgent.byService.map((service) => [service.name, service.tokens, service.costSource]),
+      [['openai/gpt-5.6-sol', 29, 'included']],
+      'Codex Desktop usage should keep model metadata and stay subscription-included',
+    );
+    assert.deepEqual(
+      codexCliAgent.byService.map((service) => [service.name, service.tokens, service.costSource]),
+      [['openai/gpt-5.6-terra', 31, 'included']],
+      'Codex CLI usage should keep model metadata and stay subscription-included',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    const modellessFile = path.join(codexDay, 'rollout-modelless.jsonl');
+    fs.appendFileSync(modellessFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'Codex Desktop', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTokenCountLine(modellessFile, timestamp, 37);
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    assert.deepEqual(
+      codexAppAgent.byService.map((service) => [service.name, service.tokens]),
+      [['openai/unknown', 37]],
+      'model-less standalone Codex usage must stay openai/unknown, not inherit the OpenClaw default model',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // Second desktop install (real corpus: codex_work_desktop) → still the app.
+    const workDesktopFile = path.join(codexDay, 'rollout-work-desktop.jsonl');
+    fs.appendFileSync(workDesktopFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'codex_work_desktop', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(workDesktopFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(workDesktopFile, timestamp, 11);
+
+    // Desktop originator but source exec = a codex exec run → CLI, not app.
+    const desktopExecFile = path.join(codexDay, 'rollout-desktop-exec.jsonl');
+    fs.appendFileSync(desktopExecFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'Codex Desktop', source: 'exec', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(desktopExecFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(desktopExecFile, timestamp, 13);
+
+    // Hermes-owned: the same tokens live in Hermes state.db — excluded, loudly.
+    const hermesFile = path.join(codexDay, 'rollout-hermes.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 17);
+
+    // Unknown originator: lands in Codex CLI but never silently.
+    const mysteryFile = path.join(codexDay, 'rollout-mystery.jsonl');
+    fs.appendFileSync(mysteryFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'codex_next_thing', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(mysteryFile, 'gpt-5.6-sol', 'openai');
+    writeTokenCountLine(mysteryFile, timestamp, 19);
+
+    const summary = await buildForPeriod('day');
+    const codexAppAgent = summary.agents.find((agent) => agent.key === 'codex_app');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(codexAppAgent.summary.periodTokens, 11, 'other desktop installs classify as Codex App');
+    assert.equal(codexCliAgent.summary.periodTokens, 13 + 19, 'desktop-originated exec runs and unknown originators classify as Codex CLI');
+    assert.equal(summary.summary.periodTokens, 11 + 13 + 19, 'hermes-owned rollouts are excluded from the combined total');
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 1, tokens: 17 },
+      'excluded hermes-owned usage must be reported, not silently dropped',
+    );
+    assert.deepEqual(
+      summary.summary.unrecognizedCodexOriginators,
+      { codex_next_thing: 19 },
+      'unknown originators must surface through the unrecognized counter',
+    );
   });
 }
 

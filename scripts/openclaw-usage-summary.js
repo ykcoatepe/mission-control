@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
  * openclaw-usage-summary.js
- * Fast, bounded OpenClaw token/cost summary for Mission Control.
+ * Fast, bounded OpenClaw + standalone Codex token/cost summary for Mission
+ * Control. Scans ~/.openclaw/agents session JSONL (OpenClaw bucket, nested
+ * codex-home runs included) and ~/.codex/sessions rollouts (Codex App vs
+ * Codex CLI buckets, split by session_meta originator).
  *
  * The official OpenClaw session-cost-usage bundle currently walks every session
  * with loadSessionCostSummary and can hang for minutes on Yordam's session corpus.
@@ -15,18 +18,29 @@ const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
 const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+// Bucket contract (2026-08-02): OpenClaw owns EVERYTHING it launched — native
+// sessions and its nested agent/codex-home Codex runs alike. The Codex buckets
+// come from the standalone Codex home (~/.codex/sessions): "Codex Desktop"
+// originator = the Codex/ChatGPT desktop app, every other originator
+// (codex_exec spawns from Claude Code, Hermes, scripts) = Codex CLI.
 const SESSION_BUCKETS = [
   {
     key: 'openclaw',
     label: 'OpenClaw',
     accent: '#5E5CE6',
-    source: 'openclaw.direct_sessions',
+    source: 'openclaw.sessions',
   },
   {
     key: 'codex_app',
     label: 'Codex App Sessions',
     accent: '#64D2FF',
-    source: 'openclaw.codex_app_sessions',
+    source: 'codex.app_sessions',
+  },
+  {
+    key: 'codex_cli',
+    label: 'Codex CLI',
+    accent: '#FF9500',
+    source: 'codex.cli_sessions',
   },
 ];
 
@@ -186,16 +200,18 @@ function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
   };
 }
 
-function modelName(provider, model, sessionKey = '') {
+function modelName(provider, model, record = {}) {
   const p = String(provider || '').trim();
   const m = String(model || '').trim();
   if (!p && !m) return 'unknown';
   // OpenClaw native Codex session_meta often records provider=openai but omits
   // model. Yordam's default OpenClaw model is GPT-5.5, which is subscription
   // included; leaving this as openai/unknown makes Mission Control show a fake
-  // unknown-cost bucket for most OpenClaw tokens.
+  // unknown-cost bucket for most OpenClaw tokens. Codex rollouts (standalone
+  // home or nested codex-home) record the model per turn, so a model-less
+  // record there stays openai/unknown instead of inheriting that default.
   if (p === 'openai' && (!m || m === 'unknown')) {
-    return sessionBucketForKey(sessionKey).key === 'codex_app'
+    return isCodexRolloutRecord(record)
       ? 'openai/unknown'
       : process.env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
   }
@@ -245,11 +261,53 @@ function isSubscriptionIncludedRecord(record = {}) {
     || record.billingMode === 'subscription_included';
 }
 
-function sessionBucketForKey(sessionKey) {
-  const normalized = String(sessionKey || '').split(path.sep).join('/');
-  return normalized.includes('/agent/codex-home/sessions/')
-    ? SESSION_BUCKETS[1]
-    : SESSION_BUCKETS[0];
+// A "codex rollout" is a session transcript written by the Codex CLI/app —
+// either into the standalone Codex home or into an OpenClaw agent's nested
+// codex-home. The distinction drives model-name fallbacks, not bucketing.
+function isCodexRolloutRecord(record = {}) {
+  if (record.origin === 'codex') return true;
+  const normalized = String(record.sessionKey || '').split(path.sep).join('/');
+  return normalized.includes('/agent/codex-home/sessions/');
+}
+
+function sessionMetaSourceKey(payload = {}) {
+  return typeof payload.source === 'string'
+    ? payload.source
+    : payload.source && typeof payload.source === 'object'
+      ? Object.keys(payload.source)[0]
+      : '';
+}
+
+// Rollout classification needs BOTH originator and source: neither alone is
+// sufficient on the real corpus (2026-08-02 census). Observed originators:
+// "Codex Desktop" / "codex_work_desktop" (desktop installs, but source:"exec"
+// means a codex exec run that merely inherited the desktop originator),
+// "codex_exec" / "codex_cli_rs" / "codex-tui" (CLI/TUI), and "hermes" —
+// Hermes drives Codex over the app-server protocol and records the SAME
+// tokens in its own state.db (verified: session 20260702_192320_d80d9474 =
+// 30.09M tokens vs 20.86M in the matching rollouts), so hermes-owned rollouts
+// are EXCLUDED here and counted once via the Hermes bucket.
+// An unknown originator is NOT silently swallowed: it classifies as CLI and
+// is reported through the unrecognizedOriginators counter (stderr + summary).
+const KNOWN_CLI_ORIGINATORS = new Set(['codex_exec', 'codex_cli_rs', 'codex-tui', 'codex_cli']);
+
+function classifyCodexSession(originator, sourceKey) {
+  const o = String(originator || '').trim().toLowerCase();
+  if (o === 'hermes') return 'hermes_owned';
+  if (o.includes('desktop')) return sourceKey === 'exec' ? 'codex_cli' : 'codex_app';
+  if (KNOWN_CLI_ORIGINATORS.has(o)) return 'codex_cli';
+  return 'unrecognized';
+}
+
+function bucketForRecord(record = {}) {
+  if (record.origin === 'codex') {
+    return record.codexClass === 'codex_app'
+      ? SESSION_BUCKETS[1]
+      : SESSION_BUCKETS[2];
+  }
+  // Everything under ~/.openclaw belongs to OpenClaw — including its nested
+  // agent/codex-home Codex runs, which OpenClaw itself launched.
+  return SESSION_BUCKETS[0];
 }
 
 function usageCostTotal(cost) {
@@ -321,7 +379,7 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
   };
 }
 
-function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
+function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0, origin = 'openclaw', keyPrefix = '') {
   if (depth > 10) return;
   let entries = [];
   try {
@@ -333,7 +391,7 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!entry.name.startsWith('.')) listJsonlFiles(fullPath, agentId, agentsBase, startMs, files, depth + 1);
+      if (!entry.name.startsWith('.')) listJsonlFiles(fullPath, agentId, agentsBase, startMs, files, depth + 1, origin, keyPrefix);
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith('.jsonl') || entry.name.endsWith('.trajectory.jsonl')) continue;
@@ -353,7 +411,8 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
           path: fullPath,
           mtimeMs: stat.mtimeMs,
           birthtimeMs,
-          sessionKey: path.relative(agentsBase, fullPath),
+          origin,
+          sessionKey: keyPrefix + path.relative(agentsBase, fullPath),
         });
       }
     } catch {}
@@ -381,6 +440,13 @@ function findSessionDirs(root, out = [], depth = 0) {
   return out;
 }
 
+function codexSessionsRoot() {
+  const codexHome = process.env.MC_CODEX_HOME
+    || process.env.CODEX_HOME
+    || path.join(process.env.HOME || '/home/ubuntu', '.codex');
+  return path.join(codexHome, 'sessions');
+}
+
 function listSessionFiles(startMs) {
   const agentsBase = path.join(process.env.HOME || '/home/ubuntu', '.openclaw', 'agents');
   const files = [];
@@ -390,7 +456,7 @@ function listSessionFiles(startMs) {
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name);
   } catch {
-    return files;
+    agents = [];
   }
 
   for (const agentId of agents) {
@@ -399,6 +465,13 @@ function listSessionFiles(startMs) {
       listJsonlFiles(sessionsDir, agentId, agentsBase, startMs, files);
     }
   }
+
+  // Standalone Codex home rollouts: the Codex/ChatGPT desktop app and every
+  // codex CLI spawn that runs outside OpenClaw write here. The key prefix keeps
+  // these session keys from colliding with OpenClaw-relative paths.
+  const codexRoot = codexSessionsRoot();
+  listJsonlFiles(codexRoot, 'codex', codexRoot, startMs, files, 0, 'codex', 'codex-sessions/');
+
   return files;
 }
 
@@ -442,11 +515,30 @@ async function scanUsageRecords(range) {
   const records = [];
   const maxFiles = Number(process.env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
   const scanFiles = prioritizeScanFiles(files, range, maxFiles);
+  // Exclusions and unknowns must stay visible: zero-output-with-green-signals
+  // is the failure mode this dashboard exists to prevent.
+  const hermesOwned = { files: new Set(), tokens: 0 };
+  const unrecognizedOriginators = new Map();
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const context = { provider: '', model: '', billingMode: '' };
+    // Standalone Codex home rollouts run under the ChatGPT subscription and
+    // never persist a cost figure; without this default they would surface as
+    // unknown metered spend instead of subscription-included usage.
+    // KALİBRASYON NOTU: bu bir varsayımdır, transcript'ten kanıtı yoktur —
+    // session_meta hiçbir auth/fatura alanı taşımıyor (2026-08-02 censusu).
+    // Dayanak: bu makinedeki tüm yerel codex kullanımı ChatGPT-auth ve rollout
+    // hiçbir zaman cost kaydetmiyor. Gözden geçirme koşulu: rollout'lar cost>0
+    // yazmaya başlarsa ya da API-key auth kullanılırsa bu varsayılan kalkar.
+    const context = {
+      provider: '',
+      model: '',
+      billingMode: file.origin === 'codex' ? 'subscription_included' : '',
+      originator: '',
+      // No session_meta at all ⇒ stays unrecognized ⇒ CLI bucket + counter.
+      codexClass: file.origin === 'codex' ? 'unrecognized' : '',
+    };
     for await (const line of rl) {
       if (!line || line.charCodeAt(0) !== 123) continue;
       let obj;
@@ -458,6 +550,10 @@ async function scanUsageRecords(range) {
       if (obj.type === 'session_meta' && obj.payload && typeof obj.payload === 'object') {
         applyModelContext(context, obj.payload);
         context.billingMode = sessionMetaBillingMode(obj.payload) || context.billingMode;
+        if (obj.payload.originator) context.originator = String(obj.payload.originator);
+        if (file.origin === 'codex') {
+          context.codexClass = classifyCodexSession(context.originator, sessionMetaSourceKey(obj.payload));
+        }
       }
       if (obj.type === 'event_msg' && obj.payload?.type === 'thread_settings_applied') {
         const settings = obj.payload.thread_settings;
@@ -470,6 +566,21 @@ async function scanUsageRecords(range) {
       }
       const record = extractUsageRecord(obj, file.mtimeMs, file.sessionKey, context);
       if (!record || record.timestampMs < range.startMs || record.timestampMs > range.endMs) continue;
+      record.origin = file.origin || 'openclaw';
+      record.originator = context.originator;
+      record.codexClass = context.codexClass;
+      if (file.origin === 'codex') {
+        if (context.codexClass === 'hermes_owned') {
+          // Counted once via the Hermes state.db bucket; excluded here, loudly.
+          hermesOwned.files.add(file.sessionKey);
+          hermesOwned.tokens += record.totalTokens;
+          continue;
+        }
+        if (context.codexClass === 'unrecognized') {
+          const name = context.originator || '(no session_meta)';
+          unrecognizedOriginators.set(name, (unrecognizedOriginators.get(name) || 0) + record.totalTokens);
+        }
+      }
       records.push(record);
     }
   }
@@ -481,6 +592,11 @@ async function scanUsageRecords(range) {
     filesScanned: scanFiles.length,
     filesAvailable: files.length,
     scanTruncated: scanFiles.length < files.length,
+    hermesOwnedCodexSkipped: {
+      files: hermesOwned.files.size,
+      tokens: hermesOwned.tokens,
+    },
+    unrecognizedCodexOriginators: Object.fromEntries(unrecognizedOriginators),
   };
 }
 
@@ -520,7 +636,7 @@ function addRecord(accumulator, record) {
   daily.cacheRead += record.cacheRead;
   daily.cacheWrite += record.cacheWrite;
 
-  const name = modelName(record.provider, record.model, record.sessionKey);
+  const name = modelName(record.provider, record.model, record);
   const model = accumulator.modelTotals.get(name) || createTotalsBucket(name);
   model.cost += record.totalCost;
   model.tokens += record.totalTokens;
@@ -657,7 +773,14 @@ function buildUsageFromAccumulator({
 
 async function buildForPeriod(period, monthAnchor = null) {
   const r = rangeForPeriod(period, monthAnchor);
-  const { records, filesScanned, filesAvailable, scanTruncated } = await scanUsageRecords({
+  const {
+    records,
+    filesScanned,
+    filesAvailable,
+    scanTruncated,
+    hermesOwnedCodexSkipped,
+    unrecognizedCodexOriginators,
+  } = await scanUsageRecords({
     startMs: r.previous.startMs,
     endMs: r.endMs,
   });
@@ -665,6 +788,15 @@ async function buildForPeriod(period, monthAnchor = null) {
     // stderr, not stdout: stdout is the JSON contract. Visible in the server log
     // so an understated month is never a silent zero.
     console.error(`[openclaw-usage-summary] scan truncated by MC_OPENCLAW_USAGE_MAX_FILES: ${filesScanned}/${filesAvailable} files${monthAnchor ? ` for anchor ${monthAnchor}` : ''}; totals may be understated`);
+  }
+  if (hermesOwnedCodexSkipped.tokens > 0) {
+    console.error(`[openclaw-usage-summary] excluded ${hermesOwnedCodexSkipped.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexSkipped.tokens} tokens (counted once via the Hermes state.db bucket)`);
+  }
+  const unrecognizedEntries = Object.entries(unrecognizedCodexOriginators || {});
+  if (unrecognizedEntries.length > 0) {
+    // Loud else-branch for the originator enumeration: an unknown originator
+    // still lands in Codex CLI, but never silently.
+    console.error(`[openclaw-usage-summary] unrecognized codex originator(s) bucketed as Codex CLI: ${unrecognizedEntries.map(([name, tokens]) => `${name}=${tokens}`).join(', ')}`);
   }
   const combinedAccumulator = createAccumulator(r.keys);
   const previousCombinedAccumulator = createAccumulator(r.previous.keys);
@@ -674,7 +806,7 @@ async function buildForPeriod(period, monthAnchor = null) {
   for (const record of records) {
     addRecord(combinedAccumulator, record);
     addRecord(previousCombinedAccumulator, record);
-    const bucket = sessionBucketForKey(record.sessionKey);
+    const bucket = bucketForRecord(record);
     addRecord(bucketAccumulators.get(bucket.key), record);
     addRecord(previousBucketAccumulators.get(bucket.key), record);
   }
@@ -700,6 +832,8 @@ async function buildForPeriod(period, monthAnchor = null) {
   });
   combined.summary.previousPeriodApiEquivalentUsd = previousCombined.summary.periodApiEquivalentUsd;
   combined.summary.previousPeriodApiEquivalentReliability = previousCombined.apiEquivalentReliability;
+  combined.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
+  combined.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
 
   combined.agents = SESSION_BUCKETS.map((bucket) => {
     const usage = buildUsageFromAccumulator({
@@ -764,5 +898,6 @@ module.exports = {
   listSessionFiles,
   prioritizeScanFiles,
   rangeForPeriod,
-  sessionBucketForKey,
+  bucketForRecord,
+  classifyCodexSession,
 };
