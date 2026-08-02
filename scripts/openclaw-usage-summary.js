@@ -447,6 +447,16 @@ function codexSessionsRoot() {
   return path.join(codexHome, 'sessions');
 }
 
+// The router passes the authoritative path via MC_HERMES_DB_PATH (see
+// server/routes/costs.js hermesProfileDbPath — the single source for the
+// discovery rules). The HOME-scoped default below only covers standalone CLI
+// runs of this script and deliberately has no absolute-path fallbacks.
+function hermesDbPath() {
+  if (process.env.MC_HERMES_DB_PATH) return process.env.MC_HERMES_DB_PATH;
+  const profile = process.env.HERMES_PROFILE || 'hmudur';
+  return path.join(process.env.HOME || '/home/ubuntu', '.hermes', 'profiles', profile, 'state.db');
+}
+
 function listSessionFiles(startMs) {
   const agentsBase = path.join(process.env.HOME || '/home/ubuntu', '.openclaw', 'agents');
   const files = [];
@@ -518,7 +528,12 @@ async function scanUsageRecords(range) {
   // Exclusions and unknowns must stay visible: zero-output-with-green-signals
   // is the failure mode this dashboard exists to prevent.
   const hermesOwned = { files: new Set(), tokens: 0 };
+  const hermesRetained = { files: new Set(), tokens: 0 };
   const unrecognizedOriginators = new Map();
+  // hermes-owned rollouts duplicate Hermes state.db tokens — but only when
+  // that db actually exists. Dropping them with no db present would erase the
+  // tokens from EVERY bucket, so exclusion is gated on availability.
+  const hermesDbAvailable = fs.existsSync(hermesDbPath());
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
@@ -571,10 +586,15 @@ async function scanUsageRecords(range) {
       record.codexClass = context.codexClass;
       if (file.origin === 'codex') {
         if (context.codexClass === 'hermes_owned') {
-          // Counted once via the Hermes state.db bucket; excluded here, loudly.
-          hermesOwned.files.add(file.sessionKey);
-          hermesOwned.tokens += record.totalTokens;
-          continue;
+          if (hermesDbAvailable) {
+            // Counted once via the Hermes state.db bucket; excluded here, loudly.
+            hermesOwned.files.add(file.sessionKey);
+            hermesOwned.tokens += record.totalTokens;
+            continue;
+          }
+          // No Hermes db to count them: retain in Codex CLI instead, loudly.
+          hermesRetained.files.add(file.sessionKey);
+          hermesRetained.tokens += record.totalTokens;
         }
         if (context.codexClass === 'unrecognized') {
           const name = context.originator || '(no session_meta)';
@@ -595,6 +615,10 @@ async function scanUsageRecords(range) {
     hermesOwnedCodexSkipped: {
       files: hermesOwned.files.size,
       tokens: hermesOwned.tokens,
+    },
+    hermesOwnedCodexRetained: {
+      files: hermesRetained.files.size,
+      tokens: hermesRetained.tokens,
     },
     unrecognizedCodexOriginators: Object.fromEntries(unrecognizedOriginators),
   };
@@ -779,6 +803,7 @@ async function buildForPeriod(period, monthAnchor = null) {
     filesAvailable,
     scanTruncated,
     hermesOwnedCodexSkipped,
+    hermesOwnedCodexRetained,
     unrecognizedCodexOriginators,
   } = await scanUsageRecords({
     startMs: r.previous.startMs,
@@ -791,6 +816,9 @@ async function buildForPeriod(period, monthAnchor = null) {
   }
   if (hermesOwnedCodexSkipped.tokens > 0) {
     console.error(`[openclaw-usage-summary] excluded ${hermesOwnedCodexSkipped.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexSkipped.tokens} tokens (counted once via the Hermes state.db bucket)`);
+  }
+  if (hermesOwnedCodexRetained.tokens > 0) {
+    console.error(`[openclaw-usage-summary] Hermes state.db unavailable — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
   }
   const unrecognizedEntries = Object.entries(unrecognizedCodexOriginators || {});
   if (unrecognizedEntries.length > 0) {
@@ -833,6 +861,7 @@ async function buildForPeriod(period, monthAnchor = null) {
   combined.summary.previousPeriodApiEquivalentUsd = previousCombined.summary.periodApiEquivalentUsd;
   combined.summary.previousPeriodApiEquivalentReliability = previousCombined.apiEquivalentReliability;
   combined.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
+  combined.summary.hermesOwnedCodexRetained = hermesOwnedCodexRetained;
   combined.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
 
   combined.agents = SESSION_BUCKETS.map((bucket) => {

@@ -12,22 +12,28 @@ assert.ok(source.includes('session JSONL fast scan'), 'script should use the bou
 assert.ok(source.includes("entry.name.endsWith('.trajectory.jsonl')"), 'script should skip trajectory JSONL files to avoid double counting');
 assert.ok(source.includes('VALID_PERIODS'), 'script should ignore non-period flags such as --json');
 
+// Seam contract with the router: the server resolves both homes and pins them
+// into the child env; the script must not depend on inherited HOME/CODEX_HOME.
+const costsSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
+assert.ok(costsSource.includes('MC_CODEX_HOME: codexHomePath()'), 'router must pin the resolved codex home into the usage-script env');
+assert.ok(costsSource.includes('MC_HERMES_DB_PATH: hermesProfileDbPath()'), 'router must pass the authoritative Hermes db path so the script can gate hermes-owned exclusion on availability');
+
 async function withTempHome(fn) {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-openclaw-usage-'));
   const previousHome = process.env.HOME;
   // The scan follows CODEX_HOME/MC_CODEX_HOME when set; a leaked developer
   // value would point the test at the real ~/.codex corpus.
-  const previousCodexHome = process.env.CODEX_HOME;
-  const previousMcCodexHome = process.env.MC_CODEX_HOME;
+  const clearedKeys = ['CODEX_HOME', 'MC_CODEX_HOME', 'MC_HERMES_DB_PATH', 'HERMES_STATE_DB', 'HERMES_PROFILE_DIR', 'HERMES_PROFILE'];
+  const previousEnv = Object.fromEntries(clearedKeys.map((key) => [key, process.env[key]]));
   process.env.HOME = tempHome;
-  delete process.env.CODEX_HOME;
-  delete process.env.MC_CODEX_HOME;
+  for (const key of clearedKeys) delete process.env[key];
   try {
     await fn(tempHome);
   } finally {
     process.env.HOME = previousHome;
-    if (previousCodexHome !== undefined) process.env.CODEX_HOME = previousCodexHome;
-    if (previousMcCodexHome !== undefined) process.env.MC_CODEX_HOME = previousMcCodexHome;
+    for (const key of clearedKeys) {
+      if (previousEnv[key] !== undefined) process.env[key] = previousEnv[key];
+    }
     fs.rmSync(tempHome, { recursive: true, force: true });
   }
 }
@@ -493,7 +499,10 @@ async function runBehaviorTests() {
     writeTurnContextLine(desktopExecFile, 'gpt-5.6-sol', 'openai');
     writeTokenCountLine(desktopExecFile, timestamp, 13);
 
-    // Hermes-owned: the same tokens live in Hermes state.db — excluded, loudly.
+    // Hermes-owned AND the Hermes state.db is present: the same tokens live in
+    // that db — excluded, loudly.
+    fs.mkdirSync(path.join(home, '.hermes', 'profiles', 'hmudur'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.hermes', 'profiles', 'hmudur', 'state.db'), '');
     const hermesFile = path.join(codexDay, 'rollout-hermes.jsonl');
     fs.appendFileSync(hermesFile, `${JSON.stringify({
       type: 'session_meta',
@@ -526,6 +535,49 @@ async function runBehaviorTests() {
       summary.summary.unrecognizedCodexOriginators,
       { codex_next_thing: 19 },
       'unknown originators must surface through the unrecognized counter',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // NO Hermes state.db anywhere: dropping these rollouts would erase the
+    // tokens from every bucket, so they must be RETAINED (Codex CLI) instead.
+    const hermesFile = path.join(codexDay, 'rollout-hermes-nodb.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 23);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(
+      codexCliAgent.summary.periodTokens,
+      23,
+      'without an available Hermes state.db, hermes-owned rollouts must be retained in Codex CLI',
+    );
+    assert.equal(summary.summary.periodTokens, 23, 'retained hermes-owned tokens must reach the combined total');
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 0, tokens: 0 },
+      'nothing may be reported as skipped when the Hermes db is unavailable',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 23 },
+      'the retained-fallback path must be reported, not silent',
     );
   });
 }

@@ -102,7 +102,12 @@ function hermesProfileDbPath() {
 // CODEX_HOME inherited from whichever agent launched the server cannot
 // silently redirect the Codex buckets.
 function codexHomePath() {
-  return process.env.MC_CODEX_HOME || path.join(hostUserHome(), '.codex');
+  if (process.env.MC_CODEX_HOME) return process.env.MC_CODEX_HOME;
+  // An explicit MC_USER_HOME is authoritative for the codex home even when it
+  // holds no .openclaw tree: hostUserHome() validates its candidates by
+  // .openclaw presence, and that check must not veto a codex-only home.
+  if (process.env.MC_USER_HOME) return path.join(process.env.MC_USER_HOME, '.codex');
+  return path.join(hostUserHome(), '.codex');
 }
 
 // Identity of the data sources a detailed scan actually read. Confirmed-empty
@@ -612,8 +617,15 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
         maxBuffer: 20 * 1024 * 1024,
         // HOME and MC_CODEX_HOME are pinned: the script must scan the host
         // user's homes even when the server was launched by an agent whose
-        // environment carries its own HOME/CODEX_HOME.
-        env: { ...process.env, HOME: hostUserHome(), MC_CODEX_HOME: codexHomePath() },
+        // environment carries its own HOME/CODEX_HOME. MC_HERMES_DB_PATH hands
+        // the script the authoritative Hermes db location so it can gate the
+        // hermes-owned rollout exclusion on that db actually being available.
+        env: {
+          ...process.env,
+          HOME: hostUserHome(),
+          MC_CODEX_HOME: codexHomePath(),
+          MC_HERMES_DB_PATH: hermesProfileDbPath(),
+        },
       });
       surfaceChildStderr('OpenClaw Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
@@ -1655,5 +1667,6 @@ module.exports = {
   rangeForPeriod,
   shiftMonthAnchor,
   sumPreviousApiEquivalentUsd,
+  codexHomePath,
   producerFingerprint,
 };
