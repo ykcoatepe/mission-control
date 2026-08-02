@@ -96,14 +96,23 @@ function writeTurnContextLine(file, model, modelProvider = undefined) {
 }
 
 // The exclusion gate probes the db the way the router does (sqlite3 CLI over
-// the sessions table), so the fixture has to be a REAL queryable db — an empty
-// placeholder file is exactly the unqueryable case the gate must reject.
-function writeQueryableHermesDb(home, profile = 'hmudur') {
+// the sessions table, started_at in unixepoch seconds), so the fixture has to
+// be a REAL db that actually COVERS the scan window — an empty placeholder
+// file, an empty table, or rows outside the window are all cases where the
+// Hermes bucket contributes nothing and the gate must refuse to exclude.
+function writeHermesDb(home, { startedAtSec = null, profile = 'hmudur' } = {}) {
   const dir = path.join(home, '.hermes', 'profiles', profile);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, 'state.db');
-  execFileSync('sqlite3', [dbPath, 'CREATE TABLE sessions (id TEXT)']);
+  const rows = startedAtSec === null
+    ? ''
+    : `; INSERT INTO sessions VALUES ('s1', ${startedAtSec})`;
+  execFileSync('sqlite3', [dbPath, `CREATE TABLE sessions (id TEXT, started_at REAL)${rows}`]);
   return dbPath;
+}
+
+function writeCoveringHermesDb(home) {
+  return writeHermesDb(home, { startedAtSec: Math.floor(Date.now() / 1000) });
 }
 
 function writeCodexAuth(home, auth) {
@@ -519,9 +528,9 @@ async function runBehaviorTests() {
     writeTurnContextLine(desktopExecFile, 'gpt-5.6-sol', 'openai');
     writeTokenCountLine(desktopExecFile, timestamp, 13);
 
-    // Hermes-owned AND the Hermes state.db is QUERYABLE: the same tokens live
-    // in that db — excluded, loudly.
-    writeQueryableHermesDb(home);
+    // Hermes-owned AND the Hermes state.db holds a session covering the scan
+    // window: the same tokens live in that db — excluded, loudly.
+    writeCoveringHermesDb(home);
     const hermesFile = path.join(codexDay, 'rollout-hermes.jsonl');
     fs.appendFileSync(hermesFile, `${JSON.stringify({
       type: 'session_meta',
@@ -646,6 +655,57 @@ async function runBehaviorTests() {
       'the retained-fallback must be reported when the db exists but cannot be queried',
     );
   });
+
+  // A queryable db is not evidence that the excluded usage is represented:
+  // an empty sessions table answers the probe but contributes zero rows to
+  // hermesUsageSummary, so exclusion would erase the tokens from every bucket.
+  for (const [label, startedAtSec, tokens] of [
+    ['an empty sessions table', null, 53],
+    ['only sessions far outside the scan window', Math.floor(Date.now() / 1000) - 90 * 86400, 59],
+  ]) {
+    await withTempHome(async (home) => {
+      const today = new Date();
+      const codexDay = path.join(
+        home,
+        '.codex',
+        'sessions',
+        String(today.getFullYear()),
+        String(today.getMonth() + 1).padStart(2, '0'),
+        String(today.getDate()).padStart(2, '0'),
+      );
+      fs.mkdirSync(codexDay, { recursive: true });
+      const timestamp = today.toISOString();
+
+      writeHermesDb(home, { startedAtSec });
+
+      const hermesFile = path.join(codexDay, 'rollout-hermes-uncovered.jsonl');
+      fs.appendFileSync(hermesFile, `${JSON.stringify({
+        type: 'session_meta',
+        payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+      })}\n`);
+      writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+      writeTokenCountLine(hermesFile, timestamp, tokens);
+
+      const summary = await buildForPeriod('day');
+      const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+      assert.equal(
+        codexCliAgent.summary.periodTokens,
+        tokens,
+        `with ${label}, hermes-owned rollouts must be retained in Codex CLI`,
+      );
+      assert.equal(summary.summary.periodTokens, tokens, `tokens must survive when the db has ${label}`);
+      assert.deepEqual(
+        summary.summary.hermesOwnedCodexSkipped,
+        { files: 0, tokens: 0 },
+        `${label} must not authorize exclusion`,
+      );
+      assert.deepEqual(
+        summary.summary.hermesOwnedCodexRetained,
+        { files: 1, tokens },
+        `the retained-fallback must be reported when the db has ${label}`,
+      );
+    });
+  }
 
   await withTempHome(async (home) => {
     const today = new Date();
