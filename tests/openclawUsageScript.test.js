@@ -19,6 +19,104 @@ const costsSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes
 assert.ok(costsSource.includes('MC_CODEX_HOME: codexHomePath()'), 'router must pin the resolved codex home into the usage-script env');
 assert.ok(costsSource.includes('MC_HERMES_DB_PATH: hermesProfileDbPath()'), 'router must pass the authoritative Hermes db path so the script can gate hermes-owned exclusion on availability');
 
+// Seam contract, mechanized: the script excludes hermes-owned rollouts only for
+// days its coverage probe reports, and that probe must fail (⇒ retain) whenever
+// the SERVER's query would fail. That holds only while the probe references
+// every sessions column hermesUsageSummary consumes. A comment cannot enforce
+// it; this does.
+function sliceBetween(text, startMarker, endMarker, label) {
+  const from = text.indexOf(startMarker);
+  assert.notEqual(from, -1, `${label}: start marker "${startMarker}" not found — update this seam test`);
+  const to = text.indexOf(endMarker, from + startMarker.length);
+  assert.notEqual(to, -1, `${label}: end marker "${endMarker}" not found — update this seam test`);
+  return text.slice(from, to);
+}
+
+// Comments in the script name every column, so a comment-only "fix" would
+// satisfy a naive substring check. Strip them: the guard must be CODE.
+function stripJsComments(text) {
+  // Only the comment tail is dropped, never the code preceding it on the same
+  // line; the [^:] guard keeps "https://" inside code from looking like one.
+  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+// Column references in the consumer's SELECT: lowercase identifiers that are
+// neither a function name (followed by "(") nor an alias (preceded by "AS").
+// Uppercase SQL keywords never match; string literals and ${} interpolations
+// are stripped first.
+const SQL_NON_COLUMN_TOKENS = new Set([
+  'select', 'from', 'sessions', 'where', 'and', 'or', 'not', 'null', 'is',
+  'distinct', 'group', 'by', 'order', 'asc', 'desc', 'limit', 'as', 'on',
+]);
+
+function sqlColumnReferences(sql) {
+  const cleaned = sql.replace(/\$\{[^}]*\}/g, ' ').replace(/'[^']*'/g, "''");
+  const columns = new Set();
+  const pattern = /\b[a-z][a-z0-9_]*\b/g;
+  let match;
+  while ((match = pattern.exec(cleaned)) !== null) {
+    const token = match[0];
+    if (SQL_NON_COLUMN_TOKENS.has(token)) continue;
+    if (/\bas\s+$/i.test(cleaned.slice(Math.max(0, match.index - 8), match.index))) continue;
+    if (/^\s*\(/.test(cleaned.slice(match.index + token.length))) continue;
+    columns.add(token);
+  }
+  return columns;
+}
+
+function uncoveredHermesColumns(consumerSql, probeCode) {
+  return [...sqlColumnReferences(consumerSql)].filter((column) => !probeCode.includes(column)).sort();
+}
+
+const hermesConsumerSql = sliceBetween(
+  costsSource.slice(costsSource.indexOf('async function hermesUsageSummary')),
+  'SELECT',
+  'GROUP BY',
+  'hermesUsageSummary query',
+);
+const hermesProbeCode = stripJsComments(sliceBetween(
+  source,
+  'const HERMES_CONSUMED_COLUMNS_GUARD',
+  'function listSessionFiles',
+  'hermes coverage probe',
+));
+
+// Anti-vacuous: a broken extractor returning nothing would pass everything.
+const consumedColumns = sqlColumnReferences(hermesConsumerSql);
+for (const column of [
+  'started_at', 'billing_provider', 'model', 'input_tokens', 'output_tokens',
+  'cache_read_tokens', 'cache_write_tokens', 'reasoning_tokens',
+  'actual_cost_usd', 'estimated_cost_usd', 'cost_status', 'billing_mode',
+]) {
+  assert.ok(consumedColumns.has(column), `column extractor must find ${column} in hermesUsageSummary's SELECT — the seam test is broken, not the guard`);
+}
+
+const uncoveredColumns = uncoveredHermesColumns(hermesConsumerSql, hermesProbeCode);
+assert.deepEqual(
+  uncoveredColumns,
+  [],
+  `hermesUsageSummary consumes column ${uncoveredColumns[0]} not covered by HERMES_CONSUMED_COLUMNS_GUARD — mirror it in scripts/openclaw-usage-summary.js`,
+);
+
+// Counter-example: the check must actually FIRE on drift, not pass vacuously.
+assert.deepEqual(
+  uncoveredHermesColumns(
+    hermesConsumerSql.replace('FROM sessions', ', SUM(COALESCE(phantom_tokens, 0)) AS phantom FROM sessions'),
+    hermesProbeCode,
+  ),
+  ['phantom_tokens'],
+  'the seam check must report a consumer column the guard does not mirror',
+);
+// And a comment naming the column must NOT satisfy it.
+assert.deepEqual(
+  uncoveredHermesColumns(
+    hermesConsumerSql.replace('FROM sessions', ', SUM(COALESCE(phantom_tokens, 0)) AS phantom FROM sessions'),
+    stripJsComments(`${hermesProbeCode}\n// phantom_tokens is handled elsewhere\n`),
+  ),
+  ['phantom_tokens'],
+  'a comment naming the column must not count as coverage',
+);
+
 async function withTempHome(fn) {
   const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-openclaw-usage-'));
   const previousHome = process.env.HOME;
@@ -101,15 +199,44 @@ function writeTurnContextLine(file, model, modelProvider = undefined) {
 // DAYS are covered — an empty placeholder file, an empty table, or rows on
 // other days are all cases where the Hermes bucket represents nothing for the
 // day in question and the gate must refuse to exclude.
-function writeHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
+// Mirrors the columns hermesUsageSummary SELECTs (server/routes/costs.js
+// 884-902). Keep in sync with it and with the script's coverage probe.
+const HERMES_SESSIONS_COLUMNS = `
+  id TEXT,
+  started_at REAL,
+  billing_provider TEXT,
+  model TEXT,
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  cache_read_tokens INTEGER,
+  cache_write_tokens INTEGER,
+  reasoning_tokens INTEGER,
+  actual_cost_usd REAL,
+  estimated_cost_usd REAL,
+  cost_status TEXT,
+  billing_mode TEXT
+`;
+
+function writeHermesDbWithColumns(home, columns, startedAtSecs, profile) {
   const dir = path.join(home, '.hermes', 'profiles', profile);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, 'state.db');
   const rows = startedAtSecs
-    .map((sec, index) => `; INSERT INTO sessions VALUES ('s${index + 1}', ${sec})`)
+    .map((sec, index) => `; INSERT INTO sessions (id, started_at) VALUES ('s${index + 1}', ${sec})`)
     .join('');
-  execFileSync('sqlite3', [dbPath, `CREATE TABLE sessions (id TEXT, started_at REAL)${rows}`]);
+  execFileSync('sqlite3', [dbPath, `CREATE TABLE sessions (${columns})${rows}`]);
   return dbPath;
+}
+
+function writeHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
+  return writeHermesDbWithColumns(home, HERMES_SESSIONS_COLUMNS, startedAtSecs, profile);
+}
+
+// Schema drift / partial migration: started_at survives but the columns the
+// consumer aggregates do not. The server query would fail outright, so the
+// probe must fail with it rather than authorize exclusion.
+function writeStartedAtOnlyHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
+  return writeHermesDbWithColumns(home, 'id TEXT, started_at REAL', startedAtSecs, profile);
 }
 
 function writeCoveringHermesDb(home) {
@@ -759,6 +886,52 @@ async function runBehaviorTests() {
       codexCliAgent.summary.periodTokens,
       67,
       "today's hermes-owned usage must survive when the Hermes bucket only covers yesterday",
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // started_at is present and in-window, but the token/billing columns
+    // hermesUsageSummary aggregates are gone (schema drift / partial
+    // migration). The server query fails there, so the Hermes bucket is empty —
+    // a probe that only reads started_at would authorize erasing these tokens.
+    writeStartedAtOnlyHermesDb(home, { startedAtSecs: [Math.floor(Date.now() / 1000)] });
+
+    const hermesFile = path.join(codexDay, 'rollout-hermes-partial-schema.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 71);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(
+      codexCliAgent.summary.periodTokens,
+      71,
+      'a sessions table missing the consumed columns must retain hermes-owned rollouts in Codex CLI',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 0, tokens: 0 },
+      'a schema the consumer cannot query must not authorize exclusion',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 71 },
+      'the retained-fallback must be reported on Hermes schema drift',
     );
   });
 

@@ -478,6 +478,32 @@ function codexBillingModeDefault() {
   return '';
 }
 
+// Schema compatibility, not just row coverage: a sessions table can hold
+// started_at and still be unusable to the consumer if a column it aggregates
+// was dropped or never migrated — the server query then FAILS and the Hermes
+// bucket is empty, so a started_at-only probe would authorize erasing tokens
+// that exist nowhere else. This guard REFERENCES every non-started_at column
+// hermesUsageSummary selects, so a missing one makes sqlite error out and the
+// probe returns an empty set (⇒ retain). It is tautological — every term is
+// COALESCE/LENGTH-wrapped, so the sum is never NULL and the returned rows are
+// identical to the unguarded query.
+//
+// MUST STAY IN SYNC with hermesUsageSummary's SELECT (server/routes/costs.js
+// 884-902). Columns covered: started_at (WHERE/SELECT above), billing_provider,
+// model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+// reasoning_tokens, actual_cost_usd, estimated_cost_usd, cost_status,
+// billing_mode. A column the consumer adds LATER is not covered until it is
+// mirrored here.
+const HERMES_CONSUMED_COLUMNS_GUARD = `(
+  COALESCE(input_tokens, 0)
+  + COALESCE(output_tokens, 0)
+  + COALESCE(cache_read_tokens, 0)
+  + COALESCE(cache_write_tokens, 0)
+  + COALESCE(reasoning_tokens, 0)
+  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
+  + LENGTH(COALESCE(billing_provider, '') || COALESCE(model, '') || COALESCE(cost_status, '') || COALESCE(billing_mode, ''))
+) IS NOT NULL`.replace(/\s+/g, ' ');
+
 // Which DAYS the Hermes bucket actually represents. Deliberately mirrors the
 // consumer (server/routes/costs.js hermesUsageSummary): same sessions table,
 // same row window (started_at >= previousStart, <= end — which is exactly the
@@ -502,7 +528,9 @@ function hermesCoveredDays(range) {
   try {
     const out = execFileSync('sqlite3', [
       hermesDbPath(),
-      `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at >= ${startSec} AND started_at <= ${endSec}`,
+      `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions`
+      + ` WHERE started_at >= ${startSec} AND started_at <= ${endSec}`
+      + ` AND ${HERMES_CONSUMED_COLUMNS_GUARD}`,
     ], {
       timeout: 3000,
       stdio: ['ignore', 'pipe', 'pipe'],
