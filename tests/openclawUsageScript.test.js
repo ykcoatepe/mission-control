@@ -692,6 +692,18 @@ async function runBehaviorTests() {
       { codex_next_thing: 19 },
       'unknown originators must surface through the unrecognized counter',
     );
+    // The API channel: mergeUsage rebuilds the top-level summary, so only the
+    // agent summary survives into /api/costs.
+    assert.deepEqual(
+      codexCliAgent.summary.hermesOwnedCodexSkipped,
+      { files: 1, tokens: 17 },
+      'the excluded-hermes counter must ride the codex_cli agent summary to reach API clients',
+    );
+    assert.deepEqual(
+      codexCliAgent.summary.unrecognizedCodexOriginators,
+      { codex_next_thing: 19 },
+      'the unrecognized-originator counter must ride the codex_cli agent summary to reach API clients',
+    );
   });
 
   await withTempHome(async (home) => {
@@ -734,6 +746,11 @@ async function runBehaviorTests() {
       summary.summary.hermesOwnedCodexRetained,
       { files: 1, tokens: 23 },
       'the retained-fallback path must be reported, not silent',
+    );
+    assert.deepEqual(
+      codexCliAgent.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 23 },
+      'the retained-fallback counter must ride the codex_cli agent summary to reach API clients',
     );
   });
 

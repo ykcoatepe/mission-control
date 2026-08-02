@@ -948,6 +948,16 @@ async function buildForPeriod(period, monthAnchor = null) {
   });
   combined.summary.previousPeriodApiEquivalentUsd = previousCombined.summary.periodApiEquivalentUsd;
   combined.summary.previousPeriodApiEquivalentReliability = previousCombined.apiEquivalentReliability;
+  // Dual attachment, on purpose — these diagnostics have TWO consumers and one
+  // of them cannot see the other's channel:
+  //   combined.summary — standalone runs of this script (stdout JSON).
+  //   codex_cli agent summary (below) — the API channel. /api/costs feeds this
+  //     output through sourceEntriesFromUsage + mergeUsage, which keeps each
+  //     AGENT's summary verbatim but REBUILDS the top-level summary from
+  //     scratch; anything attached only here is dropped before clients see it.
+  // Exclusions and unknowns must stay visible in both, and codex_cli is where
+  // all three semantically belong: retained and unrecognized records land in
+  // that bucket, and skipped records would have.
   combined.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
   combined.summary.hermesOwnedCodexRetained = hermesOwnedCodexRetained;
   combined.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
@@ -975,6 +985,12 @@ async function buildForPeriod(period, monthAnchor = null) {
     });
     usage.summary.previousPeriodApiEquivalentUsd = previousUsage.summary.periodApiEquivalentUsd;
     usage.summary.previousPeriodApiEquivalentReliability = previousUsage.apiEquivalentReliability;
+    if (bucket.key === 'codex_cli') {
+      // The API-visible copy — see the dual-attachment note above.
+      usage.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
+      usage.summary.hermesOwnedCodexRetained = hermesOwnedCodexRetained;
+      usage.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
+    }
 
     return {
       key: bucket.key,
