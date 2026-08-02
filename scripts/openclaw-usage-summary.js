@@ -478,31 +478,39 @@ function codexBillingModeDefault() {
   return '';
 }
 
-// Neither existence NOR queryability is the producer capability: the router's
-// hermesUsageSummary selects sessions rows inside the requested window, so a
-// present-but-corrupt file, a missing sessions table, a missing sqlite3 binary,
-// an EMPTY table and a table whose rows all fall outside the window are equally
-// cases where the Hermes bucket contributes nothing. Only a row that actually
-// covers the window is evidence that excluded rollouts are counted elsewhere.
-// started_at is unixepoch SECONDS (REAL); the scan range is ms. The 7-day
-// backward slack covers long-running Hermes sessions that started before the
-// window and still carry usage inside it; a day forward covers clock skew.
-function hermesDbCoversWindow(range) {
-  const startSec = Math.floor(range.startMs / 1000) - 7 * 86400;
-  const endSec = Math.ceil(range.endMs / 1000) + 86400;
-  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return false;
+// Which DAYS the Hermes bucket actually represents. Deliberately mirrors the
+// consumer (server/routes/costs.js hermesUsageSummary): same sessions table,
+// same row window (started_at >= previousStart, <= end — which is exactly the
+// range scanUsageRecords receives, so no slack is needed or wanted), same
+// date(started_at,'unixepoch','localtime') day expression. dayKey() is also
+// machine-local, so the two agree.
+//
+// Existence, queryability, and any-row-in-window are all too weak: a corrupt
+// file, a missing sessions table, a missing sqlite3 binary, an empty table, and
+// a table whose rows sit on OTHER days are equally cases where the Hermes
+// bucket represents nothing for the day of the record being excluded.
+//
+// Residual (known, accepted): Hermes attributes a whole session's totals to its
+// START day, so a rollout record on day D belonging to a session started on day
+// C≠D is retained here while its tokens also sit in the Hermes bucket under C.
+// Retention stays the safe direction — double-count is visible in the totals,
+// erasure is not.
+function hermesCoveredDays(range) {
+  const startSec = Math.floor(range.startMs / 1000);
+  const endSec = Math.ceil(range.endMs / 1000);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return new Set();
   try {
     const out = execFileSync('sqlite3', [
       hermesDbPath(),
-      `SELECT 1 FROM sessions WHERE started_at BETWEEN ${startSec} AND ${endSec} LIMIT 1`,
+      `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions WHERE started_at >= ${startSec} AND started_at <= ${endSec}`,
     ], {
       timeout: 3000,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     // No matching row exits 0 with empty stdout — silence is NOT coverage.
-    return String(out).trim() !== '';
+    return new Set(String(out).split('\n').map((line) => line.trim()).filter(Boolean));
   } catch {
-    return false;
+    return new Set();
   }
 }
 
@@ -579,12 +587,11 @@ async function scanUsageRecords(range) {
   const hermesOwned = { files: new Set(), tokens: 0 };
   const hermesRetained = { files: new Set(), tokens: 0 };
   const unrecognizedOriginators = new Map();
-  // hermes-owned rollouts duplicate Hermes state.db tokens — but only when
-  // that db actually COVERS this window. A db that answers no matching row
-  // (corrupt, no sessions table, no sqlite3 binary, empty table, rows outside
-  // the window) yields no Hermes-bucket tokens, so dropping the rollouts would
-  // erase them from EVERY bucket. Probed once per scan, not per file.
-  const hermesDbCoversScan = hermesDbCoversWindow(range);
+  // hermes-owned rollouts duplicate Hermes state.db tokens — but only on the
+  // DAYS that db actually represents. A record whose day the Hermes bucket does
+  // not cover would be erased from EVERY bucket if dropped here, so exclusion
+  // is decided per record against this set. Queried once per scan, not per file.
+  const hermesCoveredDaySet = hermesCoveredDays(range);
   // Standalone Codex home rollouts never persist a cost figure, so their
   // billing label has to come from configuration evidence. Probed once per
   // scan, not per file.
@@ -639,13 +646,13 @@ async function scanUsageRecords(range) {
       record.codexClass = context.codexClass;
       if (file.origin === 'codex') {
         if (context.codexClass === 'hermes_owned') {
-          if (hermesDbCoversScan) {
+          if (hermesCoveredDaySet.has(record.date)) {
             // Counted once via the Hermes state.db bucket; excluded here, loudly.
             hermesOwned.files.add(file.sessionKey);
             hermesOwned.tokens += record.totalTokens;
             continue;
           }
-          // No Hermes rows covering this window: retain in Codex CLI, loudly.
+          // No Hermes coverage for this record's day: retain in Codex CLI, loudly.
           hermesRetained.files.add(file.sessionKey);
           hermesRetained.tokens += record.totalTokens;
         }
@@ -871,7 +878,7 @@ async function buildForPeriod(period, monthAnchor = null) {
     console.error(`[openclaw-usage-summary] excluded ${hermesOwnedCodexSkipped.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexSkipped.tokens} tokens (counted once via the Hermes state.db bucket)`);
   }
   if (hermesOwnedCodexRetained.tokens > 0) {
-    console.error(`[openclaw-usage-summary] Hermes state.db has no rows covering this window — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
+    console.error(`[openclaw-usage-summary] no Hermes coverage for the record's day — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
   }
   const unrecognizedEntries = Object.entries(unrecognizedCodexOriginators || {});
   if (unrecognizedEntries.length > 0) {

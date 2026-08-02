@@ -95,24 +95,25 @@ function writeTurnContextLine(file, model, modelProvider = undefined) {
   })}\n`);
 }
 
-// The exclusion gate probes the db the way the router does (sqlite3 CLI over
-// the sessions table, started_at in unixepoch seconds), so the fixture has to
-// be a REAL db that actually COVERS the scan window — an empty placeholder
-// file, an empty table, or rows outside the window are all cases where the
-// Hermes bucket contributes nothing and the gate must refuse to exclude.
-function writeHermesDb(home, { startedAtSec = null, profile = 'hmudur' } = {}) {
+// The exclusion gate mirrors the consumer (server/routes/costs.js
+// hermesUsageSummary): same sessions table, same started_at window, same
+// local-day bucketing. So the fixture is a REAL db whose rows decide which
+// DAYS are covered — an empty placeholder file, an empty table, or rows on
+// other days are all cases where the Hermes bucket represents nothing for the
+// day in question and the gate must refuse to exclude.
+function writeHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
   const dir = path.join(home, '.hermes', 'profiles', profile);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, 'state.db');
-  const rows = startedAtSec === null
-    ? ''
-    : `; INSERT INTO sessions VALUES ('s1', ${startedAtSec})`;
+  const rows = startedAtSecs
+    .map((sec, index) => `; INSERT INTO sessions VALUES ('s${index + 1}', ${sec})`)
+    .join('');
   execFileSync('sqlite3', [dbPath, `CREATE TABLE sessions (id TEXT, started_at REAL)${rows}`]);
   return dbPath;
 }
 
 function writeCoveringHermesDb(home) {
-  return writeHermesDb(home, { startedAtSec: Math.floor(Date.now() / 1000) });
+  return writeHermesDb(home, { startedAtSecs: [Math.floor(Date.now() / 1000)] });
 }
 
 function writeCodexAuth(home, auth) {
@@ -659,9 +660,9 @@ async function runBehaviorTests() {
   // A queryable db is not evidence that the excluded usage is represented:
   // an empty sessions table answers the probe but contributes zero rows to
   // hermesUsageSummary, so exclusion would erase the tokens from every bucket.
-  for (const [label, startedAtSec, tokens] of [
-    ['an empty sessions table', null, 53],
-    ['only sessions far outside the scan window', Math.floor(Date.now() / 1000) - 90 * 86400, 59],
+  for (const [label, startedAtSecs, tokens] of [
+    ['an empty sessions table', [], 53],
+    ['only sessions far outside the scan window', [Math.floor(Date.now() / 1000) - 90 * 86400], 59],
   ]) {
     await withTempHome(async (home) => {
       const today = new Date();
@@ -676,7 +677,7 @@ async function runBehaviorTests() {
       fs.mkdirSync(codexDay, { recursive: true });
       const timestamp = today.toISOString();
 
-      writeHermesDb(home, { startedAtSec });
+      writeHermesDb(home, { startedAtSecs });
 
       const hermesFile = path.join(codexDay, 'rollout-hermes-uncovered.jsonl');
       fs.appendFileSync(hermesFile, `${JSON.stringify({
@@ -706,6 +707,60 @@ async function runBehaviorTests() {
       );
     });
   }
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const yesterday = new Date(Date.now() - 86400_000);
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+
+    // The Hermes bucket represents YESTERDAY only. Coverage is per-day, so a
+    // row on one day inside the scan window must not authorize excluding
+    // hermes-owned usage recorded on another day — that day's tokens exist in
+    // no bucket at all. Both sides bucket in machine-local time.
+    writeHermesDb(home, { startedAtSecs: [Math.floor(Date.now() / 1000) - 86400] });
+
+    const coveredFile = path.join(codexDay, 'rollout-hermes-covered-day.jsonl');
+    fs.appendFileSync(coveredFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(coveredFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(coveredFile, yesterday.toISOString(), 61);
+
+    const uncoveredFile = path.join(codexDay, 'rollout-hermes-uncovered-day.jsonl');
+    fs.appendFileSync(uncoveredFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(uncoveredFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(uncoveredFile, today.toISOString(), 67);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 1, tokens: 61 },
+      'only the day the Hermes bucket actually represents may be excluded',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 67 },
+      'a hermes-owned record on an uncovered day must be retained, not dropped',
+    );
+    assert.equal(
+      codexCliAgent.summary.periodTokens,
+      67,
+      "today's hermes-owned usage must survive when the Hermes bucket only covers yesterday",
+    );
+  });
 
   await withTempHome(async (home) => {
     const today = new Date();
