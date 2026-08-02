@@ -81,6 +81,22 @@ const hermesProbeCode = stripJsComments(sliceBetween(
   'hermes coverage probe',
 ));
 
+// Bound alignment: the consumer floors BOTH bounds (costs.js rangeForPeriod —
+// previousStartSec/endSec are Math.floor). Rounding our end bound up would open
+// a sub-second window where a usage-bearing row marks a day covered that the
+// consumer's query excludes. A fixture for that gap would be timing-flaky, so
+// the invariant is asserted on the code itself (comments stripped, so a comment
+// cannot satisfy it).
+assert.ok(
+  !hermesProbeCode.includes('Math.ceil'),
+  'hermes coverage bounds must not round outward — the consumer floors both bounds, so Math.ceil would cover rows it excludes',
+);
+assert.equal(
+  (hermesProbeCode.match(/Math\.floor\(range\./g) || []).length,
+  2,
+  'both hermes coverage bounds must be Math.floor(range.…) to share the consumer rounding exactly',
+);
+
 // Anti-vacuous: a broken extractor returning nothing would pass everything.
 const consumedColumns = sqlColumnReferences(hermesConsumerSql);
 for (const column of [

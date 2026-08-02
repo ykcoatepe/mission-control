@@ -537,8 +537,11 @@ const HERMES_USAGE_BEARING = `(
 // Retention stays the safe direction — double-count is visible in the totals,
 // erasure is not.
 function hermesCoveredDays(range) {
+  // Both bounds FLOOR, exactly like the consumer's previousStartSec/endSec
+  // (costs.js rangeForPeriod). Rounding the end up would open a sub-second
+  // window in which a row marks a day covered that the consumer's query skips.
   const startSec = Math.floor(range.startMs / 1000);
-  const endSec = Math.ceil(range.endMs / 1000);
+  const endSec = Math.floor(range.endMs / 1000);
   if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return new Set();
   try {
     const out = execFileSync('sqlite3', [
