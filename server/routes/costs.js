@@ -97,11 +97,25 @@ function hermesProfileDbPath() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || candidates[candidates.length - 1];
 }
 
+// The codex home the usage script must scan. Resolved HERE and pinned into the
+// child env as MC_CODEX_HOME (an explicit configuration signal) so a stray
+// CODEX_HOME inherited from whichever agent launched the server cannot
+// silently redirect the Codex buckets.
+function codexHomePath() {
+  if (process.env.MC_CODEX_HOME) return process.env.MC_CODEX_HOME;
+  // An explicit MC_USER_HOME is authoritative for the codex home even when it
+  // holds no .openclaw tree: hostUserHome() validates its candidates by
+  // .openclaw presence, and that check must not veto a codex-only home.
+  if (process.env.MC_USER_HOME) return path.join(process.env.MC_USER_HOME, '.codex');
+  return path.join(hostUserHome(), '.codex');
+}
+
 // Identity of the data sources a detailed scan actually read. Confirmed-empty
 // evidence is only valid under the SAME identity: pointing the server at a
-// different OpenClaw home or Hermes profile invalidates old emptiness.
+// different OpenClaw home, Hermes profile, or Codex home invalidates old
+// emptiness.
 function producerFingerprint() {
-  return [hostUserHome(), hermesProfileDbPath()].join('|');
+  return [hostUserHome(), hermesProfileDbPath(), codexHomePath()].join('|');
 }
 
 /**
@@ -601,7 +615,17 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const { stdout, stderr } = await execPromise(`node ${JSON.stringify(script)} ${args.map((arg) => JSON.stringify(arg)).join(' ')}`, {
         timeout: openclawUsageTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
-        env: { ...process.env, HOME: hostUserHome() },
+        // HOME and MC_CODEX_HOME are pinned: the script must scan the host
+        // user's homes even when the server was launched by an agent whose
+        // environment carries its own HOME/CODEX_HOME. MC_HERMES_DB_PATH hands
+        // the script the authoritative Hermes db location so it can gate the
+        // hermes-owned rollout exclusion on that db actually being available.
+        env: {
+          ...process.env,
+          HOME: hostUserHome(),
+          MC_CODEX_HOME: codexHomePath(),
+          MC_HERMES_DB_PATH: hermesProfileDbPath(),
+        },
       });
       surfaceChildStderr('OpenClaw Usage Summary', stderr);
       const trimmed = String(stdout || '').trim();
@@ -1254,9 +1278,13 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   function isOpenClawDerivedAgent(agent) {
+    // "Derived" means "produced by the openclaw-usage-summary fast scan": the
+    // codex_app/codex_cli buckets ride the same producer, so cache preservation
+    // must keep them together when that producer fails transiently.
     const key = String(agent?.key || '').toLowerCase();
     const source = String(agent?.source || '').toLowerCase();
-    return key === 'openclaw' || key === 'codex_app' || source.startsWith('openclaw.');
+    return key === 'openclaw' || key === 'codex_app' || key === 'codex_cli'
+      || source.startsWith('openclaw.') || source.startsWith('codex.');
   }
 
   function isClaudeCodeAgent(agent) {
@@ -1639,5 +1667,6 @@ module.exports = {
   rangeForPeriod,
   shiftMonthAnchor,
   sumPreviousApiEquivalentUsd,
+  codexHomePath,
   producerFingerprint,
 };

@@ -374,7 +374,7 @@ export default function CostDriversSection({
                 </div>
                 <div className={styles.methodologyBody}>
                   {ledgerActive
-                    ? 'Tracked spend follows billing mode. API equivalent applies public rate cards across OpenClaw, Codex App, Hermes, and Claude Code without treating subscription usage as an invoice.'
+                    ? 'Tracked spend follows billing mode. API equivalent applies public rate cards across OpenClaw, Codex App, Codex CLI, Hermes, and Claude Code without treating subscription usage as an invoice.'
                     : codexbarActive
                       ? 'This view combines local Codex and Claude Code logs through CodexBar. Costs are API-equivalent estimates, not subscription invoices.'
                       : hasAwsData

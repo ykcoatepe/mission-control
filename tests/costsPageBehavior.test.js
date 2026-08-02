@@ -115,11 +115,12 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs.') &&
-  source.includes('Direct OpenClaw native sessions only. Nested app-launched Codex runs are counted in Codex App Sessions.') &&
-  source.includes('agent/codex-home/sessions runs launched from the Codex app') &&
+  source.includes('OpenClaw covers everything it launched, nested Codex runs included; Codex App Sessions and Codex CLI come from the standalone ~/.codex session logs, split by originator; Claude Code comes from local CodexBar logs.') &&
+  source.includes('Everything OpenClaw launched: native sessions plus its nested agent/codex-home Codex runs.') &&
+  source.includes('originator is the Codex (ChatGPT) desktop app') &&
+  source.includes('codex exec / CLI spawns (Claude Code and Hermes delegations, scripts) that run outside OpenClaw') &&
   source.includes('Claude Code usage from local logs via CodexBar. Cost is an API-equivalent estimate, not a subscription invoice.'),
-  'Agent Split should explain direct OpenClaw, nested Codex App, and local Claude Code usage',
+  'Agent Split should explain OpenClaw-launched, Codex desktop app, Codex CLI, and local Claude Code usage',
 );
 
 assert.ok(

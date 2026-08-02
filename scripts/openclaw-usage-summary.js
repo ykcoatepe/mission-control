@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 /**
  * openclaw-usage-summary.js
- * Fast, bounded OpenClaw token/cost summary for Mission Control.
+ * Fast, bounded OpenClaw + standalone Codex token/cost summary for Mission
+ * Control. Scans ~/.openclaw/agents session JSONL (OpenClaw bucket, nested
+ * codex-home runs included) and ~/.codex/sessions rollouts (Codex App vs
+ * Codex CLI buckets, split by session_meta originator).
  *
  * The official OpenClaw session-cost-usage bundle currently walks every session
  * with loadSessionCostSummary and can hang for minutes on Yordam's session corpus.
@@ -11,22 +14,34 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const readline = require('node:readline');
+const { execFileSync } = require('node:child_process');
 const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
 const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+// Bucket contract (2026-08-02): OpenClaw owns EVERYTHING it launched — native
+// sessions and its nested agent/codex-home Codex runs alike. The Codex buckets
+// come from the standalone Codex home (~/.codex/sessions): "Codex Desktop"
+// originator = the Codex/ChatGPT desktop app, every other originator
+// (codex_exec spawns from Claude Code, Hermes, scripts) = Codex CLI.
 const SESSION_BUCKETS = [
   {
     key: 'openclaw',
     label: 'OpenClaw',
     accent: '#5E5CE6',
-    source: 'openclaw.direct_sessions',
+    source: 'openclaw.sessions',
   },
   {
     key: 'codex_app',
     label: 'Codex App Sessions',
     accent: '#64D2FF',
-    source: 'openclaw.codex_app_sessions',
+    source: 'codex.app_sessions',
+  },
+  {
+    key: 'codex_cli',
+    label: 'Codex CLI',
+    accent: '#FF9500',
+    source: 'codex.cli_sessions',
   },
 ];
 
@@ -186,16 +201,18 @@ function rangeForPeriod(period, monthAnchor = null, now = new Date()) {
   };
 }
 
-function modelName(provider, model, sessionKey = '') {
+function modelName(provider, model, record = {}) {
   const p = String(provider || '').trim();
   const m = String(model || '').trim();
   if (!p && !m) return 'unknown';
   // OpenClaw native Codex session_meta often records provider=openai but omits
   // model. Yordam's default OpenClaw model is GPT-5.5, which is subscription
   // included; leaving this as openai/unknown makes Mission Control show a fake
-  // unknown-cost bucket for most OpenClaw tokens.
+  // unknown-cost bucket for most OpenClaw tokens. Codex rollouts (standalone
+  // home or nested codex-home) record the model per turn, so a model-less
+  // record there stays openai/unknown instead of inheriting that default.
   if (p === 'openai' && (!m || m === 'unknown')) {
-    return sessionBucketForKey(sessionKey).key === 'codex_app'
+    return isCodexRolloutRecord(record)
       ? 'openai/unknown'
       : process.env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
   }
@@ -245,11 +262,53 @@ function isSubscriptionIncludedRecord(record = {}) {
     || record.billingMode === 'subscription_included';
 }
 
-function sessionBucketForKey(sessionKey) {
-  const normalized = String(sessionKey || '').split(path.sep).join('/');
-  return normalized.includes('/agent/codex-home/sessions/')
-    ? SESSION_BUCKETS[1]
-    : SESSION_BUCKETS[0];
+// A "codex rollout" is a session transcript written by the Codex CLI/app —
+// either into the standalone Codex home or into an OpenClaw agent's nested
+// codex-home. The distinction drives model-name fallbacks, not bucketing.
+function isCodexRolloutRecord(record = {}) {
+  if (record.origin === 'codex') return true;
+  const normalized = String(record.sessionKey || '').split(path.sep).join('/');
+  return normalized.includes('/agent/codex-home/sessions/');
+}
+
+function sessionMetaSourceKey(payload = {}) {
+  return typeof payload.source === 'string'
+    ? payload.source
+    : payload.source && typeof payload.source === 'object'
+      ? Object.keys(payload.source)[0]
+      : '';
+}
+
+// Rollout classification needs BOTH originator and source: neither alone is
+// sufficient on the real corpus (2026-08-02 census). Observed originators:
+// "Codex Desktop" / "codex_work_desktop" (desktop installs, but source:"exec"
+// means a codex exec run that merely inherited the desktop originator),
+// "codex_exec" / "codex_cli_rs" / "codex-tui" (CLI/TUI), and "hermes" —
+// Hermes drives Codex over the app-server protocol and records the SAME
+// tokens in its own state.db (verified: session 20260702_192320_d80d9474 =
+// 30.09M tokens vs 20.86M in the matching rollouts), so hermes-owned rollouts
+// are EXCLUDED here and counted once via the Hermes bucket.
+// An unknown originator is NOT silently swallowed: it classifies as CLI and
+// is reported through the unrecognizedOriginators counter (stderr + summary).
+const KNOWN_CLI_ORIGINATORS = new Set(['codex_exec', 'codex_cli_rs', 'codex-tui', 'codex_cli']);
+
+function classifyCodexSession(originator, sourceKey) {
+  const o = String(originator || '').trim().toLowerCase();
+  if (o === 'hermes') return 'hermes_owned';
+  if (o.includes('desktop')) return sourceKey === 'exec' ? 'codex_cli' : 'codex_app';
+  if (KNOWN_CLI_ORIGINATORS.has(o)) return 'codex_cli';
+  return 'unrecognized';
+}
+
+function bucketForRecord(record = {}) {
+  if (record.origin === 'codex') {
+    return record.codexClass === 'codex_app'
+      ? SESSION_BUCKETS[1]
+      : SESSION_BUCKETS[2];
+  }
+  // Everything under ~/.openclaw belongs to OpenClaw — including its nested
+  // agent/codex-home Codex runs, which OpenClaw itself launched.
+  return SESSION_BUCKETS[0];
 }
 
 function usageCostTotal(cost) {
@@ -321,7 +380,7 @@ function extractUsageRecord(obj, fallbackTimestampMs, sessionKey, context = {}) 
   };
 }
 
-function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
+function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0, origin = 'openclaw', keyPrefix = '') {
   if (depth > 10) return;
   let entries = [];
   try {
@@ -333,7 +392,7 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
   for (const entry of entries) {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (!entry.name.startsWith('.')) listJsonlFiles(fullPath, agentId, agentsBase, startMs, files, depth + 1);
+      if (!entry.name.startsWith('.')) listJsonlFiles(fullPath, agentId, agentsBase, startMs, files, depth + 1, origin, keyPrefix);
       continue;
     }
     if (!entry.isFile() || !entry.name.endsWith('.jsonl') || entry.name.endsWith('.trajectory.jsonl')) continue;
@@ -353,7 +412,8 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0) {
           path: fullPath,
           mtimeMs: stat.mtimeMs,
           birthtimeMs,
-          sessionKey: path.relative(agentsBase, fullPath),
+          origin,
+          sessionKey: keyPrefix + path.relative(agentsBase, fullPath),
         });
       }
     } catch {}
@@ -381,6 +441,133 @@ function findSessionDirs(root, out = [], depth = 0) {
   return out;
 }
 
+function codexSessionsRoot() {
+  const codexHome = process.env.MC_CODEX_HOME
+    || process.env.CODEX_HOME
+    || path.join(process.env.HOME || '/home/ubuntu', '.codex');
+  return path.join(codexHome, 'sessions');
+}
+
+// The router passes the authoritative path via MC_HERMES_DB_PATH (see
+// server/routes/costs.js hermesProfileDbPath — the single source for the
+// discovery rules). The HOME-scoped default below only covers standalone CLI
+// runs of this script and deliberately has no absolute-path fallbacks.
+function hermesDbPath() {
+  if (process.env.MC_HERMES_DB_PATH) return process.env.MC_HERMES_DB_PATH;
+  const profile = process.env.HERMES_PROFILE || 'hmudur';
+  return path.join(process.env.HOME || '/home/ubuntu', '.hermes', 'profiles', profile, 'state.db');
+}
+
+// Billing evidence for the standalone Codex home comes from its auth.json —
+// the same file the codex CLI/app authenticate with. An API key present means
+// metered usage, so no subscription claim may be made; ChatGPT auth mode (or a
+// stored token set) is positive subscription evidence. Anything else, including
+// a missing or unparseable file, stays honestly unknown.
+function codexBillingModeDefault() {
+  const codexHome = path.dirname(codexSessionsRoot());
+  let auth;
+  try {
+    auth = JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8'));
+  } catch {
+    return '';
+  }
+  if (!auth || typeof auth !== 'object') return '';
+  if (auth.OPENAI_API_KEY !== null && auth.OPENAI_API_KEY !== undefined && auth.OPENAI_API_KEY !== '') return '';
+  if (auth.auth_mode === 'chatgpt') return 'subscription_included';
+  if (auth.tokens && typeof auth.tokens === 'object' && Object.keys(auth.tokens).length > 0) return 'subscription_included';
+  return '';
+}
+
+// Schema compatibility, not just row coverage: a sessions table can hold
+// started_at and still be unusable to the consumer if a column it aggregates
+// was dropped or never migrated — the server query then FAILS and the Hermes
+// bucket is empty, so a started_at-only probe would authorize erasing tokens
+// that exist nowhere else. This guard REFERENCES every non-started_at column
+// hermesUsageSummary selects, so a missing one makes sqlite error out and the
+// probe returns an empty set (⇒ retain). It is tautological — every term is
+// COALESCE/LENGTH-wrapped, so the sum is never NULL and the returned rows are
+// identical to the unguarded query.
+//
+// MUST STAY IN SYNC with hermesUsageSummary's SELECT (server/routes/costs.js
+// 884-902). Columns covered: started_at (WHERE/SELECT above), billing_provider,
+// model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+// reasoning_tokens, actual_cost_usd, estimated_cost_usd, cost_status,
+// billing_mode. A column the consumer adds LATER is not covered until it is
+// mirrored here.
+const HERMES_CONSUMED_COLUMNS_GUARD = `(
+  COALESCE(input_tokens, 0)
+  + COALESCE(output_tokens, 0)
+  + COALESCE(cache_read_tokens, 0)
+  + COALESCE(cache_write_tokens, 0)
+  + COALESCE(reasoning_tokens, 0)
+  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
+  + LENGTH(COALESCE(billing_provider, '') || COALESCE(model, '') || COALESCE(cost_status, '') || COALESCE(billing_mode, ''))
+) IS NOT NULL`.replace(/\s+/g, ' ');
+
+// A row only counts as coverage if it actually BEARS usage. A session row can
+// exist with every token/cost column zero or null — just started, or failed
+// before recording anything — and buildHermesUsageRows then contributes zero
+// replacement tokens for that day. Excluding against such a row would erase the
+// rollout's tokens from every bucket. Overlaps the numeric half of the guard
+// above by design; the guard still carries the string columns.
+const HERMES_USAGE_BEARING = `(
+  COALESCE(input_tokens, 0)
+  + COALESCE(output_tokens, 0)
+  + COALESCE(cache_read_tokens, 0)
+  + COALESCE(cache_write_tokens, 0)
+  + COALESCE(reasoning_tokens, 0)
+  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
+) > 0`.replace(/\s+/g, ' ');
+
+// Which DAYS the Hermes bucket actually represents. Deliberately mirrors the
+// consumer (server/routes/costs.js hermesUsageSummary): same sessions table,
+// same row window (started_at >= previousStart, <= end — which is exactly the
+// range scanUsageRecords receives, so no slack is needed or wanted), same
+// date(started_at,'unixepoch','localtime') day expression. dayKey() is also
+// machine-local, so the two agree.
+//
+// Existence, queryability, and any-row-in-window are all too weak: a corrupt
+// file, a missing sessions table, a missing sqlite3 binary, an empty table, and
+// a table whose rows sit on OTHER days are equally cases where the Hermes
+// bucket represents nothing for the day of the record being excluded.
+//
+// Residual (known, accepted): Hermes attributes a whole session's totals to its
+// START day, so a rollout record on day D belonging to a session started on day
+// C≠D is retained here while its tokens also sit in the Hermes bucket under C.
+// Retention stays the safe direction — double-count is visible in the totals,
+// erasure is not.
+function hermesCoveredDays(range) {
+  // Both bounds FLOOR, exactly like the consumer's previousStartSec/endSec
+  // (costs.js rangeForPeriod). Rounding the end up would open a sub-second
+  // window in which a row marks a day covered that the consumer's query skips.
+  const startSec = Math.floor(range.startMs / 1000);
+  const endSec = Math.floor(range.endMs / 1000);
+  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return new Set();
+  try {
+    const out = execFileSync('sqlite3', [
+      // READ-ONLY, always: plain `sqlite3 <path> <sql>` CREATES the file when it
+      // is missing, which would plant a phantom state.db in the Hermes profile
+      // and make every later existence check believe Hermes is configured. This
+      // probe must never mutate the Hermes profile. Verified on sqlite3 3.51.0:
+      // `-readonly` on a missing file errors ("unable to open database file")
+      // and creates nothing.
+      '-readonly',
+      hermesDbPath(),
+      `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions`
+      + ` WHERE started_at >= ${startSec} AND started_at <= ${endSec}`
+      + ` AND ${HERMES_CONSUMED_COLUMNS_GUARD}`
+      + ` AND ${HERMES_USAGE_BEARING}`,
+    ], {
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    // No matching row exits 0 with empty stdout — silence is NOT coverage.
+    return new Set(String(out).split('\n').map((line) => line.trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}
+
 function listSessionFiles(startMs) {
   const agentsBase = path.join(process.env.HOME || '/home/ubuntu', '.openclaw', 'agents');
   const files = [];
@@ -390,7 +577,7 @@ function listSessionFiles(startMs) {
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name);
   } catch {
-    return files;
+    agents = [];
   }
 
   for (const agentId of agents) {
@@ -399,6 +586,13 @@ function listSessionFiles(startMs) {
       listJsonlFiles(sessionsDir, agentId, agentsBase, startMs, files);
     }
   }
+
+  // Standalone Codex home rollouts: the Codex/ChatGPT desktop app and every
+  // codex CLI spawn that runs outside OpenClaw write here. The key prefix keeps
+  // these session keys from colliding with OpenClaw-relative paths.
+  const codexRoot = codexSessionsRoot();
+  listJsonlFiles(codexRoot, 'codex', codexRoot, startMs, files, 0, 'codex', 'codex-sessions/');
+
   return files;
 }
 
@@ -442,11 +636,38 @@ async function scanUsageRecords(range) {
   const records = [];
   const maxFiles = Number(process.env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
   const scanFiles = prioritizeScanFiles(files, range, maxFiles);
+  // Exclusions and unknowns must stay visible: zero-output-with-green-signals
+  // is the failure mode this dashboard exists to prevent.
+  const hermesOwned = { files: new Set(), tokens: 0 };
+  const hermesRetained = { files: new Set(), tokens: 0 };
+  const unrecognizedOriginators = new Map();
+  // hermes-owned rollouts duplicate Hermes state.db tokens — but only on the
+  // DAYS that db actually represents. A record whose day the Hermes bucket does
+  // not cover would be erased from EVERY bucket if dropped here, so exclusion
+  // is decided per record against this set. Queried once per scan, not per file.
+  const hermesCoveredDaySet = hermesCoveredDays(range);
+  // Standalone Codex home rollouts never persist a cost figure, so their
+  // billing label has to come from configuration evidence. Probed once per
+  // scan, not per file.
+  // KALİBRASYON NOTU: varsayılan artık varsayım değil, auth.json kanıtı —
+  // OPENAI_API_KEY varsa metered (boş), chatgpt auth_mode / token seti varsa
+  // subscription_included, kanıt yoksa boş (dürüst bilinmiyor). Kalan sınır:
+  // auth.json ev-seviyesinde ve ŞU ANKİ durumu anlatır; oturum başına ya da
+  // geçmişteki auth değişimlerini ayırt edemez. Gözden geçirme koşulu:
+  // rollout'lar cost>0 yazmaya başlarsa bu varsayılan tamamen kalkar.
+  const codexBillingDefault = codexBillingModeDefault();
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    const context = { provider: '', model: '', billingMode: '' };
+    const context = {
+      provider: '',
+      model: '',
+      billingMode: file.origin === 'codex' ? codexBillingDefault : '',
+      originator: '',
+      // No session_meta at all ⇒ stays unrecognized ⇒ CLI bucket + counter.
+      codexClass: file.origin === 'codex' ? 'unrecognized' : '',
+    };
     for await (const line of rl) {
       if (!line || line.charCodeAt(0) !== 123) continue;
       let obj;
@@ -458,6 +679,10 @@ async function scanUsageRecords(range) {
       if (obj.type === 'session_meta' && obj.payload && typeof obj.payload === 'object') {
         applyModelContext(context, obj.payload);
         context.billingMode = sessionMetaBillingMode(obj.payload) || context.billingMode;
+        if (obj.payload.originator) context.originator = String(obj.payload.originator);
+        if (file.origin === 'codex') {
+          context.codexClass = classifyCodexSession(context.originator, sessionMetaSourceKey(obj.payload));
+        }
       }
       if (obj.type === 'event_msg' && obj.payload?.type === 'thread_settings_applied') {
         const settings = obj.payload.thread_settings;
@@ -470,6 +695,26 @@ async function scanUsageRecords(range) {
       }
       const record = extractUsageRecord(obj, file.mtimeMs, file.sessionKey, context);
       if (!record || record.timestampMs < range.startMs || record.timestampMs > range.endMs) continue;
+      record.origin = file.origin || 'openclaw';
+      record.originator = context.originator;
+      record.codexClass = context.codexClass;
+      if (file.origin === 'codex') {
+        if (context.codexClass === 'hermes_owned') {
+          if (hermesCoveredDaySet.has(record.date)) {
+            // Counted once via the Hermes state.db bucket; excluded here, loudly.
+            hermesOwned.files.add(file.sessionKey);
+            hermesOwned.tokens += record.totalTokens;
+            continue;
+          }
+          // No Hermes coverage for this record's day: retain in Codex CLI, loudly.
+          hermesRetained.files.add(file.sessionKey);
+          hermesRetained.tokens += record.totalTokens;
+        }
+        if (context.codexClass === 'unrecognized') {
+          const name = context.originator || '(no session_meta)';
+          unrecognizedOriginators.set(name, (unrecognizedOriginators.get(name) || 0) + record.totalTokens);
+        }
+      }
       records.push(record);
     }
   }
@@ -481,6 +726,15 @@ async function scanUsageRecords(range) {
     filesScanned: scanFiles.length,
     filesAvailable: files.length,
     scanTruncated: scanFiles.length < files.length,
+    hermesOwnedCodexSkipped: {
+      files: hermesOwned.files.size,
+      tokens: hermesOwned.tokens,
+    },
+    hermesOwnedCodexRetained: {
+      files: hermesRetained.files.size,
+      tokens: hermesRetained.tokens,
+    },
+    unrecognizedCodexOriginators: Object.fromEntries(unrecognizedOriginators),
   };
 }
 
@@ -520,7 +774,7 @@ function addRecord(accumulator, record) {
   daily.cacheRead += record.cacheRead;
   daily.cacheWrite += record.cacheWrite;
 
-  const name = modelName(record.provider, record.model, record.sessionKey);
+  const name = modelName(record.provider, record.model, record);
   const model = accumulator.modelTotals.get(name) || createTotalsBucket(name);
   model.cost += record.totalCost;
   model.tokens += record.totalTokens;
@@ -657,7 +911,15 @@ function buildUsageFromAccumulator({
 
 async function buildForPeriod(period, monthAnchor = null) {
   const r = rangeForPeriod(period, monthAnchor);
-  const { records, filesScanned, filesAvailable, scanTruncated } = await scanUsageRecords({
+  const {
+    records,
+    filesScanned,
+    filesAvailable,
+    scanTruncated,
+    hermesOwnedCodexSkipped,
+    hermesOwnedCodexRetained,
+    unrecognizedCodexOriginators,
+  } = await scanUsageRecords({
     startMs: r.previous.startMs,
     endMs: r.endMs,
   });
@@ -665,6 +927,18 @@ async function buildForPeriod(period, monthAnchor = null) {
     // stderr, not stdout: stdout is the JSON contract. Visible in the server log
     // so an understated month is never a silent zero.
     console.error(`[openclaw-usage-summary] scan truncated by MC_OPENCLAW_USAGE_MAX_FILES: ${filesScanned}/${filesAvailable} files${monthAnchor ? ` for anchor ${monthAnchor}` : ''}; totals may be understated`);
+  }
+  if (hermesOwnedCodexSkipped.tokens > 0) {
+    console.error(`[openclaw-usage-summary] excluded ${hermesOwnedCodexSkipped.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexSkipped.tokens} tokens (counted once via the Hermes state.db bucket)`);
+  }
+  if (hermesOwnedCodexRetained.tokens > 0) {
+    console.error(`[openclaw-usage-summary] no Hermes coverage for the record's day — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
+  }
+  const unrecognizedEntries = Object.entries(unrecognizedCodexOriginators || {});
+  if (unrecognizedEntries.length > 0) {
+    // Loud else-branch for the originator enumeration: an unknown originator
+    // still lands in Codex CLI, but never silently.
+    console.error(`[openclaw-usage-summary] unrecognized codex originator(s) bucketed as Codex CLI: ${unrecognizedEntries.map(([name, tokens]) => `${name}=${tokens}`).join(', ')}`);
   }
   const combinedAccumulator = createAccumulator(r.keys);
   const previousCombinedAccumulator = createAccumulator(r.previous.keys);
@@ -674,7 +948,7 @@ async function buildForPeriod(period, monthAnchor = null) {
   for (const record of records) {
     addRecord(combinedAccumulator, record);
     addRecord(previousCombinedAccumulator, record);
-    const bucket = sessionBucketForKey(record.sessionKey);
+    const bucket = bucketForRecord(record);
     addRecord(bucketAccumulators.get(bucket.key), record);
     addRecord(previousBucketAccumulators.get(bucket.key), record);
   }
@@ -700,6 +974,19 @@ async function buildForPeriod(period, monthAnchor = null) {
   });
   combined.summary.previousPeriodApiEquivalentUsd = previousCombined.summary.periodApiEquivalentUsd;
   combined.summary.previousPeriodApiEquivalentReliability = previousCombined.apiEquivalentReliability;
+  // Dual attachment, on purpose — these diagnostics have TWO consumers and one
+  // of them cannot see the other's channel:
+  //   combined.summary — standalone runs of this script (stdout JSON).
+  //   codex_cli agent summary (below) — the API channel. /api/costs feeds this
+  //     output through sourceEntriesFromUsage + mergeUsage, which keeps each
+  //     AGENT's summary verbatim but REBUILDS the top-level summary from
+  //     scratch; anything attached only here is dropped before clients see it.
+  // Exclusions and unknowns must stay visible in both, and codex_cli is where
+  // all three semantically belong: retained and unrecognized records land in
+  // that bucket, and skipped records would have.
+  combined.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
+  combined.summary.hermesOwnedCodexRetained = hermesOwnedCodexRetained;
+  combined.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
 
   combined.agents = SESSION_BUCKETS.map((bucket) => {
     const usage = buildUsageFromAccumulator({
@@ -724,6 +1011,12 @@ async function buildForPeriod(period, monthAnchor = null) {
     });
     usage.summary.previousPeriodApiEquivalentUsd = previousUsage.summary.periodApiEquivalentUsd;
     usage.summary.previousPeriodApiEquivalentReliability = previousUsage.apiEquivalentReliability;
+    if (bucket.key === 'codex_cli') {
+      // The API-visible copy — see the dual-attachment note above.
+      usage.summary.hermesOwnedCodexSkipped = hermesOwnedCodexSkipped;
+      usage.summary.hermesOwnedCodexRetained = hermesOwnedCodexRetained;
+      usage.summary.unrecognizedCodexOriginators = unrecognizedCodexOriginators;
+    }
 
     return {
       key: bucket.key,
@@ -764,5 +1057,6 @@ module.exports = {
   listSessionFiles,
   prioritizeScanFiles,
   rangeForPeriod,
-  sessionBucketForKey,
+  bucketForRecord,
+  classifyCodexSession,
 };

@@ -34,7 +34,7 @@ test('stale source reconstruction preserves API-equivalent token classes', () =>
   const cached = cachedUsageAgent(previous, {
     key: 'openclaw',
     label: 'OpenClaw',
-    source: 'openclaw.direct_sessions',
+    source: 'openclaw.sessions',
     summary: { periodUsd: 0 },
   });
   const row = cached.dailyByModel[0];

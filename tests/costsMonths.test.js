@@ -8,8 +8,38 @@ const path = require('node:path');
 const {
   buildCostsRouter,
   CONFIRMED_EMPTY_TTL_MS,
+  codexHomePath,
   producerFingerprint,
 } = require('../server/routes/costs');
+
+test('codexHomePath honors an explicit MC_USER_HOME that has no .openclaw tree', () => {
+  const userHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-user-home-'));
+  const serverHome = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-server-home-'));
+  fs.mkdirSync(path.join(userHome, '.codex'), { recursive: true });
+  fs.mkdirSync(path.join(serverHome, '.openclaw'), { recursive: true });
+  const previous = {
+    MC_USER_HOME: process.env.MC_USER_HOME,
+    MC_CODEX_HOME: process.env.MC_CODEX_HOME,
+    HOME: process.env.HOME,
+  };
+  process.env.MC_USER_HOME = userHome;
+  delete process.env.MC_CODEX_HOME;
+  process.env.HOME = serverHome;
+  try {
+    assert.equal(
+      codexHomePath(),
+      path.join(userHome, '.codex'),
+      'a codex-only MC_USER_HOME must not be vetoed by hostUserHome() .openclaw validation',
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    fs.rmSync(userHome, { recursive: true, force: true });
+    fs.rmSync(serverHome, { recursive: true, force: true });
+  }
+});
 
 const FIXED_CACHE_NOW = Date.parse('2026-08-15T12:00:00.000Z');
 

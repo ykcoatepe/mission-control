@@ -29,12 +29,16 @@ interface AgentSplitCardProps {
 
 const AGENT_BUCKET_DETAILS: Record<string, { scope: string; title: string }> = {
   openclaw: {
-    scope: 'Direct native sessions',
-    title: 'Direct OpenClaw native sessions only. Nested app-launched Codex runs are counted in Codex App Sessions.',
+    scope: 'OpenClaw-launched sessions',
+    title: 'Everything OpenClaw launched: native sessions plus its nested agent/codex-home Codex runs.',
   },
   codex_app: {
-    scope: 'Nested app-launched runs',
-    title: 'OpenClaw agent/codex-home/sessions runs launched from the Codex app; split out so they no longer inflate OpenClaw.',
+    scope: 'Codex desktop app usage',
+    title: 'Standalone ~/.codex/sessions rollouts whose originator is the Codex (ChatGPT) desktop app, subagent spawns included.',
+  },
+  codex_cli: {
+    scope: 'Standalone codex CLI runs',
+    title: 'Standalone ~/.codex/sessions rollouts from codex exec / CLI spawns (Claude Code and Hermes delegations, scripts) that run outside OpenClaw.',
   },
   hermes: {
     scope: 'Hermes profile usage',
@@ -48,7 +52,8 @@ const AGENT_BUCKET_DETAILS: Record<string, { scope: string; title: string }> = {
 
 const PENDING_AGENT_BUCKETS = [
   { label: 'OpenClaw', accent: '#5E5CE6' },
-  { label: 'Codex App Sessions', accent: '#007AFF' },
+  { label: 'Codex App Sessions', accent: '#64D2FF' },
+  { label: 'Codex CLI', accent: '#FF9500' },
   { label: 'Hermes', accent: '#00C7BE' },
   { label: 'Claude Code', accent: '#D97757' },
 ]
@@ -78,7 +83,7 @@ export default function AgentSplitCard({
             </div>
             {!agentSplitPending && (
               <div className={styles.sourceNote}>
-                OpenClaw is direct native usage; Codex App Sessions are nested app-launched runs; Claude Code comes from local CodexBar logs. API equivalent uses public list prices; billing status stays separate from that estimate.
+                OpenClaw covers everything it launched, nested Codex runs included; Codex App Sessions and Codex CLI come from the standalone ~/.codex session logs, split by originator; Claude Code comes from local CodexBar logs. API equivalent uses public list prices; billing status stays separate from that estimate.
               </div>
             )}
           </div>
@@ -114,7 +119,7 @@ export default function AgentSplitCard({
 
             <div
               className={styles.pendingGrid}
-              style={{ gridTemplateColumns: m ? '1fr' : `repeat(${PENDING_AGENT_BUCKETS.length}, minmax(0, 1fr))` }}
+              style={{ gridTemplateColumns: m ? '1fr' : 'repeat(2, minmax(0, 1fr))' }}
             >
               {PENDING_AGENT_BUCKETS.map(({ label, accent }) => (
                 <div

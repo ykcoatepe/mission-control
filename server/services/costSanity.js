@@ -69,7 +69,7 @@ function costSummaryFromDaily(daily = [], fallbackCost = 0, anchorMonthPrefix = 
 }
 
 function modelKey(name) {
-  return String(name || '').replace(/^(OpenClaw|Codex App Sessions|Hermes|Claude Code) \/ /, '').toLowerCase();
+  return String(name || '').replace(/^(OpenClaw|Codex App Sessions|Codex CLI|Hermes|Claude Code) \/ /, '').toLowerCase();
 }
 
 function isLocalModel(name) {
