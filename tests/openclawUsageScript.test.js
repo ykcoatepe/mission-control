@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -92,6 +93,23 @@ function writeTurnContextLine(file, model, modelProvider = undefined) {
     type: 'turn_context',
     payload: { model, model_provider: modelProvider },
   })}\n`);
+}
+
+// The exclusion gate probes the db the way the router does (sqlite3 CLI over
+// the sessions table), so the fixture has to be a REAL queryable db — an empty
+// placeholder file is exactly the unqueryable case the gate must reject.
+function writeQueryableHermesDb(home, profile = 'hmudur') {
+  const dir = path.join(home, '.hermes', 'profiles', profile);
+  fs.mkdirSync(dir, { recursive: true });
+  const dbPath = path.join(dir, 'state.db');
+  execFileSync('sqlite3', [dbPath, 'CREATE TABLE sessions (id TEXT)']);
+  return dbPath;
+}
+
+function writeCodexAuth(home, auth) {
+  const codexHome = path.join(home, '.codex');
+  fs.mkdirSync(codexHome, { recursive: true });
+  fs.writeFileSync(path.join(codexHome, 'auth.json'), JSON.stringify(auth));
 }
 
 function writeThreadSettingsLine(file, model, modelProvider = undefined) {
@@ -395,6 +413,8 @@ async function runBehaviorTests() {
       String(today.getDate()).padStart(2, '0'),
     );
     fs.mkdirSync(codexDay, { recursive: true });
+    // Subscription evidence: ChatGPT auth mode with no API key on this home.
+    writeCodexAuth(home, { auth_mode: 'chatgpt', OPENAI_API_KEY: null, tokens: { access_token: 'x' } });
     const timestamp = today.toISOString();
 
     const desktopFile = path.join(codexDay, 'rollout-desktop.jsonl');
@@ -499,10 +519,9 @@ async function runBehaviorTests() {
     writeTurnContextLine(desktopExecFile, 'gpt-5.6-sol', 'openai');
     writeTokenCountLine(desktopExecFile, timestamp, 13);
 
-    // Hermes-owned AND the Hermes state.db is present: the same tokens live in
-    // that db — excluded, loudly.
-    fs.mkdirSync(path.join(home, '.hermes', 'profiles', 'hmudur'), { recursive: true });
-    fs.writeFileSync(path.join(home, '.hermes', 'profiles', 'hmudur', 'state.db'), '');
+    // Hermes-owned AND the Hermes state.db is QUERYABLE: the same tokens live
+    // in that db — excluded, loudly.
+    writeQueryableHermesDb(home);
     const hermesFile = path.join(codexDay, 'rollout-hermes.jsonl');
     fs.appendFileSync(hermesFile, `${JSON.stringify({
       type: 'session_meta',
@@ -578,6 +597,117 @@ async function runBehaviorTests() {
       summary.summary.hermesOwnedCodexRetained,
       { files: 1, tokens: 23 },
       'the retained-fallback path must be reported, not silent',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // state.db EXISTS but is not a database: the router's hermesUsageSummary
+    // cannot produce these tokens either, so existence alone must not authorize
+    // dropping them — otherwise they vanish from every bucket.
+    fs.mkdirSync(path.join(home, '.hermes', 'profiles', 'hmudur'), { recursive: true });
+    fs.writeFileSync(path.join(home, '.hermes', 'profiles', 'hmudur', 'state.db'), 'not a database');
+
+    const hermesFile = path.join(codexDay, 'rollout-hermes-corrupt-db.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 41);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(
+      codexCliAgent.summary.periodTokens,
+      41,
+      'an unqueryable Hermes state.db must retain hermes-owned rollouts in Codex CLI',
+    );
+    assert.equal(summary.summary.periodTokens, 41, 'retained tokens from an unqueryable db must reach the combined total');
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 0, tokens: 0 },
+      'a present-but-unqueryable db must not authorize exclusion',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 41 },
+      'the retained-fallback must be reported when the db exists but cannot be queried',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    // API-key auth on this codex home: metered billing evidence, so zero-cost
+    // usage may NOT be claimed as subscription-included.
+    writeCodexAuth(home, { OPENAI_API_KEY: 'sk-test', tokens: {} });
+    const timestamp = today.toISOString();
+
+    const execFile = path.join(codexDay, 'rollout-apikey.jsonl');
+    fs.appendFileSync(execFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'codex_exec', source: 'exec', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(execFile, 'gpt-5.6-terra', 'openai');
+    writeTokenCountLine(execFile, timestamp, 43);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.deepEqual(
+      codexCliAgent.byService.map((service) => [service.name, service.tokens, service.costSource]),
+      [['openai/gpt-5.6-terra', 43, 'unknown']],
+      'API-key authenticated codex homes must not display zero-cost usage as subscription-included',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    // No auth.json at all: no billing evidence either way — honest unknown.
+    const timestamp = today.toISOString();
+
+    const execFile = path.join(codexDay, 'rollout-noauth.jsonl');
+    fs.appendFileSync(execFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'codex_exec', source: 'exec', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(execFile, 'gpt-5.6-terra', 'openai');
+    writeTokenCountLine(execFile, timestamp, 47);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.deepEqual(
+      codexCliAgent.byService.map((service) => [service.name, service.tokens, service.costSource]),
+      [['openai/gpt-5.6-terra', 47, 'unknown']],
+      'without auth.json evidence, codex usage must stay unknown rather than claim subscription billing',
     );
   });
 }

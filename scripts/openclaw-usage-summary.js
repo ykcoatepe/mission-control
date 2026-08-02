@@ -14,6 +14,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const readline = require('node:readline');
+const { execFileSync } = require('node:child_process');
 const costSanity = require('../server/services/costSanity');
 
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
@@ -457,6 +458,43 @@ function hermesDbPath() {
   return path.join(process.env.HOME || '/home/ubuntu', '.hermes', 'profiles', profile, 'state.db');
 }
 
+// Billing evidence for the standalone Codex home comes from its auth.json —
+// the same file the codex CLI/app authenticate with. An API key present means
+// metered usage, so no subscription claim may be made; ChatGPT auth mode (or a
+// stored token set) is positive subscription evidence. Anything else, including
+// a missing or unparseable file, stays honestly unknown.
+function codexBillingModeDefault() {
+  const codexHome = path.dirname(codexSessionsRoot());
+  let auth;
+  try {
+    auth = JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8'));
+  } catch {
+    return '';
+  }
+  if (!auth || typeof auth !== 'object') return '';
+  if (auth.OPENAI_API_KEY !== null && auth.OPENAI_API_KEY !== undefined && auth.OPENAI_API_KEY !== '') return '';
+  if (auth.auth_mode === 'chatgpt') return 'subscription_included';
+  if (auth.tokens && typeof auth.tokens === 'object' && Object.keys(auth.tokens).length > 0) return 'subscription_included';
+  return '';
+}
+
+// Existence is NOT the producer capability: the router's hermesUsageSummary
+// queries this db through the sqlite3 CLI, so a present-but-corrupt file, a db
+// without the sessions table, or a missing sqlite3 binary all mean the Hermes
+// bucket produces nothing. Probing the same way the producer does keeps the
+// exclusion decision tied to whether the tokens really are counted elsewhere.
+function hermesDbQueryable() {
+  try {
+    execFileSync('sqlite3', [hermesDbPath(), 'SELECT 1 FROM sessions LIMIT 1'], {
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function listSessionFiles(startMs) {
   const agentsBase = path.join(process.env.HOME || '/home/ubuntu', '.openclaw', 'agents');
   const files = [];
@@ -531,25 +569,29 @@ async function scanUsageRecords(range) {
   const hermesRetained = { files: new Set(), tokens: 0 };
   const unrecognizedOriginators = new Map();
   // hermes-owned rollouts duplicate Hermes state.db tokens — but only when
-  // that db actually exists. Dropping them with no db present would erase the
-  // tokens from EVERY bucket, so exclusion is gated on availability.
-  const hermesDbAvailable = fs.existsSync(hermesDbPath());
+  // that db can actually be QUERIED. A file that exists but cannot answer the
+  // producer's query (corrupt, no sessions table, no sqlite3 binary) yields no
+  // Hermes-bucket tokens, so dropping the rollouts would erase them from EVERY
+  // bucket. Probed once per scan, not per file.
+  const hermesDbQueryableNow = hermesDbQueryable();
+  // Standalone Codex home rollouts never persist a cost figure, so their
+  // billing label has to come from configuration evidence. Probed once per
+  // scan, not per file.
+  // KALİBRASYON NOTU: varsayılan artık varsayım değil, auth.json kanıtı —
+  // OPENAI_API_KEY varsa metered (boş), chatgpt auth_mode / token seti varsa
+  // subscription_included, kanıt yoksa boş (dürüst bilinmiyor). Kalan sınır:
+  // auth.json ev-seviyesinde ve ŞU ANKİ durumu anlatır; oturum başına ya da
+  // geçmişteki auth değişimlerini ayırt edemez. Gözden geçirme koşulu:
+  // rollout'lar cost>0 yazmaya başlarsa bu varsayılan tamamen kalkar.
+  const codexBillingDefault = codexBillingModeDefault();
 
   for (const file of scanFiles) {
     const stream = fs.createReadStream(file.path, { encoding: 'utf8' });
     const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
-    // Standalone Codex home rollouts run under the ChatGPT subscription and
-    // never persist a cost figure; without this default they would surface as
-    // unknown metered spend instead of subscription-included usage.
-    // KALİBRASYON NOTU: bu bir varsayımdır, transcript'ten kanıtı yoktur —
-    // session_meta hiçbir auth/fatura alanı taşımıyor (2026-08-02 censusu).
-    // Dayanak: bu makinedeki tüm yerel codex kullanımı ChatGPT-auth ve rollout
-    // hiçbir zaman cost kaydetmiyor. Gözden geçirme koşulu: rollout'lar cost>0
-    // yazmaya başlarsa ya da API-key auth kullanılırsa bu varsayılan kalkar.
     const context = {
       provider: '',
       model: '',
-      billingMode: file.origin === 'codex' ? 'subscription_included' : '',
+      billingMode: file.origin === 'codex' ? codexBillingDefault : '',
       originator: '',
       // No session_meta at all ⇒ stays unrecognized ⇒ CLI bucket + counter.
       codexClass: file.origin === 'codex' ? 'unrecognized' : '',
@@ -586,13 +628,13 @@ async function scanUsageRecords(range) {
       record.codexClass = context.codexClass;
       if (file.origin === 'codex') {
         if (context.codexClass === 'hermes_owned') {
-          if (hermesDbAvailable) {
+          if (hermesDbQueryableNow) {
             // Counted once via the Hermes state.db bucket; excluded here, loudly.
             hermesOwned.files.add(file.sessionKey);
             hermesOwned.tokens += record.totalTokens;
             continue;
           }
-          // No Hermes db to count them: retain in Codex CLI instead, loudly.
+          // No queryable Hermes db to count them: retain in Codex CLI, loudly.
           hermesRetained.files.add(file.sessionKey);
           hermesRetained.tokens += record.totalTokens;
         }
@@ -818,7 +860,7 @@ async function buildForPeriod(period, monthAnchor = null) {
     console.error(`[openclaw-usage-summary] excluded ${hermesOwnedCodexSkipped.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexSkipped.tokens} tokens (counted once via the Hermes state.db bucket)`);
   }
   if (hermesOwnedCodexRetained.tokens > 0) {
-    console.error(`[openclaw-usage-summary] Hermes state.db unavailable — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
+    console.error(`[openclaw-usage-summary] Hermes state.db not queryable — retained ${hermesOwnedCodexRetained.files} hermes-owned codex rollout file(s) / ${hermesOwnedCodexRetained.tokens} tokens in the Codex CLI bucket to avoid dropping them from every bucket`);
   }
   const unrecognizedEntries = Object.entries(unrecognizedCodexOriginators || {});
   if (unrecognizedEntries.length > 0) {
