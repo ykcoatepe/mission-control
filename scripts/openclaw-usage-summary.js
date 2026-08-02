@@ -504,6 +504,21 @@ const HERMES_CONSUMED_COLUMNS_GUARD = `(
   + LENGTH(COALESCE(billing_provider, '') || COALESCE(model, '') || COALESCE(cost_status, '') || COALESCE(billing_mode, ''))
 ) IS NOT NULL`.replace(/\s+/g, ' ');
 
+// A row only counts as coverage if it actually BEARS usage. A session row can
+// exist with every token/cost column zero or null — just started, or failed
+// before recording anything — and buildHermesUsageRows then contributes zero
+// replacement tokens for that day. Excluding against such a row would erase the
+// rollout's tokens from every bucket. Overlaps the numeric half of the guard
+// above by design; the guard still carries the string columns.
+const HERMES_USAGE_BEARING = `(
+  COALESCE(input_tokens, 0)
+  + COALESCE(output_tokens, 0)
+  + COALESCE(cache_read_tokens, 0)
+  + COALESCE(cache_write_tokens, 0)
+  + COALESCE(reasoning_tokens, 0)
+  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
+) > 0`.replace(/\s+/g, ' ');
+
 // Which DAYS the Hermes bucket actually represents. Deliberately mirrors the
 // consumer (server/routes/costs.js hermesUsageSummary): same sessions table,
 // same row window (started_at >= previousStart, <= end — which is exactly the
@@ -527,10 +542,18 @@ function hermesCoveredDays(range) {
   if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return new Set();
   try {
     const out = execFileSync('sqlite3', [
+      // READ-ONLY, always: plain `sqlite3 <path> <sql>` CREATES the file when it
+      // is missing, which would plant a phantom state.db in the Hermes profile
+      // and make every later existence check believe Hermes is configured. This
+      // probe must never mutate the Hermes profile. Verified on sqlite3 3.51.0:
+      // `-readonly` on a missing file errors ("unable to open database file")
+      // and creates nothing.
+      '-readonly',
       hermesDbPath(),
       `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions`
       + ` WHERE started_at >= ${startSec} AND started_at <= ${endSec}`
-      + ` AND ${HERMES_CONSUMED_COLUMNS_GUARD}`,
+      + ` AND ${HERMES_CONSUMED_COLUMNS_GUARD}`
+      + ` AND ${HERMES_USAGE_BEARING}`,
     ], {
       timeout: 3000,
       stdio: ['ignore', 'pipe', 'pipe'],

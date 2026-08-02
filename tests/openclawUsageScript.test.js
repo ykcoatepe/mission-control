@@ -217,26 +217,44 @@ const HERMES_SESSIONS_COLUMNS = `
   billing_mode TEXT
 `;
 
-function writeHermesDbWithColumns(home, columns, startedAtSecs, profile) {
+// Rows carry real usage by default: a session row with no tokens contributes
+// nothing to the Hermes bucket, so it must not read as coverage.
+const USAGE_BEARING_ROW = { input_tokens: 100, output_tokens: 50 };
+const ZERO_USAGE_ROW = {
+  input_tokens: 0,
+  output_tokens: 0,
+  cache_read_tokens: 0,
+  cache_write_tokens: 0,
+  reasoning_tokens: 0,
+  actual_cost_usd: 0,
+  estimated_cost_usd: 0,
+};
+
+function writeHermesDbWithColumns(home, columns, startedAtSecs, profile, usage) {
   const dir = path.join(home, '.hermes', 'profiles', profile);
   fs.mkdirSync(dir, { recursive: true });
   const dbPath = path.join(dir, 'state.db');
+  const usageColumns = Object.keys(usage);
+  const columnList = ['id', 'started_at', ...usageColumns].join(', ');
   const rows = startedAtSecs
-    .map((sec, index) => `; INSERT INTO sessions (id, started_at) VALUES ('s${index + 1}', ${sec})`)
+    .map((sec, index) => {
+      const values = [`'s${index + 1}'`, sec, ...usageColumns.map((name) => usage[name])].join(', ');
+      return `; INSERT INTO sessions (${columnList}) VALUES (${values})`;
+    })
     .join('');
   execFileSync('sqlite3', [dbPath, `CREATE TABLE sessions (${columns})${rows}`]);
   return dbPath;
 }
 
-function writeHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
-  return writeHermesDbWithColumns(home, HERMES_SESSIONS_COLUMNS, startedAtSecs, profile);
+function writeHermesDb(home, { startedAtSecs = [], profile = 'hmudur', usage = USAGE_BEARING_ROW } = {}) {
+  return writeHermesDbWithColumns(home, HERMES_SESSIONS_COLUMNS, startedAtSecs, profile, usage);
 }
 
 // Schema drift / partial migration: started_at survives but the columns the
 // consumer aggregates do not. The server query would fail outright, so the
 // probe must fail with it rather than authorize exclusion.
 function writeStartedAtOnlyHermesDb(home, { startedAtSecs = [], profile = 'hmudur' } = {}) {
-  return writeHermesDbWithColumns(home, 'id TEXT, started_at REAL', startedAtSecs, profile);
+  return writeHermesDbWithColumns(home, 'id TEXT, started_at REAL', startedAtSecs, profile, {});
 }
 
 function writeCoveringHermesDb(home) {
@@ -949,6 +967,89 @@ async function runBehaviorTests() {
       summary.summary.hermesOwnedCodexRetained,
       { files: 1, tokens: 71 },
       'the retained-fallback must be reported on Hermes schema drift',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // The profile directory exists but holds no db (fresh profile, or Hermes
+    // never ran). Reading it must not CREATE one: a phantom state.db would make
+    // every later existence check believe Hermes is configured.
+    const profileDir = path.join(home, '.hermes', 'profiles', 'hmudur');
+    fs.mkdirSync(profileDir, { recursive: true });
+    const dbPath = path.join(profileDir, 'state.db');
+
+    const hermesFile = path.join(codexDay, 'rollout-hermes-no-db-file.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 73);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(codexCliAgent.summary.periodTokens, 73, 'a missing db must retain hermes-owned rollouts');
+    assert.equal(
+      fs.existsSync(dbPath),
+      false,
+      'the coverage probe must never create a phantom state.db in the Hermes profile',
+    );
+  });
+
+  await withTempHome(async (home) => {
+    const today = new Date();
+    const codexDay = path.join(
+      home,
+      '.codex',
+      'sessions',
+      String(today.getFullYear()),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    );
+    fs.mkdirSync(codexDay, { recursive: true });
+    const timestamp = today.toISOString();
+
+    // Same-day row, but every token/cost column is zero (session just started,
+    // or failed before recording usage). buildHermesUsageRows contributes no
+    // replacement tokens for it, so it is not coverage.
+    writeHermesDb(home, { startedAtSecs: [Math.floor(Date.now() / 1000)], usage: ZERO_USAGE_ROW });
+
+    const hermesFile = path.join(codexDay, 'rollout-hermes-zero-usage-row.jsonl');
+    fs.appendFileSync(hermesFile, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { originator: 'hermes', source: 'vscode', model_provider: 'openai' },
+    })}\n`);
+    writeTurnContextLine(hermesFile, 'gpt-5.5', 'openai');
+    writeTokenCountLine(hermesFile, timestamp, 79);
+
+    const summary = await buildForPeriod('day');
+    const codexCliAgent = summary.agents.find((agent) => agent.key === 'codex_cli');
+    assert.equal(
+      codexCliAgent.summary.periodTokens,
+      79,
+      'a zero-usage Hermes row must not authorize excluding that day',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexSkipped,
+      { files: 0, tokens: 0 },
+      'a row bearing no usage is not coverage',
+    );
+    assert.deepEqual(
+      summary.summary.hermesOwnedCodexRetained,
+      { files: 1, tokens: 79 },
+      'the retained-fallback must be reported for zero-usage Hermes rows',
     );
   });
 
