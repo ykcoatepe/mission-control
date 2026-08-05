@@ -696,6 +696,102 @@ export function monthPickerGrid(
   })
 }
 
+// ---------------------------------------------------------------------------
+// Day picker (`YYYY-MM-DD`, local calendar)
+// ---------------------------------------------------------------------------
+
+export interface DayUsageEntry {
+  date: string
+  cost: number
+  tokens: number
+}
+
+export interface DayPickerCell {
+  date: string
+  dayOfMonth: number
+  selectable: boolean
+  isToday: boolean
+  /** 0..1 heat relative to the month's busiest day; 0 = no recorded usage. */
+  intensity: number
+  hasUsage: boolean
+  cost: number
+  tokens: number
+}
+
+export interface DayPickerMonth {
+  /** Empty grid slots before day 1 so columns align to Sunday-first weekdays. */
+  leadingBlanks: number
+  cells: DayPickerCell[]
+}
+
+export function dayKeyOf(now: Date) {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+// A day whose only activity is local models has no priced cost; the floor keeps
+// it visible on a cost-driven heat scale instead of rendering as an idle day.
+const LOCAL_ONLY_DAY_INTENSITY = 0.3
+// Any recorded usage stays visibly warm even next to a month-dominating spike.
+const MIN_VISIBLE_INTENSITY = 0.12
+
+export function dayPickerGrid(
+  monthKey: string,
+  usage: DayUsageEntry[] = [],
+  now = new Date(),
+  monthsBack = 24,
+  serverMonth?: string | null,
+): DayPickerMonth {
+  const [year, month] = monthKey.split('-').map(Number)
+  const floor = monthAnchorFloor(now, monthsBack, serverMonth)
+  const current = currentMonthKey(now, serverMonth)
+  const monthInRange = monthKey >= floor && monthKey <= current
+  const today = dayKeyOf(now)
+  const byDate = new Map(usage.map(entry => [entry.date, entry]))
+  const maxCost = usage.reduce((max, entry) => Math.max(max, Number(entry.cost) || 0), 0)
+  const maxTokens = usage.reduce((max, entry) => Math.max(max, Number(entry.tokens) || 0), 0)
+
+  const cells = Array.from({ length: daysInMonthKey(monthKey) }, (_, index) => {
+    const date = `${monthKey}-${String(index + 1).padStart(2, '0')}`
+    const entry = byDate.get(date)
+    const cost = Number(entry?.cost) || 0
+    const tokens = Number(entry?.tokens) || 0
+    const hasUsage = cost > 0 || tokens > 0
+    // Cost drives the scale; a month with only unpriced (local) usage falls back
+    // to tokens so its rhythm still reads instead of flattening to zero heat.
+    const intensity = !hasUsage
+      ? 0
+      : maxCost > 0
+        ? cost > 0 ? Math.max(cost / maxCost, MIN_VISIBLE_INTENSITY) : LOCAL_ONLY_DAY_INTENSITY
+        : Math.max(tokens / maxTokens, MIN_VISIBLE_INTENSITY)
+    // A usage-bearing day is never "future": the server clock can run ahead of
+    // the browser's around midnight, and its rows are the stronger evidence.
+    const selectable = monthInRange && (hasUsage || date <= today)
+    return { date, dayOfMonth: index + 1, selectable, isToday: date === today, intensity, hasUsage, cost, tokens }
+  })
+
+  return { leadingBlanks: new Date(year, month - 1, 1).getDay(), cells }
+}
+
+/**
+ * Which day the daily chart should highlight. A `requested` date (a calendar
+ * day click) wins as soon as its row exists in the loaded pool — it may lag a
+ * render cycle behind while an anchored month is still fetching.
+ */
+export function resolveActiveChartDate(
+  pool: Array<{ fullDate: string }>,
+  current: string | null,
+  requested: string | null = null,
+): { date: string | null; consumedRequest: boolean } {
+  if (!pool.length) return { date: null, consumedRequest: false }
+  if (requested && pool.some(day => day.fullDate === requested)) {
+    return { date: requested, consumedRequest: true }
+  }
+  if (current && pool.some(day => day.fullDate === current)) {
+    return { date: current, consumedRequest: false }
+  }
+  return { date: pool[pool.length - 1]?.fullDate || null, consumedRequest: false }
+}
+
 function codexbarDateKey(date: Date) {
   return date.toLocaleDateString('en-CA', {
     timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',

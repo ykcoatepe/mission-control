@@ -254,9 +254,10 @@ assert.ok(
 );
 
 assert.ok(
-  source.includes('wasPickerOpen') &&
-  source.includes('pickerOpen && !wasPickerOpen.current'),
-  'focus into the dialog fires only on the closed-to-open transition, never on re-renders',
+  source.includes('wasPickerState') &&
+  source.includes('const justOpened = pickerOpen && !previous.open') &&
+  source.includes('if (!justOpened && !viewChanged && !monthBrowsed) return'),
+  'focus into the dialog fires only on open/view-switch/month-page transitions, never on data re-renders',
 );
 
 assert.ok(

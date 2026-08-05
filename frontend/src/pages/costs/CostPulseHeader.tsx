@@ -2,15 +2,18 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type 
 import { ChevronLeft, ChevronRight, DollarSign } from 'lucide-react'
 import GlassCard from '../../components/GlassCard'
 import {
+  dayPickerGrid,
   formatCurrency,
   formatTokens,
   formatCompactTokenValue,
+  monthKeyLabel,
   monthNavigationState,
   monthPickerGrid,
   monthPickerYearBounds,
   nextSelectableIndex,
+  shiftMonthKey,
 } from './lib'
-import type { MonthAvailability, TrackedSpendPresentation } from './lib'
+import type { DayUsageEntry, MonthAvailability, TrackedSpendPresentation } from './lib'
 import type { CodexBarCostData } from './types'
 import styles from './CostPulseHeader.module.css'
 
@@ -24,6 +27,8 @@ interface OverviewPill {
 /** How far back the month navigator will walk from the current month. */
 const MONTH_ANCHOR_HISTORY_MONTHS = 24
 
+const WEEKDAY_LABELS = ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']
+
 interface CostPulseHeaderProps {
   m: boolean
   period: 'day' | '7d' | 'month'
@@ -34,6 +39,10 @@ interface CostPulseHeaderProps {
   serverMonth: string | null
   monthAvailability: MonthAvailability[]
   monthAvailabilityKnown: boolean
+  /** Per-day usage of the month currently in view, feeding the day grid's heat. */
+  dayUsage: DayUsageEntry[]
+  activeChartDate: string | null
+  onSelectDay: (date: string) => void
   viewingPastMonth: boolean
   anchoredMonthLabel: string | null
   activePeriodLabel: string
@@ -65,6 +74,9 @@ export default function CostPulseHeader({
   serverMonth,
   monthAvailability,
   monthAvailabilityKnown,
+  dayUsage,
+  activeChartDate,
+  onSelectDay,
   viewingPastMonth,
   anchoredMonthLabel,
   activePeriodLabel,
@@ -86,11 +98,14 @@ export default function CostPulseHeader({
   trackedValueAvailable,
 }: CostPulseHeaderProps) {
   const [pickerOpen, setPickerOpen] = useState(false)
+  // 'days' is the landing view; 'months' is the zoomed-out month/year grid.
+  const [pickerView, setPickerView] = useState<'days' | 'months'>('days')
   const monthPickerRef = useRef<HTMLDivElement>(null)
   const monthPickerDialogRef = useRef<HTMLDivElement>(null)
   const monthPickerTriggerRef = useRef<HTMLButtonElement>(null)
   const gridButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const wasPickerOpen = useRef(false)
+  const dayButtonRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const wasPickerState = useRef<{ open: boolean; view: 'days' | 'months'; month: string }>({ open: false, view: 'days', month: '' })
   const formatApiEquivalent = (value: number | null) => value === null ? 'N/A' : formatCurrency(value)
   const isPartialApiEquivalent = apiEquivalentReliability === 'partial'
   const isNotApplicableApiEquivalent = apiEquivalentReliability === 'not_applicable'
@@ -98,6 +113,9 @@ export default function CostPulseHeader({
   const trackedCoverageNote = [trackedSpend.valueQualifier, trackedSpend.coverageLabel].filter(Boolean).join(' · ')
   const monthNav = monthNavigationState(monthAnchor, calendarNow, MONTH_ANCHOR_HISTORY_MONTHS, serverMonth)
   const [pickerYear, setPickerYear] = useState(() => Number(monthNav.activeMonth.slice(0, 4)))
+  // The month the DAY grid is browsing — decoupled from the anchored month so
+  // paging through the calendar never launches a month scan by itself.
+  const [pickerMonth, setPickerMonth] = useState(() => monthNav.activeMonth)
   const pickerYearBounds = monthPickerYearBounds(calendarNow, MONTH_ANCHOR_HISTORY_MONTHS, serverMonth)
   const pickerMonths = monthPickerGrid(
     pickerYear,
@@ -107,11 +125,23 @@ export default function CostPulseHeader({
     MONTH_ANCHOR_HISTORY_MONTHS,
     serverMonth,
   )
+  // Heat only exists for the month whose rows are actually loaded; a browsed
+  // month renders neutral cells until it is selected (and thereby fetched).
+  const pickerMonthIsActive = pickerMonth === monthNav.activeMonth
+  const pickerDays = dayPickerGrid(
+    pickerMonth,
+    pickerMonthIsActive ? dayUsage : [],
+    calendarNow,
+    MONTH_ANCHOR_HISTORY_MONTHS,
+    serverMonth,
+  )
   // Stepping onto the current month clears the anchor so the request goes back to the
   // live (unanchored) window — the same cache entry as before this feature existed.
   const goToMonth = (next: string) => setMonthAnchor(next === monthNav.currentMonth ? null : next)
   const openMonthPicker = () => {
     setPickerYear(Number(monthNav.activeMonth.slice(0, 4)))
+    setPickerMonth(monthNav.activeMonth)
+    setPickerView('days')
     if (pickerOpen) {
       setPickerOpen(false)
       monthPickerTriggerRef.current?.focus()
@@ -124,7 +154,14 @@ export default function CostPulseHeader({
     monthPickerTriggerRef.current?.focus()
   }
   const chooseMonth = (month: string) => {
+    // Anchor the month and zoom into its days: the heat fills in as the month's
+    // rows land, and a day click from here drills straight into that day.
     goToMonth(month)
+    setPickerMonth(month)
+    setPickerView('days')
+  }
+  const chooseDay = (date: string) => {
+    onSelectDay(date)
     closeMonthPicker()
   }
   const moveGridFocus = (index: number, delta: number) => {
@@ -147,6 +184,20 @@ export default function CostPulseHeader({
       moveGridFocus(index, 3)
     }
   }
+  const moveDayFocus = (index: number, delta: number) => {
+    const next = nextSelectableIndex(pickerDays.cells, index, delta)
+    if (next !== index) dayButtonRefs.current[next]?.focus()
+  }
+  const onDayGridKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    const steps: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -7, ArrowDown: 7 }
+    const step = steps[event.key]
+    if (step === undefined) return
+    event.preventDefault()
+    moveDayFocus(index, step)
+  }
+  const canBrowsePreviousMonth = pickerMonth > pickerYearBounds.floor
+  const canBrowseNextMonth = pickerMonth < pickerYearBounds.current
+  const browsePickerMonth = (delta: number) => setPickerMonth(shiftMonthKey(pickerMonth, delta))
 
   useEffect(() => {
     if (!pickerOpen) return undefined
@@ -191,15 +242,35 @@ export default function CostPulseHeader({
     }
   }, [pickerOpen, monthAvailability, monthAvailabilityKnown, m])
   useEffect(() => {
-    const justOpened = pickerOpen && !wasPickerOpen.current
-    wasPickerOpen.current = pickerOpen
-    if (!justOpened) return
-    const selectedIndex = pickerMonths.findIndex(item => item.month === monthNav.activeMonth && item.selectable)
-    const firstSelectableIndex = pickerMonths.findIndex(item => item.selectable)
-    const focusIndex = selectedIndex >= 0 ? selectedIndex : firstSelectableIndex
-    // Focus is an open-transition side effect; re-running it on data re-renders steals focus from the year controls mid-navigation.
-    if (focusIndex >= 0) gridButtonRefs.current[focusIndex]?.focus()
-  }, [pickerMonths, pickerOpen, monthNav.activeMonth])
+    const previous = wasPickerState.current
+    const justOpened = pickerOpen && !previous.open
+    const viewChanged = pickerOpen && previous.view !== pickerView
+    const monthBrowsed = pickerOpen && pickerView === 'days' && previous.month !== pickerMonth
+    wasPickerState.current = { open: pickerOpen, view: pickerView, month: pickerMonth }
+    // Focus is a transition side effect (open / view switch / month page); re-running
+    // it on data re-renders steals focus from the header controls mid-navigation.
+    if (!justOpened && !viewChanged && !monthBrowsed) return
+    if (pickerView === 'months') {
+      const selectedIndex = pickerMonths.findIndex(item => item.month === monthNav.activeMonth && item.selectable)
+      const firstSelectableIndex = pickerMonths.findIndex(item => item.selectable)
+      const focusIndex = selectedIndex >= 0 ? selectedIndex : firstSelectableIndex
+      if (focusIndex >= 0) gridButtonRefs.current[focusIndex]?.focus()
+      return
+    }
+    // A month page-turn only needs focus rescued when it left with the old grid.
+    if (monthBrowsed && !justOpened && !viewChanged
+      && monthPickerDialogRef.current?.contains(document.activeElement)) return
+    const cells = pickerDays.cells
+    const selectedIndex = cells.findIndex(cell => cell.date === activeChartDate && cell.selectable)
+    const todayIndex = cells.findIndex(cell => cell.isToday && cell.selectable)
+    let focusIndex = selectedIndex >= 0 ? selectedIndex : todayIndex
+    if (focusIndex < 0) {
+      for (let index = cells.length - 1; index >= 0; index -= 1) {
+        if (cells[index].selectable) { focusIndex = index; break }
+      }
+    }
+    if (focusIndex >= 0) dayButtonRefs.current[focusIndex]?.focus()
+  }, [activeChartDate, pickerDays, pickerMonth, pickerMonths, pickerOpen, pickerView, monthNav.activeMonth])
   const spendPeriodDescription = period === 'month'
     ? viewingPastMonth && anchoredMonthLabel
       ? `${anchoredMonthLabel} tracked spend`
@@ -276,58 +347,144 @@ export default function CostPulseHeader({
                     <div
                       id="costs-month-picker"
                       role="dialog"
-                      aria-label="Choose month"
+                      aria-label={pickerView === 'days' ? 'Choose day' : 'Choose month'}
                       className={styles.monthPicker}
                       ref={monthPickerDialogRef}
                     >
-                      <div className={styles.monthPickerYearRow}>
-                        <button
-                          type="button"
-                          className={styles.monthPickerYearButton}
-                          onClick={() => setPickerYear(year => year - 1)}
-                          disabled={pickerYear <= pickerYearBounds.minimumYear}
-                          aria-label={`Show ${pickerYear - 1}`}
-                        >
-                          <ChevronLeft size={14} />
-                        </button>
-                        <span className={styles.monthPickerYear}>{pickerYear}</span>
-                        <button
-                          type="button"
-                          className={styles.monthPickerYearButton}
-                          onClick={() => setPickerYear(year => year + 1)}
-                          disabled={pickerYear >= pickerYearBounds.maximumYear}
-                          aria-label={`Show ${pickerYear + 1}`}
-                        >
-                          <ChevronRight size={14} />
-                        </button>
-                      </div>
-                      <div className={styles.monthPickerGrid} aria-label={`${pickerYear} months`}>
-                        {pickerMonths.map((item, index) => {
-                          const selected = item.month === monthNav.activeMonth
-                          const className = !item.selectable
-                            ? `${styles.monthPickerMonth} ${styles.monthPickerMonthDisabled}`
-                            : selected
-                              ? `${styles.monthPickerMonth} ${styles.monthPickerMonthSelected}`
-                              : styles.monthPickerMonth
-                          return (
+                      {pickerView === 'days' ? (
+                        <>
+                          <div className={styles.monthPickerYearRow}>
                             <button
-                              key={item.month}
-                              ref={element => { gridButtonRefs.current[index] = element }}
                               type="button"
-                              className={className}
-                              onClick={() => chooseMonth(item.month)}
-                              onKeyDown={event => onMonthGridKeyDown(event, index)}
-                              disabled={!item.selectable}
-                              aria-disabled={!item.selectable}
-                              aria-pressed={selected}
-                              aria-label={`Show ${item.month}`}
-                              title={item.outsideRange ? 'Outside the available history range' : item.unknown ? 'Availability is not fully scanned' : undefined}
+                              className={styles.monthPickerYearButton}
+                              onClick={() => browsePickerMonth(-1)}
+                              disabled={!canBrowsePreviousMonth}
+                              aria-label={`Browse ${shiftMonthKey(pickerMonth, -1)}`}
                             >
-                              {item.label}
+                              <ChevronLeft size={14} />
                             </button>
-                          )
-                        })}
-                      </div>
+                            <button
+                              type="button"
+                              className={styles.dayPickerMonthLabel}
+                              onClick={() => {
+                                setPickerYear(Number(pickerMonth.slice(0, 4)))
+                                setPickerView('months')
+                              }}
+                              aria-label={`Choose a different month (currently ${monthKeyLabel(pickerMonth)})`}
+                            >
+                              {monthKeyLabel(pickerMonth)}
+                            </button>
+                            <button
+                              type="button"
+                              className={styles.monthPickerYearButton}
+                              onClick={() => browsePickerMonth(1)}
+                              disabled={!canBrowseNextMonth}
+                              aria-label={`Browse ${shiftMonthKey(pickerMonth, 1)}`}
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                          <div className={styles.dayPickerWeekHeader} aria-hidden="true">
+                            {WEEKDAY_LABELS.map(label => (
+                              <span key={label} className={styles.dayPickerWeekday}>{label}</span>
+                            ))}
+                          </div>
+                          <div className={styles.dayPickerGrid} aria-label={`${monthKeyLabel(pickerMonth)} days`}>
+                            {Array.from({ length: pickerDays.leadingBlanks }, (_, index) => (
+                              <span key={`blank-${index}`} aria-hidden="true" />
+                            ))}
+                            {pickerDays.cells.map((cell, index) => {
+                              const selected = pickerMonthIsActive && cell.date === activeChartDate
+                              const className = [
+                                styles.dayPickerDay,
+                                !cell.selectable ? styles.dayPickerDayDisabled : '',
+                                selected ? styles.dayPickerDaySelected : '',
+                                cell.isToday ? styles.dayPickerDayToday : '',
+                              ].filter(Boolean).join(' ')
+                              return (
+                                <button
+                                  key={cell.date}
+                                  ref={element => { dayButtonRefs.current[index] = element }}
+                                  type="button"
+                                  className={className}
+                                  style={cell.intensity > 0
+                                    ? { background: `rgba(94,92,230,${(0.12 + cell.intensity * 0.55).toFixed(3)})` }
+                                    : undefined}
+                                  onClick={() => chooseDay(cell.date)}
+                                  onKeyDown={event => onDayGridKeyDown(event, index)}
+                                  disabled={!cell.selectable}
+                                  aria-disabled={!cell.selectable}
+                                  aria-pressed={selected}
+                                  aria-label={`Show ${cell.date} usage`}
+                                  title={cell.hasUsage
+                                    ? `${cell.date} — ${formatCurrency(cell.cost)} · ${formatCompactTokenValue(cell.tokens)} tokens`
+                                    : pickerMonthIsActive ? `${cell.date} — no recorded usage` : cell.date}
+                                >
+                                  {cell.dayOfMonth}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className={styles.dayPickerHint}>
+                            {pickerMonthIsActive
+                              ? dayUsage.length > 0
+                                ? 'Shading follows each day’s usage. Pick a day to inspect it below.'
+                                : 'No per-day usage is loaded for this month yet.'
+                              : `Pick a day to load ${monthKeyLabel(pickerMonth)}.`}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className={styles.monthPickerYearRow}>
+                            <button
+                              type="button"
+                              className={styles.monthPickerYearButton}
+                              onClick={() => setPickerYear(year => year - 1)}
+                              disabled={pickerYear <= pickerYearBounds.minimumYear}
+                              aria-label={`Show ${pickerYear - 1}`}
+                            >
+                              <ChevronLeft size={14} />
+                            </button>
+                            <span className={styles.monthPickerYear}>{pickerYear}</span>
+                            <button
+                              type="button"
+                              className={styles.monthPickerYearButton}
+                              onClick={() => setPickerYear(year => year + 1)}
+                              disabled={pickerYear >= pickerYearBounds.maximumYear}
+                              aria-label={`Show ${pickerYear + 1}`}
+                            >
+                              <ChevronRight size={14} />
+                            </button>
+                          </div>
+                          <div className={styles.monthPickerGrid} aria-label={`${pickerYear} months`}>
+                            {pickerMonths.map((item, index) => {
+                              const selected = item.month === monthNav.activeMonth
+                              const className = !item.selectable
+                                ? `${styles.monthPickerMonth} ${styles.monthPickerMonthDisabled}`
+                                : selected
+                                  ? `${styles.monthPickerMonth} ${styles.monthPickerMonthSelected}`
+                                  : styles.monthPickerMonth
+                              return (
+                                <button
+                                  key={item.month}
+                                  ref={element => { gridButtonRefs.current[index] = element }}
+                                  type="button"
+                                  className={className}
+                                  onClick={() => chooseMonth(item.month)}
+                                  onKeyDown={event => onMonthGridKeyDown(event, index)}
+                                  disabled={!item.selectable}
+                                  aria-disabled={!item.selectable}
+                                  aria-pressed={selected}
+                                  aria-label={`Show ${item.month}`}
+                                  title={item.outsideRange ? 'Outside the available history range' : item.unknown ? 'Availability is not fully scanned' : undefined}
+                                >
+                                  {item.label}
+                                </button>
+                              )
+                            })}
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
                 </div>
