@@ -49,6 +49,10 @@ function writeFakeCodexbar(binDir, modeFile, payloadFile) {
     '  echo "this is not json {"',
     '  exit 0',
     'fi',
+    'if [ "$MODE" = "semantic" ]; then',
+    '  echo "{\\"error\\":\\"scanner failed\\"}"',
+    '  exit 0',
+    'fi',
     `cat ${JSON.stringify(payloadFile)}`,
   ].join('\n');
   const binPath = path.join(binDir, 'codexbar');
@@ -143,6 +147,47 @@ test('an exit-0 scan with garbage output falls back and does NOT poison the last
     const recoveredBody = await recovered.json();
     assert.equal(recoveredBody.stale, undefined, 'a healthy re-scan must serve fresh again');
     assert.equal(recoveredBody.totals.totalCost, 10);
+  });
+});
+
+test('exit-0 SEMANTIC garbage (valid JSON, hollow shape) falls back instead of storing zeros', async () => {
+  await withCodexbarRouter(async ({ base, modeFile }) => {
+    const fresh = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fresh.status, 200);
+
+    // {"error":"scanner failed"} parses fine and merges into a zero-valued
+    // report; without shape validation it would silently replace the last
+    // good scan with zeros.
+    fs.writeFileSync(modeFile, 'semantic');
+    const fallback = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fallback.status, 200);
+    const fallbackBody = await fallback.json();
+    assert.equal(fallbackBody.stale, true, 'a hollow report must be treated as a failed scan');
+    assert.equal(fallbackBody.totals.totalCost, 10, 'the last good totals must survive, not zeros');
+
+    fs.writeFileSync(modeFile, 'ok');
+    const recovered = await fetch(`${base}/api/costs/codexbar`);
+    const recoveredBody = await recovered.json();
+    assert.equal(recoveredBody.stale, undefined);
+    assert.equal(recoveredBody.totals.totalCost, 10);
+  });
+});
+
+test('a stale codexbar scan marks month availability partial while keeping its months', async () => {
+  await withCodexbarRouter(async ({ base, modeFile }) => {
+    const fresh = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fresh.status, 200);
+
+    fs.writeFileSync(modeFile, 'fail');
+    const months = await fetch(`${base}/api/costs/months`);
+    assert.equal(months.status, 200);
+    const body = await months.json();
+    // The stale scan's months are real usage and stay listed…
+    assert.equal(body.sourceStatus.codexbar, 'ready');
+    assert.ok(body.months.some((entry) => entry.sources.includes('codexbar')),
+      'months from the last good scan must remain available');
+    // …but the payload must not claim a fully fresh scan.
+    assert.equal(body.partial, true);
   });
 });
 
