@@ -17,6 +17,16 @@
   gap: 16px;
 }
 
+/* Between the JS mobile breakpoint and a comfortably wide desktop the two
+   columns cannot both fit: minmax(0, …) lets the left track shrink below its
+   content, whose overflow then slides UNDER the right column and swallows its
+   clicks (the month-nav chevrons were unclickable at ~854px). Stack instead. */
+@media (max-width: 1080px) {
+  .outer {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ── Left column ─────────────────────────────────────────────── */
 
 .leftCol {
@@ -245,6 +255,92 @@
 .monthPickerMonthDisabled {
   cursor: not-allowed;
   opacity: 0.38;
+}
+
+/* ── Day picker (calendar view) ──────────────────────────────── */
+
+.dayPickerMonthLabel {
+  min-height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255,255,255,0.94);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 750;
+  font-feature-settings: "tnum";
+}
+
+.dayPickerMonthLabel:hover,
+.dayPickerMonthLabel:focus-visible {
+  background: rgba(255,255,255,0.09);
+  color: rgba(255,255,255,0.98);
+  outline: none;
+}
+
+.dayPickerWeekHeader {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+  margin-bottom: 4px;
+}
+
+.dayPickerWeekday {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: rgba(255,255,255,0.42);
+}
+
+.dayPickerGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.dayPickerDay {
+  min-height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255,255,255,0.84);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 650;
+  font-feature-settings: "tnum";
+  /* Heat tint is set inline; the border carries hover/selection state so the
+     tint stays readable underneath. */
+}
+
+.dayPickerDay:hover:not(:disabled),
+.dayPickerDay:focus-visible {
+  border-color: rgba(10,132,255,0.55);
+  color: rgba(255,255,255,0.98);
+  outline: none;
+}
+
+.dayPickerDayToday {
+  border-color: rgba(10,132,255,0.4);
+}
+
+.dayPickerDaySelected {
+  border-color: rgba(50,215,75,0.55);
+  box-shadow: inset 0 0 0 1px rgba(50,215,75,0.35);
+  color: rgba(223,255,230,0.98);
+}
+
+.dayPickerDayDisabled {
+  cursor: not-allowed;
+  opacity: 0.32;
+}
+
+.dayPickerHint {
+  margin-top: 8px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: rgba(255,255,255,0.45);
+  text-align: center;
 }
 
 /* ── Overview pills grid ─────────────────────────────────────── */
