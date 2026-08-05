@@ -278,6 +278,7 @@ export default function CostPulseHeader({
     : `${activePeriodLabel} spend in view`
   return (
     <GlassCard delay={0} noPad overflowVisible={pickerOpen}>
+      <div className={styles.headerShell}>
       <div className={m ? `${styles.outer} ${styles.outerMobile}` : styles.outer}>
         <div className={styles.leftCol}>
           <div className={styles.titleRow}>
@@ -651,6 +652,7 @@ export default function CostPulseHeader({
             </>
           )}
         </div>
+      </div>
       </div>
     </GlassCard>
   )

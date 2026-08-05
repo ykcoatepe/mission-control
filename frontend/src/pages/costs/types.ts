@@ -118,6 +118,10 @@ export interface CodexBarDailyEntry {
 
 export interface CodexBarCostData {
   source: string
+  /** Server served its last good scan because a fresh re-scan failed. */
+  stale?: boolean
+  staleAgeMs?: number
+  staleReason?: string
   provider: 'codex' | 'claude' | 'both' | string
   updatedAt: string | null
   last30DaysCostUSD: number

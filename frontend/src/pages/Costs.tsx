@@ -571,6 +571,18 @@ export default function Costs() {
     setRequestedChartDate(date)
   }
 
+  // Navigation NOT initiated by a calendar-day click abandons any pending day
+  // request — otherwise a request whose month loaded empty would linger and
+  // hijack the selection on a later visit to that month.
+  const navigateMonthAnchor = (anchor: string | null) => {
+    setRequestedChartDate(null)
+    setMonthAnchor(anchor)
+  }
+  const navigatePeriod = (next: 'day' | '7d' | 'month') => {
+    setRequestedChartDate(null)
+    setPeriod(next)
+  }
+
   const allTokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
     const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string> }>()
 
@@ -1024,9 +1036,13 @@ export default function Costs() {
       accent: ledgerActive ? '#5E5CE6' : codexbarActive ? '#FF9500' : hasAwsData ? '#32D74B' : '#FF9F0A',
     },
     {
-      label: 'CodexBar API Eq.',
+      // A stale payload (server served its last good scan after a failed
+      // re-scan) must not read as fresh: the label and tooltip both say so.
+      label: codexbarCosts?.stale ? 'CodexBar API Eq. (stale)' : 'CodexBar API Eq.',
       value: formatCurrency(codexbarPeriodCost),
-      title: `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
+      title: codexbarCosts?.stale
+        ? `${activePeriodLabel} CodexBar-scanned API-equivalent estimate — served from the last good scan (${Math.round((codexbarCosts.staleAgeMs || 0) / 60000)} min old) because a fresh scan failed`
+        : `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
       accent: codexbarActive ? '#FF9500' : '#8E8E93',
     },
     {
@@ -1053,9 +1069,9 @@ export default function Costs() {
         <CostPulseHeader
           m={m}
           period={period}
-          setPeriod={setPeriod}
+          setPeriod={navigatePeriod}
           monthAnchor={monthAnchor}
-          setMonthAnchor={setMonthAnchor}
+          setMonthAnchor={navigateMonthAnchor}
           calendarNow={calendarNow}
           serverMonth={serverMonth}
           monthAvailability={monthAvailability?.months ?? []}

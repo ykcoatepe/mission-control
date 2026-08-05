@@ -17,10 +17,26 @@
   gap: 16px;
 }
 
-/* Between the JS mobile breakpoint and a comfortably wide desktop the two
-   columns cannot both fit: minmax(0, …) lets the left track shrink below its
-   content, whose overflow then slides UNDER the right column and swallows its
-   clicks (the month-nav chevrons were unclickable at ~854px). Stack instead. */
+/* When the header is too narrow the two columns cannot both fit:
+   minmax(0, …) lets the left track shrink below its content, whose overflow
+   then slides UNDER the right column and swallows its clicks (the month-nav
+   chevrons were unclickable at an ~854px viewport). What matters is the
+   HEADER's own width — the sidebar eats a fixed slice of any viewport — so
+   the primary rule is a container query on the card shell; the media query
+   is only a fallback for engines without container-query support and may
+   over-trigger (extra stacking is harmless, overlap is not). Threshold: the
+   right column bottoms out at 320px + 76px padding/gap, and the left column
+   needs ~400px before its content stops fitting. */
+.headerShell {
+  container-type: inline-size;
+}
+
+@container (max-width: 800px) {
+  .outer {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 1080px) {
   .outer {
     grid-template-columns: 1fr;

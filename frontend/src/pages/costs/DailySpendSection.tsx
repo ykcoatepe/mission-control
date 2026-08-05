@@ -368,6 +368,39 @@ export default function DailySpendSection({
     apiEquivalentReliability === 'no_usage'
   )
 
+  // Selected-day drill-down, rendered under every branch that has per-day rows
+  // — including the all-local ledger and the zero-cost CSS fallback, where the
+  // calendar's local-only heat would otherwise lead to a dead end.
+  const activeDay = chartData.find(day => day.fullDate === activeChartDate) || null
+  const activeDaySegments = activeDay ? buildDaySegments(activeDay, chartSeries) : []
+  const dayDetailPanel = activeDay ? (
+    <div className={styles.desktopDetailBox} data-testid="day-detail-panel">
+      <div className={styles.desktopDetailHeader}>
+        <div>
+          <div className={styles.desktopDetailDate}>{String(activeDay.fullDate)}</div>
+          <div className={styles.desktopDetailHint}>Click a bar or a calendar day to inspect another day.</div>
+        </div>
+        <div className={styles.desktopDetailTotals}>
+          <span className={styles.desktopDetailTotal}>{formatCurrency(Number(activeDay.total || 0))}</span>
+          <span className={styles.desktopDetailTokens}>{formatTokens(Number(activeDay.totalTokens || 0))} tokens</span>
+        </div>
+      </div>
+      {activeDaySegments.length > 0 && (
+        <div className={styles.desktopDetailSegments}>
+          {activeDaySegments.map(segment => (
+            <span key={segment.key} className={styles.desktopDetailSegment}>
+              <span className={styles.desktopDetailDot} style={{ background: segment.color }} />
+              <span className={styles.desktopDetailSegmentName}>{canonicalModelName(segment.label)}</span>
+              <span className={styles.desktopDetailSegmentValue}>
+                {segment.local ? `${formatTokens(segment.tokens)} tok` : formatCurrency(segment.value)}
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  ) : null
+
   useEffect(() => {
     if (useMobileDailyChart || !hasChartBars) {
       return
@@ -435,6 +468,7 @@ export default function DailySpendSection({
           </div>
 
           {apiEquivalentUnavailable ? (
+            <>
             <div
               className={styles.tokenFallbackWrap}
               style={{ height: m ? '180px' : '240px' }}
@@ -454,6 +488,8 @@ export default function DailySpendSection({
                   : 'No public rate card is available for the models used in this period.'}
               </div>
             </div>
+            {dayDetailPanel}
+            </>
           ) : chartData.length > 0 ? (
             useMobileDailyChart ? (
               <MobileDailySpendChartLocal
@@ -518,38 +554,7 @@ export default function DailySpendSection({
                   <div className={styles.chartSizingPlaceholder} aria-hidden="true" />
                 )}
               </div>
-              {(() => {
-                const activeDay = chartData.find(day => day.fullDate === activeChartDate) || null
-                if (!activeDay) return null
-                const segments = buildDaySegments(activeDay, chartSeries)
-                return (
-                  <div className={styles.desktopDetailBox}>
-                    <div className={styles.desktopDetailHeader}>
-                      <div>
-                        <div className={styles.desktopDetailDate}>{String(activeDay.fullDate)}</div>
-                        <div className={styles.desktopDetailHint}>Click a bar or a calendar day to inspect another day.</div>
-                      </div>
-                      <div className={styles.desktopDetailTotals}>
-                        <span className={styles.desktopDetailTotal}>{formatCurrency(Number(activeDay.total || 0))}</span>
-                        <span className={styles.desktopDetailTokens}>{formatTokens(Number(activeDay.totalTokens || 0))} tokens</span>
-                      </div>
-                    </div>
-                    {segments.length > 0 && (
-                      <div className={styles.desktopDetailSegments}>
-                        {segments.map(segment => (
-                          <span key={segment.key} className={styles.desktopDetailSegment}>
-                            <span className={styles.desktopDetailDot} style={{ background: segment.color }} />
-                            <span className={styles.desktopDetailSegmentName}>{canonicalModelName(segment.label)}</span>
-                            <span className={styles.desktopDetailSegmentValue}>
-                              {segment.local ? `${formatTokens(segment.tokens)} tok` : formatCurrency(segment.value)}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })()}
+              {dayDetailPanel}
               </>
             ) : (
               <div className={styles.fallbackWrap}>
@@ -602,6 +607,7 @@ export default function DailySpendSection({
                     })
                   })()}
                 </div>
+                {dayDetailPanel}
               </div>
             )
           ) : hasSessionEstimateChart ? (

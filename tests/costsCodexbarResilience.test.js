@@ -45,6 +45,10 @@ function writeFakeCodexbar(binDir, modeFile, payloadFile) {
     '  echo "synthetic codexbar failure" >&2',
     '  exit 1',
     'fi',
+    'if [ "$MODE" = "garbage" ]; then',
+    '  echo "this is not json {"',
+    '  exit 0',
+    'fi',
     `cat ${JSON.stringify(payloadFile)}`,
   ].join('\n');
   const binPath = path.join(binDir, 'codexbar');
@@ -52,7 +56,7 @@ function writeFakeCodexbar(binDir, modeFile, payloadFile) {
   fs.chmodSync(binPath, 0o755);
 }
 
-async function withCodexbarRouter(run) {
+async function withCodexbarRouter(run, envOverrides = {}) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-codexbar-resilience-'));
   const binDir = path.join(workDir, 'bin');
   fs.mkdirSync(binDir);
@@ -64,12 +68,17 @@ async function withCodexbarRouter(run) {
     PATH: process.env.PATH,
     MC_COSTS_CACHE_DIR: process.env.MC_COSTS_CACHE_DIR,
     MC_CODEXBAR_SCAN_TTL_MS: process.env.MC_CODEXBAR_SCAN_TTL_MS,
+    MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS: process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS,
   };
   process.env.PATH = `${binDir}:${process.env.PATH}`;
   process.env.MC_COSTS_CACHE_DIR = path.join(workDir, 'cache');
   // TTL 0 forces every request through a fresh exec, so the failure path is
   // reachable without waiting out the production 30s reuse window.
   process.env.MC_CODEXBAR_SCAN_TTL_MS = '0';
+  delete process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS;
+  Object.entries(envOverrides).forEach(([envKey, envValue]) => {
+    process.env[envKey] = envValue;
+  });
 
   const express = require('express');
   const { buildCostsRouter } = require('../server/routes/costs');
@@ -113,6 +122,39 @@ test('a failing re-scan serves the last good codexbar result, typed as stale', a
     assert.ok(Number.isFinite(fallbackBody.staleAgeMs));
     assert.equal(fallbackBody.totals.totalCost, 10, 'the payload must be the last good scan');
   });
+});
+
+test('an exit-0 scan with garbage output falls back and does NOT poison the last good cache', async () => {
+  await withCodexbarRouter(async ({ base, modeFile }) => {
+    const fresh = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fresh.status, 200);
+
+    fs.writeFileSync(modeFile, 'garbage');
+    const fallback = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fallback.status, 200, 'garbage output with exit 0 must fall back like a failed scan');
+    const fallbackBody = await fallback.json();
+    assert.equal(fallbackBody.stale, true);
+    assert.equal(fallbackBody.totals.totalCost, 10, 'the served payload must be the last GOOD scan, not the garbage');
+
+    // The recovery request proves the cache held the good scan, not the garbage.
+    fs.writeFileSync(modeFile, 'ok');
+    const recovered = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(recovered.status, 200);
+    const recoveredBody = await recovered.json();
+    assert.equal(recoveredBody.stale, undefined, 'a healthy re-scan must serve fresh again');
+    assert.equal(recoveredBody.totals.totalCost, 10);
+  });
+});
+
+test('the last good fallback expires at the age ceiling instead of masking a dead scanner forever', async () => {
+  await withCodexbarRouter(async ({ base, modeFile }) => {
+    const fresh = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fresh.status, 200);
+
+    fs.writeFileSync(modeFile, 'fail');
+    const expired = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(expired.status, 500, 'past the age ceiling the failure must surface, not the frozen result');
+  }, { MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS: '0' });
 });
 
 test('a failure with no last good result still surfaces as an error', async () => {

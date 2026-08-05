@@ -537,26 +537,34 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
 
     const scan = refreshLimiter.run(async () => {
       let stdout;
-      let stderr;
       try {
+        let stderr;
         ({ stdout, stderr } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
           timeout: codexbarTimeoutMs,
           maxBuffer: 20 * 1024 * 1024,
           env: process.env,
         }));
+        surfaceChildStderr('CodexBar', stderr);
+        // Validated BEFORE this output may replace the last good scan: an
+        // exit-0 child emitting empty/truncated/garbage JSON must not poison
+        // the fallback cache and turn every later request into a 500.
+        if (!mergeCodexBarReports(JSON.parse(stdout))) {
+          throw new Error('CodexBar returned no usable report');
+        }
       } catch (error) {
         noteCodexbarExecError(error);
         // A missing binary is "not configured", never "flaky" — only a real
-        // scan failure (timeout, crash) may fall back to the last good result.
+        // scan failure (timeout, crash, bad output) may fall back to the last
+        // good result, and only within the age ceiling: an unbounded fallback
+        // would let a permanently broken scanner serve frozen totals forever.
         const lastGood = codexbarScanCache.get(key);
-        if (lastGood && codexbarConfigured()) {
-          const ageMs = Date.now() - lastGood.time;
-          console.warn(`[CodexBar] scan failed (${error.message.split('\n')[0]}); serving last good result from ${Math.round(ageMs / 1000)}s ago`);
-          return { stdout: lastGood.stdout, stale: { ageMs } };
+        const lastGoodAgeMs = lastGood ? Date.now() - lastGood.time : Infinity;
+        if (lastGood && codexbarConfigured() && lastGoodAgeMs <= codexbarLastGoodMaxAgeMs) {
+          console.warn(`[CodexBar] scan failed (${String(error.message || error).split('\n')[0]}); serving last good result from ${Math.round(lastGoodAgeMs / 1000)}s ago`);
+          return { stdout: lastGood.stdout, stale: { ageMs: lastGoodAgeMs } };
         }
         throw error;
       }
-      surfaceChildStderr('CodexBar', stderr);
       codexbarScanCache.set(key, { stdout, time: Date.now() });
       return { stdout, stale: null };
     }).finally(() => {
@@ -580,6 +588,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   // error log. Same remedy as the OpenClaw timeout above; revisit if scans of
   // deeper anchors approach this ceiling.
   const codexbarTimeoutMs = Number(process.env.MC_CODEXBAR_TIMEOUT_MS || 120000);
+  // Ceiling for serving a last good scan after a failed re-scan. Six hours is
+  // far above any transient contention (scans re-run on a 30s TTL) yet forces
+  // a persistently broken scanner back into visible failure within the day.
+  const codexbarLastGoodMaxAgeMs = Number(process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS || 6 * 60 * 60 * 1000);
 
   function persistCostsCache() {
     try {
@@ -733,6 +745,12 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
     // Use the shared scan path so this cheap availability request obeys the
     // refresh limit and preserves the missing-binary classification used by the
     // detailed costs producer.
+    // Deliberate: a stale (last-good) scan is accepted here without demoting
+    // the source status. Month-granular availability only drifts across a
+    // month boundary, the fallback is capped at codexbarLastGoodMaxAgeMs, and
+    // past the cap the scan throws — which this endpoint already reports as a
+    // partial result. Threading staleness into sourceStatus would widen that
+    // enum's producer-consumer seam for no user-visible gain.
     const { stdout } = await codexbarScan(70);
     const raw = mergeCodexBarReports(JSON.parse(stdout));
     if (!raw || !Array.isArray(raw.daily)) {
