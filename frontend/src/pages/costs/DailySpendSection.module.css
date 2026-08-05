@@ -267,6 +267,97 @@
   text-align: center;
 }
 
+/* ── Desktop selected-day detail ─────────────────────────────── */
+
+.desktopDetailBox {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.desktopDetailHeader {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.desktopDetailDate {
+  font-size: 13px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 700;
+  font-feature-settings: "tnum";
+}
+
+.desktopDetailHint {
+  font-size: 11px;
+  color: rgba(255,255,255,0.5);
+  margin-top: 2px;
+}
+
+.desktopDetailTotals {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.desktopDetailTotal {
+  font-size: 15px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 750;
+}
+
+.desktopDetailTokens {
+  font-size: 11px;
+  color: rgba(255,255,255,0.55);
+}
+
+.desktopDetailSegments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.desktopDetailSegment {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.08);
+  background: rgba(255,255,255,0.03);
+  max-width: 100%;
+}
+
+.desktopDetailDot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  /* background set inline */
+}
+
+.desktopDetailSegmentName {
+  font-size: 11px;
+  color: rgba(255,255,255,0.72);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.desktopDetailSegmentValue {
+  font-size: 11px;
+  color: rgba(255,255,255,0.95);
+  font-weight: 650;
+  white-space: nowrap;
+}
+
 /* ── Mobile daily spend chart ────────────────────────────────── */
 
 .mobileChartWrap {

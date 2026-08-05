@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, createElement, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -43,6 +45,9 @@ const baseProps = {
   serverMonth: '2026-08',
   monthAvailability: [],
   monthAvailabilityKnown: false,
+  dayUsage: [],
+  activeChartDate: null,
+  onSelectDay: vi.fn(),
   viewingPastMonth: false,
   anchoredMonthLabel: null,
   activePeriodLabel: 'August 2026',
@@ -74,6 +79,18 @@ afterEach(() => {
   MockResizeObserver.instances = []
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('CostPulseHeader column overlap guard', () => {
+  it('stacks by the header container width, not only the viewport', () => {
+    // The sidebar eats a fixed slice of any viewport, so a viewport-only media
+    // query leaves a band of window widths where the two columns overlap and
+    // the right column swallows the month-nav clicks. The primary rule must be
+    // a container query on the card shell.
+    const css = readFileSync(join(__dirname, 'CostPulseHeader.module.css'), 'utf8')
+    expect(css).toContain('container-type: inline-size')
+    expect(css).toMatch(/@container \(max-width: \d+px\) \{\s*\.outer \{\s*grid-template-columns: 1fr;/)
+  })
 })
 
 describe('CostPulseHeader month picker viewport clamp', () => {

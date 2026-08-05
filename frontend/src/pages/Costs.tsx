@@ -58,8 +58,10 @@ import {
   awsBillingDataAvailable,
   awsIntegrationEnabled,
   currentMonthKey,
+  resolveActiveChartDate,
   shouldClearMonthAnchor,
 } from './costs/lib'
+import type { DayUsageEntry } from './costs/lib'
 import CostPulseHeader from './costs/CostPulseHeader'
 import AgentSplitCard from './costs/AgentSplitCard'
 import type { AgentSplitItem } from './costs/AgentSplitCard'
@@ -117,6 +119,10 @@ export default function Costs() {
   // restored the moment Monthly comes back.
   const [monthAnchor, setMonthAnchor] = useState<string | null>(null)
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
+  // A calendar-day click that may point at a month whose rows are still loading;
+  // consumed (and scrolled to) once the day exists in the chart pool.
+  const [requestedChartDate, setRequestedChartDate] = useState<string | null>(null)
+  const dailySpendRef = useRef<HTMLDivElement | null>(null)
   const [driverView, setDriverView] = useState<'models' | 'sessions' | 'codexbar' | 'notes'>('models')
   const [fallbackSessionTimestamp] = useState(() => Date.now() / 1000)
   const [calendarNow, setCalendarNow] = useState(() => new Date())
@@ -518,17 +524,64 @@ export default function Costs() {
         return
       }
 
-      setActiveChartDate(current => {
-        if (current && nextPool.some(day => day.fullDate === current)) return current
-        return nextPool[nextPool.length - 1]?.fullDate || null
-      })
+      setActiveChartDate(current => resolveActiveChartDate(nextPool, current, requestedChartDate).date)
+      if (requestedChartDate && nextPool.some(day => day.fullDate === requestedChartDate)) {
+        setRequestedChartDate(null)
+        // The clicked day is now live in the chart — bring it into view.
+        dailySpendRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }
     }, 0)
 
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [chartData, sessionEstimateData])
+  }, [chartData, requestedChartDate, sessionEstimateData])
+
+  // Per-day usage of the month in view, for the calendar day grid's heat scale.
+  // Mirrors the chart's own source order: ledger rows, then codexbar, then the
+  // session-token fallback (tokens only — no priced cost exists there).
+  const dayUsage = useMemo<DayUsageEntry[]>(() => {
+    if (chartData.length > 0) {
+      return chartData.map(row => ({
+        date: String(row.fullDate),
+        cost: Number(row.total || 0),
+        tokens: Number(row.totalTokens || 0),
+      }))
+    }
+    if (codexbarActive && codexbarPeriodDays.length > 0) {
+      return codexbarPeriodDays.map(day => ({
+        date: day.date,
+        cost: Number(day.totalCost || 0),
+        tokens: Number(day.totalTokens || 0),
+      }))
+    }
+    return sessionEstimateData.map(day => ({ date: day.fullDate, cost: 0, tokens: day.tokens }))
+  }, [chartData, codexbarActive, codexbarPeriodDays, sessionEstimateData])
+
+  // Direct chart interaction supersedes any still-pending calendar request.
+  const selectChartDate = (date: string) => {
+    setRequestedChartDate(null)
+    setActiveChartDate(date)
+  }
+
+  const handlePickDay = (date: string) => {
+    const monthKey = date.slice(0, 7)
+    setMonthAnchor(monthKey === currentServerMonth ? null : monthKey)
+    setRequestedChartDate(date)
+  }
+
+  // Navigation NOT initiated by a calendar-day click abandons any pending day
+  // request — otherwise a request whose month loaded empty would linger and
+  // hijack the selection on a later visit to that month.
+  const navigateMonthAnchor = (anchor: string | null) => {
+    setRequestedChartDate(null)
+    setMonthAnchor(anchor)
+  }
+  const navigatePeriod = (next: 'day' | '7d' | 'month') => {
+    setRequestedChartDate(null)
+    setPeriod(next)
+  }
 
   const allTokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
     const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string> }>()
@@ -983,9 +1036,13 @@ export default function Costs() {
       accent: ledgerActive ? '#5E5CE6' : codexbarActive ? '#FF9500' : hasAwsData ? '#32D74B' : '#FF9F0A',
     },
     {
-      label: 'CodexBar API Eq.',
+      // A stale payload (server served its last good scan after a failed
+      // re-scan) must not read as fresh: the label and tooltip both say so.
+      label: codexbarCosts?.stale ? 'CodexBar API Eq. (stale)' : 'CodexBar API Eq.',
       value: formatCurrency(codexbarPeriodCost),
-      title: `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
+      title: codexbarCosts?.stale
+        ? `${activePeriodLabel} CodexBar-scanned API-equivalent estimate — served from the last good scan (${Math.round((codexbarCosts.staleAgeMs || 0) / 60000)} min old) because a fresh scan failed`
+        : `${activePeriodLabel} CodexBar-scanned API-equivalent estimate`,
       accent: codexbarActive ? '#FF9500' : '#8E8E93',
     },
     {
@@ -1012,13 +1069,16 @@ export default function Costs() {
         <CostPulseHeader
           m={m}
           period={period}
-          setPeriod={setPeriod}
+          setPeriod={navigatePeriod}
           monthAnchor={monthAnchor}
-          setMonthAnchor={setMonthAnchor}
+          setMonthAnchor={navigateMonthAnchor}
           calendarNow={calendarNow}
           serverMonth={serverMonth}
           monthAvailability={monthAvailability?.months ?? []}
           monthAvailabilityKnown={Boolean(monthAvailability)}
+          dayUsage={dayUsage}
+          activeChartDate={activeChartDate}
+          onSelectDay={handlePickDay}
           viewingPastMonth={viewingPastMonth}
           anchoredMonthLabel={anchoredMonthLabel}
           activePeriodLabel={activePeriodLabel}
@@ -1107,6 +1167,7 @@ export default function Costs() {
           spendLabel={viewingPastMonth && anchoredMonthLabel ? `${anchoredMonthLabel} spend vs budget` : 'Current spend vs budget'}
         />
 
+        <div ref={dailySpendRef}>
         <DailySpendSection
           m={m}
           chartData={chartData}
@@ -1114,7 +1175,7 @@ export default function Costs() {
           hasChartBars={hasChartBars}
           useMobileDailyChart={useMobileDailyChart}
           activeChartDate={activeChartDate}
-          setActiveChartDate={setActiveChartDate}
+          setActiveChartDate={selectChartDate}
           chartDayCount={chartDayCount}
           codexbarActive={codexbarActive}
           ledgerActive={ledgerActive}
@@ -1127,6 +1188,7 @@ export default function Costs() {
           blendedCostBreakdown={blendedCostBreakdown as BlendedCostItem[]}
           apiEquivalentReliability={apiEquivalentReliability}
         />
+        </div>
 
         <CostDriversSection
           m={m}

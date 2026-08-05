@@ -28,7 +28,10 @@ import {
   codexbarQueryPath,
   costsQueryPath,
   currentMonthKey,
+  dayKeyOf,
+  dayPickerGrid,
   daysInMonthKey,
+  resolveActiveChartDate,
   isPastMonthAnchor,
   monthKeyLabel,
   monthNavigationState,
@@ -841,6 +844,105 @@ describe('month picker keyboard navigation', () => {
 
   it('is a no-op for an all-disabled row', () => {
     expect(nextSelectableIndex([{ selectable: false }, { selectable: false }, { selectable: false }], 1, 1)).toBe(1)
+  })
+})
+
+describe('day picker grid', () => {
+  // 2026-08-14, mid-month: 2026-08-01 is a Saturday.
+  const now = new Date(2026, 7, 14, 12, 0, 0)
+
+  it('aligns day 1 to its weekday column and covers the whole month', () => {
+    const grid = dayPickerGrid('2026-08', [], now, 24, '2026-08')
+    expect(grid.leadingBlanks).toBe(6)
+    expect(grid.cells).toHaveLength(31)
+    expect(grid.cells[0]).toMatchObject({ date: '2026-08-01', dayOfMonth: 1 })
+    expect(grid.cells[30]).toMatchObject({ date: '2026-08-31', dayOfMonth: 31 })
+  })
+
+  it('handles leap February', () => {
+    const grid = dayPickerGrid('2028-02', [], new Date(2028, 2, 1), 24, '2028-03')
+    expect(grid.cells).toHaveLength(29)
+  })
+
+  it('marks today and disables browser-future days without usage', () => {
+    const grid = dayPickerGrid('2026-08', [], now, 24, '2026-08')
+    expect(grid.cells[13]).toMatchObject({ date: '2026-08-14', isToday: true, selectable: true })
+    expect(grid.cells[14]).toMatchObject({ date: '2026-08-15', selectable: false })
+  })
+
+  it('keeps a usage-bearing day selectable even when the browser clock lags the server', () => {
+    // Browser still on Aug 31 while the server has rows for Sep 1.
+    const lagging = new Date(2026, 7, 31, 23, 30)
+    const grid = dayPickerGrid('2026-09', [{ date: '2026-09-01', cost: 3, tokens: 100 }], lagging, 24, '2026-09')
+    expect(grid.cells[0]).toMatchObject({ date: '2026-09-01', selectable: true })
+    expect(grid.cells[1]).toMatchObject({ date: '2026-09-02', selectable: false })
+  })
+
+  it('disables every day of a month outside the history range', () => {
+    const outside = dayPickerGrid('2023-01', [], now, 24, '2026-08')
+    expect(outside.cells.every(cell => !cell.selectable)).toBe(true)
+    const future = dayPickerGrid('2026-09', [], now, 24, '2026-08')
+    expect(future.cells.every(cell => !cell.selectable)).toBe(true)
+  })
+
+  it('scales heat by cost against the busiest day, with a visibility floor', () => {
+    const grid = dayPickerGrid('2026-08', [
+      { date: '2026-08-01', cost: 10, tokens: 1000 },
+      { date: '2026-08-02', cost: 5, tokens: 400 },
+      { date: '2026-08-03', cost: 0.01, tokens: 10 },
+    ], now, 24, '2026-08')
+    expect(grid.cells[0].intensity).toBe(1)
+    expect(grid.cells[1].intensity).toBe(0.5)
+    expect(grid.cells[2].intensity).toBe(0.12)
+    expect(grid.cells[3].intensity).toBe(0)
+    expect(grid.cells[3].hasUsage).toBe(false)
+  })
+
+  it('gives an unpriced local-only day a fixed warm floor on a cost-driven scale', () => {
+    const grid = dayPickerGrid('2026-08', [
+      { date: '2026-08-01', cost: 10, tokens: 1000 },
+      { date: '2026-08-02', cost: 0, tokens: 900 },
+    ], now, 24, '2026-08')
+    expect(grid.cells[1]).toMatchObject({ intensity: 0.3, hasUsage: true })
+  })
+
+  it('falls back to a token scale when the month has no priced usage at all', () => {
+    const grid = dayPickerGrid('2026-08', [
+      { date: '2026-08-01', cost: 0, tokens: 1000 },
+      { date: '2026-08-02', cost: 0, tokens: 250 },
+    ], now, 24, '2026-08')
+    expect(grid.cells[0].intensity).toBe(1)
+    expect(grid.cells[1].intensity).toBe(0.25)
+  })
+
+  it('formats the local day key without UTC drift', () => {
+    expect(dayKeyOf(new Date(2026, 0, 5, 0, 30))).toBe('2026-01-05')
+  })
+})
+
+describe('resolveActiveChartDate', () => {
+  const pool = [{ fullDate: '2026-08-01' }, { fullDate: '2026-08-02' }, { fullDate: '2026-08-03' }]
+
+  it('consumes a requested day the moment its row exists', () => {
+    expect(resolveActiveChartDate(pool, '2026-08-03', '2026-08-01'))
+      .toEqual({ date: '2026-08-01', consumedRequest: true })
+  })
+
+  it('keeps the current selection while a requested day is still loading', () => {
+    expect(resolveActiveChartDate(pool, '2026-08-02', '2026-07-15'))
+      .toEqual({ date: '2026-08-02', consumedRequest: false })
+  })
+
+  it('falls back to the latest day when nothing valid is selected', () => {
+    expect(resolveActiveChartDate(pool, '2026-07-30', null))
+      .toEqual({ date: '2026-08-03', consumedRequest: false })
+    expect(resolveActiveChartDate(pool, null, null))
+      .toEqual({ date: '2026-08-03', consumedRequest: false })
+  })
+
+  it('returns null for an empty pool without consuming the request', () => {
+    expect(resolveActiveChartDate([], '2026-08-01', '2026-08-01'))
+      .toEqual({ date: null, consumedRequest: false })
   })
 })
 

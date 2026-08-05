@@ -514,35 +514,87 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   const codexbarScanCache = new Map();
-  const codexbarScanTtlMs = 30000;
+  const codexbarScanTtlMs = Number(process.env.MC_CODEXBAR_SCAN_TTL_MS || 30000);
+
+  /**
+   * Structural sanity of the RAW codexbar output. Distinguishes "the scanner
+   * emitted a real (possibly empty) report" from exit-0 garbage: a real report
+   * always names its provider and carries a daily array, while `{}` or
+   * `{error:"..."}` merge into a zero-valued report that would silently
+   * replace the last good scan.
+   */
+  function isPlausibleCodexbarOutput(parsed) {
+    const reports = (Array.isArray(parsed) ? parsed : [parsed]);
+    return reports.length > 0 && reports.every((report) => (
+      report
+      && typeof report === 'object'
+      && typeof report.provider === 'string'
+      && Array.isArray(report.daily)
+      // CodexBar's structured error shape keeps provider + an empty daily
+      // array; a report that CARRIES an error is a failed scan even on exit 0,
+      // and a half-failed `both` scan must not replace a fully good result.
+      && (report.error === undefined || report.error === null)
+    ));
+  }
 
   /**
    * One codexbar child per distinct scan depth: concurrent callers share the
    * in-flight promise, a recent result is reused for a short TTL, and the work
    * itself waits behind the same limiter as the detailed refreshes.
+   *
+   * Resolves to `{ report, stale }` where `report` is the merged
+   * mergeCodexBarReports result — parsed and validated exactly once, and
+   * treated as READ-ONLY by every consumer since the same object is cached.
+   * `stale` is null for a fresh (or in-TTL) result; when a re-scan fails while
+   * a previous good result exists, that last good result is served instead of
+   * failing the caller and `stale` carries `{ ageMs }`. The failure itself
+   * stays visible: it is logged here, /api/costs/codexbar types the payload
+   * stale, and month availability reports itself partial.
    */
   function codexbarScan(scanDays) {
     const key = `codexbar:${scanDays}`;
     const cached = codexbarScanCache.get(key);
-    if (cached && Date.now() - cached.time < codexbarScanTtlMs) return Promise.resolve(cached.stdout);
+    if (cached && Date.now() - cached.time < codexbarScanTtlMs) {
+      return Promise.resolve({ report: cached.report, stale: null });
+    }
     if (codexbarScans.has(key)) return codexbarScans.get(key);
 
     const scan = refreshLimiter.run(async () => {
-      let stdout;
-      let stderr;
+      let report;
       try {
+        let stdout;
+        let stderr;
         ({ stdout, stderr } = await execPromise(`codexbar cost --format json --provider both --days ${scanDays}`, {
-          timeout: 30000,
+          timeout: codexbarTimeoutMs,
           maxBuffer: 20 * 1024 * 1024,
           env: process.env,
         }));
+        surfaceChildStderr('CodexBar', stderr);
+        // Validated BEFORE this output may replace the last good scan: an
+        // exit-0 child emitting empty, truncated, or semantically hollow JSON
+        // must not poison the fallback cache with a zero-valued report.
+        const parsed = JSON.parse(stdout);
+        if (!isPlausibleCodexbarOutput(parsed)) {
+          throw new Error('CodexBar returned an implausible report shape');
+        }
+        report = mergeCodexBarReports(parsed);
+        if (!report) throw new Error('CodexBar returned no usable report');
       } catch (error) {
         noteCodexbarExecError(error);
+        // A missing binary is "not configured", never "flaky" — only a real
+        // scan failure (timeout, crash, bad output) may fall back to the last
+        // good result, and only within the age ceiling: an unbounded fallback
+        // would let a permanently broken scanner serve frozen totals forever.
+        const lastGood = codexbarScanCache.get(key);
+        const lastGoodAgeMs = lastGood ? Date.now() - lastGood.time : Infinity;
+        if (lastGood && codexbarConfigured() && lastGoodAgeMs <= codexbarLastGoodMaxAgeMs) {
+          console.warn(`[CodexBar] scan failed (${String(error.message || error).split('\n')[0]}); serving last good result from ${Math.round(lastGoodAgeMs / 1000)}s ago`);
+          return { report: lastGood.report, stale: { ageMs: lastGoodAgeMs } };
+        }
         throw error;
       }
-      surfaceChildStderr('CodexBar', stderr);
-      codexbarScanCache.set(key, { stdout, time: Date.now() });
-      return stdout;
+      codexbarScanCache.set(key, { report, time: Date.now() });
+      return { report, stale: null };
     }).finally(() => {
       codexbarScans.delete(key);
     });
@@ -558,6 +610,16 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   // OpenClaw's session-cost-usage aggregation can take ~55s for 7d on Yordam's host.
   // A too-low timeout silently produced null OpenClaw data, which mergeUsage then rendered as 0 tokens.
   const openclawUsageTimeoutMs = Number(process.env.MC_OPENCLAW_USAGE_TIMEOUT_MS || 120000);
+  // Calibration (2026-08-05): a warm `codexbar cost --days 70` measures ~15s on
+  // this host when idle, and exceeded the old 30s ceiling whenever it queued
+  // behind detailed refresh scans — repeated user-visible 500s in the launchd
+  // error log. Same remedy as the OpenClaw timeout above; revisit if scans of
+  // deeper anchors approach this ceiling.
+  const codexbarTimeoutMs = Number(process.env.MC_CODEXBAR_TIMEOUT_MS || 120000);
+  // Ceiling for serving a last good scan after a failed re-scan. Six hours is
+  // far above any transient contention (scans re-run on a 30s TTL) yet forces
+  // a persistently broken scanner back into visible failure within the day.
+  const codexbarLastGoodMaxAgeMs = Number(process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS || 6 * 60 * 60 * 1000);
 
   function persistCostsCache() {
     try {
@@ -645,7 +707,7 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
     try {
       const days = claudeCodeScanDays(monthAnchor);
       const { stdout, stderr } = await execPromise(`codexbar cost --format json --provider claude --days ${days}`, {
-        timeout: 30000,
+        timeout: codexbarTimeoutMs,
         maxBuffer: 20 * 1024 * 1024,
         env: process.env,
       });
@@ -711,15 +773,18 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
     // Use the shared scan path so this cheap availability request obeys the
     // refresh limit and preserves the missing-binary classification used by the
     // detailed costs producer.
-    const stdout = await codexbarScan(70);
-    const raw = mergeCodexBarReports(JSON.parse(stdout));
-    if (!raw || !Array.isArray(raw.daily)) {
+    // A stale (last-good) scan is accepted here — its months were real usage —
+    // but the staleness rides along so the availability payload can report
+    // itself partial instead of claiming a fully fresh scan.
+    const { report, stale } = await codexbarScan(70);
+    if (!report || !Array.isArray(report.daily)) {
       throw new Error('CodexBar returned an invalid usage report');
     }
-    return raw.daily
+    const months = report.daily
       .filter((day) => Number(day.totalTokens || 0) > 0 || Number(day.totalCost || 0) > 0)
       .map((day) => String(day.date || '').slice(0, 7))
       .filter(isValidMonthAnchor);
+    return { months, stale: Boolean(stale) };
   }
 
   /**
@@ -765,16 +830,23 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
   }
 
   function sourceStatusFor({ configured, load }) {
-    if (!configured()) return Promise.resolve({ status: 'not_configured', months: new Set() });
+    if (!configured()) return Promise.resolve({ status: 'not_configured', months: new Set(), stale: false });
     return Promise.resolve()
       .then(load)
-      .then((months) => ({
-        status: months.length > 0 ? 'ready' : 'no_usage',
-        months: new Set(months),
-      }))
+      // Loaders return either a plain month array or { months, stale } when
+      // the result came from a served-last-good scan (codexbar).
+      .then((loaded) => {
+        const months = Array.isArray(loaded) ? loaded : loaded.months;
+        return {
+          status: months.length > 0 ? 'ready' : 'no_usage',
+          months: new Set(months),
+          stale: Array.isArray(loaded) ? false : Boolean(loaded.stale),
+        };
+      })
       .catch((error) => ({
         status: configured() ? 'unavailable' : 'not_configured',
         months: new Set(),
+        stale: false,
         error,
       }));
   }
@@ -853,7 +925,11 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
           }),
           generatedAt: now.toISOString(),
           sourceStatus,
+          // A served-last-good codexbar scan means the freshness contract is
+          // not fully met, so the payload must say partial — even though the
+          // months themselves (real past usage) remain individually valid.
           partial: monthAvailabilityHasUnavailable({ sourceStatus })
+            || codexbar.stale
             || months.some((month) => !codexbarMonthIsFullyCovered(month, scanStart)),
         };
         if (crossedMonth) return value;
@@ -1599,9 +1675,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       // outside the refresh limiter. Same scan depth = same work, so requests are
       // de-duplicated by depth, share one in-flight process, briefly cached, and
       // queued behind the same concurrency bound as the detailed refreshes.
-      const stdout = await codexbarScan(scanDays);
-      const data = JSON.parse(stdout);
-      const raw = mergeCodexBarReports(data);
+      const scan = await codexbarScan(scanDays);
+      // Parsed, validated, and merged once inside codexbarScan; the cached
+      // report object is shared, so it is read-only here.
+      const raw = scan.report;
       if (!raw) throw new Error('CodexBar returned no Codex or Claude usage reports');
 
       const daily = (raw.daily || []).map((day) => ({
@@ -1620,6 +1697,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       const totals = raw.totals || {};
       return res.json({
         source: 'codexbar',
+        // A last-good fallback is typed as stale so no client mistakes it for a
+        // fresh scan; the underlying failure is already in the server log.
+        ...(scan.stale ? { stale: true, staleAgeMs: scan.stale.ageMs, staleReason: 'scan_failed_served_last_good' } : {}),
         provider: raw.provider,
         updatedAt: raw.updatedAt || null,
         last30DaysCostUSD: raw.last30DaysCostUSD || 0,
