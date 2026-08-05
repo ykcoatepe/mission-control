@@ -53,6 +53,10 @@ function writeFakeCodexbar(binDir, modeFile, payloadFile) {
     '  echo "{\\"error\\":\\"scanner failed\\"}"',
     '  exit 0',
     'fi',
+    'if [ "$MODE" = "structured-error" ]; then',
+    '  echo "[{\\"provider\\":\\"codex\\",\\"daily\\":[],\\"error\\":{\\"message\\":\\"auth expired\\"}}]"',
+    '  exit 0',
+    'fi',
     `cat ${JSON.stringify(payloadFile)}`,
   ].join('\n');
   const binPath = path.join(binDir, 'codexbar');
@@ -164,6 +168,28 @@ test('exit-0 SEMANTIC garbage (valid JSON, hollow shape) falls back instead of s
     const fallbackBody = await fallback.json();
     assert.equal(fallbackBody.stale, true, 'a hollow report must be treated as a failed scan');
     assert.equal(fallbackBody.totals.totalCost, 10, 'the last good totals must survive, not zeros');
+
+    fs.writeFileSync(modeFile, 'ok');
+    const recovered = await fetch(`${base}/api/costs/codexbar`);
+    const recoveredBody = await recovered.json();
+    assert.equal(recoveredBody.stale, undefined);
+    assert.equal(recoveredBody.totals.totalCost, 10);
+  });
+});
+
+test('CodexBar\'s structured error shape (provider + empty daily + error) falls back too', async () => {
+  await withCodexbarRouter(async ({ base, modeFile }) => {
+    const fresh = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fresh.status, 200);
+
+    // The CLI's error builder emits provider + daily:[] + error; if that ever
+    // exits 0 it must be treated as a failed scan, not a zero-usage report.
+    fs.writeFileSync(modeFile, 'structured-error');
+    const fallback = await fetch(`${base}/api/costs/codexbar`);
+    assert.equal(fallback.status, 200);
+    const fallbackBody = await fallback.json();
+    assert.equal(fallbackBody.stale, true, 'an error-carrying report must not read as fresh zeros');
+    assert.equal(fallbackBody.totals.totalCost, 10, 'last good totals must survive the structured error');
 
     fs.writeFileSync(modeFile, 'ok');
     const recovered = await fetch(`${base}/api/costs/codexbar`);

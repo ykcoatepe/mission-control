@@ -530,6 +530,10 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
       && typeof report === 'object'
       && typeof report.provider === 'string'
       && Array.isArray(report.daily)
+      // CodexBar's structured error shape keeps provider + an empty daily
+      // array; a report that CARRIES an error is a failed scan even on exit 0,
+      // and a half-failed `both` scan must not replace a fully good result.
+      && (report.error === undefined || report.error === null)
     ));
   }
 
