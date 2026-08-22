@@ -428,7 +428,13 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const active = findNumber(jobsPayload, ['active', 'running', 'processing']);
   const stalled = findNumber(jobsPayload, ['stalled', 'dead']);
   const rawStatus = findString(healthPayload, ['status', 'health_status']);
-  const status = rawStatus || (stalePages > 0 ? 'stale' : score !== null && score >= 90 ? 'healthy' : 'unknown');
+  const status = rawStatus || (
+    stalePages > 0
+      ? 'stale'
+      : score !== null
+        ? score >= 90 ? 'healthy' : 'warning'
+        : 'unknown'
+  );
 
   return {
     ok: true,
@@ -518,12 +524,12 @@ function needsStatsBackfill(health) {
 
 async function buildLiveGBrainStats(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
-  const result = await runGBrain(execFilePromise, ['stats', '--json']);
+  const result = await runGBrain(execFilePromise, ['stats', '--source', '__all__', '--json']);
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeStatsPayload(payload);
   const textStats = normalizeStatsText(result.stdout);
   if (result.ok && textStats) return textStats;
-  const fallbackResult = await runGBrain(execFilePromise, ['stats']);
+  const fallbackResult = await runGBrain(execFilePromise, ['stats', '--source', '__all__']);
   const fallbackPayload = parseJsonFromOutput(fallbackResult.stdout);
   if (fallbackResult.ok && fallbackPayload) return normalizeStatsPayload(fallbackPayload);
   return fallbackResult.ok ? normalizeStatsText(fallbackResult.stdout) : null;
@@ -635,7 +641,7 @@ async function buildLiveGBrainHealth(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
   const [healthResult, jobsResult] = await Promise.all([
-    runGBrain(execFilePromise, ['call', 'get_health']),
+    runGBrain(execFilePromise, ['call', '--source', '__all__', 'get_health']),
     runGBrain(execFilePromise, ['jobs', 'stats', '--json']),
   ]);
   const healthPayload = parseJsonFromOutput(healthResult.stdout);
@@ -650,7 +656,7 @@ async function buildLiveGBrainHealth(options = {}) {
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
-  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--json']);
+  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--source', '__all__', '--json']);
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
     const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt);

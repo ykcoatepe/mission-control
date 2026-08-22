@@ -123,7 +123,7 @@ async function testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCaptu
 async function testLiveHealthNormalizesReadOnlyProbe() {
   const execFilePromise = async (bin, args) => {
     assert.equal(bin, 'gbrain');
-    if (args.join(' ') === 'call get_health') {
+    if (args.join(' ') === 'call --source __all__ get_health') {
       return {
         stdout: JSON.stringify({
           status: 'healthy',
@@ -157,10 +157,42 @@ async function testLiveHealthNormalizesReadOnlyProbe() {
   assert.equal(overview.nodes.find((node) => node.id === 'gbrain-core')?.proof.source, 'gbrain call get_health');
 }
 
+async function testLiveHealthClassifiesSubtargetGlobalScoreAsWarning() {
+  const execFilePromise = async (bin, args) => {
+    assert.equal(bin, 'gbrain');
+    if (args.join(' ') === 'call --source __all__ get_health') {
+      return {
+        stdout: JSON.stringify({
+          brain_score: 73,
+          page_count: 28211,
+          chunk_count: 297769,
+          embedded_count: 297769,
+          missing_embeddings: 0,
+          stale_pages: 0,
+          embed_coverage: 1,
+        }),
+        stderr: '',
+      };
+    }
+    if (args.join(' ') === 'jobs stats --json') {
+      return { stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0 }), stderr: '' };
+    }
+    throw new Error(`Unexpected command ${args.join(' ')}`);
+  };
+
+  const health = await buildLiveGBrainHealth({ execFilePromise });
+
+  assert.equal(health.ok, true);
+  assert.equal(health.status, 'warning');
+  assert.equal(health.score, 73);
+  assert.equal(health.metrics.pages, 28211);
+  assert.equal(health.metrics.chunks, 297769);
+}
+
 async function testLiveHealthBackfillsInventoryFromStatsText() {
   const execFilePromise = async (bin, args) => {
     assert.equal(bin, 'gbrain');
-    if (args.join(' ') === 'call get_health') {
+    if (args.join(' ') === 'call --source __all__ get_health') {
       return {
         stdout: JSON.stringify({
           status: 'healthy',
@@ -176,7 +208,7 @@ async function testLiveHealthBackfillsInventoryFromStatsText() {
     if (args.join(' ') === 'jobs stats --json') {
       return { stdout: 'Queue health: 0 waiting, 0 active, 0 stalled', stderr: '' };
     }
-    if (args.join(' ') === 'stats --json') {
+    if (args.join(' ') === 'stats --source __all__ --json') {
       return {
         stdout: ['Pages:     16452', 'Chunks:    196692', 'Embedded:  196692'].join('\n'),
         stderr: '',
@@ -826,12 +858,12 @@ async function testLiveSourcesFallsBackToTextOutput() {
 async function testLiveHealthFallsBackToTextOutput() {
   const execFilePromise = async (bin, args) => {
     assert.equal(bin, 'gbrain');
-    if (args.join(' ') === 'call get_health') {
+    if (args.join(' ') === 'call --source __all__ get_health') {
       const error = new Error('raw get_health unavailable');
       error.stderr = error.message;
       throw error;
     }
-    if (args.join(' ') === 'health --json') {
+    if (args.join(' ') === 'health --source __all__ --json') {
       return {
         stdout: [
           'Health score: 7/10',
@@ -1266,6 +1298,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 (async () => {
   await testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture();
   await testLiveHealthNormalizesReadOnlyProbe();
+  await testLiveHealthClassifiesSubtargetGlobalScoreAsWarning();
   await testLiveHealthBackfillsInventoryFromStatsText();
   await testLiveVersionAppearsInOverview();
   await testLiveToolsFeaturesAndIntegrationHealth();
