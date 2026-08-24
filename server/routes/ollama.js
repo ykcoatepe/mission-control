@@ -377,9 +377,10 @@ function buildOllamaRouter({
     }
 
     const allowedOllamaModels = await getAllowedOllamaModels();
-    const visibleModels = (allowedOllamaModels instanceof Set)
-      ? mergedModels.filter((model) => allowedOllamaModels.has(String(model?.name || '').trim()) || isOllamaEmbeddingModel(model))
-      : mergedModels;
+    // The Runtime page is an Ollama inventory surface, not the OpenClaw model picker.
+    // Keep every model returned by /api/tags visible here; the allowlist remains
+    // intentionally scoped to the derived model-telemetry endpoint below.
+    const visibleModels = mergedModels;
     const visibleRunningCount = visibleModels.filter((model) => String(model?.status || '').toLowerCase() === 'running').length;
 
     const totalMem = Number(require('os').totalmem()) || 0;

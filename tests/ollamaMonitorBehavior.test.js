@@ -65,6 +65,12 @@ assert.ok(
 
 const modelTelemetryRoute = routeSource.match(/router\.get\('\/api\/ollama\/telemetry\/models'[\s\S]*?\n  \}\);/);
 assert.ok(
+  routeSource.includes('const visibleModels = mergedModels') &&
+    !routeSource.includes('mergedModels.filter((model) => allowedOllamaModels.has'),
+  'Ollama Runtime inventory should expose every installed /api/tags model without changing the OpenClaw allowlist',
+);
+
+assert.ok(
   routeSource.includes("Object.defineProperty(payload, 'allowedOllamaModels'") &&
     modelTelemetryRoute &&
     modelTelemetryRoute[0].includes('telemetry?.allowedOllamaModels instanceof Set') &&
