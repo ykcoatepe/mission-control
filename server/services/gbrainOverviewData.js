@@ -71,10 +71,12 @@ function createGBrainOverviewService(options = {}) {
         }
       };
 
-      await Promise.all(Array.from(
+      const workerResults = await Promise.allSettled(Array.from(
         { length: Math.min(2, probeEntries.length) },
         () => runWorker(),
       ));
+      const workerFailure = workerResults.find((result) => result.status === 'rejected');
+      if (workerFailure) throw workerFailure.reason;
       const live = Object.fromEntries(probeEntries.map(([name]) => [name, probeResults.get(name)]));
       const integrationRuntime = buildIntegrationRuntime();
       const snapshot = {

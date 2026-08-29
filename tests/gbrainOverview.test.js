@@ -117,6 +117,34 @@ async function testSharedOverviewCoalescesReadsAndBoundsConcurrency() {
   assert.equal(first.live.sources.freshness.staleCount, 0);
 }
 
+async function testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot() {
+  let slowProbeSettled = false;
+  const service = createGBrainOverviewService({
+    probes: {
+      health: async () => {
+        throw new Error('health probe failed');
+      },
+      sources: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        slowProbeSettled = true;
+        return { ok: true, sources: [], freshness: { status: 'healthy', staleCount: 0 } };
+      },
+      version: async () => ({ ok: true, version: '0.46.28.0' }),
+      tools: async () => ({ ok: true, requiredTools: [] }),
+      features: async () => ({ ok: true, recommendations: [] }),
+      providers: async () => ({ ok: true, providers: [] }),
+      hermesProxy: async () => ({ ok: true }),
+    },
+    buildIntegrationRuntime: () => ({ systems: {} }),
+  });
+
+  await assert.rejects(
+    () => service.readSnapshot(),
+    /health probe failed/,
+  );
+  assert.equal(slowProbeSettled, true);
+}
+
 (function testOverviewIsReadOnlyAndEvidenceBacked() {
   const overview = buildGBrainOverview();
 
@@ -1398,6 +1426,7 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   await testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture();
   await testSharedOverviewBoundsProbeConcurrency();
   await testSharedOverviewCoalescesReadsAndBoundsConcurrency();
+  await testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot();
   await testLiveHealthNormalizesReadOnlyProbe();
   await testLiveHealthKeepsChildProbesBounded();
   await testLiveHealthClassifiesSubtargetGlobalScoreAsWarning();
