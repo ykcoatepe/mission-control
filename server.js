@@ -615,6 +615,10 @@ const operationsOverviewService = createOperationsOverviewService({
     gbrainOverviewService,
   }),
   listCapabilities: () => listGBrainActions(),
+  // GBrain probes are concurrency-bounded but routinely exceed the Operations
+  // default under database pressure. Keep that allowance scoped to GBrain so an
+  // unrelated stalled reader is still isolated at 10s.
+  sourceTimeoutMsOverrides: { gbrain: 30_000 },
 });
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');

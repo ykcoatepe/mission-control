@@ -1,4 +1,6 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 
 const {
@@ -296,7 +298,7 @@ test('bounds reader failures independently and still returns the successful evid
   const service = createOperationsOverviewService({
     readers: {
       status: async () => input.status,
-      sessions: async () => input.sessions,
+      sessions: () => new Promise(() => {}),
       cron: async () => input.cron,
       hermes: async () => input.hermes,
       gbrain: async () => {
@@ -315,6 +317,35 @@ test('bounds reader failures independently and still returns the successful evid
   assert.equal(overview.overall.state, 'warning');
   assert.ok(overview.attention.some((item) => item.reasonCode === 'gbrain_unavailable'));
   assert.doesNotMatch(JSON.stringify(overview), /Bearer|\/Users\//);
+});
+
+test('keeps the longer GBrain probe deadline scoped to GBrain only', async () => {
+  const input = healthyInput();
+  const service = createOperationsOverviewService({
+    readers: {
+      status: () => new Promise(() => {}),
+      sessions: () => new Promise(() => {}),
+      cron: async () => input.cron,
+      hermes: async () => input.hermes,
+      gbrain: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 11));
+        return input.gbrain;
+      },
+    },
+    listCapabilities: () => input.capabilities,
+    now: () => new Date(generatedAt),
+    sourceTimeoutMs: 5,
+    sourceTimeoutMsOverrides: { gbrain: 30 },
+  });
+
+  const overview = await service.getOverview();
+
+  assert.equal(overview.systems.openclaw.state, 'unavailable');
+  assert.equal(overview.systems.gbrain.state, 'healthy');
+  assert.match(
+    fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8'),
+    /sourceTimeoutMsOverrides:\s*\{\s*gbrain:\s*30_000/,
+  );
 });
 
 test('times out only the stalled source and preserves the remaining snapshot', async () => {

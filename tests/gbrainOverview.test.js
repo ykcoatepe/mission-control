@@ -57,6 +57,66 @@ async function testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCaptu
   assert.equal(captureCount, 1);
 }
 
+async function testSharedOverviewBoundsProbeConcurrency() {
+  let active = 0;
+  let maxActive = 0;
+  const guarded = (value) => async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active -= 1;
+    return value;
+  };
+  const service = createGBrainOverviewService({
+    probes: {
+      sources: guarded({ ok: true, sources: [], freshness: { status: 'healthy', staleCount: 0 } }),
+      health: guarded({ ok: true, status: 'healthy', score: 99, checkedAt: '2026-08-25T15:00:00.000Z' }),
+      version: guarded({ ok: true, version: '0.46.28.0' }),
+      tools: guarded({ ok: true, requiredTools: [] }),
+      features: guarded({ ok: true, recommendations: [] }),
+      providers: guarded({ ok: true, providers: [] }),
+      hermesProxy: guarded({ ok: true }),
+    },
+    buildIntegrationRuntime: () => ({ systems: {} }),
+  });
+
+  const snapshot = await service.readSnapshot();
+
+  assert.equal(maxActive, 2);
+  assert.ok(Object.values(snapshot.live).every((probe) => probe.ok));
+}
+
+async function testSharedOverviewCoalescesReadsAndBoundsConcurrency() {
+  let active = 0;
+  let maxActive = 0;
+  const guarded = (value) => async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    active -= 1;
+    return value;
+  };
+  const service = createGBrainOverviewService({
+    probes: {
+      health: guarded({ ok: true, status: 'healthy', score: 99, checkedAt: '2026-08-25T15:00:00.000Z' }),
+      sources: guarded({ ok: true, sources: [], freshness: { status: 'healthy', staleCount: 0 } }),
+      version: guarded({ ok: true, version: '0.46.28.0' }),
+      tools: guarded({ ok: true, requiredTools: [] }),
+      features: guarded({ ok: true, recommendations: [] }),
+      providers: guarded({ ok: true, providers: [] }),
+      hermesProxy: guarded({ ok: true }),
+    },
+    buildIntegrationRuntime: () => ({ systems: {} }),
+  });
+
+  const [first, second] = await Promise.all([service.readSnapshot(), service.readSnapshot()]);
+
+  assert.equal(first, second);
+  assert.equal(maxActive, 2);
+  assert.equal(first.live.health.status, 'healthy');
+  assert.equal(first.live.sources.freshness.staleCount, 0);
+}
+
 (function testOverviewIsReadOnlyAndEvidenceBacked() {
   const overview = buildGBrainOverview();
 
@@ -155,6 +215,45 @@ async function testLiveHealthNormalizesReadOnlyProbe() {
   assert.equal(overview.cockpit.health.value, '100/100');
   assert.equal(overview.cockpit.queue.value, '0 / 0 / 0');
   assert.equal(overview.nodes.find((node) => node.id === 'gbrain-core')?.proof.source, 'gbrain call get_health');
+}
+
+async function testLiveHealthKeepsChildProbesBounded() {
+  let active = 0;
+  let maxActive = 0;
+  const execFilePromise = async (bin, args) => {
+    assert.equal(bin, 'gbrain');
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    try {
+      if (args.join(' ') === 'call --source __all__ get_health') {
+        return {
+          stdout: JSON.stringify({
+            status: 'healthy',
+            brain_score: 99,
+            page_count: 10,
+            chunk_count: 20,
+            embedded_count: 20,
+            missing_embeddings: 0,
+            stale_pages: 0,
+            embed_coverage: 1,
+          }),
+          stderr: '',
+        };
+      }
+      if (args.join(' ') === 'jobs stats --json') {
+        return { stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0 }), stderr: '' };
+      }
+      throw new Error(`Unexpected command ${args.join(' ')}`);
+    } finally {
+      active -= 1;
+    }
+  };
+
+  const health = await buildLiveGBrainHealth({ execFilePromise });
+
+  assert.equal(health.ok, true);
+  assert.equal(health.score, 99);
+  assert.equal(maxActive, 1);
 }
 
 async function testLiveHealthClassifiesSubtargetGlobalScoreAsWarning() {
@@ -1297,7 +1396,10 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 
 (async () => {
   await testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture();
+  await testSharedOverviewBoundsProbeConcurrency();
+  await testSharedOverviewCoalescesReadsAndBoundsConcurrency();
   await testLiveHealthNormalizesReadOnlyProbe();
+  await testLiveHealthKeepsChildProbesBounded();
   await testLiveHealthClassifiesSubtargetGlobalScoreAsWarning();
   await testLiveHealthBackfillsInventoryFromStatsText();
   await testLiveVersionAppearsInOverview();

@@ -7,7 +7,7 @@ const { DEFAULT_COMMAND_TIMEOUT_MS } = require('./constants');
 
 const defaultExecFilePromise = util.promisify(execFile);
 
-function createGBrainExecOptions(timeoutMs) {
+function createGBrainExecOptions(timeoutMs, options = {}) {
   const pathEntries = [
     `${os.homedir()}/.bun/bin`,
     '/opt/homebrew/bin',
@@ -21,6 +21,13 @@ function createGBrainExecOptions(timeoutMs) {
       PATH: pathEntries.join(':'),
     },
   };
+  if (options.suppressStartupHooks) {
+    // Mission Control owns update/version presentation for read-only probes.
+    // Startup notices on stderr can otherwise mask the real failure when a
+    // probe exits non-zero during a brief database reconnect. Maintenance
+    // actions keep startup rails (including durability warnings) visible.
+    execOptions.env.GBRAIN_SKIP_STARTUP_HOOKS = '1';
+  }
   if (timeoutMs > 0) execOptions.timeout = timeoutMs;
   return execOptions;
 }
@@ -66,7 +73,7 @@ async function runGBrain(execFilePromise, args, options = {}) {
 
   try {
     const timeoutMs = options.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
-    const result = await execFilePromise('gbrain', args, createGBrainExecOptions(timeoutMs));
+    const result = await execFilePromise('gbrain', args, createGBrainExecOptions(timeoutMs, options));
     return { ok: true, stdout: result.stdout || '', stderr: result.stderr || '' };
   } catch (error) {
     return {
