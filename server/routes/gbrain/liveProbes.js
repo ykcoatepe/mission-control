@@ -149,7 +149,7 @@ async function buildLiveHermesProxyStatus(options = {}) {
 async function buildLiveGBrainTools(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const result = await runGBrain(execFilePromise, ['--tools-json']);
+  const result = await runGBrain(execFilePromise, ['--tools-json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeToolsPayload(payload, checkedAt);
   return {
@@ -165,7 +165,7 @@ async function buildLiveGBrainTools(options = {}) {
 async function buildLiveGBrainFeatures(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const result = await runGBrain(execFilePromise, ['features', '--json']);
+  const result = await runGBrain(execFilePromise, ['features', '--json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeFeaturesPayload(payload, checkedAt);
   return {
@@ -181,7 +181,7 @@ async function buildLiveGBrainFeatures(options = {}) {
 async function buildLiveGBrainProviders(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const result = await runGBrain(execFilePromise, ['providers', 'explain', '--json']);
+  const result = await runGBrain(execFilePromise, ['providers', 'explain', '--json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeProvidersPayload(payload, checkedAt);
   return {
@@ -524,12 +524,12 @@ function needsStatsBackfill(health) {
 
 async function buildLiveGBrainStats(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
-  const result = await runGBrain(execFilePromise, ['stats', '--source', '__all__', '--json']);
+  const result = await runGBrain(execFilePromise, ['stats', '--source', '__all__', '--json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeStatsPayload(payload);
   const textStats = normalizeStatsText(result.stdout);
   if (result.ok && textStats) return textStats;
-  const fallbackResult = await runGBrain(execFilePromise, ['stats', '--source', '__all__']);
+  const fallbackResult = await runGBrain(execFilePromise, ['stats', '--source', '__all__'], { suppressStartupHooks: true });
   const fallbackPayload = parseJsonFromOutput(fallbackResult.stdout);
   if (fallbackResult.ok && fallbackPayload) return normalizeStatsPayload(fallbackPayload);
   return fallbackResult.ok ? normalizeStatsText(fallbackResult.stdout) : null;
@@ -640,10 +640,11 @@ function normalizeSourcesText(output, checkedAt) {
 async function buildLiveGBrainHealth(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const [healthResult, jobsResult] = await Promise.all([
-    runGBrain(execFilePromise, ['call', '--source', '__all__', 'get_health']),
-    runGBrain(execFilePromise, ['jobs', 'stats', '--json']),
-  ]);
+  // Keep each top-level probe to one child command. The overview scheduler may
+  // run two probes concurrently; a nested health fan-out would otherwise allow
+  // three simultaneous GBrain subprocesses and defeat that database bound.
+  const healthResult = await runGBrain(execFilePromise, ['call', '--source', '__all__', 'get_health'], { suppressStartupHooks: true });
+  const jobsResult = await runGBrain(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true });
   const healthPayload = parseJsonFromOutput(healthResult.stdout);
   const jobsPayload = parseJsonFromOutput(jobsResult.stdout) || {
     waiting: numberFromText(jobsResult.stdout, /Queue health:\s*(\d+)\s+waiting/i),
@@ -656,7 +657,7 @@ async function buildLiveGBrainHealth(options = {}) {
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
-  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--source', '__all__', '--json']);
+  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true });
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
     const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt);
@@ -680,14 +681,14 @@ async function buildLiveGBrainHealth(options = {}) {
 async function buildLiveGBrainSources(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const result = await runGBrain(execFilePromise, ['sources', 'list', '--json']);
+  const result = await runGBrain(execFilePromise, ['sources', 'list', '--json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
 
   if (result.ok && payload) {
     return normalizeSourcesPayload(payload, checkedAt);
   }
 
-  const fallbackResult = await runGBrain(execFilePromise, ['sources', 'list']);
+  const fallbackResult = await runGBrain(execFilePromise, ['sources', 'list'], { suppressStartupHooks: true });
   const textSources = fallbackResult.ok ? normalizeSourcesText(fallbackResult.stdout, checkedAt) : null;
   if (!textSources?.ok) {
     return {
@@ -706,7 +707,7 @@ async function buildLiveGBrainSources(options = {}) {
 async function buildLiveGBrainVersion(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
-  const result = await runGBrain(execFilePromise, ['--version']);
+  const result = await runGBrain(execFilePromise, ['--version'], { suppressStartupHooks: true });
   const version = parseVersionOutput(result.stdout || result.stderr);
 
   if (result.ok && version) {

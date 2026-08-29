@@ -699,11 +699,16 @@ function createOperationsOverviewService({
   listCapabilities = () => [],
   now = () => new Date(),
   sourceTimeoutMs = 10_000,
+  sourceTimeoutMsOverrides = {},
 } = {}) {
   async function getOverview() {
     const names = ['status', 'sessions', 'cron', 'hermes', 'gbrain'];
     const results = await Promise.allSettled(
-      names.map((name) => withTimeout(readers[name], sourceTimeoutMs, name)),
+      names.map((name) => withTimeout(
+        readers[name],
+        sourceTimeoutMsOverrides[name] ?? sourceTimeoutMs,
+        name,
+      )),
     );
     const input = Object.fromEntries(results.map((result, index) => [
       names[index],

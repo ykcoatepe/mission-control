@@ -346,7 +346,11 @@ describe('GBrain Explore action controls', () => {
 
     expect(host.textContent).toContain('Operational')
     expect(host.textContent).toContain('Recovered regression awaiting acknowledgement')
+    expect(host.querySelectorAll('#gbrain-recovered-incidents li')).toHaveLength(0)
+
+    await act(async () => host.querySelector<HTMLButtonElement>('#gbrain-recovered-incidents-toggle')?.click())
     expect(host.textContent).toContain('Worst recent regression still needs acknowledgement')
+    expect(host.querySelectorAll('#gbrain-recovered-incidents li')).toHaveLength(1)
     expect(host.querySelector('[role="status"] button')).toBeNull()
 
     const acknowledgeHistory = buttonByText(host, 'Acknowledge history')
@@ -355,6 +359,58 @@ describe('GBrain Explore action controls', () => {
     expect(host.textContent).not.toContain('Recovered regression awaiting acknowledgement')
     expect(host.textContent).not.toContain('Worst recent regression still needs acknowledgement')
     expect(host.textContent).toContain('Operational')
+    await act(async () => root.unmount())
+  })
+
+  it('shows every recovered regression together and clears them as one batch', async () => {
+    mocks.overviewOverride = healthyOverview()
+    mocks.timelineOverride = {
+      enabled: true,
+      entries: [],
+      retainedEntryCount: 0,
+      malformedLineCount: 0,
+      incidentBanners: [
+        {
+          status: 'warning',
+          title: 'Worst recent regression still needs acknowledgement',
+          detail: '185 missing embeddings at 2026-07-11T08:00:00Z.',
+          snapshotId: 'regression-worst',
+          kind: 'recent-regression',
+        },
+        {
+          status: 'warning',
+          title: 'Worst recent regression still needs acknowledgement',
+          detail: '9 stale pages at 2026-07-11T07:00:00Z.',
+          snapshotId: 'regression-stale',
+          kind: 'recent-regression',
+        },
+        {
+          status: 'warning',
+          title: 'Worst recent regression still needs acknowledgement',
+          detail: '185 missing embeddings at 2026-07-11T07:30:00Z.',
+          snapshotId: 'regression-worst',
+          kind: 'recent-regression',
+        },
+      ],
+    }
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    await act(async () => root.render(createElement(GBrain)))
+
+    expect(host.textContent).toContain('Recovered regressions awaiting acknowledgement (2)')
+    expect(host.querySelectorAll('#gbrain-recovered-incidents li')).toHaveLength(0)
+
+    await act(async () => host.querySelector<HTMLButtonElement>('#gbrain-recovered-incidents-toggle')?.click())
+    expect(host.textContent).toContain('185 missing embeddings')
+    expect(host.textContent).toContain('9 stale pages')
+    expect(host.querySelectorAll('[aria-label^="Recovered regressions awaiting acknowledgement"] li')).toHaveLength(2)
+
+    await act(async () => buttonByText(host, 'Acknowledge all 2')?.click())
+    expect(host.textContent).not.toContain('Recovered regressions awaiting acknowledgement')
+    expect(host.textContent).not.toContain('185 missing embeddings')
+    expect(host.textContent).not.toContain('9 stale pages')
     await act(async () => root.unmount())
   })
 
