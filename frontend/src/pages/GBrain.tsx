@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   Bot,
   Brain,
+  ChevronDown,
   CheckCircle2,
   Clock,
   Database,
@@ -509,6 +510,7 @@ export default function GBrain() {
       return new Set()
     }
   })
+  const [recoveredIncidentsExpanded, setRecoveredIncidentsExpanded] = useState(false)
 
   const selectedNode = useMemo(() => {
     if (!data?.nodes?.length) return null
@@ -540,9 +542,16 @@ export default function GBrain() {
     return candidate.kind !== 'recent-regression' || !acknowledgedIncidents.has(key)
   })
   const activeIncidentBanner = visibleIncidentCandidates.find((candidate) => candidate.kind !== 'recent-regression') || null
-  const recoveredIncidentBanner = visibleIncidentCandidates.find((candidate) => candidate.kind === 'recent-regression') || null
-  const recoveredIncidentKey = recoveredIncidentBanner?.snapshotId
-    || `${recoveredIncidentBanner?.title || ''}:${recoveredIncidentBanner?.detail || ''}`
+  // Timeline heartbeats can retain multiple ledger rows with the same fingerprint.
+  // They are one operator-facing incident and must collapse before counting/rendering.
+  const recoveredIncidentMap = new Map<string, IncidentBanner>()
+  for (const candidate of visibleIncidentCandidates) {
+    if (candidate.kind !== 'recent-regression') continue
+    const key = candidate.snapshotId || `${candidate.title}:${candidate.detail}`
+    if (!recoveredIncidentMap.has(key)) recoveredIncidentMap.set(key, candidate)
+  }
+  const recoveredIncidentBanners = [...recoveredIncidentMap.values()]
+  const recoveredIncidentKeys = [...recoveredIncidentMap.keys()]
   const incidentIsCurrent = Boolean(activeIncidentBanner)
   const timelineEnabled = timeline?.enabled ?? timelineSummary?.enabled ?? true
   const timelineEntries = timeline?.entries || []
@@ -834,11 +843,11 @@ export default function GBrain() {
     if (currentAction) void runAction(currentAction.id, true)
   }
 
-  const acknowledgeIncident = () => {
-    if (!recoveredIncidentBanner || !recoveredIncidentKey) return
+  const acknowledgeIncidents = () => {
+    if (!recoveredIncidentKeys.length) return
     setAcknowledgedIncidents((current) => {
       const next = new Set(current)
-      next.add(recoveredIncidentKey)
+      for (const key of recoveredIncidentKeys) next.add(key)
       try {
         window.localStorage.setItem('gbrain.acknowledgedIncidents', JSON.stringify([...next].slice(-50)))
       } catch {
@@ -922,18 +931,60 @@ export default function GBrain() {
           </div>
         </section>
 
-        {recoveredIncidentBanner ? (
+        {recoveredIncidentBanners.length ? (
           <aside
-            className={styles.recoveredIncident}
-            style={{ '--status-color': statusColor(recoveredIncidentBanner.status) } as CSSProperties}
-            aria-label="Recovered regression awaiting acknowledgement"
+            className={styles.recoveredIncidentPanel}
+            style={{ '--status-color': statusColor(recoveredIncidentBanners[0].status) } as CSSProperties}
+            aria-label={recoveredIncidentBanners.length === 1
+              ? 'Recovered regression awaiting acknowledgement'
+              : `Recovered regressions awaiting acknowledgement: ${recoveredIncidentBanners.length}`}
           >
-            <Clock size={16} />
-            <div>
-              <strong>Recovered regression awaiting acknowledgement</strong>
-              <span>{recoveredIncidentBanner.title}. {incidentDetailForDisplay(recoveredIncidentBanner.detail)}</span>
+            <div className={styles.recoveredIncidentHeader}>
+              <button
+                id="gbrain-recovered-incidents-toggle"
+                type="button"
+                className={styles.recoveredIncidentToggle}
+                aria-expanded={recoveredIncidentsExpanded}
+                aria-controls="gbrain-recovered-incidents"
+                aria-label="Toggle recovered regression history"
+                onClick={() => setRecoveredIncidentsExpanded((expanded) => !expanded)}
+              >
+                <Clock size={16} />
+                <div>
+                  <strong>
+                    {recoveredIncidentBanners.length === 1
+                      ? 'Recovered regression awaiting acknowledgement'
+                      : `Recovered regressions awaiting acknowledgement (${recoveredIncidentBanners.length})`}
+                  </strong>
+                  <span>Worst-first history. Select to show details.</span>
+                </div>
+                <ChevronDown
+                  size={16}
+                  className={recoveredIncidentsExpanded ? styles.recoveredIncidentChevronExpanded : styles.recoveredIncidentChevron}
+                />
+              </button>
+              <button type="button" onClick={acknowledgeIncidents}>
+                {recoveredIncidentBanners.length === 1 ? 'Acknowledge history' : `Acknowledge all ${recoveredIncidentBanners.length}`}
+              </button>
             </div>
-            <button type="button" onClick={acknowledgeIncident}>Acknowledge history</button>
+
+            {recoveredIncidentsExpanded ? (
+              <ul
+                id="gbrain-recovered-incidents"
+                className={styles.recoveredIncidentList}
+                aria-labelledby="gbrain-recovered-incidents-toggle"
+              >
+                {recoveredIncidentBanners.map((incident, index) => (
+                  <li key={incident.snapshotId || `${incident.title}:${incident.detail}`}>
+                    <span aria-hidden="true">{index + 1}</span>
+                    <div>
+                      <strong>{incident.title}</strong>
+                      <small>{incidentDetailForDisplay(incident.detail)}</small>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
           </aside>
         ) : null}
 
