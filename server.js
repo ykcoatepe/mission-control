@@ -196,7 +196,7 @@ async function fetchSessions(limit = 50) {
   };
 
   try {
-    const { stdout } = await openclawExec(['sessions', '--json'], 15000);
+    const { stdout } = await openclawExec(['sessions', '--json', '--all-agents'], 15000);
     const parsed = parseFirstJson(stdout, {});
     const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
     if (normalized) return attachOperationsSource(normalized, {

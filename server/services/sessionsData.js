@@ -22,7 +22,7 @@ function createSessionsService({
 
   async function fetchSessionsRaw(limit = 50) {
     try {
-      const { stdout } = await openclawExec(['sessions', '--json', '--limit', String(limit)], 15000);
+      const { stdout } = await openclawExec(['sessions', '--json', '--all-agents', '--limit', String(limit)], 15000);
       const parsed = parseFirstJson(stdout, {});
       if (parsed?.sessions) return parsed;
     } catch {}
