@@ -158,6 +158,19 @@ function estimateApiEquivalentCost(item = {}) {
       : { usd, status: 'partial', source: 'default_rate_card' };
   }
 
+  // Rows with a token total but no input/output breakdown (e.g. aggregated
+  // "unknown" model rows) price at the default tier's blended rate as a
+  // partial estimate instead of dropping the row to unavailable.
+  const fallbackTokens = Math.max(Number(item.tokens || 0), 0);
+  if (!hasTokenClasses && fallbackTokens > 0) {
+    const blended = (API_DEFAULT_RATE.input + API_DEFAULT_RATE.output) / 2;
+    return {
+      usd: fallbackTokens * blended / 1_000_000,
+      status: 'partial',
+      source: 'default_rate_card_blended',
+    };
+  }
+
   const currentCost = Number(item.cost || 0);
   if (currentCost > 0 && Number.isFinite(currentCost)) {
     return { usd: currentCost, status: 'estimated', source: 'recorded_cost_estimate' };

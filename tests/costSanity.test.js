@@ -191,15 +191,20 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
   assert.equal(usage.agents[0].summary.periodApiEquivalentUsd, 4.7125);
 })();
 
-(function testLocalAndUnpricedModelsExposeExplicitApiEquivalentStatus() {
+(function testLocalAndUnknownModelsExposeExplicitApiEquivalentStatus() {
   const local = estimateApiEquivalentCost({ name: 'ollama/qwen3.6', tokens: 1_000_000 });
+  // Unknown cloud models price at the default tier's blended rate as a
+  // documented partial estimate; only rows with no usage at all stay
+  // unavailable.
   const unknown = estimateApiEquivalentCost({ name: 'vendor/new-cloud-model', tokens: 1_000_000 });
+  const noUsage = estimateApiEquivalentCost({ name: 'vendor/new-cloud-model', tokens: 0 });
 
   assert.deepEqual(local, { usd: 0, status: 'not_applicable', source: 'local_model' });
-  assert.deepEqual(unknown, { usd: null, status: 'unavailable', source: 'unpriced_model' });
+  assert.deepEqual(unknown, { usd: 6.25, status: 'partial', source: 'default_rate_card_blended' });
+  assert.deepEqual(noUsage, { usd: null, status: 'unavailable', source: 'unpriced_model' });
 })();
 
-(function testUnpricedOnlyUsageDoesNotFabricateZeroApiEquivalent() {
+(function testUnknownOnlyUsageYieldsPartialEstimateNotZeroOrNull() {
   const usage = normalizeUsageCosts({
     summary: { periodUsd: 0, periodTokens: 1_000_000 },
     daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
@@ -207,8 +212,11 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
     byService: [{ name: 'vendor/new-cloud-model', cost: 0, tokens: 1_000_000 }],
   });
 
-  assert.equal(usage.summary.periodApiEquivalentUsd, null);
-  assert.equal(usage.apiEquivalentReliability, 'unavailable');
+  // Unknown cloud models price at the documented default tier as a partial
+  // estimate — never a fabricated $0, and no longer a null total that hides
+  // the whole Usage surface behind N/A.
+  assert.equal(usage.summary.periodApiEquivalentUsd, 6.25);
+  assert.equal(usage.apiEquivalentReliability, 'partial');
 })();
 
 (function testEmptyUsageHasDistinctNoUsageApiEquivalentState() {
@@ -239,7 +247,9 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
     ],
   });
 
-  assert.equal(usage.summary.periodApiEquivalentUsd, 5);
+  // gpt-5.6-sol at the official card (1M input = $5) plus the unknown model
+  // at the blended default tier (1M x $6.25).
+  assert.equal(usage.summary.periodApiEquivalentUsd, 11.25);
   assert.equal(usage.apiEquivalentReliability, 'partial');
 })();
 
@@ -487,4 +497,15 @@ test('a day of only brand-new models still publishes the period API-equivalent t
   assert.equal(normalized.apiEquivalentReliability, 'partial');
   assert.ok(Number(normalized.summary.periodApiEquivalentUsd) > 0);
   assert.ok(Number(normalized.daily[0].apiEquivalentCost) > 0);
+});
+
+test('rows without a token-class breakdown price at the blended default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/unknown',
+    tokens: 1_000_000,
+  });
+
+  assert.equal(estimate.status, 'partial');
+  assert.equal(estimate.source, 'default_rate_card_blended');
+  assert.equal(estimate.usd, 6.25);
 });
