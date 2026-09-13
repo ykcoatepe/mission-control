@@ -85,9 +85,9 @@ async function runGBrain(execFilePromise, args, options = {}) {
   }
 }
 
-function runGBrainWithSoftTimeout(args, options = {}) {
+function runGBrainWithSoftTimeout(args, options = {}, spawner = execFile) {
   const timeoutMs = options.softTimeoutMs;
-  const child = execFile('gbrain', args, createGBrainExecOptions(0));
+  const child = spawner('gbrain', args, createGBrainExecOptions(0, options));
   let stdout = '';
   let stderr = '';
   let settled = false;

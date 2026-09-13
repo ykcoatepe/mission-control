@@ -26,3 +26,29 @@ test('Health-probe soft timeout constant is exported to liveProbes', () => {
 
   assert.equal(gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, 30000);
 });
+
+test('Soft-timeout path forwards suppressStartupHooks to the spawned child', async () => {
+  const { runGBrainWithSoftTimeout } = require('../server/routes/gbrain/commandRunner');
+  const { EventEmitter } = require('node:events');
+
+  const captureSpawn = () => {
+    const captured = { options: null, child: null };
+    const spawner = (cmd, args, options) => {
+      captured.options = options;
+      const child = new EventEmitter();
+      child.kill = () => {};
+      captured.child = child;
+      setImmediate(() => child.emit('exit', 0, null));
+      return child;
+    };
+    return { captured, spawner };
+  };
+
+  const suppressed = captureSpawn();
+  await runGBrainWithSoftTimeout(['health'], { suppressStartupHooks: true, softTimeoutMs: 30000 }, suppressed.spawner);
+  assert.equal(suppressed.captured.options.env.GBRAIN_SKIP_STARTUP_HOOKS, '1');
+
+  const withRails = captureSpawn();
+  await runGBrainWithSoftTimeout(['health'], { softTimeoutMs: 30000 }, withRails.spawner);
+  assert.equal(withRails.captured.options.env.GBRAIN_SKIP_STARTUP_HOOKS, undefined);
+});
