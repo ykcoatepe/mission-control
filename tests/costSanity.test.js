@@ -531,3 +531,14 @@ test('an agent whose models all price at the default tier keeps a published tota
   assert.equal(agent.summary.apiEquivalentStatus, 'partial');
   assert.equal(agent.summary.periodApiEquivalentUsd, (600 * 2.5 + 400 * 10) / 1_000_000);
 });
+
+test('known free models zero-price instead of hitting the default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'qwen/qwen3.6-free',
+    tokens: 1_000_000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
+});

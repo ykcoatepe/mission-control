@@ -39,6 +39,11 @@ const API_RATE_CARDS = [
   { match: 'claude-sonnet-5', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
   { match: 'claude-sonnet-4-6', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
   { match: 'glm-5.3-flash', input: 0.15, cachedInput: 0.03, output: 0.5, cacheWrite: 0.1875 },
+  // Known free tiers must zero-price before the generic default tier can
+  // fabricate a cost for them (mirrors the frontend pricing registry).
+  { match: 'qwen3-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
+  { match: 'qwen3.6-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
+  { match: 'nemotron-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
 ];
 
 // Rows matching no known card are priced at this generic premium-cloud tier so
@@ -154,7 +159,9 @@ function estimateApiEquivalentCost(item = {}) {
       + cacheWrite * rate.cacheWrite
     ) / 1_000_000;
     return matchedRate
-      ? { usd, status: 'estimated', source: 'official_rate_card' }
+      ? (matchedRate.free
+        ? { usd: 0, status: 'estimated', source: 'free_rate_card' }
+        : { usd, status: 'estimated', source: 'official_rate_card' })
       : { usd, status: 'partial', source: 'default_rate_card' };
   }
 
