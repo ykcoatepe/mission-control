@@ -20,6 +20,8 @@ const {
   attachRawSessions,
   buildOperationsSessionsPayload,
 } = require('./server/services/sessionOperationsView');
+const { resolveSessionTranscriptFile } = require('./server/services/sessionTranscripts');
+const { GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS } = require('./server/routes/gbrain/constants');
 const { buildAgentsRouter } = require('./server/routes/agents');
 const { buildAwsRouter } = require('./server/routes/aws');
 const { buildCalendarRouter } = require('./server/routes/calendar');
@@ -184,7 +186,7 @@ function attachOperationsSource(payload, operationsSource) {
   return payload;
 }
 
-async function fetchSessions(limit = 50) {
+async function fetchSessions(limit = 50, { allowGateway = true } = {}) {
   const normalizeSessionPayload = (payload, { allowEmpty = false } = {}) => {
     const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
     if (!sessions.length && !allowEmpty) return null;
@@ -196,7 +198,7 @@ async function fetchSessions(limit = 50) {
   };
 
   try {
-    const { stdout } = await openclawExec(['sessions', '--json'], 15000);
+    const { stdout } = await openclawExec(['sessions', '--json', '--all-agents'], 15000);
     const parsed = parseFirstJson(stdout, {});
     const normalized = normalizeSessionPayload(parsed, { allowEmpty: Array.isArray(parsed?.sessions) });
     if (normalized) return attachOperationsSource(normalized, {
@@ -209,6 +211,14 @@ async function fetchSessions(limit = 50) {
     if (normalized) return attachOperationsSource(normalized, {
       sourceSucceeded: false,
       provenance: 'openclaw-sessions-cli-failed',
+      observedAt: null,
+    });
+  }
+
+  if (!allowGateway) {
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
       observedAt: null,
     });
   }
@@ -319,6 +329,11 @@ function detectSessionType(session) {
   return 'other';
 }
 
+function messageEntryText(content) {
+  if (Array.isArray(content)) return content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text || '').join('\n');
+  return typeof content === 'string' ? content : '';
+}
+
 function createSessionsService() {
   const hiddenSessionsPath = path.join(__dirname, 'hidden-sessions.json');
   let hiddenSessions = readJsonFileSafe(hiddenSessionsPath, []);
@@ -326,6 +341,55 @@ function createSessionsService() {
   let visibleSessionsCacheTime = 0;
   let visibleSessionsRefresh = null;
   const visibleSessionsCacheTtl = 30000;
+  // One in-flight send per session: overlapping requests could otherwise
+  // correlate each other's replies in the transcript fallback path.
+  const pendingSendsBySession = new Map();
+
+  // Poll a pending send's transcript until an assistant reply correlated to
+  // this send appears — anchored on the send's own user entry and requiring
+  // text-producing output, so intermediate tool-call records do not release
+  // the lock early. Hard-capped so a vanished transcript cannot lock a
+  // session forever.
+  function watchSessionReply(sessionKey, { transcriptFile, sentAtMs }, message) {
+    const startedAt = Date.now();
+    const poll = () => {
+      let replied = false;
+      try {
+        if (transcriptFile && fs.existsSync(transcriptFile)) {
+          const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+          let anchorIndex = -1;
+          for (let index = lines.length - 1; index >= 0; index -= 1) {
+            try {
+              const entry = JSON.parse(lines[index]);
+              if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
+              if (messageEntryText(entry.message.content).trim() === message.trim()) {
+                anchorIndex = index;
+                break;
+              }
+            } catch {}
+          }
+          for (let index = lines.length - 1; index > anchorIndex; index -= 1) {
+            try {
+              const entry = JSON.parse(lines[index]);
+              const entryMs = new Date(entry.timestamp || 0).getTime();
+              if (!Number.isFinite(entryMs) || entryMs <= sentAtMs) continue;
+              if (entry.type === 'message' && entry.message?.role === 'assistant'
+                && messageEntryText(entry.message.content).trim()) {
+                replied = true;
+                break;
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+      if (replied || Date.now() - startedAt > 15 * 60 * 1000) {
+        pendingSendsBySession.delete(sessionKey);
+        return;
+      }
+      setTimeout(poll, 10000);
+    };
+    setTimeout(poll, 10000);
+  }
 
   const readHiddenSessions = () => {
     hiddenSessions = Array.isArray(readJsonFileSafe(hiddenSessionsPath, hiddenSessions))
@@ -408,9 +472,8 @@ function createSessionsService() {
       const decoded = decodeURIComponent(sessionKey);
       const payload = await fetchSessions(200);
       const session = (payload.sessions || []).find((entry) => entry.key === decoded);
-      if (!session?.transcriptPath) return { messages: [], info: 'No transcript found' };
-
-      const transcriptFile = path.join(os.homedir(), '.openclaw/agents/main/sessions', session.transcriptPath);
+      const transcriptFile = resolveSessionTranscriptFile(session);
+      if (!transcriptFile) return { messages: [], info: 'No transcript found' };
       if (!fs.existsSync(transcriptFile)) return { messages: [], info: 'Transcript file missing' };
 
       const lines = fs.readFileSync(transcriptFile, 'utf8').split('\n').filter(Boolean);
@@ -436,11 +499,23 @@ function createSessionsService() {
     },
     async sendSessionMessage(sessionKey, message) {
       const decoded = decodeURIComponent(sessionKey);
+      if (pendingSendsBySession.has(decoded)) {
+        return { ok: false, busy: true, result: 'A message to this session is still in progress — wait for the current reply before sending again.' };
+      }
+      let pendingWatch = null;
+      const send = (async () => {
       const cfg = fs.existsSync(OPENCLAW_CONFIG_PATH) ? JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8')) : {};
       const gatewayToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || GATEWAY_TOKEN || '';
       const gatewayPort = cfg.gateway?.port || GATEWAY_PORT;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 90000);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 90000);
+      // Transcript boundary for the fallback scan: any assistant entry written
+      // before this moment belongs to an earlier turn, not to this send.
+      const sentAtMs = Date.now();
 
       try {
         const response = await fetch(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
@@ -464,33 +539,86 @@ function createSessionsService() {
         clearTimeout(timeout);
         let resultText = '';
         try {
-          const sessionsFile = path.join(os.homedir(), '.openclaw/agents/main/sessions/sessions.json');
-          const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-          const sessionInfo = sessions[decoded] || {};
-          const sessionId = sessionInfo.sessionId || '';
-          if (sessionId) {
-            const transcriptPath = path.join(os.homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
-            if (fs.existsSync(transcriptPath)) {
-              const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-              for (let index = lines.length - 1; index >= 0; index -= 1) {
-                try {
-                  const entry = JSON.parse(lines[index]);
-                  if (entry.type === 'message' && entry.message?.role === 'assistant') {
-                    const content = entry.message.content;
-                    resultText = Array.isArray(content)
-                      ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('\n')
-                      : typeof content === 'string' ? content : '';
-                    if (resultText) break;
-                  }
-                } catch {}
-              }
+          // The gateway never answered inside its window; read the reply from
+          // the session's owning agent transcript, same ownership rule as
+          // getSessionHistory. Resolve the session from the in-memory cache
+          // or the CLI only — never the gateway that just stalled.
+          let session = (visibleSessionsCache?.sessions || []).find((entry) => entry.key === decoded);
+          if (!session) {
+            const payload = await fetchSessions(200, { allowGateway: false });
+            session = (payload.sessions || []).find((entry) => entry.key === decoded);
+          }
+          const transcriptFile = resolveSessionTranscriptFile(session);
+          if (transcriptFile) pendingWatch = { transcriptFile, sentAtMs };
+          if (transcriptFile && fs.existsSync(transcriptFile)) {
+            const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+            // Anchor on this send's own user entry: only assistant replies
+            // written after it can answer this request, so overlapping sends
+            // cannot misattribute each other's replies. Without a matching
+            // user entry, fall back to the sentAt boundary alone.
+            let anchorIndex = -1;
+            for (let index = lines.length - 1; index >= 0; index -= 1) {
+              try {
+                const entry = JSON.parse(lines[index]);
+                if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
+                if (messageEntryText(entry.message.content).trim() === message.trim()) {
+                  anchorIndex = index;
+                  break;
+                }
+              } catch {}
+            }
+            for (let index = lines.length - 1; index > anchorIndex; index -= 1) {
+              try {
+                const entry = JSON.parse(lines[index]);
+                const entryMs = new Date(entry.timestamp || 0).getTime();
+                if (!Number.isFinite(entryMs) || entryMs <= sentAtMs) continue;
+                if (entry.type === 'message' && entry.message?.role === 'assistant') {
+                  resultText = messageEntryText(entry.message.content);
+                  if (resultText) break;
+                }
+              } catch {}
             }
           }
         } catch {}
+        // Only a send that ran the full gateway window and was aborted counts
+        // as accepted-but-pending; an immediate transport failure never
+        // reached the agent and must not read as pending to the client.
         return resultText
           ? { ok: true, result: resultText }
-          : { ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
+          : timedOut
+            ? { ok: false, pending: true, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' }
+            : { ok: false, result: 'Could not reach the OpenClaw gateway — the message was not delivered.' };
       }
+      })();
+      pendingSendsBySession.set(decoded, send);
+      let outcome;
+      try {
+        outcome = await send;
+      } catch (error) {
+        // Setup failures (e.g. a malformed config) must not leave a stuck
+        // lock behind.
+        pendingSendsBySession.delete(decoded);
+        throw error;
+      }
+      if (outcome && outcome.pending) {
+        if (pendingWatch) {
+          // Accepted by the agent and still working: hold the per-session lock
+          // until the transcript shows this send's assistant reply (polled), so
+          // a follow-up send cannot interleave while the reply may still land.
+          // Hard-capped so a vanished transcript cannot lock a session forever;
+          // the anchor correlation keeps replies attributable after the cap.
+          watchSessionReply(decoded, pendingWatch, message);
+        } else {
+          // Transcript metadata unavailable (cache and CLI both failed): hold
+          // a bounded grace lock instead of releasing while the response says
+          // the agent is still working; the sentAt boundary still guards the
+          // eventual fallback scan.
+          setTimeout(() => pendingSendsBySession.delete(decoded), 120000);
+        }
+      } else {
+        pendingSendsBySession.delete(decoded);
+      }
+      return outcome;
     },
     hideSession(sessionKey) {
       const decoded = decodeURIComponent(sessionKey);
@@ -616,9 +744,11 @@ const operationsOverviewService = createOperationsOverviewService({
   }),
   listCapabilities: () => listGBrainActions(),
   // GBrain probes are concurrency-bounded but routinely exceed the Operations
-  // default under database pressure. Keep that allowance scoped to GBrain so an
-  // unrelated stalled reader is still isolated at 10s.
-  sourceTimeoutMsOverrides: { gbrain: 30_000 },
+  // default under database pressure, and a soft-timed-out probe keeps the
+  // child until the hard-kill backstop before returning. The deadline is
+  // derived from the probe constants so the reader outlives the worst chain;
+  // keep other sources isolated at the 10s default.
+  sourceTimeoutMsOverrides: { gbrain: GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS },
 });
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');

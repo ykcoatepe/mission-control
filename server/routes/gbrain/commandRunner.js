@@ -3,7 +3,7 @@
 const os = require('os');
 const { execFile } = require('child_process');
 const util = require('util');
-const { DEFAULT_COMMAND_TIMEOUT_MS } = require('./constants');
+const { DEFAULT_COMMAND_TIMEOUT_MS, HEALTH_PROBE_HARD_KILL_DELAY_MS } = require('./constants');
 
 const defaultExecFilePromise = util.promisify(execFile);
 
@@ -85,9 +85,9 @@ async function runGBrain(execFilePromise, args, options = {}) {
   }
 }
 
-function runGBrainWithSoftTimeout(args, options = {}) {
+function runGBrainWithSoftTimeout(args, options = {}, spawner = execFile) {
   const timeoutMs = options.softTimeoutMs;
-  const child = execFile('gbrain', args, createGBrainExecOptions(0));
+  const child = spawner('gbrain', args, createGBrainExecOptions(0, options));
   let stdout = '';
   let stderr = '';
   let settled = false;
@@ -114,7 +114,7 @@ function runGBrainWithSoftTimeout(args, options = {}) {
       child.kill('SIGINT');
       hardKillTimer = setTimeout(() => {
         if (!exited) child.kill('SIGKILL');
-      }, options.hardKillDelayMs || 30000);
+      }, options.hardKillDelayMs || HEALTH_PROBE_HARD_KILL_DELAY_MS);
       resolve({
         ok: false,
         stdout,
@@ -137,7 +137,10 @@ function runGBrainWithSoftTimeout(args, options = {}) {
       });
     });
 
-    child.once('exit', (code, signal) => {
+    // Resolve on close, not exit: buffered stdout can still deliver the final
+    // chunk after the process exits, and parsing before the streams close
+    // would truncate the JSON of a successful probe.
+    child.once('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);

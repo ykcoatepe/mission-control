@@ -4,7 +4,7 @@ const { buildGBrainRouter } = require('./router');
 const { createGBrainOverviewService } = require('../../services/gbrainOverviewData');
 const { buildGBrainOverview, statusLabelText } = require('./overview');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
-const { buildLocalGBrainIntegrationRuntime } = require('./integrationRuntime');
+const { buildLocalGBrainIntegrationRuntime, hasOpenClawSemanticGBrainContract } = require('./integrationRuntime');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
 const {
   buildLiveGBrainHealth,
@@ -31,6 +31,7 @@ module.exports = {
   buildLiveHermesProxyStatus,
   buildGBrainIntegrationHealth,
   buildLocalGBrainIntegrationRuntime,
+  hasOpenClawSemanticGBrainContract,
   listGBrainActions,
   runGBrainAction,
   sanitizeMessage,

@@ -13,6 +13,7 @@ const {
   buildLiveGBrainProviders,
   buildGBrainIntegrationHealth,
   buildLocalGBrainIntegrationRuntime,
+  hasOpenClawSemanticGBrainContract,
   createGBrainOverviewService,
   listGBrainActions,
   runGBrainAction,
@@ -762,6 +763,35 @@ function testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned() {
   assert.equal(runtime.systems.hermes.runtimeContract.proof, 'Hermes hmudur MEMORY.md semantic contract');
 }
 
+function testLocalRuntimeAcceptsOpenClawSemanticContractWhenMarkerIsAbsent() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-runtime-openclaw-semantic-'));
+  const homeDir = path.join(root, 'home');
+  const clawdRoot = path.join(root, 'clawd');
+  fs.mkdirSync(path.join(homeDir, '.openclaw'), { recursive: true });
+  fs.mkdirSync(clawdRoot, { recursive: true });
+
+  fs.writeFileSync(path.join(homeDir, '.openclaw/openclaw.json'), JSON.stringify({
+    mcp: { servers: { gbrain: { command: '/x/gbrain', args: ['serve'] } } },
+  }));
+  fs.writeFileSync(path.join(clawdRoot, 'AGENTS.md'), [
+    '# OpenClaw adapter for the shared Hermes instructions',
+    '',
+    '- For cross-system knowledge, use available GBrain tools, preserve source scope and existing content, and exclude secrets/raw transcripts.',
+    '  OpenClaw memory promotions retain the existing curated/tagged bridge workflow; shared-memory writes are scoped to decisions.md, playbooks.md and handoffs.md.',
+  ].join('\n'));
+
+  const runtime = buildLocalGBrainIntegrationRuntime({ homeDir, clawdRoot });
+
+  assert.equal(runtime.systems.openclaw.runtimeContract.status, 'healthy');
+  assert.equal(runtime.systems.openclaw.runtimeContract.proof, 'OpenClaw AGENTS.md semantic contract');
+}
+
+function testOpenClawSemanticDetectorRejectsUnrelatedProse() {
+  assert.equal(hasOpenClawSemanticGBrainContract('GBrain tools are available for cross-system knowledge.'), false);
+  assert.equal(hasOpenClawSemanticGBrainContract(''), false);
+  assert.equal(hasOpenClawSemanticGBrainContract('For cross-system knowledge, use GBrain tools, preserve source scope and existing content, exclude secrets/raw transcripts, curated/tagged bridge workflow, shared-memory writes are scoped to decisions.md'), true);
+}
+
 function testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-workspace-'));
   const homeDir = path.join(root, 'home');
@@ -1441,6 +1471,8 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   testIntegrationWarningsAppearAsTopLevelCaveats();
   testLocalRuntimeDetectorVerifiesManagedContractsAndBridges();
   testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned();
+  testLocalRuntimeAcceptsOpenClawSemanticContractWhenMarkerIsAbsent();
+  testOpenClawSemanticDetectorRejectsUnrelatedProse();
   testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent();
   await testLiveSourcesDoNotExposeLocalPaths();
   await testDefaultSourceWithoutPathIsNotFreshnessStale();
@@ -1464,3 +1496,47 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 
   console.log('gbrainOverview tests passed');
 })();
+
+function testIntegrationHealthPrefersCurrentOpenclawSourceOverLegacyAlias() {
+  const { REQUIRED_GBRAIN_TOOLS } = require('../server/routes/gbrain/constants');
+  const checkedAt = '2026-09-13T00:00:00.000Z';
+  const health = { ok: true, mode: 'live-read-only', checkedAt, status: 'healthy', score: 100, metrics: {} };
+  const tools = {
+    ok: true,
+    checkedAt,
+    requiredTools: REQUIRED_GBRAIN_TOOLS.map((tool) => ({ ...tool, present: true })),
+    presentCount: REQUIRED_GBRAIN_TOOLS.length,
+    missingCount: 0,
+  };
+  const sources = {
+    ok: true,
+    mode: 'live-read-only',
+    checkedAt,
+    count: 2,
+    totalPages: 3,
+    healthyCount: 1,
+    warningCount: 1,
+    freshness: { status: 'healthy', staleCount: 0, defaultThresholdHours: 24 },
+    sources: [
+      { id: 'clawd', status: 'stale', pages: 1, lastSyncAt: checkedAt, freshness: { status: 'warning', syncTracked: true } },
+      { id: 'openclaw-memories', status: 'synced', pages: 2, lastSyncAt: checkedAt, freshness: { status: 'healthy', syncTracked: true } },
+    ],
+  };
+  const runtime = {
+    checkedAt,
+    think: { configured: true, modelConfigured: true, proxyConfigured: false, proof: 'GBrain chat model configured' },
+    systems: {
+      openclaw: { mcpConfigured: true, mcpProof: 'OpenClaw mcp.servers.gbrain', runtimeContract: { status: 'healthy', label: 'GBrain shared-brain contract installed', proof: 'OpenClaw AGENTS.md managed block' }, durablePipeline: { status: 'healthy', label: 'Dedicated exporter verified', proof: 'bridge state file present' } },
+    },
+  };
+
+  const integration = buildGBrainIntegrationHealth({ health, sources, tools }, runtime);
+  const openclaw = integration.systems.find((system) => system.id === 'openclaw');
+
+  assert.equal(openclaw.source.id, 'openclaw-memories');
+  assert.equal(openclaw.source.status, 'healthy');
+  assert.equal(openclaw.status, 'healthy');
+}
+
+testIntegrationHealthPrefersCurrentOpenclawSourceOverLegacyAlias();
+console.log('openclaw source preference test passed');

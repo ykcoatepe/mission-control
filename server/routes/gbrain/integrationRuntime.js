@@ -102,6 +102,21 @@ function hasHermesSemanticGBrainContract(text) {
     && /(bridge scripts|hermes_hmudur_memory_bridge\.py)/i.test(normalized);
 }
 
+// OpenClaw keeps the same shared-brain rules in AGENTS.md prose (adapter line:
+// "For cross-system knowledge, use available GBrain tools, preserve source
+// scope ... exclude secrets/raw transcripts ... curated/tagged bridge
+// workflow; shared-memory writes are scoped to ..."). Accept that phrasing as
+// semantic proof so a managed marker block is not required in AGENTS.md.
+function hasOpenClawSemanticGBrainContract(text) {
+  const normalized = String(text || '').replace(/\s+/g, ' ');
+  return /GBrain tools/i.test(normalized)
+    && /cross-system knowledge/i.test(normalized)
+    && /preserve source scope/i.test(normalized)
+    && /exclude secrets\/raw transcripts/i.test(normalized)
+    && /curated\/tagged bridge workflow/i.test(normalized)
+    && /shared-memory writes are scoped to/i.test(normalized);
+}
+
 function detectHermesRuntimeContract(text) {
   if (hasManagedGBrainContract(text)) {
     return {
@@ -118,6 +133,25 @@ function detectHermesRuntimeContract(text) {
   return {
     installed: false,
     proof: 'Hermes hmudur MEMORY.md has no managed or semantic GBrain contract block',
+  };
+}
+
+function detectOpenClawRuntimeContract(text) {
+  if (hasManagedGBrainContract(text)) {
+    return {
+      installed: true,
+      proof: 'OpenClaw AGENTS.md managed block',
+    };
+  }
+  if (hasOpenClawSemanticGBrainContract(text)) {
+    return {
+      installed: true,
+      proof: 'OpenClaw AGENTS.md semantic contract',
+    };
+  }
+  return {
+    installed: false,
+    proof: 'OpenClaw AGENTS.md has no managed or semantic GBrain contract block',
   };
 }
 
@@ -141,7 +175,8 @@ function buildLocalGBrainIntegrationRuntime(options = {}) {
   const hermesMemoryText = readTextFile(hermesMemory);
   const openclawBridgeLinked = syncWrapper.includes('main_memory_to_gbrain_bridge.py');
   const openclawBridgeBlockPresent = handoffsText.includes('main-memory-gbrain-bridge:start');
-  const openclawContractInstalled = hasManagedGBrainContract(openclawAgentsText);
+  const openclawContract = detectOpenClawRuntimeContract(openclawAgentsText);
+  const openclawContractInstalled = openclawContract.installed;
   const hermesContract = detectHermesRuntimeContract(hermesMemoryText);
   const openclawBridgeReady = fileExists(openclawBridgeScript) && openclawBridgeLinked && openclawBridgeBlockPresent;
 
@@ -169,7 +204,7 @@ function buildLocalGBrainIntegrationRuntime(options = {}) {
         runtimeContract: {
           status: openclawContractInstalled ? 'healthy' : 'warning',
           label: openclawContractInstalled ? 'GBrain shared-brain contract installed' : 'GBrain shared-brain contract missing',
-          proof: openclawContractInstalled ? 'OpenClaw AGENTS.md managed block' : 'OpenClaw AGENTS.md has no managed GBrain contract block',
+          proof: openclawContractInstalled ? openclawContract.proof : 'OpenClaw AGENTS.md has no managed or semantic GBrain contract block',
         },
         durablePipeline: {
           status: openclawBridgeReady ? 'healthy' : fileExists(clawdSharedMemory) ? 'warning' : 'critical',
@@ -197,5 +232,6 @@ module.exports = {
   detectOpenClawGBrainConfig,
   detectGBrainThinkConfig,
   hasHermesSemanticGBrainContract,
+  hasOpenClawSemanticGBrainContract,
   buildLocalGBrainIntegrationRuntime,
 };

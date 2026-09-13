@@ -4,6 +4,19 @@ const AUDIT_REPORT_PATH = '~/hermes-workspace/reports/gbrain-full-audit-20260524
 const DESIGN_HANDOFF_PATH = 'docs/gbrain-hybrid-brain-view-handoff-20260524.md';
 const AUDIT_VERIFIED_AT = '2026-05-24T00:00:00.000Z';
 const DEFAULT_COMMAND_TIMEOUT_MS = 7000;
+// Health-probe chain runs alongside a sibling probe under the overview
+// semaphore; under machine load two concurrent gbrain children take 2-3x the
+// sequential runtime (measured 7.3s vs 2.6s), which a 7s hard timeout turns
+// into flapping "Unavailable" dashboards. Mirrors sourceTimeoutMsOverrides.
+const HEALTH_PROBE_SOFT_TIMEOUT_MS = 30000;
+const HEALTH_PROBE_HARD_KILL_DELAY_MS = 30000;
+// Worst probe chain (buildLiveGBrainHealth): up to five sequential successful
+// commands — health, jobs, fallback health, stats backfill and its fallback —
+// can each run just under the soft window, and the last one may instead soft-
+// time out, adding the hard-kill tail. The Operations source deadline must
+// cover that whole budget or the reader discards exactly the loaded-machine
+// evidence the soft timeout exists to capture.
+const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = 5 * HEALTH_PROBE_SOFT_TIMEOUT_MS + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
 const DEFAULT_SOURCE_FRESHNESS_HOURS = 24;
 const SOURCE_FRESHNESS_THRESHOLDS_HOURS = {
   missioncontrol: 12,
@@ -147,6 +160,9 @@ module.exports = {
   DESIGN_HANDOFF_PATH,
   AUDIT_VERIFIED_AT,
   DEFAULT_COMMAND_TIMEOUT_MS,
+  HEALTH_PROBE_SOFT_TIMEOUT_MS,
+  HEALTH_PROBE_HARD_KILL_DELAY_MS,
+  GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
   DEFAULT_SOURCE_FRESHNESS_HOURS,
   SOURCE_FRESHNESS_THRESHOLDS_HOURS,
   REQUIRED_GBRAIN_TOOLS,

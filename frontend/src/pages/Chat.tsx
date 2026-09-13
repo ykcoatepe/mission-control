@@ -106,6 +106,7 @@ export default function Chat() {
   const [filter, setFilter] = useState<'active' | 'all'>('active')
   const [searchQuery, setSearchQuery] = useState('')
   const [sessionInput, setSessionInput] = useState('')
+  const [sendPending, setSendPending] = useState(false)
   const historyEndRef = useRef<HTMLDivElement>(null)
 
   const { data: sessionsData } = useQuery(apiQueryOptions<{ sessions?: SessionInfo[] }>('/api/sessions', 15000))
@@ -177,13 +178,14 @@ export default function Chat() {
 
   const sendToSession = useCallback(async () => {
     const text = sessionInput.trim()
-    if (!text || !activeSession || activeSession === 'main-chat') return
+    if (!text || !activeSession || activeSession === 'main-chat' || sendPending) return
 
     const optimisticEntry = { role: 'user', content: text, ts: Date.now() }
     queryClient.setQueryData<{ messages: HistoryMessage[] }>(historyKey, (previous) => ({
       messages: [...(previous?.messages || []), optimisticEntry],
     }))
     setSessionInput('')
+    setSendPending(true)
 
     try {
       const response = await fetch(`/api/sessions/${encodeURIComponent(activeSession)}/send`, {
@@ -192,6 +194,29 @@ export default function Chat() {
         body: JSON.stringify({ message: text }),
       })
       const data = await response.json()
+      if (data.ok === false && data.pending) {
+        // Accepted by the agent and still working: keep the sent message and
+        // show a status notice instead of treating it as a failure.
+        queryClient.setQueryData<{ messages: HistoryMessage[] }>(historyKey, (previous) => ({
+          messages: [
+            ...(previous?.messages || []),
+            { role: 'assistant', content: `⏳ ${data.result || 'The agent is still working on this.'}`, ts: Date.now() },
+          ],
+        }))
+        return
+      }
+      if (data.ok === false) {
+        // The send never reached the agent: roll back the optimistic entry,
+        // restore the draft, and surface the reason instead of a fake reply.
+        queryClient.setQueryData<{ messages: HistoryMessage[] }>(historyKey, (previous) => ({
+          messages: [
+            ...(previous?.messages || []).filter((entry) => entry !== optimisticEntry),
+            { role: 'assistant', content: `⚠️ ${data.result || 'Message could not be sent'}`, ts: Date.now() },
+          ],
+        }))
+        setSessionInput((current) => (current ? `${text}\n${current}` : text))
+        return
+      }
       if (data.result) {
         queryClient.setQueryData<{ messages: HistoryMessage[] }>(historyKey, (previous) => ({
           messages: [
@@ -208,8 +233,10 @@ export default function Chat() {
           { role: 'assistant', content: `⚠️ ${message}`, ts: Date.now() },
         ],
       }))
+    } finally {
+      setSendPending(false)
     }
-  }, [activeSession, historyKey, queryClient, sessionInput])
+  }, [activeSession, historyKey, queryClient, sendPending, sessionInput])
 
   const allSessions = sessionsData?.sessions || []
   const sessions = allSessions
@@ -329,6 +356,7 @@ export default function Chat() {
                   }}
                   placeholder="Continue this conversation..."
                   rows={1}
+                  disabled={sendPending}
                   className={`${styles.textarea} ${styles.sessionTextarea}`}
                   onInput={(event) => {
                     const target = event.currentTarget
@@ -338,7 +366,7 @@ export default function Chat() {
                 />
                 <button
                   type="submit"
-                  disabled={!sessionInput.trim()}
+                  disabled={!sessionInput.trim() || sendPending}
                   className={`${styles.sendButton} ${
                     sessionInput.trim() ? styles.sendButtonActive : ''
                   }`}
