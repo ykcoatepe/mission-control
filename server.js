@@ -186,7 +186,7 @@ function attachOperationsSource(payload, operationsSource) {
   return payload;
 }
 
-async function fetchSessions(limit = 50) {
+async function fetchSessions(limit = 50, { allowGateway = true } = {}) {
   const normalizeSessionPayload = (payload, { allowEmpty = false } = {}) => {
     const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
     if (!sessions.length && !allowEmpty) return null;
@@ -211,6 +211,14 @@ async function fetchSessions(limit = 50) {
     if (normalized) return attachOperationsSource(normalized, {
       sourceSucceeded: false,
       provenance: 'openclaw-sessions-cli-failed',
+      observedAt: null,
+    });
+  }
+
+  if (!allowGateway) {
+    return attachOperationsSource({ count: 0, sessions: [] }, {
+      sourceSucceeded: false,
+      provenance: 'openclaw-sessions-unavailable',
       observedAt: null,
     });
   }
@@ -467,9 +475,13 @@ function createSessionsService() {
         try {
           // The gateway never answered inside its window; read the reply from
           // the session's owning agent transcript, same ownership rule as
-          // getSessionHistory so cross-agent sessions are covered too.
-          const payload = await fetchSessions(200);
-          const session = (payload.sessions || []).find((entry) => entry.key === decoded);
+          // getSessionHistory. Resolve the session from the in-memory cache
+          // or the CLI only — never the gateway that just stalled.
+          let session = (visibleSessionsCache?.sessions || []).find((entry) => entry.key === decoded);
+          if (!session) {
+            const payload = await fetchSessions(200, { allowGateway: false });
+            session = (payload.sessions || []).find((entry) => entry.key === decoded);
+          }
           const transcriptFile = resolveSessionTranscriptFile(session);
           if (transcriptFile && fs.existsSync(transcriptFile)) {
             const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
