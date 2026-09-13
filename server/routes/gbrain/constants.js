@@ -10,11 +10,13 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 7000;
 // into flapping "Unavailable" dashboards. Mirrors sourceTimeoutMsOverrides.
 const HEALTH_PROBE_SOFT_TIMEOUT_MS = 30000;
 const HEALTH_PROBE_HARD_KILL_DELAY_MS = 30000;
-// The Operations source deadline must outlive the worst probe chain — one
-// soft-timed-out command (soft window plus hard-kill backstop) plus
-// scheduling headroom — or the reader discards exactly the loaded-machine
+// Worst probe chain (buildLiveGBrainHealth): up to five sequential successful
+// commands — health, jobs, fallback health, stats backfill and its fallback —
+// can each run just under the soft window, and the last one may instead soft-
+// time out, adding the hard-kill tail. The Operations source deadline must
+// cover that whole budget or the reader discards exactly the loaded-machine
 // evidence the soft timeout exists to capture.
-const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = HEALTH_PROBE_SOFT_TIMEOUT_MS + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
+const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = 5 * HEALTH_PROBE_SOFT_TIMEOUT_MS + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
 const DEFAULT_SOURCE_FRESHNESS_HOURS = 24;
 const SOURCE_FRESHNESS_THRESHOLDS_HOURS = {
   missioncontrol: 12,

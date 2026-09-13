@@ -26,7 +26,7 @@ test('Health-probe timeout constants are exported to liveProbes and Operations',
 
   assert.equal(gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, 30000);
   assert.equal(gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS, 30000);
-  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS, 75000);
+  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS, 195000);
 });
 
 test('Soft-timeout path forwards suppressStartupHooks to the spawned child', async () => {

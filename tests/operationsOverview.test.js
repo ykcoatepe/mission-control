@@ -352,9 +352,9 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
   const gbrainConstants = require('../server/routes/gbrain/constants');
   assert.equal(
     gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
-    gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000,
+    5 * gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000,
   );
-  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS > gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, true);
+  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS > 5 * gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, true);
 });
 
 test('times out only the stalled source and preserves the remaining snapshot', async () => {
