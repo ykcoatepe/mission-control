@@ -6,6 +6,7 @@ const {
   DEFAULT_SOURCE_FRESHNESS_HOURS,
   SOURCE_FRESHNESS_THRESHOLDS_HOURS,
   REQUIRED_GBRAIN_TOOLS,
+  HEALTH_PROBE_SOFT_TIMEOUT_MS,
 } = require('./constants');
 const {
   defaultExecFilePromise,
@@ -524,12 +525,12 @@ function needsStatsBackfill(health) {
 
 async function buildLiveGBrainStats(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
-  const result = await runGBrain(execFilePromise, ['stats', '--source', '__all__', '--json'], { suppressStartupHooks: true });
+  const result = await runGBrain(execFilePromise, ['stats', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeStatsPayload(payload);
   const textStats = normalizeStatsText(result.stdout);
   if (result.ok && textStats) return textStats;
-  const fallbackResult = await runGBrain(execFilePromise, ['stats', '--source', '__all__'], { suppressStartupHooks: true });
+  const fallbackResult = await runGBrain(execFilePromise, ['stats', '--source', '__all__'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const fallbackPayload = parseJsonFromOutput(fallbackResult.stdout);
   if (fallbackResult.ok && fallbackPayload) return normalizeStatsPayload(fallbackPayload);
   return fallbackResult.ok ? normalizeStatsText(fallbackResult.stdout) : null;
@@ -643,8 +644,8 @@ async function buildLiveGBrainHealth(options = {}) {
   // Keep each top-level probe to one child command. The overview scheduler may
   // run two probes concurrently; a nested health fan-out would otherwise allow
   // three simultaneous GBrain subprocesses and defeat that database bound.
-  const healthResult = await runGBrain(execFilePromise, ['call', '--source', '__all__', 'get_health'], { suppressStartupHooks: true });
-  const jobsResult = await runGBrain(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true });
+  const healthResult = await runGBrain(execFilePromise, ['call', '--source', '__all__', 'get_health'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  const jobsResult = await runGBrain(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const healthPayload = parseJsonFromOutput(healthResult.stdout);
   const jobsPayload = parseJsonFromOutput(jobsResult.stdout) || {
     waiting: numberFromText(jobsResult.stdout, /Queue health:\s*(\d+)\s+waiting/i),
@@ -657,7 +658,7 @@ async function buildLiveGBrainHealth(options = {}) {
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
-  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true });
+  const fallbackHealthResult = await runGBrain(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
     const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt);

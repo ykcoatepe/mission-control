@@ -4,6 +4,11 @@ const AUDIT_REPORT_PATH = '~/hermes-workspace/reports/gbrain-full-audit-20260524
 const DESIGN_HANDOFF_PATH = 'docs/gbrain-hybrid-brain-view-handoff-20260524.md';
 const AUDIT_VERIFIED_AT = '2026-05-24T00:00:00.000Z';
 const DEFAULT_COMMAND_TIMEOUT_MS = 7000;
+// Health-probe chain runs alongside a sibling probe under the overview
+// semaphore; under machine load two concurrent gbrain children take 2-3x the
+// sequential runtime (measured 7.3s vs 2.6s), which a 7s hard timeout turns
+// into flapping "Unavailable" dashboards. Mirrors sourceTimeoutMsOverrides.
+const HEALTH_PROBE_SOFT_TIMEOUT_MS = 30000;
 const DEFAULT_SOURCE_FRESHNESS_HOURS = 24;
 const SOURCE_FRESHNESS_THRESHOLDS_HOURS = {
   missioncontrol: 12,
