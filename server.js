@@ -450,6 +450,9 @@ function createSessionsService() {
       const gatewayPort = cfg.gateway?.port || GATEWAY_PORT;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 90000);
+      // Transcript boundary for the fallback scan: any assistant entry written
+      // before this moment belongs to an earlier turn, not to this send.
+      const sentAtMs = Date.now();
 
       try {
         const response = await fetch(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
@@ -488,6 +491,8 @@ function createSessionsService() {
             for (let index = lines.length - 1; index >= 0; index -= 1) {
               try {
                 const entry = JSON.parse(lines[index]);
+                const entryMs = new Date(entry.timestamp || 0).getTime();
+                if (!Number.isFinite(entryMs) || entryMs <= sentAtMs) continue;
                 if (entry.type === 'message' && entry.message?.role === 'assistant') {
                   const content = entry.message.content;
                   resultText = Array.isArray(content)
