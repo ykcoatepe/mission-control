@@ -968,6 +968,10 @@ export default function Costs() {
         const rawCost = Number(day[key] || 0)
         const rawApiEquivalent = day[`${key}_apiEquivalentUsd`]
         const rawApiEquivalentStatus = String(day[`${key}_apiEquivalentStatus`] || '')
+        // 'partial' rows are priced too (default-tier / blended estimates for
+        // models without an exact rate card), so they count toward the agent's
+        // API-equivalent total instead of hiding it behind N/A.
+        const apiEquivalentPriced = rawApiEquivalentStatus === 'estimated' || rawApiEquivalentStatus === 'partial'
         const current = modelTotals.get(key) || {
           name: key,
           tokens: 0,
@@ -978,7 +982,7 @@ export default function Costs() {
         }
         current.tokens += Number.isFinite(rawTokens) ? rawTokens : 0
         current.cost += Number.isFinite(rawCost) ? rawCost : 0
-        if (rawApiEquivalentStatus === 'estimated' && rawApiEquivalent !== null && rawApiEquivalent !== undefined && Number.isFinite(Number(rawApiEquivalent))) {
+        if (apiEquivalentPriced && rawApiEquivalent !== null && rawApiEquivalent !== undefined && Number.isFinite(Number(rawApiEquivalent))) {
           current.apiEquivalentCost += Number(rawApiEquivalent)
           current.apiEquivalentAvailable = true
         }
@@ -1018,7 +1022,8 @@ export default function Costs() {
         : Number(agent.summary?.periodApiEquivalentUsd ?? agent.summary?.apiEquivalentUsd ?? 0),
       apiEquivalentAvailable: periodModels.length > 0
         ? periodApiEquivalentAvailable
-        : (agent.byService || []).some(service => service.apiEquivalentStatus === 'estimated'),
+        : (agent.byService || []).some(service =>
+            service.apiEquivalentStatus === 'estimated' || service.apiEquivalentStatus === 'partial'),
       topModel: topModel?.name
         ?.replace(/^OpenClaw \/ /, '')
         .replace(/^Codex App Sessions \/ /, '')
