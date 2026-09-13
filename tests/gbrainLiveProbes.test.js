@@ -71,3 +71,19 @@ test('stats probe returns null after a soft timeout without running the fallback
   assert.equal(await buildLiveGBrainStats({ probeCommand: pendingProbe }), null);
   assert.deepEqual(launched, ['stats']);
 });
+
+test('health chain stops after a timed-out jobs probe instead of backfilling stats', async () => {
+  const { buildLiveGBrainHealth } = require('../server/routes/gbrain/liveProbes');
+  const launched = [];
+  const probe = async (_execFilePromise, args) => {
+    launched.push(args[0]);
+    if (args[0] === 'call') return { ok: true, stdout: JSON.stringify({ brain_score: 100 }) };
+    if (args[0] === 'jobs') return { ok: false, pending: true, stdout: '', stderr: '', error: 'gbrain jobs exceeded 30s and was asked to stop' };
+    return { ok: true, stdout: '{}' };
+  };
+
+  const health = await buildLiveGBrainHealth({ probeCommand: probe });
+
+  assert.equal(health.status, 'unavailable');
+  assert.deepEqual(launched, ['call', 'jobs']);
+});

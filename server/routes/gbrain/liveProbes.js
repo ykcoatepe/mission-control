@@ -670,6 +670,13 @@ async function buildLiveGBrainHealth(options = {}) {
     return { ok: false, mode: 'live-read-only', checkedAt, status: 'unavailable', error: healthResult.error };
   }
   const jobsResult = await runProbe(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  // Same stop rule as above: a timed-out jobs probe means the database is too
+  // contended to keep probing, and reporting a healthy score with unavailable
+  // queue counters would be the false "healthy" this probe chain exists to
+  // prevent.
+  if (jobsResult.pending) {
+    return { ok: false, mode: 'live-read-only', checkedAt, status: 'unavailable', error: jobsResult.error };
+  }
   const healthPayload = parseJsonFromOutput(healthResult.stdout);
   const jobsPayload = parseJsonFromOutput(jobsResult.stdout) || {
     waiting: numberFromText(jobsResult.stdout, /Queue health:\s*(\d+)\s+waiting/i),
