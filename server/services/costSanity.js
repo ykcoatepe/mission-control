@@ -171,12 +171,10 @@ function estimateApiEquivalentCost(item = {}) {
         ? { usd: 0, status: 'estimated', source: 'free_rate_card' }
         : { usd, status: 'estimated', source: 'official_rate_card' };
     }
-    // Unmatched model with real metered spend: the recorded bill is better
-    // evidence than a fabricated default-tier estimate.
+    // Unmatched model with real recorded spend: the bill is better evidence
+    // than a fabricated default-tier estimate, whatever its source label.
     const meteredCost = Number(item.cost || 0);
-    const costSource = String(item.costSource || '').toLowerCase();
-    if (meteredCost > 0 && Number.isFinite(meteredCost)
-      && (costSource.includes('api') || costSource.includes('metered') || costSource.includes('recorded'))) {
+    if (meteredCost > 0 && Number.isFinite(meteredCost)) {
       return { usd: meteredCost, status: 'estimated', source: 'recorded_cost_estimate' };
     }
     return { usd, status: 'partial', source: 'default_rate_card' };
@@ -343,6 +341,7 @@ function normalizeUsageCosts(usage) {
         name: key,
         cost,
         tokens,
+        costSource: String(out[`${key}_costSource`] || ''),
         apiEquivalentUsd: out[`${key}_apiEquivalentUsd`],
         apiEquivalentStatus: out[`${key}_apiEquivalentStatus`],
         input: Number(out[`${key}_input`] || 0),

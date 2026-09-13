@@ -617,3 +617,36 @@ test('priced byService rows publish the period total even without dailyByModel',
   assert.equal(usage.apiEquivalentReliability, 'estimated');
   assert.equal(usage.summary.periodApiEquivalentUsd, 0.015);
 });
+
+test('recorded cost wins for unmatched models even without a source marker', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'vendor/kimi-k2.9',
+    tokens: 1_000_000,
+    input: 600_000,
+    output: 400_000,
+    cost: 18,
+  });
+
+  assert.deepEqual(estimate, { usd: 18, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('daily rows carry their cost source so the period total matches byService', () => {
+  const usage = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 18 },
+    daily: [{ date: '2026-09-13', cost: 18, totalCost: 18, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [{
+      date: '2026-09-13',
+      'vendor/kimi-k2.9': 18,
+      'vendor/kimi-k2.9_tokens': 1_000_000,
+      'vendor/kimi-k2.9_input': 600_000,
+      'vendor/kimi-k2.9_output': 400_000,
+      'vendor/kimi-k2.9_costSource': 'api',
+    }],
+    byService: [{ name: 'vendor/kimi-k2.9', tokens: 1_000_000, input: 600_000, output: 400_000, cost: 18, costSource: 'api' }],
+  });
+
+  assert.equal(usage.daily[0].apiEquivalentCost, 18);
+  assert.equal(usage.summary.periodApiEquivalentUsd, 18);
+});
