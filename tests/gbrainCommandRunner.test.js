@@ -20,3 +20,9 @@ test('Maintenance actions preserve GBrain startup rails', () => {
     if (inherited !== undefined) process.env.GBRAIN_SKIP_STARTUP_HOOKS = inherited;
   }
 });
+
+test('Health-probe soft timeout constant is exported to liveProbes', () => {
+  const gbrainConstants = require('../server/routes/gbrain/constants');
+
+  assert.equal(gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, 30000);
+});
