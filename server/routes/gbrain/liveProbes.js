@@ -538,12 +538,16 @@ const runProbeCommand = createProbeCommandRunner(runGBrain);
 
 async function buildLiveGBrainStats(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
-  const result = await runProbeCommand(execFilePromise, ['stats', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  const runProbe = options.probeCommand || runProbeCommand;
+  const result = await runProbe(execFilePromise, ['stats', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const payload = parseJsonFromOutput(result.stdout);
   if (result.ok && payload) return normalizeStatsPayload(payload);
   const textStats = normalizeStatsText(result.stdout);
   if (result.ok && textStats) return textStats;
-  const fallbackResult = await runProbeCommand(execFilePromise, ['stats', '--source', '__all__'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  // A soft-timed-out child means gbrain is already too loaded or hung; stop
+  // instead of stacking a fallback probe on the same database.
+  if (result.pending) return null;
+  const fallbackResult = await runProbe(execFilePromise, ['stats', '--source', '__all__'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const fallbackPayload = parseJsonFromOutput(fallbackResult.stdout);
   if (fallbackResult.ok && fallbackPayload) return normalizeStatsPayload(fallbackPayload);
   return fallbackResult.ok ? normalizeStatsText(fallbackResult.stdout) : null;
@@ -653,12 +657,19 @@ function normalizeSourcesText(output, checkedAt) {
 
 async function buildLiveGBrainHealth(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
+  const runProbe = options.probeCommand || runProbeCommand;
   const checkedAt = new Date().toISOString();
   // Keep each top-level probe to one child command. The overview scheduler may
   // run two probes concurrently; a nested health fan-out would otherwise allow
   // three simultaneous GBrain subprocesses and defeat that database bound.
-  const healthResult = await runProbeCommand(execFilePromise, ['call', '--source', '__all__', 'get_health'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
-  const jobsResult = await runProbeCommand(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  const healthResult = await runProbe(execFilePromise, ['call', '--source', '__all__', 'get_health'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  // A soft-timed-out child has already consumed the soft window plus hard-kill
+  // cleanup; successor probes would stack on the same loaded database and
+  // stretch a single overview request to minutes. Report unavailable instead.
+  if (healthResult.pending) {
+    return { ok: false, mode: 'live-read-only', checkedAt, status: 'unavailable', error: healthResult.error };
+  }
+  const jobsResult = await runProbe(execFilePromise, ['jobs', 'stats', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
   const healthPayload = parseJsonFromOutput(healthResult.stdout);
   const jobsPayload = parseJsonFromOutput(jobsResult.stdout) || {
     waiting: numberFromText(jobsResult.stdout, /Queue health:\s*(\d+)\s+waiting/i),
@@ -671,7 +682,10 @@ async function buildLiveGBrainHealth(options = {}) {
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
-  const fallbackHealthResult = await runProbeCommand(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  const fallbackHealthResult = await runProbe(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
+  if (fallbackHealthResult.pending) {
+    return { ok: false, mode: 'live-read-only', checkedAt, status: 'unavailable', error: fallbackHealthResult.error };
+  }
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
     const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt);

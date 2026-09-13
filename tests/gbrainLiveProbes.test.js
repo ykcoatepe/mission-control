@@ -45,3 +45,29 @@ test('probe runner passes results through untouched when no cleanup is pending',
 
   assert.deepEqual(result, { ok: true, stdout: '{}' });
 });
+
+test('health chain stops after a soft-timed-out probe instead of stacking successors', async () => {
+  const { buildLiveGBrainHealth } = require('../server/routes/gbrain/liveProbes');
+  const launched = [];
+  const pendingProbe = async (_execFilePromise, args) => {
+    launched.push(args[0]);
+    return { ok: false, pending: true, stdout: '', stderr: '', error: 'gbrain call exceeded 30s and was asked to stop' };
+  };
+
+  const health = await buildLiveGBrainHealth({ probeCommand: pendingProbe });
+
+  assert.equal(health.status, 'unavailable');
+  assert.deepEqual(launched, ['call']);
+});
+
+test('stats probe returns null after a soft timeout without running the fallback', async () => {
+  const { buildLiveGBrainStats } = require('../server/routes/gbrain/liveProbes');
+  const launched = [];
+  const pendingProbe = async (_execFilePromise, args) => {
+    launched.push(args[0]);
+    return { ok: false, pending: true, stdout: '', stderr: '' };
+  };
+
+  assert.equal(await buildLiveGBrainStats({ probeCommand: pendingProbe }), null);
+  assert.deepEqual(launched, ['stats']);
+});

@@ -1496,3 +1496,47 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 
   console.log('gbrainOverview tests passed');
 })();
+
+function testIntegrationHealthPrefersCurrentOpenclawSourceOverLegacyAlias() {
+  const { REQUIRED_GBRAIN_TOOLS } = require('../server/routes/gbrain/constants');
+  const checkedAt = '2026-09-13T00:00:00.000Z';
+  const health = { ok: true, mode: 'live-read-only', checkedAt, status: 'healthy', score: 100, metrics: {} };
+  const tools = {
+    ok: true,
+    checkedAt,
+    requiredTools: REQUIRED_GBRAIN_TOOLS.map((tool) => ({ ...tool, present: true })),
+    presentCount: REQUIRED_GBRAIN_TOOLS.length,
+    missingCount: 0,
+  };
+  const sources = {
+    ok: true,
+    mode: 'live-read-only',
+    checkedAt,
+    count: 2,
+    totalPages: 3,
+    healthyCount: 1,
+    warningCount: 1,
+    freshness: { status: 'healthy', staleCount: 0, defaultThresholdHours: 24 },
+    sources: [
+      { id: 'clawd', status: 'stale', pages: 1, lastSyncAt: checkedAt, freshness: { status: 'warning', syncTracked: true } },
+      { id: 'openclaw-memories', status: 'synced', pages: 2, lastSyncAt: checkedAt, freshness: { status: 'healthy', syncTracked: true } },
+    ],
+  };
+  const runtime = {
+    checkedAt,
+    think: { configured: true, modelConfigured: true, proxyConfigured: false, proof: 'GBrain chat model configured' },
+    systems: {
+      openclaw: { mcpConfigured: true, mcpProof: 'OpenClaw mcp.servers.gbrain', runtimeContract: { status: 'healthy', label: 'GBrain shared-brain contract installed', proof: 'OpenClaw AGENTS.md managed block' }, durablePipeline: { status: 'healthy', label: 'Dedicated exporter verified', proof: 'bridge state file present' } },
+    },
+  };
+
+  const integration = buildGBrainIntegrationHealth({ health, sources, tools }, runtime);
+  const openclaw = integration.systems.find((system) => system.id === 'openclaw');
+
+  assert.equal(openclaw.source.id, 'openclaw-memories');
+  assert.equal(openclaw.source.status, 'healthy');
+  assert.equal(openclaw.status, 'healthy');
+}
+
+testIntegrationHealthPrefersCurrentOpenclawSourceOverLegacyAlias();
+console.log('openclaw source preference test passed');

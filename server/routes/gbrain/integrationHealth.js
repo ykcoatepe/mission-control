@@ -12,8 +12,15 @@ function normalizeSourceKey(value) {
 }
 
 function sourceById(liveSources, ids) {
-  const wanted = new Set(ids.map((id) => normalizeSourceKey(id)));
-  return (liveSources?.sources || []).find((source) => wanted.has(normalizeSourceKey(source.id))) || null;
+  // ids are in preference order: when legacy and current ids coexist in the
+  // live inventory, the earlier (current) id must win over inventory order.
+  const sources = liveSources?.sources || [];
+  for (const id of ids) {
+    const wanted = normalizeSourceKey(id);
+    const match = sources.find((source) => normalizeSourceKey(source.id) === wanted);
+    if (match) return match;
+  }
+  return null;
 }
 
 function sourceStatusFor(source, sourcesUnavailable) {
@@ -38,7 +45,7 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
   const hermesSource = sourceById(liveSources, ['hermes-agent', 'hermes']);
   // 'clawd'/'openclaw' were the historical workspace source ids; current GBrain
   // inventory exposes OpenClaw's curated memory export as 'openclaw-memories'.
-  const openclawSource = sourceById(liveSources, ['clawd', 'openclaw', 'openclaw-memories']);
+  const openclawSource = sourceById(liveSources, ['openclaw-memories', 'clawd', 'openclaw']);
   const runtimeSystems = runtime?.systems || {};
   const featureGaps = liveFeatures?.recommendations || [];
   const blockingFeatureGaps = featureGaps.filter((item) => item.severity !== 'optional');
