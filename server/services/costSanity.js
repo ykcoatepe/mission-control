@@ -39,6 +39,9 @@ const API_RATE_CARDS = [
   { match: 'claude-sonnet-5', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
   { match: 'claude-sonnet-4-6', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
   { match: 'glm-5.3-flash', input: 0.15, cachedInput: 0.03, output: 0.5, cacheWrite: 0.1875 },
+  // Must stay AFTER the flash card: includes-matching would otherwise catch
+  // 'glm-5.3-flash' rows at the larger model's rates.
+  { match: 'glm-5.3', input: 1.4, cachedInput: 0.26, output: 4.4, cacheWrite: 1.75 },
   // Known free tiers must zero-price before the generic default tier can
   // fabricate a cost for them (mirrors the frontend pricing registry).
   { match: 'qwen3-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
@@ -100,9 +103,9 @@ function isSubscriptionIncludedModel(name) {
 function lookupFallbackPricing(name) {
   if (!name || isLocalModel(name) || isSubscriptionIncludedModel(name)) return null;
   const lower = modelKey(name);
-  for (const [key, rate] of Object.entries(FALLBACK_PRICING)) {
-    if (lower.includes(key.toLowerCase())) return rate;
-  }
+  // The specificity-aware chain must run first: generic map keys like
+  // 'openai-codex/gpt-5.4' are substrings of 'gpt-5.4-nano' and would
+  // otherwise shadow the intended nano/mini/her rates.
   if (lower.includes('gpt-5.4-mini') || lower.includes('gpt-5.4-nano')) return FALLBACK_PRICING['openai-codex/gpt-5.4-mini'];
   if (lower.includes('gpt-5.4') && !lower.includes('mini')) return FALLBACK_PRICING['openai-codex/gpt-5.4'];
   if (lower.includes('gpt-5.3-codex') || lower.includes('gpt-5.3')) return FALLBACK_PRICING['openai-codex/gpt-5.3-codex-spark'];
@@ -111,6 +114,9 @@ function lookupFallbackPricing(name) {
   if (lower.includes('minimax-m2.1')) return FALLBACK_PRICING['minimax/minimax-m2.1'];
   if (lower.includes('minimax-m2-her')) return FALLBACK_PRICING['minimax/minimax-m2-her'];
   if (lower.includes('minimax-m2')) return FALLBACK_PRICING['minimax/minimax-m2'];
+  for (const [key, rate] of Object.entries(FALLBACK_PRICING)) {
+    if (lower.includes(key.toLowerCase())) return rate;
+  }
   return null;
 }
 
@@ -124,23 +130,24 @@ function estimateApiEquivalentCost(item = {}) {
     return { usd: 0, status: 'not_applicable', source: 'local_model' };
   }
 
-  if (item.apiEquivalentUsd !== null && item.apiEquivalentUsd !== undefined && Number.isFinite(Number(item.apiEquivalentUsd))) {
+  const recordedApiEquivalent = Number(item.apiEquivalentUsd);
+  if (item.apiEquivalentUsd !== null && item.apiEquivalentUsd !== undefined
+    && Number.isFinite(recordedApiEquivalent) && recordedApiEquivalent >= 0) {
     return {
-      usd: Number(item.apiEquivalentUsd),
+      usd: recordedApiEquivalent,
       status: item.apiEquivalentStatus || 'estimated',
       source: item.apiEquivalentSource || 'recorded_cost_estimate',
     };
   }
 
   const matchedRate = lookupApiRateCard(item.name);
-  const rate = matchedRate || API_DEFAULT_RATE;
   const input = Math.max(Number(item.input || 0), 0);
   const output = Math.max(Number(item.output || 0), 0);
   const cacheRead = Math.max(Number(item.cacheRead || 0), 0);
   const cacheWrite = Math.max(Number(item.cacheWrite || 0), 0);
   const hasTokenClasses = input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0;
 
-  if (rate && hasTokenClasses) {
+  if (hasTokenClasses) {
     // CodexBar-style rows include cached tokens inside input, while OpenClaw
     // native rows commonly expose uncached input and cache reads separately.
     // Pick the interpretation that best reconciles with the recorded total.
@@ -152,17 +159,27 @@ function estimateApiEquivalentCost(item = {}) {
     const cacheIsSeparate = cacheRead > 0 && separateCacheDelta < includedCacheDelta;
     const cachedInput = cacheIsSeparate ? cacheRead : Math.min(cacheRead, input);
     const uncachedInput = cacheIsSeparate ? input : Math.max(input - cachedInput, 0);
+    const rate = matchedRate || API_DEFAULT_RATE;
     const usd = (
       uncachedInput * rate.input
       + cachedInput * rate.cachedInput
       + output * rate.output
       + cacheWrite * rate.cacheWrite
     ) / 1_000_000;
-    return matchedRate
-      ? (matchedRate.free
+    if (matchedRate) {
+      return matchedRate.free
         ? { usd: 0, status: 'estimated', source: 'free_rate_card' }
-        : { usd, status: 'estimated', source: 'official_rate_card' })
-      : { usd, status: 'partial', source: 'default_rate_card' };
+        : { usd, status: 'estimated', source: 'official_rate_card' };
+    }
+    // Unmatched model with real metered spend: the recorded bill is better
+    // evidence than a fabricated default-tier estimate.
+    const meteredCost = Number(item.cost || 0);
+    const costSource = String(item.costSource || '').toLowerCase();
+    if (meteredCost > 0 && Number.isFinite(meteredCost)
+      && (costSource.includes('api') || costSource.includes('metered') || costSource.includes('recorded'))) {
+      return { usd: meteredCost, status: 'estimated', source: 'recorded_cost_estimate' };
+    }
+    return { usd, status: 'partial', source: 'default_rate_card' };
   }
 
   // Rows without a token-class breakdown keep the best available evidence in
@@ -171,7 +188,7 @@ function estimateApiEquivalentCost(item = {}) {
   // truly unpriced rows so it never buries better data.
   const fallbackTokens = Math.max(Number(item.tokens || 0), 0);
   const currentCost = Number(item.cost || 0);
-  if (!hasTokenClasses && (fallbackTokens > 0 || currentCost > 0)) {
+  if (fallbackTokens > 0 || currentCost > 0) {
     if (matchedRate && matchedRate.free) {
       return { usd: 0, status: 'estimated', source: 'free_rate_card' };
     }
@@ -184,10 +201,6 @@ function estimateApiEquivalentCost(item = {}) {
     }
     const blended = (API_DEFAULT_RATE.input + API_DEFAULT_RATE.output) / 2;
     return { usd: fallbackTokens * blended / 1_000_000, status: 'partial', source: 'default_rate_card_blended' };
-  }
-
-  if (currentCost > 0 && Number.isFinite(currentCost)) {
-    return { usd: currentCost, status: 'estimated', source: 'recorded_cost_estimate' };
   }
 
   return { usd: null, status: 'unavailable', source: 'unpriced_model' };
@@ -367,35 +380,37 @@ function normalizeUsageCosts(usage) {
     .filter((item) => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
     .map((item) => item.apiEquivalentStatus);
   const hasEstimatedApiEquivalent = apiEquivalentStatuses.includes('estimated');
-  const hasUnavailableApiEquivalent = apiEquivalentStatuses.includes('unavailable');
   // Default-tier rows are estimates too (flagged partial); they count toward
   // publishing the total so a day dominated by brand-new models still shows a
   // documented number instead of null.
   const hasPricedApiEquivalent = hasEstimatedApiEquivalent || apiEquivalentStatuses.includes('partial');
-  const hasPartialApiEquivalent = apiEquivalentStatuses.includes('partial');
+  // One truth table for every rollup: the exported combiner treats partial
+  // (and estimated+unavailable) as partial, matching the frontend gates.
   let apiEquivalentReliability = apiEquivalentStatuses.length === 0
     ? 'no_usage'
-    : (hasPartialApiEquivalent || (hasEstimatedApiEquivalent && hasUnavailableApiEquivalent))
-    ? 'partial'
-    : hasEstimatedApiEquivalent
-    ? 'estimated'
-    : hasUnavailableApiEquivalent
-      ? 'unavailable'
-      : 'not_applicable';
+    : combineApiEquivalentReliability(apiEquivalentStatuses);
   const sourceStatuses = [
     usage.meta?.openclawStatus,
     usage.meta?.hermesStatus,
     usage.meta?.claudeCodeStatus,
   ].filter(Boolean);
   const sourceCoveragePartial = sourceStatuses.includes('unavailable');
+  const scanTruncated = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
   // A truncated scan understates the API-equivalent estimate exactly as much as
   // it understates tracked cost, and the headline/month-total/trend labels read
   // this field — not costReliability.
-  const truncatedScan = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
-  const coverageIncomplete = sourceCoveragePartial || truncatedScan;
+  const coverageIncomplete = sourceCoveragePartial || scanTruncated;
   const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
   if (coverageIncomplete && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
-  const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
+  // The published value sums the daily rows; when the producer supplied
+  // byService evidence without any dailyByModel rows (fast fallback path),
+  // fall back to that sum instead of publishing a confident $0.00.
+  const byServiceApiEquivalentSum = byService.reduce((sum, item) => (
+    item.apiEquivalentUsd === null ? sum : sum + Number(item.apiEquivalentUsd || 0)
+  ), 0);
+  const estimatedPeriodApiEquivalentUsd = (normalized.dailyByModel || []).length > 0
+    ? normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0)
+    : byServiceApiEquivalentSum;
   const periodApiEquivalentUsd = hasPricedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
@@ -406,7 +421,6 @@ function normalizeUsageCosts(usage) {
   // the candidate set before any record was read. That is partial coverage no matter
   // how clean the producer statuses look, and the frontend gates budget progress
   // and projections on this field alone.
-  const scanTruncated = usage.summary?.scanTruncated === true || usage.scanTruncated === true;
   normalized.costReliability = scanTruncated
     || sourceCoveragePartial
     || byService.some((item) => item.costSource === 'unknown')
@@ -419,8 +433,12 @@ function normalizeUsageCosts(usage) {
       const agentOut = { ...agent, byService: (agent.byService || []).map(normalizeServiceCost) };
       const agentCost = agentOut.byService.reduce((sum, item) => sum + Number(item.cost || 0), 0);
       agentOut.summary = { ...(agent.summary || {}) };
-      if ('periodUsd' in agentOut.summary || agentOut.byService.length) agentOut.summary.periodUsd = agentCost;
-      if ('totalUsd' in agentOut.summary || agentOut.byService.length) agentOut.summary.totalUsd = agentCost;
+      // With no byService rows there is nothing to roll up; keep the
+      // producer-supplied summary instead of clobbering it with zeros.
+      if (agentOut.byService.length) {
+        agentOut.summary.periodUsd = agentCost;
+        agentOut.summary.totalUsd = agentCost;
+      }
       const agentApiEquivalentStatuses = agentOut.byService
         .filter((item) => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
         .map((item) => item.apiEquivalentStatus);
@@ -429,7 +447,6 @@ function normalizeUsageCosts(usage) {
       // toward the agent's published total instead of nulling it.
       const agentHasPartial = agentApiEquivalentStatuses.includes('partial');
       const agentHasPriced = agentHasEstimated || agentHasPartial;
-      const agentHasUnavailable = agentApiEquivalentStatuses.includes('unavailable');
       const agentApiEquivalent = agentOut.byService.reduce((sum, item) => (
         item.apiEquivalentUsd === null ? sum : sum + Number(item.apiEquivalentUsd || 0)
       ), 0);
@@ -437,13 +454,7 @@ function normalizeUsageCosts(usage) {
       agentOut.summary.apiEquivalentUsd = agentHasPriced ? agentApiEquivalent : null;
       agentOut.summary.apiEquivalentStatus = agentApiEquivalentStatuses.length === 0
         ? 'no_usage'
-        : (agentHasPartial || (agentHasEstimated && agentHasUnavailable))
-        ? 'partial'
-        : agentHasEstimated
-        ? 'estimated'
-        : agentHasUnavailable
-          ? 'unavailable'
-          : 'not_applicable';
+        : combineApiEquivalentReliability(agentApiEquivalentStatuses);
       return agentOut;
     });
   }

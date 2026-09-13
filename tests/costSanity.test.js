@@ -570,3 +570,50 @@ test('token-only rows of a card-matched model blend their own card rates', () =>
 
   assert.deepEqual(estimate, { usd: 30, status: 'partial', source: 'rate_card_blended' });
 });
+
+test('specific fallback rates are not shadowed by generic map keys', () => {
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4-nano'), 4.5);
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4-mini'), 4.5);
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4'), 15);
+  assert.equal(lookupFallbackPricing('minimax/minimax-m2-her'), 1.2);
+});
+
+test('class-ful metered rows without a card keep their recorded cost', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'vendor/kimi-k2.9',
+    tokens: 1_000_000,
+    input: 500_000,
+    output: 500_000,
+    cost: 18,
+    costSource: 'api',
+  });
+
+  assert.deepEqual(estimate, { usd: 18, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('glm-5.3 (non-flash) prices from its own card, not the flash or default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'zai-coding-plan/glm-5.3',
+    tokens: 1_000_000,
+    input: 500_000,
+    output: 500_000,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.source, 'official_rate_card');
+  assert.equal(estimate.usd, (500_000 * 1.4 + 500_000 * 4.4) / 1_000_000);
+});
+
+test('priced byService rows publish the period total even without dailyByModel', () => {
+  const usage = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [],
+    byService: [{ name: 'openai/gpt-5.6-sol', tokens: 1_000_000, input: 600, output: 400, cost: 0 }],
+  });
+
+  assert.equal(usage.apiEquivalentReliability, 'estimated');
+  assert.equal(usage.summary.periodApiEquivalentUsd, 0.015);
+});
