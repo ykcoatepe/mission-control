@@ -449,7 +449,7 @@ function createSessionsService() {
     async sendSessionMessage(sessionKey, message) {
       const decoded = decodeURIComponent(sessionKey);
       if (pendingSendsBySession.has(decoded)) {
-        return { ok: false, result: 'A message to this session is still in progress — wait for the current reply before sending again.' };
+        return { ok: false, busy: true, result: 'A message to this session is still in progress — wait for the current reply before sending again.' };
       }
       const send = (async () => {
       const cfg = fs.existsSync(OPENCLAW_CONFIG_PATH) ? JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8')) : {};
@@ -495,7 +495,26 @@ function createSessionsService() {
           const transcriptFile = resolveSessionTranscriptFile(session);
           if (transcriptFile && fs.existsSync(transcriptFile)) {
             const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+            // Anchor on this send's own user entry: only assistant replies
+            // written after it can answer this request, so overlapping sends
+            // cannot misattribute each other's replies. Without a matching
+            // user entry, fall back to the sentAt boundary alone.
+            let anchorIndex = -1;
             for (let index = lines.length - 1; index >= 0; index -= 1) {
+              try {
+                const entry = JSON.parse(lines[index]);
+                if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
+                const content = entry.message.content;
+                const entryText = Array.isArray(content)
+                  ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text || '').join('\n')
+                  : typeof content === 'string' ? content : '';
+                if (entryText.trim() === message.trim()) {
+                  anchorIndex = index;
+                  break;
+                }
+              } catch {}
+            }
+            for (let index = lines.length - 1; index > anchorIndex; index -= 1) {
               try {
                 const entry = JSON.parse(lines[index]);
                 const entryMs = new Date(entry.timestamp || 0).getTime();
@@ -513,15 +532,21 @@ function createSessionsService() {
         } catch {}
         return resultText
           ? { ok: true, result: resultText }
-          : { ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
+          : { ok: false, pending: true, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
       }
       })();
       pendingSendsBySession.set(decoded, send);
-      try {
-        return await send;
-      } finally {
+      const outcome = await send;
+      if (outcome && outcome.pending) {
+        // Accepted by the agent and still working: hold the per-session lock
+        // for a bounded grace so a follow-up send cannot interleave while the
+        // reply for this one may still land. The anchor correlation above
+        // keeps replies attributable regardless of when the lock lifts.
+        setTimeout(() => pendingSendsBySession.delete(decoded), 120000);
+      } else {
         pendingSendsBySession.delete(decoded);
       }
+      return outcome;
     },
     hideSession(sessionKey) {
       const decoded = decodeURIComponent(sessionKey);

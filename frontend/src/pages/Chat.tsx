@@ -194,6 +194,17 @@ export default function Chat() {
         body: JSON.stringify({ message: text }),
       })
       const data = await response.json()
+      if (data.ok === false && data.pending) {
+        // Accepted by the agent and still working: keep the sent message and
+        // show a status notice instead of treating it as a failure.
+        queryClient.setQueryData<{ messages: HistoryMessage[] }>(historyKey, (previous) => ({
+          messages: [
+            ...(previous?.messages || []),
+            { role: 'assistant', content: `⏳ ${data.result || 'The agent is still working on this.'}`, ts: Date.now() },
+          ],
+        }))
+        return
+      }
       if (data.ok === false) {
         // The send never reached the agent: roll back the optimistic entry,
         // restore the draft, and surface the reason instead of a fake reply.
