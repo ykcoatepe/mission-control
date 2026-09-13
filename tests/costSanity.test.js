@@ -542,3 +542,12 @@ test('known free models zero-price instead of hitting the default tier', () => {
 
   assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
 });
+
+test('free models with total-only tokens stay zero-priced in the blended fallback', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'qwen/qwen3.6-free',
+    tokens: 1_000_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
+});

@@ -170,6 +170,11 @@ function estimateApiEquivalentCost(item = {}) {
   // partial estimate instead of dropping the row to unavailable.
   const fallbackTokens = Math.max(Number(item.tokens || 0), 0);
   if (!hasTokenClasses && fallbackTokens > 0) {
+    // A matched free card wins even without token classes; only unmatched
+    // models fall through to the blended default tier.
+    if (matchedRate && matchedRate.free) {
+      return { usd: 0, status: 'estimated', source: 'free_rate_card' };
+    }
     const blended = (API_DEFAULT_RATE.input + API_DEFAULT_RATE.output) / 2;
     return {
       usd: fallbackTokens * blended / 1_000_000,
