@@ -432,3 +432,59 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
 })();
 
 console.log('costSanity tests passed');
+
+test('gpt-6-astra usage prices from the official rate card', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-6-astra',
+    tokens: 1000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.source, 'official_rate_card');
+  assert.equal(estimate.usd, (600 * 10 + 400 * 50) / 1_000_000);
+});
+
+test('unknown cloud models price at the default tier as a partial estimate', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'moa/openai-balanced',
+    tokens: 1000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.equal(estimate.status, 'partial');
+  assert.equal(estimate.source, 'default_rate_card');
+  assert.equal(estimate.usd, (600 * 2.5 + 400 * 10) / 1_000_000);
+});
+
+test('a day of only brand-new models still publishes the period API-equivalent total', () => {
+  const usage = {
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 1000, totalTokens: 1000 }],
+    dailyByModel: [{
+      date: '2026-09-13',
+      'openai/gpt-6-astra': 0,
+      'openai/gpt-6-astra_tokens': 900,
+      'openai/gpt-6-astra_input': 500,
+      'openai/gpt-6-astra_output': 400,
+      'moa/openai-balanced': 0,
+      'moa/openai-balanced_tokens': 100,
+      'moa/openai-balanced_input': 60,
+      'moa/openai-balanced_output': 40,
+    }],
+    byService: [
+      { name: 'openai/gpt-6-astra', tokens: 900, input: 500, output: 400, cost: 0 },
+      { name: 'moa/openai-balanced', tokens: 100, input: 60, output: 40, cost: 0 },
+    ],
+  };
+
+  const normalized = normalizeUsageCosts(usage);
+
+  assert.equal(normalized.apiEquivalentReliability, 'partial');
+  assert.ok(Number(normalized.summary.periodApiEquivalentUsd) > 0);
+  assert.ok(Number(normalized.daily[0].apiEquivalentCost) > 0);
+});

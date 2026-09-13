@@ -41,6 +41,7 @@ import {
   previousMonthKey,
   shouldClearMonthAnchor,
   shiftMonthKey,
+  estimateCost,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -951,5 +952,13 @@ describe('server month anchor clearing', () => {
     expect(shouldClearMonthAnchor('2026-08', '2026-08')).toBe(true)
     expect(shouldClearMonthAnchor('2026-07', '2026-08')).toBe(false)
     expect(shouldClearMonthAnchor(null, '2026-08')).toBe(false)
+  })
+})
+
+describe('newer model pricing', () => {
+  it('prices gpt-6-astra, glm-5.3-flash, and glm-5.3 instead of returning 0', () => {
+    expect(estimateCost(1_000_000, 'openai/gpt-6-astra')).toBeCloseTo(50)
+    expect(estimateCost(1_000_000, 'Hermes / glm-5.3-flash')).toBeCloseTo(0.5)
+    expect(estimateCost(1_000_000, 'zai-coding-plan/glm-5.3')).toBeCloseTo(4.4)
   })
 })

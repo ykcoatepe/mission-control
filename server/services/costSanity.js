@@ -19,8 +19,10 @@ const FALLBACK_PRICING = {
 
 // Standard API list prices per 1M tokens. These are comparison rates only:
 // subscription-included and local usage remains $0 tracked spend.
-// Sources reviewed 2026-07-13: OpenAI and Anthropic public rate cards.
+// Sources reviewed 2026-09-13: OpenAI and Z.ai public rate cards
+// (gpt-6-astra, gpt-5.3-codex-spark, glm-5.3-flash added then).
 const API_RATE_CARDS = [
+  { match: 'gpt-6-astra', input: 10, cachedInput: 1, output: 50, cacheWrite: 12.5 },
   { match: 'gpt-5.6-sol', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 6.25 },
   { match: 'gpt-5.6-terra', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 3.125 },
   { match: 'gpt-5.6-luna', input: 1, cachedInput: 0.1, output: 6, cacheWrite: 1.25 },
@@ -29,13 +31,21 @@ const API_RATE_CARDS = [
   { match: 'gpt-5.4-mini', input: 0.75, cachedInput: 0.075, output: 4.5, cacheWrite: 0.75 },
   { match: 'gpt-5.4-nano', input: 0.2, cachedInput: 0.02, output: 1.25, cacheWrite: 0.2 },
   { match: 'gpt-5.4', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 2.5 },
+  { match: 'gpt-5.3-codex-spark', input: 1.75, cachedInput: 0.175, output: 14, cacheWrite: 2.1875 },
   { match: 'claude-fable-5', input: 10, cachedInput: 1, output: 50, cacheWrite: 12.5 },
   { match: 'claude-opus-4-8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
   { match: 'claude-opus-4.8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
   { match: 'claude-opus-4-6', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
   { match: 'claude-sonnet-5', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
   { match: 'claude-sonnet-4-6', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
+  { match: 'glm-5.3-flash', input: 0.15, cachedInput: 0.03, output: 0.5, cacheWrite: 0.1875 },
 ];
+
+// Rows matching no known card are priced at this generic premium-cloud tier so
+// the dashboard shows a documented partial estimate instead of dropping the
+// total to unavailable when a new model appears. Cache-write rates follow the
+// file's 1.25x-input convention where providers do not bill writes separately.
+const API_DEFAULT_RATE = { input: 2.5, cachedInput: 0.25, output: 10, cacheWrite: 2.5 };
 
 const SUMMARY_COST_FIELDS = ['periodUsd', 'todayUsd', 'yesterdayUsd', 'thisWeekUsd', 'thisMonthUsd', 'totalUsd'];
 
@@ -117,7 +127,8 @@ function estimateApiEquivalentCost(item = {}) {
     };
   }
 
-  const rate = lookupApiRateCard(item.name);
+  const matchedRate = lookupApiRateCard(item.name);
+  const rate = matchedRate || API_DEFAULT_RATE;
   const input = Math.max(Number(item.input || 0), 0);
   const output = Math.max(Number(item.output || 0), 0);
   const cacheRead = Math.max(Number(item.cacheRead || 0), 0);
@@ -142,7 +153,9 @@ function estimateApiEquivalentCost(item = {}) {
       + output * rate.output
       + cacheWrite * rate.cacheWrite
     ) / 1_000_000;
-    return { usd, status: 'estimated', source: 'official_rate_card' };
+    return matchedRate
+      ? { usd, status: 'estimated', source: 'official_rate_card' }
+      : { usd, status: 'partial', source: 'default_rate_card' };
   }
 
   const currentCost = Number(item.cost || 0);
@@ -328,10 +341,17 @@ function normalizeUsageCosts(usage) {
     .map((item) => item.apiEquivalentStatus);
   const hasEstimatedApiEquivalent = apiEquivalentStatuses.includes('estimated');
   const hasUnavailableApiEquivalent = apiEquivalentStatuses.includes('unavailable');
+  // Default-tier rows are estimates too (flagged partial); they count toward
+  // publishing the total so a day dominated by brand-new models still shows a
+  // documented number instead of null.
+  const hasPricedApiEquivalent = hasEstimatedApiEquivalent || apiEquivalentStatuses.includes('partial');
+  const hasPartialApiEquivalent = apiEquivalentStatuses.includes('partial');
   let apiEquivalentReliability = apiEquivalentStatuses.length === 0
     ? 'no_usage'
+    : (hasPartialApiEquivalent || (hasEstimatedApiEquivalent && hasUnavailableApiEquivalent))
+    ? 'partial'
     : hasEstimatedApiEquivalent
-    ? (hasUnavailableApiEquivalent ? 'partial' : 'estimated')
+    ? 'estimated'
     : hasUnavailableApiEquivalent
       ? 'unavailable'
       : 'not_applicable';
@@ -349,7 +369,7 @@ function normalizeUsageCosts(usage) {
   const coverageCanBePartial = ['estimated', 'no_usage', 'not_applicable'];
   if (coverageIncomplete && coverageCanBePartial.includes(apiEquivalentReliability)) apiEquivalentReliability = 'partial';
   const estimatedPeriodApiEquivalentUsd = normalized.daily.reduce((sum, row) => sum + Number(row.apiEquivalentCost || 0), 0);
-  const periodApiEquivalentUsd = hasEstimatedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
+  const periodApiEquivalentUsd = hasPricedApiEquivalent ? estimatedPeriodApiEquivalentUsd : null;
   normalized.summary.periodApiEquivalentUsd = periodApiEquivalentUsd;
   normalized.summary.apiEquivalentUsd = periodApiEquivalentUsd;
   if (coverageIncomplete && coverageCanBePartial.includes(normalized.summary.previousPeriodApiEquivalentReliability)) {

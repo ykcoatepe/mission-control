@@ -219,6 +219,11 @@ const MODEL_PRICING: Record<string, number> = {
   'gpt-5.4-mini': 4.5,
   'gpt-5.3-codex-spark': 14,
   'gpt-5.3': 14,
+  // OpenAI GPT-6 Astra (public list, 2026-09)
+  'gpt-6-astra': 50,
+  // Z.ai GLM (public list, 2026-09)
+  'glm-5.3-flash': 0.5,
+  'glm-5.3': 4.4,
   // Anthropic (OpenRouter)
   'claude-opus-4-6': 25,
   'claude-opus': 25,
@@ -272,6 +277,13 @@ export function estimateCost(tokens: number, model?: string): number {
   if (modelLower.includes('gpt-5.4-mini') || modelLower.includes('gpt-5.4-nano')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.4-mini']
   if (modelLower.includes('gpt-5.4')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.4']
   if (modelLower.includes('gpt-5.3-codex') || modelLower.includes('gpt-5.3')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.3-codex-spark']
+
+  // OpenAI GPT-6 Astra
+  if (modelLower.includes('gpt-6-astra')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-6-astra']
+
+  // Z.ai GLM
+  if (modelLower.includes('glm-5.3-flash')) return (tokens / 1_000_000) * MODEL_PRICING['glm-5.3-flash']
+  if (modelLower.includes('glm-5.3')) return (tokens / 1_000_000) * MODEL_PRICING['glm-5.3']
 
   // Anthropic
   if (modelLower.includes('opus-4.6') || (modelLower.includes('opus') && modelLower.includes('4'))) return (tokens / 1_000_000) * MODEL_PRICING['claude-opus-4-6']
