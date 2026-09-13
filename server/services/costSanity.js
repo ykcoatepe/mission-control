@@ -178,9 +178,15 @@ function estimateApiEquivalentCost(item = {}) {
         : { usd, status: 'estimated', source: 'official_rate_card' };
     }
     // Unmatched model with real recorded spend: the bill is better evidence
-    // than a fabricated default-tier estimate, whatever its source label.
+    // than a fabricated default-tier estimate. But when that cost is itself a
+    // fallback heuristic, keep the uncertainty visible instead of relabeling
+    // it as recorded evidence.
     const meteredCost = Number(item.cost || 0);
     if (meteredCost > 0 && Number.isFinite(meteredCost)) {
+      const provenance = String(item.costSource || '').toLowerCase();
+      if (provenance.includes('fallback') || provenance.includes('unknown')) {
+        return { usd: meteredCost, status: 'partial', source: 'fallback_blended_estimate' };
+      }
       return { usd: meteredCost, status: 'estimated', source: 'recorded_cost_estimate' };
     }
     return { usd, status: 'partial', source: 'default_rate_card' };

@@ -675,3 +675,16 @@ test('channel-only fallback payloads do not publish a fabricated total', () => {
   assert.equal(usage.summary.periodApiEquivalentUsd, null);
   assert.equal(usage.apiEquivalentReliability, 'unavailable');
 });
+
+test('fallback-priced class-ful rows keep the uncertainty signal', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'anthropic/claude-haiku',
+    tokens: 1_000_000,
+    input: 800_000,
+    output: 200_000,
+    cost: 5,
+    costSource: 'fallback_estimate',
+  });
+
+  assert.deepEqual(estimate, { usd: 5, status: 'partial', source: 'fallback_blended_estimate' });
+});
