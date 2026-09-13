@@ -450,7 +450,7 @@ export default function DailySpendSection({
               {chartDayCount > 0
                 ? ledgerActive
                   ? apiEquivalentReliability === 'partial'
-                    ? `${chartDayCount}-day partial public-list-price estimate; unpriced models are excluded.`
+                    ? `${chartDayCount}-day partial public-list-price estimate; unmatched models use a generic rate.`
                     : apiEquivalentReliability === 'not_applicable'
                       ? 'API comparison does not apply to the all-local usage in this period.'
                       : apiEquivalentReliability === 'no_usage'

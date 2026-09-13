@@ -191,15 +191,20 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
   assert.equal(usage.agents[0].summary.periodApiEquivalentUsd, 4.7125);
 })();
 
-(function testLocalAndUnpricedModelsExposeExplicitApiEquivalentStatus() {
+(function testLocalAndUnknownModelsExposeExplicitApiEquivalentStatus() {
   const local = estimateApiEquivalentCost({ name: 'ollama/qwen3.6', tokens: 1_000_000 });
+  // Unknown cloud models price at the default tier's blended rate as a
+  // documented partial estimate; only rows with no usage at all stay
+  // unavailable.
   const unknown = estimateApiEquivalentCost({ name: 'vendor/new-cloud-model', tokens: 1_000_000 });
+  const noUsage = estimateApiEquivalentCost({ name: 'vendor/new-cloud-model', tokens: 0 });
 
   assert.deepEqual(local, { usd: 0, status: 'not_applicable', source: 'local_model' });
-  assert.deepEqual(unknown, { usd: null, status: 'unavailable', source: 'unpriced_model' });
+  assert.deepEqual(unknown, { usd: 6.25, status: 'partial', source: 'default_rate_card_blended' });
+  assert.deepEqual(noUsage, { usd: null, status: 'unavailable', source: 'unpriced_model' });
 })();
 
-(function testUnpricedOnlyUsageDoesNotFabricateZeroApiEquivalent() {
+(function testUnknownOnlyUsageYieldsPartialEstimateNotZeroOrNull() {
   const usage = normalizeUsageCosts({
     summary: { periodUsd: 0, periodTokens: 1_000_000 },
     daily: [{ date: '2026-07-13', cost: 0, totalCost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
@@ -207,8 +212,11 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
     byService: [{ name: 'vendor/new-cloud-model', cost: 0, tokens: 1_000_000 }],
   });
 
-  assert.equal(usage.summary.periodApiEquivalentUsd, null);
-  assert.equal(usage.apiEquivalentReliability, 'unavailable');
+  // Unknown cloud models price at the documented default tier as a partial
+  // estimate — never a fabricated $0, and no longer a null total that hides
+  // the whole Usage surface behind N/A.
+  assert.equal(usage.summary.periodApiEquivalentUsd, 6.25);
+  assert.equal(usage.apiEquivalentReliability, 'partial');
 })();
 
 (function testEmptyUsageHasDistinctNoUsageApiEquivalentState() {
@@ -239,7 +247,9 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
     ],
   });
 
-  assert.equal(usage.summary.periodApiEquivalentUsd, 5);
+  // gpt-5.6-sol at the official card (1M input = $5) plus the unknown model
+  // at the blended default tier (1M x $6.25).
+  assert.equal(usage.summary.periodApiEquivalentUsd, 11.25);
   assert.equal(usage.apiEquivalentReliability, 'partial');
 })();
 
@@ -432,3 +442,260 @@ test('a truncated scan also downgrades the API-equivalent reliability', () => {
 })();
 
 console.log('costSanity tests passed');
+
+test('gpt-6-astra usage prices from the official rate card', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-6-astra',
+    tokens: 1000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.source, 'official_rate_card');
+  assert.equal(estimate.usd, (600 * 10 + 400 * 50) / 1_000_000);
+});
+
+test('unknown cloud models price at the default tier as a partial estimate', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'moa/openai-balanced',
+    tokens: 1000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.equal(estimate.status, 'partial');
+  assert.equal(estimate.source, 'default_rate_card');
+  assert.equal(estimate.usd, (600 * 2.5 + 400 * 10) / 1_000_000);
+});
+
+test('a day of only brand-new models still publishes the period API-equivalent total', () => {
+  const usage = {
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 1000, totalTokens: 1000 }],
+    dailyByModel: [{
+      date: '2026-09-13',
+      'openai/gpt-6-astra': 0,
+      'openai/gpt-6-astra_tokens': 900,
+      'openai/gpt-6-astra_input': 500,
+      'openai/gpt-6-astra_output': 400,
+      'moa/openai-balanced': 0,
+      'moa/openai-balanced_tokens': 100,
+      'moa/openai-balanced_input': 60,
+      'moa/openai-balanced_output': 40,
+    }],
+    byService: [
+      { name: 'openai/gpt-6-astra', tokens: 900, input: 500, output: 400, cost: 0 },
+      { name: 'moa/openai-balanced', tokens: 100, input: 60, output: 40, cost: 0 },
+    ],
+  };
+
+  const normalized = normalizeUsageCosts(usage);
+
+  assert.equal(normalized.apiEquivalentReliability, 'partial');
+  assert.ok(Number(normalized.summary.periodApiEquivalentUsd) > 0);
+  assert.ok(Number(normalized.daily[0].apiEquivalentCost) > 0);
+});
+
+test('rows without a token-class breakdown price at the blended default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/unknown',
+    tokens: 1_000_000,
+  });
+
+  assert.equal(estimate.status, 'partial');
+  assert.equal(estimate.source, 'default_rate_card_blended');
+  assert.equal(estimate.usd, 6.25);
+});
+
+test('an agent whose models all price at the default tier keeps a published total', () => {
+  const usage = {
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [],
+    dailyByModel: [],
+    byService: [],
+    agents: [{
+      label: 'Hermes',
+      summary: { periodUsd: 0 },
+      byService: [{ name: 'moa/openai-balanced', tokens: 1_000_000, input: 600, output: 400, cost: 0 }],
+    }],
+  };
+
+  const normalized = normalizeUsageCosts(usage);
+  const agent = normalized.agents[0];
+
+  assert.equal(agent.summary.apiEquivalentStatus, 'partial');
+  assert.equal(agent.summary.periodApiEquivalentUsd, (600 * 2.5 + 400 * 10) / 1_000_000);
+});
+
+test('known free models zero-price instead of hitting the default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'qwen/qwen3.6-free',
+    tokens: 1_000_000,
+    input: 600,
+    output: 400,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
+});
+
+test('free models with total-only tokens stay zero-priced in the blended fallback', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'qwen/qwen3.6-free',
+    tokens: 1_000_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
+});
+
+test('recorded cost wins over the blended default for class-less rows', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-5.6-sol',
+    tokens: 1_000_000,
+    cost: 25,
+  });
+
+  assert.deepEqual(estimate, { usd: 25, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('token-only rows of a card-matched model blend their own card rates', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-6-astra',
+    tokens: 1_000_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 30, status: 'partial', source: 'rate_card_blended' });
+});
+
+test('specific fallback rates are not shadowed by generic map keys', () => {
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4-nano'), 4.5);
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4-mini'), 4.5);
+  assert.equal(lookupFallbackPricing('openai-codex/gpt-5.4'), 15);
+  assert.equal(lookupFallbackPricing('minimax/minimax-m2-her'), 1.2);
+});
+
+test('class-ful metered rows without a card keep their recorded cost', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'vendor/kimi-k2.9',
+    tokens: 1_000_000,
+    input: 500_000,
+    output: 500_000,
+    cost: 18,
+    costSource: 'api',
+  });
+
+  assert.deepEqual(estimate, { usd: 18, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('glm-5.3 (non-flash) prices from its own card, not the flash or default tier', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'zai-coding-plan/glm-5.3',
+    tokens: 1_000_000,
+    input: 500_000,
+    output: 500_000,
+  });
+
+  assert.equal(estimate.status, 'estimated');
+  assert.equal(estimate.source, 'official_rate_card');
+  assert.equal(estimate.usd, (500_000 * 1.4 + 500_000 * 4.4) / 1_000_000);
+});
+
+test('priced byService rows publish the period total even without dailyByModel', () => {
+  const usage = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [],
+    byService: [{ name: 'openai/gpt-5.6-sol', tokens: 1_000_000, input: 600, output: 400, cost: 0 }],
+  });
+
+  assert.equal(usage.apiEquivalentReliability, 'estimated');
+  assert.equal(usage.summary.periodApiEquivalentUsd, 0.015);
+});
+
+test('recorded cost wins for unmatched models even without a source marker', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'vendor/kimi-k2.9',
+    tokens: 1_000_000,
+    input: 600_000,
+    output: 400_000,
+    cost: 18,
+  });
+
+  assert.deepEqual(estimate, { usd: 18, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('daily rows carry their cost source so the period total matches byService', () => {
+  const usage = normalizeUsageCosts({
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 18 },
+    daily: [{ date: '2026-09-13', cost: 18, totalCost: 18, tokens: 1_000_000, totalTokens: 1_000_000 }],
+    dailyByModel: [{
+      date: '2026-09-13',
+      'vendor/kimi-k2.9': 18,
+      'vendor/kimi-k2.9_tokens': 1_000_000,
+      'vendor/kimi-k2.9_input': 600_000,
+      'vendor/kimi-k2.9_output': 400_000,
+      'vendor/kimi-k2.9_costSource': 'api',
+    }],
+    byService: [{ name: 'vendor/kimi-k2.9', tokens: 1_000_000, input: 600_000, output: 400_000, cost: 18, costSource: 'api' }],
+  });
+
+  assert.equal(usage.daily[0].apiEquivalentCost, 18);
+  assert.equal(usage.summary.periodApiEquivalentUsd, 18);
+});
+
+test('channel rollup rows stay unavailable instead of being priced as models', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'Telegram',
+    tokens: 5_000_000,
+    cost: 0,
+    billingModes: 'channel_rollup',
+  });
+
+  assert.deepEqual(estimate, { usd: null, status: 'unavailable', source: 'channel_rollup' });
+});
+
+test('channel-only fallback payloads do not publish a fabricated total', () => {
+  const usage = normalizeUsageCosts({
+    source: 'sessions.fast_fallback',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 5_000_000, totalTokens: 5_000_000 }],
+    dailyByModel: [],
+    byService: [{ name: 'Telegram', tokens: 5_000_000, cost: 0, billingModes: 'channel_rollup' }],
+  });
+
+  assert.equal(usage.summary.periodApiEquivalentUsd, null);
+  assert.equal(usage.apiEquivalentReliability, 'unavailable');
+});
+
+test('fallback-priced class-ful rows keep the uncertainty signal', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'anthropic/claude-haiku',
+    tokens: 1_000_000,
+    input: 800_000,
+    output: 200_000,
+    cost: 5,
+    costSource: 'fallback_estimate',
+  });
+
+  assert.deepEqual(estimate, { usd: 5, status: 'partial', source: 'fallback_blended_estimate' });
+});
+
+test('custom/ provider models are local, not cloud-priced', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'custom/qwen3.6:35b-a3b-nvfp4',
+    tokens: 1_000_000,
+    input: 600_000,
+    output: 400_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'not_applicable', source: 'local_model' });
+});
