@@ -20,6 +20,7 @@ const {
   attachRawSessions,
   buildOperationsSessionsPayload,
 } = require('./server/services/sessionOperationsView');
+const { resolveSessionTranscriptFile } = require('./server/services/sessionTranscripts');
 const { buildAgentsRouter } = require('./server/routes/agents');
 const { buildAwsRouter } = require('./server/routes/aws');
 const { buildCalendarRouter } = require('./server/routes/calendar');
@@ -408,9 +409,8 @@ function createSessionsService() {
       const decoded = decodeURIComponent(sessionKey);
       const payload = await fetchSessions(200);
       const session = (payload.sessions || []).find((entry) => entry.key === decoded);
-      if (!session?.transcriptPath) return { messages: [], info: 'No transcript found' };
-
-      const transcriptFile = path.join(os.homedir(), '.openclaw/agents/main/sessions', session.transcriptPath);
+      const transcriptFile = resolveSessionTranscriptFile(session);
+      if (!transcriptFile) return { messages: [], info: 'No transcript found' };
       if (!fs.existsSync(transcriptFile)) return { messages: [], info: 'Transcript file missing' };
 
       const lines = fs.readFileSync(transcriptFile, 'utf8').split('\n').filter(Boolean);
