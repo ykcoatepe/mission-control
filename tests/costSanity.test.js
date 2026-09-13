@@ -551,3 +551,22 @@ test('free models with total-only tokens stay zero-priced in the blended fallbac
 
   assert.deepEqual(estimate, { usd: 0, status: 'estimated', source: 'free_rate_card' });
 });
+
+test('recorded cost wins over the blended default for class-less rows', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-5.6-sol',
+    tokens: 1_000_000,
+    cost: 25,
+  });
+
+  assert.deepEqual(estimate, { usd: 25, status: 'estimated', source: 'recorded_cost_estimate' });
+});
+
+test('token-only rows of a card-matched model blend their own card rates', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'openai/gpt-6-astra',
+    tokens: 1_000_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 30, status: 'partial', source: 'rate_card_blended' });
+});

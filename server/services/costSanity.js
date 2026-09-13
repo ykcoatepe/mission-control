@@ -165,25 +165,27 @@ function estimateApiEquivalentCost(item = {}) {
       : { usd, status: 'partial', source: 'default_rate_card' };
   }
 
-  // Rows with a token total but no input/output breakdown (e.g. aggregated
-  // "unknown" model rows) price at the default tier's blended rate as a
-  // partial estimate instead of dropping the row to unavailable.
+  // Rows without a token-class breakdown keep the best available evidence in
+  // order: recorded cost, then the matched card's blended rate (free cards
+  // zero-price), then the generic default blend — the default is reserved for
+  // truly unpriced rows so it never buries better data.
   const fallbackTokens = Math.max(Number(item.tokens || 0), 0);
-  if (!hasTokenClasses && fallbackTokens > 0) {
-    // A matched free card wins even without token classes; only unmatched
-    // models fall through to the blended default tier.
+  const currentCost = Number(item.cost || 0);
+  if (!hasTokenClasses && (fallbackTokens > 0 || currentCost > 0)) {
     if (matchedRate && matchedRate.free) {
       return { usd: 0, status: 'estimated', source: 'free_rate_card' };
     }
+    if (currentCost > 0 && Number.isFinite(currentCost)) {
+      return { usd: currentCost, status: 'estimated', source: 'recorded_cost_estimate' };
+    }
+    if (matchedRate) {
+      const blended = (matchedRate.input + matchedRate.output) / 2;
+      return { usd: fallbackTokens * blended / 1_000_000, status: 'partial', source: 'rate_card_blended' };
+    }
     const blended = (API_DEFAULT_RATE.input + API_DEFAULT_RATE.output) / 2;
-    return {
-      usd: fallbackTokens * blended / 1_000_000,
-      status: 'partial',
-      source: 'default_rate_card_blended',
-    };
+    return { usd: fallbackTokens * blended / 1_000_000, status: 'partial', source: 'default_rate_card_blended' };
   }
 
-  const currentCost = Number(item.cost || 0);
   if (currentCost > 0 && Number.isFinite(currentCost)) {
     return { usd: currentCost, status: 'estimated', source: 'recorded_cost_estimate' };
   }
