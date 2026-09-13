@@ -329,6 +329,11 @@ function detectSessionType(session) {
   return 'other';
 }
 
+function messageEntryText(content) {
+  if (Array.isArray(content)) return content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text || '').join('\n');
+  return typeof content === 'string' ? content : '';
+}
+
 function createSessionsService() {
   const hiddenSessionsPath = path.join(__dirname, 'hidden-sessions.json');
   let hiddenSessions = readJsonFileSafe(hiddenSessionsPath, []);
@@ -340,22 +345,36 @@ function createSessionsService() {
   // correlate each other's replies in the transcript fallback path.
   const pendingSendsBySession = new Map();
 
-  // Poll a pending send's transcript until its assistant reply appears, then
-  // release that session's lock. Hard-capped so a vanished transcript cannot
-  // lock a session forever.
-  function watchSessionReply(sessionKey, { transcriptFile, sentAtMs }) {
+  // Poll a pending send's transcript until an assistant reply correlated to
+  // this send appears — anchored on the send's own user entry and requiring
+  // text-producing output, so intermediate tool-call records do not release
+  // the lock early. Hard-capped so a vanished transcript cannot lock a
+  // session forever.
+  function watchSessionReply(sessionKey, { transcriptFile, sentAtMs }, message) {
     const startedAt = Date.now();
     const poll = () => {
       let replied = false;
       try {
         if (transcriptFile && fs.existsSync(transcriptFile)) {
           const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+          let anchorIndex = -1;
           for (let index = lines.length - 1; index >= 0; index -= 1) {
             try {
               const entry = JSON.parse(lines[index]);
+              if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
+              if (messageEntryText(entry.message.content).trim() === message.trim()) {
+                anchorIndex = index;
+                break;
+              }
+            } catch {}
+          }
+          for (let index = lines.length - 1; index > anchorIndex; index -= 1) {
+            try {
+              const entry = JSON.parse(lines[index]);
               const entryMs = new Date(entry.timestamp || 0).getTime();
-              if (Number.isFinite(entryMs) && entryMs > sentAtMs
-                && entry.type === 'message' && entry.message?.role === 'assistant') {
+              if (!Number.isFinite(entryMs) || entryMs <= sentAtMs) continue;
+              if (entry.type === 'message' && entry.message?.role === 'assistant'
+                && messageEntryText(entry.message.content).trim()) {
                 replied = true;
                 break;
               }
@@ -542,11 +561,7 @@ function createSessionsService() {
               try {
                 const entry = JSON.parse(lines[index]);
                 if (entry.type !== 'message' || entry.message?.role !== 'user') continue;
-                const content = entry.message.content;
-                const entryText = Array.isArray(content)
-                  ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text || '').join('\n')
-                  : typeof content === 'string' ? content : '';
-                if (entryText.trim() === message.trim()) {
+                if (messageEntryText(entry.message.content).trim() === message.trim()) {
                   anchorIndex = index;
                   break;
                 }
@@ -558,10 +573,7 @@ function createSessionsService() {
                 const entryMs = new Date(entry.timestamp || 0).getTime();
                 if (!Number.isFinite(entryMs) || entryMs <= sentAtMs) continue;
                 if (entry.type === 'message' && entry.message?.role === 'assistant') {
-                  const content = entry.message.content;
-                  resultText = Array.isArray(content)
-                    ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('\n')
-                    : typeof content === 'string' ? content : '';
+                  resultText = messageEntryText(entry.message.content);
                   if (resultText) break;
                 }
               } catch {}
@@ -594,7 +606,7 @@ function createSessionsService() {
         // a follow-up send cannot interleave while the reply may still land.
         // Hard-capped so a vanished transcript cannot lock a session forever;
         // the anchor correlation keeps replies attributable after the cap.
-        watchSessionReply(decoded, pendingWatch);
+        watchSessionReply(decoded, pendingWatch, message);
       } else {
         pendingSendsBySession.delete(decoded);
       }
