@@ -40,7 +40,10 @@ test('Soft-timeout path forwards suppressStartupHooks to the spawned child', asy
       const child = new EventEmitter();
       child.kill = () => {};
       captured.child = child;
-      setImmediate(() => child.emit('exit', 0, null));
+      setImmediate(() => {
+        child.emit('exit', 0, null);
+        child.emit('close', 0, null);
+      });
       return child;
     };
     return { captured, spawner };
@@ -53,4 +56,29 @@ test('Soft-timeout path forwards suppressStartupHooks to the spawned child', asy
   const withRails = captureSpawn();
   await runGBrainWithSoftTimeout(['health'], { softTimeoutMs: 30000 }, withRails.spawner);
   assert.equal(withRails.captured.options.env.GBRAIN_SKIP_STARTUP_HOOKS, undefined);
+});
+
+test('soft-timeout path resolves on stream close so buffered output is not truncated', async () => {
+  const { runGBrainWithSoftTimeout } = require('../server/routes/gbrain/commandRunner');
+  const { EventEmitter } = require('node:events');
+
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.kill = () => {};
+  const spawner = () => child;
+
+  setImmediate(() => {
+    child.stdout.emit('data', '{"partial":');
+    child.emit('exit', 0, null);
+    setImmediate(() => {
+      child.stdout.emit('data', 'true}');
+      child.emit('close', 0, null);
+    });
+  });
+
+  const result = await runGBrainWithSoftTimeout(['stats'], { softTimeoutMs: 30000 }, spawner);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, '{"partial":true}');
 });

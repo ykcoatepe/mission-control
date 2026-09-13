@@ -137,7 +137,10 @@ function runGBrainWithSoftTimeout(args, options = {}, spawner = execFile) {
       });
     });
 
-    child.once('exit', (code, signal) => {
+    // Resolve on close, not exit: buffered stdout can still deliver the final
+    // chunk after the process exits, and parsing before the streams close
+    // would truncate the JSON of a successful probe.
+    child.once('close', (code, signal) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
