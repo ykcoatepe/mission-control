@@ -509,3 +509,25 @@ test('rows without a token-class breakdown price at the blended default tier', (
   assert.equal(estimate.source, 'default_rate_card_blended');
   assert.equal(estimate.usd, 6.25);
 });
+
+test('an agent whose models all price at the default tier keeps a published total', () => {
+  const usage = {
+    source: 'combined.agent_usage',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [],
+    dailyByModel: [],
+    byService: [],
+    agents: [{
+      label: 'Hermes',
+      summary: { periodUsd: 0 },
+      byService: [{ name: 'moa/openai-balanced', tokens: 1_000_000, input: 600, output: 400, cost: 0 }],
+    }],
+  };
+
+  const normalized = normalizeUsageCosts(usage);
+  const agent = normalized.agents[0];
+
+  assert.equal(agent.summary.apiEquivalentStatus, 'partial');
+  assert.equal(agent.summary.periodApiEquivalentUsd, (600 * 2.5 + 400 * 10) / 1_000_000);
+});

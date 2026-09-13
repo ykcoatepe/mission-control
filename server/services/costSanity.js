@@ -411,16 +411,22 @@ function normalizeUsageCosts(usage) {
         .filter((item) => Number(item.tokens || 0) > 0 || Number(item.cost || 0) > 0)
         .map((item) => item.apiEquivalentStatus);
       const agentHasEstimated = agentApiEquivalentStatuses.includes('estimated');
+      // Default-tier rows are priced estimates flagged partial; they count
+      // toward the agent's published total instead of nulling it.
+      const agentHasPartial = agentApiEquivalentStatuses.includes('partial');
+      const agentHasPriced = agentHasEstimated || agentHasPartial;
       const agentHasUnavailable = agentApiEquivalentStatuses.includes('unavailable');
       const agentApiEquivalent = agentOut.byService.reduce((sum, item) => (
         item.apiEquivalentUsd === null ? sum : sum + Number(item.apiEquivalentUsd || 0)
       ), 0);
-      agentOut.summary.periodApiEquivalentUsd = agentHasEstimated ? agentApiEquivalent : null;
-      agentOut.summary.apiEquivalentUsd = agentHasEstimated ? agentApiEquivalent : null;
+      agentOut.summary.periodApiEquivalentUsd = agentHasPriced ? agentApiEquivalent : null;
+      agentOut.summary.apiEquivalentUsd = agentHasPriced ? agentApiEquivalent : null;
       agentOut.summary.apiEquivalentStatus = agentApiEquivalentStatuses.length === 0
         ? 'no_usage'
+        : (agentHasPartial || (agentHasEstimated && agentHasUnavailable))
+        ? 'partial'
         : agentHasEstimated
-        ? (agentHasUnavailable ? 'partial' : 'estimated')
+        ? 'estimated'
         : agentHasUnavailable
           ? 'unavailable'
           : 'not_applicable';
