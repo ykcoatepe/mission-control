@@ -36,7 +36,9 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
   const presentTools = requiredTools.filter((tool) => tool.present);
   const missingTools = requiredTools.filter((tool) => !tool.present);
   const hermesSource = sourceById(liveSources, ['hermes-agent', 'hermes']);
-  const openclawSource = sourceById(liveSources, ['clawd', 'openclaw']);
+  // 'clawd'/'openclaw' were the historical workspace source ids; current GBrain
+  // inventory exposes OpenClaw's curated memory export as 'openclaw-memories'.
+  const openclawSource = sourceById(liveSources, ['clawd', 'openclaw', 'openclaw-memories']);
   const runtimeSystems = runtime?.systems || {};
   const featureGaps = liveFeatures?.recommendations || [];
   const blockingFeatureGaps = featureGaps.filter((item) => item.severity !== 'optional');
@@ -124,7 +126,7 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
         label: runtimeSystem.runtimeContract?.label || 'GBrain shared-brain contract not verified',
       },
       source: {
-        id: source?.id || (system.id === 'hermes' ? 'hermes-agent' : 'clawd'),
+        id: source?.id || (system.id === 'hermes' ? 'hermes-agent' : 'openclaw-memories'),
         status: sourceStatus,
         lastSyncAt: source?.lastSyncAt || null,
         pages: source?.pages ?? null,

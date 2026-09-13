@@ -13,6 +13,7 @@ const {
   buildLiveGBrainProviders,
   buildGBrainIntegrationHealth,
   buildLocalGBrainIntegrationRuntime,
+  hasOpenClawSemanticGBrainContract,
   createGBrainOverviewService,
   listGBrainActions,
   runGBrainAction,
@@ -762,6 +763,35 @@ function testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned() {
   assert.equal(runtime.systems.hermes.runtimeContract.proof, 'Hermes hmudur MEMORY.md semantic contract');
 }
 
+function testLocalRuntimeAcceptsOpenClawSemanticContractWhenMarkerIsAbsent() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-runtime-openclaw-semantic-'));
+  const homeDir = path.join(root, 'home');
+  const clawdRoot = path.join(root, 'clawd');
+  fs.mkdirSync(path.join(homeDir, '.openclaw'), { recursive: true });
+  fs.mkdirSync(clawdRoot, { recursive: true });
+
+  fs.writeFileSync(path.join(homeDir, '.openclaw/openclaw.json'), JSON.stringify({
+    mcp: { servers: { gbrain: { command: '/x/gbrain', args: ['serve'] } } },
+  }));
+  fs.writeFileSync(path.join(clawdRoot, 'AGENTS.md'), [
+    '# OpenClaw adapter for the shared Hermes instructions',
+    '',
+    '- For cross-system knowledge, use available GBrain tools, preserve source scope and existing content, and exclude secrets/raw transcripts.',
+    '  OpenClaw memory promotions retain the existing curated/tagged bridge workflow; shared-memory writes are scoped to decisions.md, playbooks.md and handoffs.md.',
+  ].join('\n'));
+
+  const runtime = buildLocalGBrainIntegrationRuntime({ homeDir, clawdRoot });
+
+  assert.equal(runtime.systems.openclaw.runtimeContract.status, 'healthy');
+  assert.equal(runtime.systems.openclaw.runtimeContract.proof, 'OpenClaw AGENTS.md semantic contract');
+}
+
+function testOpenClawSemanticDetectorRejectsUnrelatedProse() {
+  assert.equal(hasOpenClawSemanticGBrainContract('GBrain tools are available for cross-system knowledge.'), false);
+  assert.equal(hasOpenClawSemanticGBrainContract(''), false);
+  assert.equal(hasOpenClawSemanticGBrainContract('For cross-system knowledge, use GBrain tools, preserve source scope and existing content, exclude secrets/raw transcripts, curated/tagged bridge workflow, shared-memory writes are scoped to decisions.md'), true);
+}
+
 function testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gbrain-workspace-'));
   const homeDir = path.join(root, 'home');
@@ -1441,6 +1471,8 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
   testIntegrationWarningsAppearAsTopLevelCaveats();
   testLocalRuntimeDetectorVerifiesManagedContractsAndBridges();
   testLocalRuntimeAcceptsHermesSemanticContractWhenMarkerIsPruned();
+  testLocalRuntimeAcceptsOpenClawSemanticContractWhenMarkerIsAbsent();
+  testOpenClawSemanticDetectorRejectsUnrelatedProse();
   testLocalRuntimeUsesConfiguredWorkspaceBeforeProjectParent();
   await testLiveSourcesDoNotExposeLocalPaths();
   await testDefaultSourceWithoutPathIsNotFreshnessStale();
