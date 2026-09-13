@@ -340,6 +340,38 @@ function createSessionsService() {
   // correlate each other's replies in the transcript fallback path.
   const pendingSendsBySession = new Map();
 
+  // Poll a pending send's transcript until its assistant reply appears, then
+  // release that session's lock. Hard-capped so a vanished transcript cannot
+  // lock a session forever.
+  function watchSessionReply(sessionKey, { transcriptFile, sentAtMs }) {
+    const startedAt = Date.now();
+    const poll = () => {
+      let replied = false;
+      try {
+        if (transcriptFile && fs.existsSync(transcriptFile)) {
+          const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+          for (let index = lines.length - 1; index >= 0; index -= 1) {
+            try {
+              const entry = JSON.parse(lines[index]);
+              const entryMs = new Date(entry.timestamp || 0).getTime();
+              if (Number.isFinite(entryMs) && entryMs > sentAtMs
+                && entry.type === 'message' && entry.message?.role === 'assistant') {
+                replied = true;
+                break;
+              }
+            } catch {}
+          }
+        }
+      } catch {}
+      if (replied || Date.now() - startedAt > 15 * 60 * 1000) {
+        pendingSendsBySession.delete(sessionKey);
+        return;
+      }
+      setTimeout(poll, 10000);
+    };
+    setTimeout(poll, 10000);
+  }
+
   const readHiddenSessions = () => {
     hiddenSessions = Array.isArray(readJsonFileSafe(hiddenSessionsPath, hiddenSessions))
       ? readJsonFileSafe(hiddenSessionsPath, hiddenSessions)
@@ -451,12 +483,17 @@ function createSessionsService() {
       if (pendingSendsBySession.has(decoded)) {
         return { ok: false, busy: true, result: 'A message to this session is still in progress — wait for the current reply before sending again.' };
       }
+      let pendingWatch = null;
       const send = (async () => {
       const cfg = fs.existsSync(OPENCLAW_CONFIG_PATH) ? JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8')) : {};
       const gatewayToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || GATEWAY_TOKEN || '';
       const gatewayPort = cfg.gateway?.port || GATEWAY_PORT;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 90000);
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 90000);
       // Transcript boundary for the fallback scan: any assistant entry written
       // before this moment belongs to an earlier turn, not to this send.
       const sentAtMs = Date.now();
@@ -493,6 +530,7 @@ function createSessionsService() {
             session = (payload.sessions || []).find((entry) => entry.key === decoded);
           }
           const transcriptFile = resolveSessionTranscriptFile(session);
+          if (transcriptFile) pendingWatch = { transcriptFile, sentAtMs };
           if (transcriptFile && fs.existsSync(transcriptFile)) {
             const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
             // Anchor on this send's own user entry: only assistant replies
@@ -530,19 +568,33 @@ function createSessionsService() {
             }
           }
         } catch {}
+        // Only a send that ran the full gateway window and was aborted counts
+        // as accepted-but-pending; an immediate transport failure never
+        // reached the agent and must not read as pending to the client.
         return resultText
           ? { ok: true, result: resultText }
-          : { ok: false, pending: true, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
+          : timedOut
+            ? { ok: false, pending: true, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' }
+            : { ok: false, result: 'Could not reach the OpenClaw gateway — the message was not delivered.' };
       }
       })();
       pendingSendsBySession.set(decoded, send);
-      const outcome = await send;
-      if (outcome && outcome.pending) {
+      let outcome;
+      try {
+        outcome = await send;
+      } catch (error) {
+        // Setup failures (e.g. a malformed config) must not leave a stuck
+        // lock behind.
+        pendingSendsBySession.delete(decoded);
+        throw error;
+      }
+      if (outcome && outcome.pending && pendingWatch) {
         // Accepted by the agent and still working: hold the per-session lock
-        // for a bounded grace so a follow-up send cannot interleave while the
-        // reply for this one may still land. The anchor correlation above
-        // keeps replies attributable regardless of when the lock lifts.
-        setTimeout(() => pendingSendsBySession.delete(decoded), 120000);
+        // until the transcript shows this send's assistant reply (polled), so
+        // a follow-up send cannot interleave while the reply may still land.
+        // Hard-capped so a vanished transcript cannot lock a session forever;
+        // the anchor correlation keeps replies attributable after the cap.
+        watchSessionReply(decoded, pendingWatch);
       } else {
         pendingSendsBySession.delete(decoded);
       }
