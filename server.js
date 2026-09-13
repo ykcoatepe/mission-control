@@ -600,13 +600,21 @@ function createSessionsService() {
         pendingSendsBySession.delete(decoded);
         throw error;
       }
-      if (outcome && outcome.pending && pendingWatch) {
-        // Accepted by the agent and still working: hold the per-session lock
-        // until the transcript shows this send's assistant reply (polled), so
-        // a follow-up send cannot interleave while the reply may still land.
-        // Hard-capped so a vanished transcript cannot lock a session forever;
-        // the anchor correlation keeps replies attributable after the cap.
-        watchSessionReply(decoded, pendingWatch, message);
+      if (outcome && outcome.pending) {
+        if (pendingWatch) {
+          // Accepted by the agent and still working: hold the per-session lock
+          // until the transcript shows this send's assistant reply (polled), so
+          // a follow-up send cannot interleave while the reply may still land.
+          // Hard-capped so a vanished transcript cannot lock a session forever;
+          // the anchor correlation keeps replies attributable after the cap.
+          watchSessionReply(decoded, pendingWatch, message);
+        } else {
+          // Transcript metadata unavailable (cache and CLI both failed): hold
+          // a bounded grace lock instead of releasing while the response says
+          // the agent is still working; the sentAt boundary still guards the
+          // eventual fallback scan.
+          setTimeout(() => pendingSendsBySession.delete(decoded), 120000);
+        }
       } else {
         pendingSendsBySession.delete(decoded);
       }
