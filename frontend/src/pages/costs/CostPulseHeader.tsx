@@ -531,7 +531,7 @@ export default function CostPulseHeader({
                   </div>
                   <div className={styles.codexbarDesc}>
                     {isPartialApiEquivalent
-                      ? 'Partial public-list-price estimate; some models are unpriced'
+                      ? 'Partial public-list-price estimate; some models use a generic rate'
                       : isNotApplicableApiEquivalent
                         ? 'API comparison does not apply to local-only usage'
                       : hasNoApiEquivalentUsage

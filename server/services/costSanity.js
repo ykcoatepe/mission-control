@@ -53,7 +53,7 @@ const API_RATE_CARDS = [
 // the dashboard shows a documented partial estimate instead of dropping the
 // total to unavailable when a new model appears. Cache-write rates follow the
 // file's 1.25x-input convention where providers do not bill writes separately.
-const API_DEFAULT_RATE = { input: 2.5, cachedInput: 0.25, output: 10, cacheWrite: 2.5 };
+const API_DEFAULT_RATE = { input: 2.5, cachedInput: 0.25, output: 10, cacheWrite: 3.125 };
 
 const SUMMARY_COST_FIELDS = ['periodUsd', 'todayUsd', 'yesterdayUsd', 'thisWeekUsd', 'thisMonthUsd', 'totalUsd'];
 
