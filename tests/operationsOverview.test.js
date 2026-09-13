@@ -342,10 +342,19 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
 
   assert.equal(overview.systems.openclaw.state, 'unavailable');
   assert.equal(overview.systems.gbrain.state, 'healthy');
+  const serverSource = fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
   assert.match(
-    fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8'),
-    /sourceTimeoutMsOverrides:\s*\{\s*gbrain:\s*30_000/,
+    serverSource,
+    /sourceTimeoutMsOverrides:\s*\{\s*gbrain:\s*GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS\s*,?\s*\}/,
   );
+  // The deadline must outlive the worst probe chain (soft window + hard-kill
+  // backstop), otherwise Operations discards the loaded-machine evidence.
+  const gbrainConstants = require('../server/routes/gbrain/constants');
+  assert.equal(
+    gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
+    gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000,
+  );
+  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS > gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, true);
 });
 
 test('times out only the stalled source and preserves the remaining snapshot', async () => {

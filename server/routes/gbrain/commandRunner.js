@@ -3,7 +3,7 @@
 const os = require('os');
 const { execFile } = require('child_process');
 const util = require('util');
-const { DEFAULT_COMMAND_TIMEOUT_MS } = require('./constants');
+const { DEFAULT_COMMAND_TIMEOUT_MS, HEALTH_PROBE_HARD_KILL_DELAY_MS } = require('./constants');
 
 const defaultExecFilePromise = util.promisify(execFile);
 
@@ -114,7 +114,7 @@ function runGBrainWithSoftTimeout(args, options = {}, spawner = execFile) {
       child.kill('SIGINT');
       hardKillTimer = setTimeout(() => {
         if (!exited) child.kill('SIGKILL');
-      }, options.hardKillDelayMs || 30000);
+      }, options.hardKillDelayMs || HEALTH_PROBE_HARD_KILL_DELAY_MS);
       resolve({
         ok: false,
         stdout,

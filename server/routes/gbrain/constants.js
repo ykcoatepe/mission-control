@@ -9,6 +9,12 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 7000;
 // sequential runtime (measured 7.3s vs 2.6s), which a 7s hard timeout turns
 // into flapping "Unavailable" dashboards. Mirrors sourceTimeoutMsOverrides.
 const HEALTH_PROBE_SOFT_TIMEOUT_MS = 30000;
+const HEALTH_PROBE_HARD_KILL_DELAY_MS = 30000;
+// The Operations source deadline must outlive the worst probe chain — one
+// soft-timed-out command (soft window plus hard-kill backstop) plus
+// scheduling headroom — or the reader discards exactly the loaded-machine
+// evidence the soft timeout exists to capture.
+const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = HEALTH_PROBE_SOFT_TIMEOUT_MS + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
 const DEFAULT_SOURCE_FRESHNESS_HOURS = 24;
 const SOURCE_FRESHNESS_THRESHOLDS_HOURS = {
   missioncontrol: 12,
@@ -153,6 +159,8 @@ module.exports = {
   AUDIT_VERIFIED_AT,
   DEFAULT_COMMAND_TIMEOUT_MS,
   HEALTH_PROBE_SOFT_TIMEOUT_MS,
+  HEALTH_PROBE_HARD_KILL_DELAY_MS,
+  GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
   DEFAULT_SOURCE_FRESHNESS_HOURS,
   SOURCE_FRESHNESS_THRESHOLDS_HOURS,
   REQUIRED_GBRAIN_TOOLS,

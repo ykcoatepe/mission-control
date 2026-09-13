@@ -21,10 +21,12 @@ test('Maintenance actions preserve GBrain startup rails', () => {
   }
 });
 
-test('Health-probe soft timeout constant is exported to liveProbes', () => {
+test('Health-probe timeout constants are exported to liveProbes and Operations', () => {
   const gbrainConstants = require('../server/routes/gbrain/constants');
 
   assert.equal(gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, 30000);
+  assert.equal(gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS, 30000);
+  assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS, 75000);
 });
 
 test('Soft-timeout path forwards suppressStartupHooks to the spawned child', async () => {

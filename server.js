@@ -21,6 +21,7 @@ const {
   buildOperationsSessionsPayload,
 } = require('./server/services/sessionOperationsView');
 const { resolveSessionTranscriptFile } = require('./server/services/sessionTranscripts');
+const { GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS } = require('./server/routes/gbrain/constants');
 const { buildAgentsRouter } = require('./server/routes/agents');
 const { buildAwsRouter } = require('./server/routes/aws');
 const { buildCalendarRouter } = require('./server/routes/calendar');
@@ -464,26 +465,25 @@ function createSessionsService() {
         clearTimeout(timeout);
         let resultText = '';
         try {
-          const sessionsFile = path.join(os.homedir(), '.openclaw/agents/main/sessions/sessions.json');
-          const sessions = JSON.parse(fs.readFileSync(sessionsFile, 'utf8'));
-          const sessionInfo = sessions[decoded] || {};
-          const sessionId = sessionInfo.sessionId || '';
-          if (sessionId) {
-            const transcriptPath = path.join(os.homedir(), '.openclaw/agents/main/sessions', `${sessionId}.jsonl`);
-            if (fs.existsSync(transcriptPath)) {
-              const lines = fs.readFileSync(transcriptPath, 'utf8').trim().split('\n');
-              for (let index = lines.length - 1; index >= 0; index -= 1) {
-                try {
-                  const entry = JSON.parse(lines[index]);
-                  if (entry.type === 'message' && entry.message?.role === 'assistant') {
-                    const content = entry.message.content;
-                    resultText = Array.isArray(content)
-                      ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('\n')
-                      : typeof content === 'string' ? content : '';
-                    if (resultText) break;
-                  }
-                } catch {}
-              }
+          // The gateway never answered inside its window; read the reply from
+          // the session's owning agent transcript, same ownership rule as
+          // getSessionHistory so cross-agent sessions are covered too.
+          const payload = await fetchSessions(200);
+          const session = (payload.sessions || []).find((entry) => entry.key === decoded);
+          const transcriptFile = resolveSessionTranscriptFile(session);
+          if (transcriptFile && fs.existsSync(transcriptFile)) {
+            const lines = fs.readFileSync(transcriptFile, 'utf8').trim().split('\n');
+            for (let index = lines.length - 1; index >= 0; index -= 1) {
+              try {
+                const entry = JSON.parse(lines[index]);
+                if (entry.type === 'message' && entry.message?.role === 'assistant') {
+                  const content = entry.message.content;
+                  resultText = Array.isArray(content)
+                    ? content.filter((chunk) => chunk.type === 'text').map((chunk) => chunk.text).join('\n')
+                    : typeof content === 'string' ? content : '';
+                  if (resultText) break;
+                }
+              } catch {}
             }
           }
         } catch {}
@@ -616,9 +616,11 @@ const operationsOverviewService = createOperationsOverviewService({
   }),
   listCapabilities: () => listGBrainActions(),
   // GBrain probes are concurrency-bounded but routinely exceed the Operations
-  // default under database pressure. Keep that allowance scoped to GBrain so an
-  // unrelated stalled reader is still isolated at 10s.
-  sourceTimeoutMsOverrides: { gbrain: 30_000 },
+  // default under database pressure, and a soft-timed-out probe keeps the
+  // child until the hard-kill backstop before returning. The deadline is
+  // derived from the probe constants so the reader outlives the worst chain;
+  // keep other sources isolated at the 10s default.
+  sourceTimeoutMsOverrides: { gbrain: GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS },
 });
 const TASKS_FILE = path.join(__dirname, 'tasks.json');
 const DECISION_LOG_PATH = path.join(__dirname, 'data/decision-log.json');
