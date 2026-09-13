@@ -1284,6 +1284,9 @@ function buildCostsRouter({ mcConfig, projectRoot, sessionsService, monthAvailab
         cost: 0,
         tokens: value.tokens,
         sessions: value.sessions,
+        // Channel rollups name channels, not models: costSanity must not
+        // price them at a model rate.
+        billingModes: 'channel_rollup',
         percentage: totalTokens > 0 ? Math.round((value.tokens / totalTokens) * 100) : 0,
       }))
       .sort((left, right) => right.tokens - left.tokens);

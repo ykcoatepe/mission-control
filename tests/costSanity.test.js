@@ -650,3 +650,28 @@ test('daily rows carry their cost source so the period total matches byService',
   assert.equal(usage.daily[0].apiEquivalentCost, 18);
   assert.equal(usage.summary.periodApiEquivalentUsd, 18);
 });
+
+test('channel rollup rows stay unavailable instead of being priced as models', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'Telegram',
+    tokens: 5_000_000,
+    cost: 0,
+    billingModes: 'channel_rollup',
+  });
+
+  assert.deepEqual(estimate, { usd: null, status: 'unavailable', source: 'channel_rollup' });
+});
+
+test('channel-only fallback payloads do not publish a fabricated total', () => {
+  const usage = normalizeUsageCosts({
+    source: 'sessions.fast_fallback',
+    meta: { openclawStatus: 'ready', hermesStatus: 'ready', claudeCodeStatus: 'ready' },
+    summary: { periodUsd: 0 },
+    daily: [{ date: '2026-09-13', cost: 0, tokens: 5_000_000, totalTokens: 5_000_000 }],
+    dailyByModel: [],
+    byService: [{ name: 'Telegram', tokens: 5_000_000, cost: 0, billingModes: 'channel_rollup' }],
+  });
+
+  assert.equal(usage.summary.periodApiEquivalentUsd, null);
+  assert.equal(usage.apiEquivalentReliability, 'unavailable');
+});

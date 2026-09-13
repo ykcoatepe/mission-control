@@ -130,6 +130,12 @@ function estimateApiEquivalentCost(item = {}) {
     return { usd: 0, status: 'not_applicable', source: 'local_model' };
   }
 
+  if (String(item.billingModes || '').toLowerCase().includes('channel_rollup')) {
+    // Fast-fallback channel rollups name channels, not models; pricing them
+    // at a model rate would fabricate a total.
+    return { usd: null, status: 'unavailable', source: 'channel_rollup' };
+  }
+
   const recordedApiEquivalent = Number(item.apiEquivalentUsd);
   if (item.apiEquivalentUsd !== null && item.apiEquivalentUsd !== undefined
     && Number.isFinite(recordedApiEquivalent) && recordedApiEquivalent >= 0) {
