@@ -688,3 +688,14 @@ test('fallback-priced class-ful rows keep the uncertainty signal', () => {
 
   assert.deepEqual(estimate, { usd: 5, status: 'partial', source: 'fallback_blended_estimate' });
 });
+
+test('custom/ provider models are local, not cloud-priced', () => {
+  const estimate = estimateApiEquivalentCost({
+    name: 'custom/qwen3.6:35b-a3b-nvfp4',
+    tokens: 1_000_000,
+    input: 600_000,
+    output: 400_000,
+  });
+
+  assert.deepEqual(estimate, { usd: 0, status: 'not_applicable', source: 'local_model' });
+});

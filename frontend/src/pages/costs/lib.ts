@@ -199,7 +199,8 @@ export function canonicalModelName(model: string) {
 
 export function isLocalModel(model: string) {
   const lower = model.toLowerCase()
-  return lower.includes('ollama/') || lower.includes('lmstudio') || lower.includes('localhost') || lower.includes('local/')
+  // 'custom/' routes to the local Ollama endpoint (cronData provider map).
+  return lower.includes('ollama/') || lower.includes('custom/') || lower.includes('lmstudio') || lower.includes('localhost') || lower.includes('local/')
 }
 
 export function toChartKey(index: number) {

@@ -92,7 +92,8 @@ function modelKey(name) {
 
 function isLocalModel(name) {
   const lower = modelKey(name);
-  return lower.includes('ollama/') || lower.includes('localhost') || lower.includes('lmstudio') || lower.includes('local/');
+  // 'custom/' routes to the local Ollama endpoint (cronData provider map).
+  return lower.includes('ollama/') || lower.includes('custom/') || lower.includes('localhost') || lower.includes('lmstudio') || lower.includes('local/');
 }
 
 function isSubscriptionIncludedModel(name) {
