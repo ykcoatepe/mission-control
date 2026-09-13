@@ -336,6 +336,9 @@ function createSessionsService() {
   let visibleSessionsCacheTime = 0;
   let visibleSessionsRefresh = null;
   const visibleSessionsCacheTtl = 30000;
+  // One in-flight send per session: overlapping requests could otherwise
+  // correlate each other's replies in the transcript fallback path.
+  const pendingSendsBySession = new Map();
 
   const readHiddenSessions = () => {
     hiddenSessions = Array.isArray(readJsonFileSafe(hiddenSessionsPath, hiddenSessions))
@@ -445,6 +448,10 @@ function createSessionsService() {
     },
     async sendSessionMessage(sessionKey, message) {
       const decoded = decodeURIComponent(sessionKey);
+      if (pendingSendsBySession.has(decoded)) {
+        return { ok: false, result: 'A message to this session is still in progress — wait for the current reply before sending again.' };
+      }
+      const send = (async () => {
       const cfg = fs.existsSync(OPENCLAW_CONFIG_PATH) ? JSON.parse(fs.readFileSync(OPENCLAW_CONFIG_PATH, 'utf8')) : {};
       const gatewayToken = cfg.gateway?.auth?.token || process.env.MC_GATEWAY_TOKEN || GATEWAY_TOKEN || '';
       const gatewayPort = cfg.gateway?.port || GATEWAY_PORT;
@@ -507,6 +514,13 @@ function createSessionsService() {
         return resultText
           ? { ok: true, result: resultText }
           : { ok: false, result: 'Response is taking longer than expected. The agent is still working — check back in a moment.' };
+      }
+      })();
+      pendingSendsBySession.set(decoded, send);
+      try {
+        return await send;
+      } finally {
+        pendingSendsBySession.delete(decoded);
       }
     },
     hideSession(sessionKey) {
