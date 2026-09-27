@@ -521,7 +521,8 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
   const score = numberFromText(healthText, /Health score:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
   const coveragePercent = numberFromText(healthText, /Embed coverage:\s*(\d+(?:\.\d+)?)%/i);
   const missing = numberFromText(healthText, /Missing embeddings:\s*(\d+)/i);
-  const stalePages = numberFromText(healthText, /Stale pages:\s*(\d+)/i);
+  // Whole-line integer only: '0.5', '0junk', '0e3' are malformed -> unavailable.
+  const stalePages = numberFromText(healthText, /^\s*Stale pages:\s*(\d+)\s*$/im);
   const waiting = numberFromText(jobsText, /Queue health:\s*(\d+)\s+waiting/i);
   const active = numberFromText(jobsText, /Queue health:\s*\d+\s+waiting,\s*(\d+)\s+active/i);
   const stalled = numberFromText(jobsText, /Queue health:\s*\d+\s+waiting,\s*\d+\s+active,\s*(\d+)\s+stalled/i);

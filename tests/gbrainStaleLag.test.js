@@ -164,3 +164,16 @@ test('two records owning the same stale count are ambiguous: unavailable, never 
   assert.equal(r.core.status, 'warning');
   assert.match(r.overview.caveats.join(' '), /did not report a valid stale-page count/);
 });
+
+test('text fallback: only a whole-line integer stale count counts; malformed is unavailable (review round 5)', () => {
+  const { normalizeHealthText } = require('../server/routes/gbrain/liveProbes');
+  const ok = normalizeHealthText('Health score: 9.8/10\nStale pages: 0\n', '', '2026-09-27T18:00:00.000Z');
+  assert.equal(ok.metrics.stalePages, 0);
+  assert.equal(ok.metrics.stalePagesUnavailable, false);
+  for (const bad of ['0.5', '0junk', '0e3', '-1', '']) {
+    const r = normalizeHealthText(`Health score: 9.8/10\nStale pages: ${bad}\n`, '', '2026-09-27T18:00:00.000Z');
+    assert.equal(r.metrics.stalePages, null, `text ${JSON.stringify(bad)}`);
+    assert.equal(r.metrics.stalePagesUnavailable, true);
+    assert.equal(r.status, 'stale');
+  }
+});
