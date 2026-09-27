@@ -287,7 +287,7 @@ function parseTimestamp(value) {
 }
 
 function isSyncTrackedSource(source) {
-  const id = normalizeSourceKey(source?.id || source?.name || source?.source);
+  const id = normalizeSourceKey(source?.source_id || source?.id || source?.name || source?.source);
   const localPath = source?.local_path || source?.localPath || source?.path || source?.repoPath || source?.repo_path || null;
   const syncEnabled = source?.sync_enabled ?? source?.syncEnabled;
   if (syncEnabled === false) return false;
@@ -297,7 +297,7 @@ function isSyncTrackedSource(source) {
 }
 
 function sourceFreshnessStatus(source, lastSyncAt, checkedAt, thresholds = SOURCE_FRESHNESS_THRESHOLDS_HOURS) {
-  const sourceId = source?.id || source?.name || source?.source;
+  const sourceId = source?.source_id || source?.id || source?.name || source?.source;
   const thresholdHours = freshnessThresholdHours(sourceId, thresholds);
   const parsedLastSyncAt = parseTimestamp(lastSyncAt);
   const checkedMs = Date.parse(checkedAt);
@@ -556,11 +556,12 @@ async function buildLiveGBrainStats(options = {}) {
 function normalizeSourcesPayload(payload, checkedAt) {
   const rawSources = Array.isArray(payload)
     ? payload
-    : payload?.sources || payload?.data || payload?.items || [];
+    : payload?.sync?.sources || payload?.sources || payload?.data || payload?.items || [];
   const sources = rawSources
     .filter((source) => source && typeof source === 'object')
     .map((source) => {
-      const pages = Number.isFinite(Number(source.pages || source.page_count)) ? Number(source.pages || source.page_count) : null;
+      const rawPages = source.pages ?? source.page_count;
+      const pages = Number.isFinite(Number(rawPages)) ? Number(rawPages) : null;
       const reportedStatus = source.status || source.clone_state || source.cloneState;
       const status = reportedStatus
         || (source.last_sync_at ? 'synced' : source.federated === false ? 'isolated' : 'unknown');
@@ -577,12 +578,13 @@ function normalizeSourcesPayload(payload, checkedAt) {
       const rawSyncEnabled = source.sync_enabled ?? source.syncEnabled;
       const syncEnabled = typeof rawSyncEnabled === 'boolean' ? rawSyncEnabled : null;
       const freshness = sourceFreshnessStatus(source, lastSyncAt, checkedAt);
+      const rawChunks = source.chunks ?? source.chunk_count ?? source.chunks_total;
       return {
-        id: String(source.id || source.name || source.source || 'unknown'),
+        id: String(source.source_id || source.id || source.name || source.source || 'unknown'),
         status: String(status),
         statusReported: Boolean(reportedStatus),
         pages,
-        chunks: Number.isFinite(Number(source.chunks || source.chunk_count)) ? Number(source.chunks || source.chunk_count) : null,
+        chunks: Number.isFinite(Number(rawChunks)) ? Number(rawChunks) : null,
         lastSyncAt,
         syncEnabled,
         freshness,
@@ -716,9 +718,19 @@ async function buildLiveGBrainHealth(options = {}) {
 async function buildLiveGBrainSources(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const checkedAt = new Date().toISOString();
+  const snapshotResult = await runGBrain(
+    execFilePromise,
+    ['call', '--source', '__all__', 'get_status_snapshot'],
+    { suppressStartupHooks: true },
+  );
+  const snapshotPayload = parseJsonFromOutput(snapshotResult.stdout);
+
+  if (snapshotResult.ok && Array.isArray(snapshotPayload?.sync?.sources)) {
+    return normalizeSourcesPayload(snapshotPayload.sync.sources, checkedAt);
+  }
+
   const result = await runGBrain(execFilePromise, ['sources', 'list', '--json'], { suppressStartupHooks: true });
   const payload = parseJsonFromOutput(result.stdout);
-
   if (result.ok && payload) {
     return normalizeSourcesPayload(payload, checkedAt);
   }
@@ -731,7 +743,7 @@ async function buildLiveGBrainSources(options = {}) {
       mode: 'live-read-only',
       checkedAt,
       status: 'unavailable',
-      error: result.error || fallbackResult?.error || 'gbrain sources list did not return parseable output',
+      error: snapshotResult.error || result.error || fallbackResult?.error || 'gbrain source probes did not return parseable output',
       sources: [],
     };
   }
