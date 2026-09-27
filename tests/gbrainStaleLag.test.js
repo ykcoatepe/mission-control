@@ -133,3 +133,14 @@ test('timeline keeps the raw count and scores only overdue pages as a regression
   assert.equal(youngEntry.metrics.stalePagesOverdue, 0);
   assert.equal(oldEntry.metrics.stalePagesOverdue, 3);
 });
+
+test('two records owning the same stale count are ambiguous: lag ignored, pages overdue (review round 2)', async () => {
+  const payload = {
+    health: healthPayload(3, { stale_pages_oldest_lag_seconds: null }),
+    debug: { stale_pages: 3, stale_pages_oldest_lag_seconds: 30 },
+  };
+  assert.equal(readStaleLag(payload, 3), null);
+  const r = await overviewFor(payload);
+  assert.equal(r.health.metrics.stalePagesOverdue, 3);
+  assertDegraded(r, 3);
+});

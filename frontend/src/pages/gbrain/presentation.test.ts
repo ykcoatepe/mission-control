@@ -77,6 +77,19 @@ describe('GBrain presentation model', () => {
     ])
   })
 
+  it('shows catching-up pages as a compiled truth change without calling them stale', () => {
+    const base = {
+      trust: { status: 'healthy' as const, score: 100 },
+      sourceFreshness: { status: 'healthy' as const },
+    }
+    const clean = { ...base, metrics: { missingEmbeddings: 0, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    const catchingUp = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 0, caveats: '0' } }
+    const overdue = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 3, caveats: '0' } }
+
+    expect(timelineDeltaLines(catchingUp, clean)).toEqual(['Compiled truth Current → Current · 3 catching up'])
+    expect(timelineDeltaLines(overdue, catchingUp)).toEqual(['Compiled truth Current · 3 catching up → 3 stale pages'])
+  })
+
   it('keeps stale compiled pages separate from a clean embedding queue', () => {
     expect(deriveQueueEvidenceStatus({
       fallbackStatus: 'warning',

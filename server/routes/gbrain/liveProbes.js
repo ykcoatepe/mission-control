@@ -440,10 +440,12 @@ function splitStalePages(stalePages, oldestLagSeconds) {
   return { overdue: stalePages, catchingUp: 0 };
 }
 
-// The lag is only trusted from the record that owns `stale_pages` itself and
-// only when that record's count is the count we are judging; a lag key found
-// anywhere else in the payload is ignored.
+// The lag is only trusted from the ONE record that owns `stale_pages`, and
+// only when that record's count is the count we are judging. Several records
+// owning `stale_pages` (wrapped/augmented payloads) are ambiguous -> null; a
+// lag key found anywhere else in the payload is ignored.
 function readStaleLag(payload, stalePages) {
+  const owners = [];
   const seen = new Set();
   const stack = [payload];
   while (stack.length) {
@@ -454,14 +456,13 @@ function readStaleLag(payload, stalePages) {
       for (const child of item) stack.push(child);
       continue;
     }
-    if (Object.prototype.hasOwnProperty.call(item, 'stale_pages')) {
-      const ownCount = Number(item.stale_pages);
-      const lag = item.stale_pages_oldest_lag_seconds;
-      return ownCount === stalePages && isValidLag(lag) ? lag : null;
-    }
+    if (Object.prototype.hasOwnProperty.call(item, 'stale_pages')) owners.push(item);
     for (const value of Object.values(item)) stack.push(value);
   }
-  return null;
+  if (owners.length !== 1) return null;
+  const [record] = owners;
+  const lag = record.stale_pages_oldest_lag_seconds;
+  return Number(record.stale_pages) === stalePages && isValidLag(lag) ? lag : null;
 }
 
 function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {

@@ -74,15 +74,20 @@ function missingEmbeddingsCount(entry: TimelineDeltaEntry) {
 }
 
 function stalePagesCount(entry: TimelineDeltaEntry) {
-  return structuredCount(entry.metrics, 'stalePagesOverdue')
-    ?? structuredCount(entry.metrics, 'stalePages')
+  return structuredCount(entry.metrics, 'stalePages')
     ?? legacyCount(entry.metrics.embeddingsDetail, /([\d,]+)\s+stale pages?/i)
 }
 
-function compiledTruthLabel(count: number | null) {
+// Overdue pages (older than the sweep tolerance) are "stale"; the rest of the
+// raw count is shown as catching up. Snapshots without stalePagesOverdue
+// treat every stale page as overdue.
+function compiledTruthLabel(entry: TimelineDeltaEntry) {
+  const count = stalePagesCount(entry)
   if (count === null) return null
-  if (count === 0) return 'Current'
-  return `${count.toLocaleString()} stale page${count === 1 ? '' : 's'}`
+  const overdue = structuredCount(entry.metrics, 'stalePagesOverdue') ?? count
+  if (overdue > 0) return `${overdue.toLocaleString()} stale page${overdue === 1 ? '' : 's'}`
+  if (count > 0) return `Current · ${count.toLocaleString()} catching up`
+  return 'Current'
 }
 
 export function deriveOperationalState(input: OperationalStateInput): OperationalState {
@@ -131,8 +136,8 @@ export function timelineDeltaLines(
     },
     {
       label: 'Compiled truth',
-      from: compiledTruthLabel(stalePagesCount(previous)),
-      to: compiledTruthLabel(stalePagesCount(current)),
+      from: compiledTruthLabel(previous),
+      to: compiledTruthLabel(current),
     },
     { label: 'Queue', from: previous.metrics.queue, to: current.metrics.queue },
     {
