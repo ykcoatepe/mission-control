@@ -417,13 +417,35 @@ function normalizeHealthScore(score) {
   return value > 0 && value <= 10 ? value * 10 : value;
 }
 
+// Stale-page tolerance. GBrain's autopilot runs an extract-stale-sweep every
+// tick (600s), so pages written since the last sweep are normally stale for
+// up to ~10 min. Calibration: 1200s = 2 ticks (design-derived from the 600s
+// cadence; sweep job itself ~5s). Review if the tick interval changes or if
+// probes show catching-up ages near the limit. Without the lag field (older
+// GBrain) or with a null lag, any stale page stays verdict-bearing (fail-closed).
+const STALE_PAGES_LAG_TOLERANCE_SECONDS = 1200;
+
+function splitStalePages(stalePages, oldestLagSeconds) {
+  if (!Number.isFinite(stalePages) || stalePages <= 0) {
+    return { lagging: stalePages, catchingUp: 0 };
+  }
+  if (Number.isFinite(oldestLagSeconds) && oldestLagSeconds >= 0 && oldestLagSeconds <= STALE_PAGES_LAG_TOLERANCE_SECONDS) {
+    return { lagging: 0, catchingUp: stalePages };
+  }
+  return { lagging: stalePages, catchingUp: 0 };
+}
+
 function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const score = normalizeHealthScore(findNumber(healthPayload, ['brain_score', 'brainScore', 'health_score', 'healthScore', 'score']));
   const pages = findNumber(healthPayload, ['pages', 'page_count', 'total_pages']);
   const chunks = findNumber(healthPayload, ['chunks', 'chunk_count', 'total_chunks']);
   const embedded = findNumber(healthPayload, ['embedded', 'embedded_chunks', 'embedded_count']);
   const missing = findNumber(healthPayload, ['missing_embeddings', 'missingEmbeddings', 'missing']);
-  const stalePages = findNumber(healthPayload, ['stale_pages', 'stalePages', 'stale']);
+  const reportedStalePages = findNumber(healthPayload, ['stale_pages', 'stalePages', 'stale']);
+  const staleLag = findNumber(healthPayload, ['stale_pages_oldest_lag_seconds']);
+  // stalePages is the verdict-bearing count (lagging beyond tolerance);
+  // pages inside the tolerance are reported separately as catching up.
+  const { lagging: stalePages, catchingUp: stalePagesCatchingUp } = splitStalePages(reportedStalePages, staleLag);
   const coverage = findNumber(healthPayload, ['embed_coverage', 'embedding_coverage', 'coverage']);
   const waiting = findNumber(jobsPayload, ['waiting', 'queued', 'pending']);
   const active = findNumber(jobsPayload, ['active', 'running', 'processing']);
@@ -449,6 +471,9 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
       embedded,
       missingEmbeddings: missing,
       stalePages,
+      stalePagesReported: reportedStalePages,
+      stalePagesCatchingUp,
+      stalePagesOldestLagSeconds: staleLag,
       embeddingCoverage: coverage,
       queue: { waiting, active, stalled },
     },
@@ -777,6 +802,8 @@ async function buildLiveGBrainVersion(options = {}) {
 }
 
 module.exports = {
+  STALE_PAGES_LAG_TOLERANCE_SECONDS,
+  splitStalePages,
   normalizeToolsPayload,
   normalizeFeaturesPayload,
   normalizeProvidersPayload,

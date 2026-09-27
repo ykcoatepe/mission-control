@@ -46,6 +46,11 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const embedded = liveHealth?.metrics?.embedded ?? null;
   const missing = liveHealth?.metrics?.missingEmbeddings ?? null;
   const stalePages = liveHealth?.metrics?.stalePages ?? null;
+  const stalePagesCatchingUp = liveHealth?.metrics?.stalePagesCatchingUp ?? 0;
+  const staleLagSeconds = liveHealth?.metrics?.stalePagesOldestLagSeconds ?? null;
+  const stalePagesValue = stalePages !== null && stalePages <= 0 && stalePagesCatchingUp > 0
+    ? `${formatCount(stalePagesCatchingUp)} catching up${Number.isFinite(staleLagSeconds) ? ` (oldest ${Math.max(1, Math.round(staleLagSeconds / 60))}m)` : ''}`
+    : stalePages !== null ? formatCount(stalePages) : null;
   const coverage = liveHealth?.metrics?.embeddingCoverage ?? null;
   const hasMissingEmbeddings = Number.isFinite(missing) && missing > 0;
   const queue = liveHealth?.metrics?.queue || {};
@@ -117,7 +122,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
         { label: 'Pages', value: pages !== null ? formatCount(pages) : healthUnavailable ? 'Unavailable' : '15,713' },
         { label: 'Chunks', value: chunks !== null ? formatCount(chunks) : healthUnavailable ? 'Unavailable' : '191,638' },
         { label: 'Embedded', value: embedded !== null ? formatCount(embedded) : healthUnavailable ? 'Unavailable' : '191,638' },
-        ...(stalePages !== null ? [{ label: 'Stale pages', value: formatCount(stalePages) }] : []),
+        ...(stalePagesValue !== null ? [{ label: 'Stale pages', value: stalePagesValue }] : []),
       ],
       risks: [
         liveHealth
