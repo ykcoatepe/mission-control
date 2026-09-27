@@ -103,6 +103,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const activeCaveats = [
     ...(healthUnavailable ? ['Live health probe unavailable.'] : []),
     ...(sourcesUnavailable ? ['Live source probe unavailable.'] : []),
+    ...(liveHealth?.metrics?.stalePagesUnavailable === true ? ['Live health did not report a valid stale-page count.'] : []),
     ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}${staleOldestText}.`] : []),
     ...(hasMissingEmbeddings ? [`Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}.`] : []),
     ...(staleSourceCount > 0 ? [`${staleSourceCount} source${staleSourceCount === 1 ? '' : 's'} exceeded freshness thresholds.`] : []),

@@ -8,7 +8,7 @@ const {
 const {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
   splitStalePages,
-  readStaleLag,
+  readStaleRecord,
 } = require('../server/routes/gbrain/liveProbes');
 const { normalizeSnapshot } = require('../server/services/gbrainTimeline');
 
@@ -66,17 +66,34 @@ test('splitStalePages: inside tolerance is catching up; beyond it, or without a 
   assert.deepEqual(splitStalePages(null, 300), { overdue: null, catchingUp: 0 });
 });
 
-test('readStaleLag only trusts the lag on the record that owns stale_pages with the same count', () => {
-  assert.equal(readStaleLag({ stale_pages: 3, stale_pages_oldest_lag_seconds: 240 }, 3), 240);
+test('readStaleRecord reads count and lag together from the single owning record', () => {
+  assert.deepEqual(readStaleRecord({ stale_pages: 3, stale_pages_oldest_lag_seconds: 240 }), { count: 3, lag: 240 });
   // Nested unrelated lag with no lag on the owning record.
-  assert.equal(readStaleLag({ stale_pages: 3, details: { stale_pages_oldest_lag_seconds: 30 } }, 3), null);
-  // Lag on a different record than the one owning the count.
-  assert.equal(readStaleLag({ health: { stale_pages: 3 }, other: { stale_pages_oldest_lag_seconds: 30 } }, 3), null);
-  // Count mismatch (count resolved from a different record).
-  assert.equal(readStaleLag({ stale_pages: 1, stale_pages_oldest_lag_seconds: 30 }, 3), null);
+  assert.deepEqual(readStaleRecord({ stale_pages: 3, details: { stale_pages_oldest_lag_seconds: 30 } }), { count: 3, lag: null });
   for (const bad of [null, '', false, '240', -1]) {
-    assert.equal(readStaleLag({ stale_pages: 3, stale_pages_oldest_lag_seconds: bad }, 3), null, `lag ${String(bad)}`);
+    assert.deepEqual(readStaleRecord({ stale_pages: 3, stale_pages_oldest_lag_seconds: bad }), { count: 3, lag: null }, `lag ${String(bad)}`);
   }
+  // Invalid or missing count is unavailable, never zero (review round 4).
+  for (const bad of [null, false, '', '3', -1, 2.5, NaN]) {
+    assert.deepEqual(readStaleRecord({ stale_pages: bad, stale_pages_oldest_lag_seconds: 30 }), { count: null, lag: null }, `count ${String(bad)}`);
+  }
+  assert.deepEqual(readStaleRecord({ brain_score: 98 }), { count: null, lag: null });
+  // Two owners are ambiguous.
+  assert.deepEqual(readStaleRecord({ a: { stale_pages: 3 }, b: { stale_pages: 3, stale_pages_oldest_lag_seconds: 30 } }), { count: null, lag: null });
+});
+
+test('missing or invalid stale count is a warning, never healthy (review round 4)', async () => {
+  for (const bad of [null, false, '', -1]) {
+    const r = await overviewFor(healthPayload(bad));
+    assert.equal(r.health.metrics.stalePagesUnavailable, true, `count ${JSON.stringify(bad)}`);
+    assert.equal(r.core.status, 'warning');
+    assert.match(r.overview.caveats.join(' '), /did not report a valid stale-page count/);
+  }
+  const absent = healthPayload(0);
+  delete absent.stale_pages;
+  const r = await overviewFor(absent);
+  assert.equal(r.health.metrics.stalePagesUnavailable, true);
+  assert.equal(r.core.status, 'warning');
 });
 
 test('young stale pages: GBrain Core stays healthy, raw count kept and shown as catching up', async () => {
@@ -136,13 +153,14 @@ test('timeline keeps the raw count and scores only overdue pages as a regression
   assert.equal(oldEntry.metrics.stalePagesOverdue, 3);
 });
 
-test('two records owning the same stale count are ambiguous: lag ignored, pages overdue (review round 2)', async () => {
+test('two records owning the same stale count are ambiguous: unavailable, never healthy (review rounds 2+4)', async () => {
   const payload = {
     health: healthPayload(3, { stale_pages_oldest_lag_seconds: null }),
     debug: { stale_pages: 3, stale_pages_oldest_lag_seconds: 30 },
   };
-  assert.equal(readStaleLag(payload, 3), null);
+  assert.deepEqual(readStaleRecord(payload), { count: null, lag: null });
   const r = await overviewFor(payload);
-  assert.equal(r.health.metrics.stalePagesOverdue, 3);
-  assertDegraded(r, 3);
+  assert.equal(r.health.metrics.stalePagesUnavailable, true);
+  assert.equal(r.core.status, 'warning');
+  assert.match(r.overview.caveats.join(' '), /did not report a valid stale-page count/);
 });

@@ -374,6 +374,7 @@ function liveHealthStatus(liveHealth, healthUnavailable = false) {
   const stalePages = Number(liveHealth.metrics?.stalePagesOverdue ?? liveHealth.metrics?.stalePages);
   const missingEmbeddings = Number(liveHealth.metrics?.missingEmbeddings);
   if (/critical|fail|error|unavailable/.test(rawStatus)) return 'critical';
+  if (liveHealth.metrics?.stalePagesUnavailable === true) return 'warning';
   if (Number.isFinite(score) && score < 90) return 'warning';
   if (Number.isFinite(stalePages) && stalePages > 0) return 'warning';
   if (Number.isFinite(missingEmbeddings) && missingEmbeddings > 0) return 'warning';
@@ -440,11 +441,12 @@ function splitStalePages(stalePages, oldestLagSeconds) {
   return { overdue: stalePages, catchingUp: 0 };
 }
 
-// The lag is only trusted from the ONE record that owns `stale_pages`, and
-// only when that record's count is the count we are judging. Several records
-// owning `stale_pages` (wrapped/augmented payloads) are ambiguous -> null; a
-// lag key found anywhere else in the payload is ignored.
-function readStaleLag(payload, stalePages) {
+// The stale count and its lag are read together from the ONE record that
+// owns `stale_pages`. The count must be a non-negative integer JSON number,
+// the lag a finite non-negative JSON number; several owner records are
+// ambiguous. Anything else is reported as unavailable (count null), which
+// the verdict treats as a warning, never as zero stale pages.
+function readStaleRecord(payload) {
   const owners = [];
   const seen = new Set();
   const stack = [payload];
@@ -459,10 +461,12 @@ function readStaleLag(payload, stalePages) {
     if (Object.prototype.hasOwnProperty.call(item, 'stale_pages')) owners.push(item);
     for (const value of Object.values(item)) stack.push(value);
   }
-  if (owners.length !== 1) return null;
+  if (owners.length !== 1) return { count: null, lag: null };
   const [record] = owners;
+  const count = record.stale_pages;
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return { count: null, lag: null };
   const lag = record.stale_pages_oldest_lag_seconds;
-  return Number(record.stale_pages) === stalePages && isValidLag(lag) ? lag : null;
+  return { count, lag: isValidLag(lag) ? lag : null };
 }
 
 function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
@@ -471,8 +475,8 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const chunks = findNumber(healthPayload, ['chunks', 'chunk_count', 'total_chunks']);
   const embedded = findNumber(healthPayload, ['embedded', 'embedded_chunks', 'embedded_count']);
   const missing = findNumber(healthPayload, ['missing_embeddings', 'missingEmbeddings', 'missing']);
-  const stalePages = findNumber(healthPayload, ['stale_pages', 'stalePages', 'stale']);
-  const staleLag = readStaleLag(healthPayload, stalePages);
+  const { count: stalePages, lag: staleLag } = readStaleRecord(healthPayload);
+  const stalePagesUnavailable = stalePages === null;
   // stalePages stays the raw count; stalePagesOverdue is the verdict-bearing
   // part (older than the tolerance), the rest is catching up.
   const { overdue: stalePagesOverdue, catchingUp: stalePagesCatchingUp } = splitStalePages(stalePages, staleLag);
@@ -482,7 +486,7 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const stalled = findNumber(jobsPayload, ['stalled', 'dead']);
   const rawStatus = findString(healthPayload, ['status', 'health_status']);
   const status = rawStatus || (
-    stalePagesOverdue > 0
+    stalePagesOverdue > 0 || stalePagesUnavailable
       ? 'stale'
       : score !== null
         ? score >= 90 ? 'healthy' : 'warning'
@@ -503,6 +507,7 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
       stalePages,
       stalePagesOverdue,
       stalePagesCatchingUp,
+      stalePagesUnavailable,
       stalePagesOldestLagSeconds: staleLag,
       embeddingCoverage: coverage,
       queue: { waiting, active, stalled },
@@ -527,7 +532,7 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
     ok: true,
     mode: 'live-read-only',
     checkedAt,
-    status: stalePages > 0 ? 'stale' : score !== null && score >= 7 ? 'healthy' : 'warning',
+    status: stalePages === null || stalePages > 0 ? 'stale' : score !== null && score >= 7 ? 'healthy' : 'warning',
     score: score !== null ? score * 10 : null,
     metrics: {
       pages: null,
@@ -536,6 +541,7 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
       missingEmbeddings: missing,
       stalePages,
       stalePagesOverdue: stalePages,
+      stalePagesUnavailable: stalePages === null,
       embeddingCoverage: coveragePercent !== null ? coveragePercent : null,
       queue: { waiting, active, stalled },
     },
@@ -835,7 +841,7 @@ async function buildLiveGBrainVersion(options = {}) {
 module.exports = {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
   splitStalePages,
-  readStaleLag,
+  readStaleRecord,
   normalizeToolsPayload,
   normalizeFeaturesPayload,
   normalizeProvidersPayload,
