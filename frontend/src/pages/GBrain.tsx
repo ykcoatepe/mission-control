@@ -236,6 +236,8 @@ interface LiveHealthAvailable {
     embedded: number | null
     missingEmbeddings: number | null
     stalePages: number | null
+    stalePagesOverdue?: number | null
+    stalePagesCatchingUp?: number | null
     embeddingCoverage: number | null
     queue: { waiting: number | null; active: number | null; stalled: number | null }
   }
@@ -638,7 +640,9 @@ export default function GBrain() {
   const degradedNodeCount = presentedNodes.filter((node) => node.status === 'warning').length
   const disconnectedNodeCount = presentedNodes.filter((node) => node.status === 'critical' || node.status === 'inactive').length
   const nodeCount = presentedNodes.length
-  const stalePageCount = liveHealthMetrics?.stalePages ?? null
+  // Only pages older than the sweep tolerance count as behind.
+  const stalePageCount = liveHealthMetrics?.stalePagesOverdue ?? liveHealthMetrics?.stalePages ?? null
+  const stalePagesCatchingUp = liveHealthMetrics?.stalePagesCatchingUp ?? 0
   const brainQualityScore = liveHealthAvailable ? liveHealth.score : null
   const brainQualityStatus: EvidenceStatus = healthUnavailable
     ? 'critical'
@@ -662,7 +666,9 @@ export default function GBrain() {
       ? 'Unknown'
     : stalePageCount > 0
       ? `${stalePageCount} page${stalePageCount === 1 ? '' : 's'} behind`
-      : 'Current'
+      : stalePagesCatchingUp > 0
+        ? `Current · ${stalePagesCatchingUp} catching up`
+        : 'Current'
   const allSourcesNotApplicable = Boolean(
     sourceFreshness
     && sourceFreshness.freshCount === 0

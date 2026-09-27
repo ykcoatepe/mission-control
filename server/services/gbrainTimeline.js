@@ -101,6 +101,7 @@ function normalizeSnapshot(overview, options = {}) {
   };
   const missingEmbeddings = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddings);
   const stalePages = finiteMetric(overview?.live?.health?.metrics?.stalePages);
+  const stalePagesOverdue = finiteMetric(overview?.live?.health?.metrics?.stalePagesOverdue);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -120,6 +121,7 @@ function normalizeSnapshot(overview, options = {}) {
       embeddingsDetail: sanitizeTimelineText(cockpit.embeddings?.detail || ''),
       ...(missingEmbeddings === null ? {} : { missingEmbeddings }),
       ...(stalePages === null ? {} : { stalePages }),
+      ...(stalePagesOverdue === null ? {} : { stalePagesOverdue }),
       queue: sanitizeTimelineText(cockpit.queue?.value || ''),
       caveats: sanitizeTimelineText(cockpit.caveats?.value || ''),
       bridge: sanitizeTimelineText(cockpit.bridge?.value || ''),
@@ -259,6 +261,7 @@ function computeTrustDiff(current, previous) {
     ['embeddings', current.metrics?.embeddings, previous.metrics?.embeddings],
     ['missingEmbeddings', current.metrics?.missingEmbeddings, previous.metrics?.missingEmbeddings],
     ['stalePages', current.metrics?.stalePages, previous.metrics?.stalePages],
+    ['stalePagesOverdue', current.metrics?.stalePagesOverdue, previous.metrics?.stalePagesOverdue],
     ['queue', current.metrics?.queue, previous.metrics?.queue],
     ['caveats', current.metrics?.caveats, previous.metrics?.caveats],
     ['sourceFreshness.status', current.sourceFreshness?.status, previous.sourceFreshness?.status],
@@ -290,7 +293,10 @@ function parseQueueBacklog(value) {
 
 function regressionSignals(entry) {
   const structuredMissingEmbeddings = finiteMetric(entry?.metrics?.missingEmbeddings);
-  const structuredStalePages = finiteMetric(entry?.metrics?.stalePages);
+  // Only overdue stale pages are a regression; entries without the field
+  // (older snapshots) count every stale page.
+  const structuredStalePages = finiteMetric(entry?.metrics?.stalePagesOverdue)
+    ?? finiteMetric(entry?.metrics?.stalePages);
   const missingEmbeddings = structuredMissingEmbeddings
     ?? parseTimelineCount(entry?.metrics?.embeddingsDetail, /([\d,]+)\s+missing/i);
   const stalePages = structuredStalePages

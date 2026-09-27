@@ -371,7 +371,7 @@ function liveHealthStatus(liveHealth, healthUnavailable = false) {
   if (!liveHealth) return 'warning';
   const rawStatus = String(liveHealth.status || '').toLowerCase();
   const score = Number(liveHealth.score);
-  const stalePages = Number(liveHealth.metrics?.stalePages);
+  const stalePages = Number(liveHealth.metrics?.stalePagesOverdue ?? liveHealth.metrics?.stalePages);
   const missingEmbeddings = Number(liveHealth.metrics?.missingEmbeddings);
   if (/critical|fail|error|unavailable/.test(rawStatus)) return 'critical';
   if (Number.isFinite(score) && score < 90) return 'warning';
@@ -421,18 +421,47 @@ function normalizeHealthScore(score) {
 // tick (600s), so pages written since the last sweep are normally stale for
 // up to ~10 min. Calibration: 1200s = 2 ticks (design-derived from the 600s
 // cadence; sweep job itself ~5s). Review if the tick interval changes or if
-// probes show catching-up ages near the limit. Without the lag field (older
-// GBrain) or with a null lag, any stale page stays verdict-bearing (fail-closed).
+// probes show catching-up ages near the limit. Without a valid lag from the
+// same health record (older GBrain, null, non-number, negative), any stale
+// page stays overdue (fail-closed).
 const STALE_PAGES_LAG_TOLERANCE_SECONDS = 1200;
+
+function isValidLag(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
 
 function splitStalePages(stalePages, oldestLagSeconds) {
   if (!Number.isFinite(stalePages) || stalePages <= 0) {
-    return { lagging: stalePages, catchingUp: 0 };
+    return { overdue: stalePages, catchingUp: 0 };
   }
-  if (Number.isFinite(oldestLagSeconds) && oldestLagSeconds >= 0 && oldestLagSeconds <= STALE_PAGES_LAG_TOLERANCE_SECONDS) {
-    return { lagging: 0, catchingUp: stalePages };
+  if (isValidLag(oldestLagSeconds) && oldestLagSeconds <= STALE_PAGES_LAG_TOLERANCE_SECONDS) {
+    return { overdue: 0, catchingUp: stalePages };
   }
-  return { lagging: stalePages, catchingUp: 0 };
+  return { overdue: stalePages, catchingUp: 0 };
+}
+
+// The lag is only trusted from the record that owns `stale_pages` itself and
+// only when that record's count is the count we are judging; a lag key found
+// anywhere else in the payload is ignored.
+function readStaleLag(payload, stalePages) {
+  const seen = new Set();
+  const stack = [payload];
+  while (stack.length) {
+    const item = stack.pop();
+    if (!item || typeof item !== 'object' || seen.has(item)) continue;
+    seen.add(item);
+    if (Array.isArray(item)) {
+      for (const child of item) stack.push(child);
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(item, 'stale_pages')) {
+      const ownCount = Number(item.stale_pages);
+      const lag = item.stale_pages_oldest_lag_seconds;
+      return ownCount === stalePages && isValidLag(lag) ? lag : null;
+    }
+    for (const value of Object.values(item)) stack.push(value);
+  }
+  return null;
 }
 
 function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
@@ -441,18 +470,18 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const chunks = findNumber(healthPayload, ['chunks', 'chunk_count', 'total_chunks']);
   const embedded = findNumber(healthPayload, ['embedded', 'embedded_chunks', 'embedded_count']);
   const missing = findNumber(healthPayload, ['missing_embeddings', 'missingEmbeddings', 'missing']);
-  const reportedStalePages = findNumber(healthPayload, ['stale_pages', 'stalePages', 'stale']);
-  const staleLag = findNumber(healthPayload, ['stale_pages_oldest_lag_seconds']);
-  // stalePages is the verdict-bearing count (lagging beyond tolerance);
-  // pages inside the tolerance are reported separately as catching up.
-  const { lagging: stalePages, catchingUp: stalePagesCatchingUp } = splitStalePages(reportedStalePages, staleLag);
+  const stalePages = findNumber(healthPayload, ['stale_pages', 'stalePages', 'stale']);
+  const staleLag = readStaleLag(healthPayload, stalePages);
+  // stalePages stays the raw count; stalePagesOverdue is the verdict-bearing
+  // part (older than the tolerance), the rest is catching up.
+  const { overdue: stalePagesOverdue, catchingUp: stalePagesCatchingUp } = splitStalePages(stalePages, staleLag);
   const coverage = findNumber(healthPayload, ['embed_coverage', 'embedding_coverage', 'coverage']);
   const waiting = findNumber(jobsPayload, ['waiting', 'queued', 'pending']);
   const active = findNumber(jobsPayload, ['active', 'running', 'processing']);
   const stalled = findNumber(jobsPayload, ['stalled', 'dead']);
   const rawStatus = findString(healthPayload, ['status', 'health_status']);
   const status = rawStatus || (
-    stalePages > 0
+    stalePagesOverdue > 0
       ? 'stale'
       : score !== null
         ? score >= 90 ? 'healthy' : 'warning'
@@ -471,7 +500,7 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
       embedded,
       missingEmbeddings: missing,
       stalePages,
-      stalePagesReported: reportedStalePages,
+      stalePagesOverdue,
       stalePagesCatchingUp,
       stalePagesOldestLagSeconds: staleLag,
       embeddingCoverage: coverage,
@@ -505,6 +534,7 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
       embedded: null,
       missingEmbeddings: missing,
       stalePages,
+      stalePagesOverdue: stalePages,
       embeddingCoverage: coveragePercent !== null ? coveragePercent : null,
       queue: { waiting, active, stalled },
     },
@@ -804,6 +834,7 @@ async function buildLiveGBrainVersion(options = {}) {
 module.exports = {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
   splitStalePages,
+  readStaleLag,
   normalizeToolsPayload,
   normalizeFeaturesPayload,
   normalizeProvidersPayload,

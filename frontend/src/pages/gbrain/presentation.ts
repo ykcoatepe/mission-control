@@ -74,7 +74,8 @@ function missingEmbeddingsCount(entry: TimelineDeltaEntry) {
 }
 
 function stalePagesCount(entry: TimelineDeltaEntry) {
-  return structuredCount(entry.metrics, 'stalePages')
+  return structuredCount(entry.metrics, 'stalePagesOverdue')
+    ?? structuredCount(entry.metrics, 'stalePages')
     ?? legacyCount(entry.metrics.embeddingsDetail, /([\d,]+)\s+stale pages?/i)
 }
 

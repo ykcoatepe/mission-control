@@ -45,12 +45,20 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const chunks = liveHealth?.metrics?.chunks ?? null;
   const embedded = liveHealth?.metrics?.embedded ?? null;
   const missing = liveHealth?.metrics?.missingEmbeddings ?? null;
-  const stalePages = liveHealth?.metrics?.stalePages ?? null;
+  // stalePages is the raw count; only the overdue part is verdict-bearing
+  // (health objects without stalePagesOverdue treat every stale page as overdue).
+  const stalePagesRaw = liveHealth?.metrics?.stalePages ?? null;
+  const stalePages = liveHealth?.metrics?.stalePagesOverdue ?? stalePagesRaw;
   const stalePagesCatchingUp = liveHealth?.metrics?.stalePagesCatchingUp ?? 0;
   const staleLagSeconds = liveHealth?.metrics?.stalePagesOldestLagSeconds ?? null;
-  const stalePagesValue = stalePages !== null && stalePages <= 0 && stalePagesCatchingUp > 0
+  const stalePagesCatchingUpText = stalePagesCatchingUp > 0
     ? `${formatCount(stalePagesCatchingUp)} catching up${Number.isFinite(staleLagSeconds) ? ` (oldest ${Math.max(1, Math.round(staleLagSeconds / 60))}m)` : ''}`
-    : stalePages !== null ? formatCount(stalePages) : null;
+    : null;
+  const stalePagesValue = stalePagesRaw === null
+    ? null
+    : !(stalePages > 0) && stalePagesCatchingUpText
+    ? stalePagesCatchingUpText
+    : formatCount(stalePagesRaw);
   const coverage = liveHealth?.metrics?.embeddingCoverage ?? null;
   const hasMissingEmbeddings = Number.isFinite(missing) && missing > 0;
   const queue = liveHealth?.metrics?.queue || {};
