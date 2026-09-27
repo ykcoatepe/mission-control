@@ -51,14 +51,20 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const stalePages = liveHealth?.metrics?.stalePagesOverdue ?? stalePagesRaw;
   const stalePagesCatchingUp = liveHealth?.metrics?.stalePagesCatchingUp ?? 0;
   const staleLagSeconds = liveHealth?.metrics?.stalePagesOldestLagSeconds ?? null;
+  // The overdue verdict is all-or-nothing on the OLDEST page's age, so counts
+  // are always shown as the raw stale count with that age, never as an exact
+  // number of overdue pages.
+  const staleOldestText = Number.isFinite(staleLagSeconds)
+    ? ` (oldest ${Math.max(1, Math.round(staleLagSeconds / 60))}m)`
+    : '';
   const stalePagesCatchingUpText = stalePagesCatchingUp > 0
-    ? `${formatCount(stalePagesCatchingUp)} catching up${Number.isFinite(staleLagSeconds) ? ` (oldest ${Math.max(1, Math.round(staleLagSeconds / 60))}m)` : ''}`
+    ? `${formatCount(stalePagesCatchingUp)} catching up${staleOldestText}`
     : null;
   const stalePagesValue = stalePagesRaw === null
     ? null
     : !(stalePages > 0) && stalePagesCatchingUpText
     ? stalePagesCatchingUpText
-    : formatCount(stalePagesRaw);
+    : `${formatCount(stalePagesRaw)}${stalePages > 0 ? staleOldestText : ''}`;
   const coverage = liveHealth?.metrics?.embeddingCoverage ?? null;
   const hasMissingEmbeddings = Number.isFinite(missing) && missing > 0;
   const queue = liveHealth?.metrics?.queue || {};
@@ -97,7 +103,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const activeCaveats = [
     ...(healthUnavailable ? ['Live health probe unavailable.'] : []),
     ...(sourcesUnavailable ? ['Live source probe unavailable.'] : []),
-    ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}.`] : []),
+    ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}${staleOldestText}.`] : []),
     ...(hasMissingEmbeddings ? [`Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}.`] : []),
     ...(staleSourceCount > 0 ? [`${staleSourceCount} source${staleSourceCount === 1 ? '' : 's'} exceeded freshness thresholds.`] : []),
     ...((sourceWarnings || 0) > 0 ? [`${sourceWarnings} live source${sourceWarnings === 1 ? '' : 's'} reported a warning status.`] : []),

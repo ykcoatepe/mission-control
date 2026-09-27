@@ -95,7 +95,9 @@ test('stale pages older than tolerance degrade GBrain Core', async () => {
   const r = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: 1500 }));
   assert.equal(r.health.metrics.stalePagesOverdue, 3);
   assertDegraded(r, 3);
-  assert.equal(r.core.metrics.find((metric) => metric.label === 'Stale pages')?.value, '3');
+  // Mixed-age backlog: the count is the raw stale count, labeled with the oldest age.
+  assert.equal(r.core.metrics.find((metric) => metric.label === 'Stale pages')?.value, '3 (oldest 25m)');
+  assert.match(r.overview.caveats.join(' '), /3 stale pages \(oldest 25m\)/);
 });
 
 test('explicit null / non-number lag degrades end to end (review P1)', async () => {
