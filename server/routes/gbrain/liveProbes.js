@@ -482,8 +482,8 @@ function splitMissingEmbeddings(missingEmbeddings, oldestAgeSeconds) {
 // Producer seam (GBrain list_jobs): filters by name / status / queue, then
 // ORDER BY created_at DESC LIMIT. A plain name query can therefore return only
 // newer non-terminal rows and hide the latest terminal one, so the terminal
-// job is fetched explicitly per (name, status) with limit 1 and the newest by
-// finished_at wins. Queue scope is EMBED_JOB_QUEUE (where autopilot embed jobs
+// job is fetched explicitly per (name, status) (see
+// EMBED_JOB_TERMINAL_PAGE_LIMIT) and the newest by finished_at wins. Queue scope is EMBED_JOB_QUEUE (where autopilot embed jobs
 // run) so a foreign-queue job can neither clear a failure nor add waiting.
 // `jobs stats` by_type is GLOBAL across queues, so it is only used as a
 // pre-filter: the default-queue waiting set is a subset of the global one, so
@@ -498,6 +498,20 @@ const EMBED_JOB_QUEUE = 'default';
 const EMBED_JOB_TERMINAL_STATUSES = ['completed', 'failed', 'dead'];
 const EMBED_JOB_WAITING_TOLERANCE_MINUTES = 20;
 const EMBED_JOB_WAITING_LIST_LIMIT = 50;
+// Terminal rows fetched per (name, status). GBrain orders by created_at DESC
+// BEFORE the limit, so with worker concurrency > 1 a later-FINISHED job can be
+// older-created than the rows returned. Several rows per status are read and
+// the newest finished_at across all of them wins; a FULL page can hide an
+// older-created job, which could only have finished after the chosen latest
+// if it ran for at least (latest finished_at - oldest created_at on that
+// page). When that span is below EMBED_JOB_MAX_RUNTIME_MS the page may be
+// hiding the true latest -> signal unavailable, never clean.
+// Calibration note: 10 rows ~ 100 min of 600s ticks per status, so a full
+// page normally spans > 60 min; 60 min is the assumed max embed job runtime
+// (autopilot tick 600s; embed has no default handler timeout in GBrain).
+// A job running longer than that is outside this model (residual: disclosed).
+const EMBED_JOB_TERMINAL_PAGE_LIMIT = 10;
+const EMBED_JOB_MAX_RUNTIME_MS = 60 * 60 * 1000;
 
 function clockText(ms) {
   const d = new Date(ms);
@@ -519,7 +533,9 @@ function globalWaitingClears(jobsPayload, name) {
   const [{ waiting_now: waitingNow, oldest_waiting_minutes: oldest }] = rows;
   if (!isFiniteNumber(waitingNow) || waitingNow < 0) return false;
   if (waitingNow === 0) return true;
-  return isFiniteNumber(oldest) && oldest >= 0 && oldest <= EMBED_JOB_WAITING_TOLERANCE_MINUTES;
+  // GBrain publishes Math.round(seconds / 60): a published 20 can be 20m29s.
+  // Only a published value <= tolerance - 1 (true age < 19m30s) clears.
+  return isFiniteNumber(oldest) && oldest >= 0 && oldest <= EMBED_JOB_WAITING_TOLERANCE_MINUTES - 1;
 }
 
 function isQueueJob(job, name, status) {
@@ -539,12 +555,18 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
   let available = true;
 
   let latest = null;
+  const fullPageOldestCreated = [];
   for (const name of EMBED_JOB_NAMES) {
     for (const status of EMBED_JOB_TERMINAL_STATUSES) {
       const rows = embedJobs.terminal[name]?.[status];
-      if (!Array.isArray(rows) || rows.length > 1) {
+      if (!Array.isArray(rows) || rows.length > EMBED_JOB_TERMINAL_PAGE_LIMIT) {
         available = false;
         continue;
+      }
+      if (rows.length === EMBED_JOB_TERMINAL_PAGE_LIMIT) {
+        const created = rows.map((job) => Date.parse(job?.created_at));
+        if (created.every(Number.isFinite)) fullPageOldestCreated.push(Math.min(...created));
+        else available = false;
       }
       for (const job of rows) {
         if (!isQueueJob(job, name, status)) {
@@ -571,6 +593,12 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
         if (!latest || at > latest.at) latest = { job, at };
       }
     }
+  }
+  if (latest && fullPageOldestCreated.some((oldestCreated) => latest.at - oldestCreated < EMBED_JOB_MAX_RUNTIME_MS)) {
+    // A full page may hide an older-created job that finished later than
+    // `latest`: the latest terminal job is not established.
+    available = false;
+    latest = null;
   }
   if (!latest) {
     // No terminal embed job could be established: never read that as clean.
@@ -618,7 +646,7 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
 }
 
 // Bounded and serialized: every list_jobs child goes through the same probe
-// runner (reaped before the next), at most 3 terminal calls per name plus one
+// runner (reaped before the next), at most 3 terminal pages per name plus one
 // waiting call per name the global stats cannot clear, all inside
 // EMBED_JOB_PROBE_BUDGET_MS (each call's soft window is capped to the budget
 // left). The first failed / timed-out / unparseable call stops the chain; a
@@ -643,7 +671,7 @@ async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, { budgetMs
   for (const name of EMBED_JOB_NAMES) {
     terminal[name] = {};
     for (const status of EMBED_JOB_TERMINAL_STATUSES) {
-      const r = await call({ name, status, queue: EMBED_JOB_QUEUE, limit: 1 });
+      const r = await call({ name, status, queue: EMBED_JOB_QUEUE, limit: EMBED_JOB_TERMINAL_PAGE_LIMIT });
       if (r.stop) return { available: false, pending: Boolean(r.pending), error: r.error };
       terminal[name][status] = r.jobs;
     }
@@ -1123,6 +1151,8 @@ module.exports = {
   MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS,
   EMBED_JOB_WAITING_TOLERANCE_MINUTES,
   EMBED_JOB_QUEUE,
+  EMBED_JOB_TERMINAL_PAGE_LIMIT,
+  EMBED_JOB_MAX_RUNTIME_MS,
   evaluateEmbedJobSignal,
   probeEmbedJobs,
   splitStalePages,

@@ -15,6 +15,8 @@ const {
   normalizeHealthText,
   EMBED_JOB_WAITING_TOLERANCE_MINUTES,
   EMBED_JOB_QUEUE,
+  EMBED_JOB_TERMINAL_PAGE_LIMIT,
+  EMBED_JOB_MAX_RUNTIME_MS,
   evaluateEmbedJobSignal,
 } = require('../server/routes/gbrain/liveProbes');
 const { normalizeSnapshot, buildActiveRegressionBanner } = require('../server/services/gbrainTimeline');
@@ -442,15 +444,65 @@ test('default-queue embed job waiting > 20m -> overdue with "waiting Nm"; <= 20m
   });
   assertJobOverdue(r, 3, /embed job waiting 25m/);
 
-  // Global stats already prove nothing waits > 20m: no waiting call needed.
+  // A published (rounded) 19 proves nothing waits >= 19m30s: no waiting call.
   const calls = [];
-  const atLimit = await overviewFor(healthPayload(3, YOUNG), {
-    byType: [{ name: 'embed-catch-up', waiting_now: 1, oldest_waiting_minutes: 20 }, { name: 'sync', waiting_now: 5, oldest_waiting_minutes: 300 }],
+  const below = await overviewFor(healthPayload(3, YOUNG), {
+    byType: [{ name: 'embed-catch-up', waiting_now: 1, oldest_waiting_minutes: 19 }, { name: 'sync', waiting_now: 5, oldest_waiting_minutes: 300 }],
     calls,
   });
-  assert.equal(atLimit.health.metrics.missingEmbeddingsOverdue, 0);
-  assert.equal(atLimit.core.status, 'healthy');
+  assert.equal(below.health.metrics.missingEmbeddingsOverdue, 0);
+  assert.equal(below.core.status, 'healthy');
   assert.ok(!calls.some((c) => c.includes('"status":"waiting"')), calls.join(' | '));
+});
+
+test('counterexample: GBrain rounds oldest_waiting_minutes — 20m29s published as 20 is queue-checked -> overdue', async () => {
+  const now = Date.now();
+  const waitingSeconds = 20 * 60 + 29;
+  const calls = [];
+  const r = await overviewFor(healthPayload(1, YOUNG), {
+    jobs: [HEALTHY_EMBED_JOB, job({ id: 8, status: 'waiting', created_at: new Date(now - waitingSeconds * 1000).toISOString(), finished_at: null })],
+    // Exactly what GBrain getStats publishes for that job.
+    byType: [{ name: 'embed', waiting_now: 1, oldest_waiting_minutes: Math.round(waitingSeconds / 60) }],
+    calls,
+  });
+  assert.equal(Math.round(waitingSeconds / 60), 20);
+  assert.ok(calls.some((c) => c.includes('"name":"embed","status":"waiting"')), calls.join(' | '));
+  assertJobOverdue(r, 1, /embed job waiting 20m/);
+});
+
+test('counterexample: reverse completion under worker concurrency — older-created job finished LATER with failures -> overdue', async () => {
+  // A created 10:00, completed 10:30 with failures:2; B created 10:10,
+  // completed cleanly 10:20. created_at DESC + limit 1 would return only B.
+  const a = job({ id: 21, created_at: '2026-09-28T10:00:00.000Z', finished_at: '2026-09-28T10:30:00.000Z', result: { embedded: 5, failures: 2 } });
+  const b = job({ id: 22, created_at: '2026-09-28T10:10:00.000Z', finished_at: '2026-09-28T10:20:00.000Z' });
+  assert.deepEqual(listJobs([a, b], { name: 'embed', status: 'completed', queue: 'default', limit: 1 }).map((row) => row.id), [22]);
+  const r = await overviewFor(healthPayload(1, YOUNG), { jobs: [a, b] });
+  assertJobOverdue(r, 1, new RegExp(`embed job completed with 2 failures at ${clock(a.finished_at)}`));
+  // Mirror: the hidden later completion is clean, the earlier-finished one failed -> clean (no false Degraded).
+  const c = job({ id: 23, created_at: '2026-09-28T10:00:00.000Z', finished_at: '2026-09-28T10:30:00.000Z' });
+  const d = job({ id: 24, created_at: '2026-09-28T10:10:00.000Z', finished_at: '2026-09-28T10:20:00.000Z', result: { embedded: 1, failures: 1 } });
+  const clean = await overviewFor(healthPayload(1, YOUNG), { jobs: [c, d] });
+  assert.equal(clean.health.metrics.missingEmbeddingsOverdue, 0);
+  assert.equal(clean.core.status, 'healthy');
+});
+
+test('full terminal page that could hide a later-finished older job -> unavailable; a page spanning > max runtime is trusted', async () => {
+  assert.equal(EMBED_JOB_TERMINAL_PAGE_LIMIT, 10);
+  assert.equal(EMBED_JOB_MAX_RUNTIME_MS, 60 * 60 * 1000);
+  const base = Date.parse('2026-09-28T10:00:00.000Z');
+  const page = (stepMinutes) => Array.from({ length: 10 }, (_, i) => job({
+    id: 100 + i,
+    created_at: new Date(base + i * stepMinutes * 60000).toISOString(),
+    finished_at: new Date(base + i * stepMinutes * 60000 + 60000).toISOString(),
+  }));
+  // Hidden 11th (older-created) completed row that finished last and failed.
+  const hidden = job({ id: 99, created_at: new Date(base - 60000).toISOString(), finished_at: new Date(base + 40 * 60000).toISOString(), result: { failures: 3 } });
+  const dense = await overviewFor(healthPayload(1, YOUNG), { jobs: [hidden, ...page(1)] });
+  assertJobUnavailable(dense, 1, 'dense full page');
+  // 10 ticks apart (spans 91 min > 60 min): the page is trusted.
+  const sparse = await overviewFor(healthPayload(1, YOUNG), { jobs: page(10) });
+  assert.equal(sparse.health.metrics.embedJobProbeUnavailable, false);
+  assert.equal(sparse.core.status, 'healthy');
 });
 
 test('healthy latest embed job + young age -> catching up, no caveats', async () => {
@@ -541,12 +593,12 @@ test('job probes are bounded: serialized, queue-scoped per (name, status), first
   await buildLiveGBrainHealth({ execFilePromise: wrapped });
   assert.equal(maxInFlight, 1);
   assert.deepEqual(calls.filter((c) => c.includes('list_jobs')), [
-    'call list_jobs {"name":"embed","status":"completed","queue":"default","limit":1}',
-    'call list_jobs {"name":"embed","status":"failed","queue":"default","limit":1}',
-    'call list_jobs {"name":"embed","status":"dead","queue":"default","limit":1}',
-    'call list_jobs {"name":"embed-catch-up","status":"completed","queue":"default","limit":1}',
-    'call list_jobs {"name":"embed-catch-up","status":"failed","queue":"default","limit":1}',
-    'call list_jobs {"name":"embed-catch-up","status":"dead","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed","status":"completed","queue":"default","limit":10}',
+    'call list_jobs {"name":"embed","status":"failed","queue":"default","limit":10}',
+    'call list_jobs {"name":"embed","status":"dead","queue":"default","limit":10}',
+    'call list_jobs {"name":"embed-catch-up","status":"completed","queue":"default","limit":10}',
+    'call list_jobs {"name":"embed-catch-up","status":"failed","queue":"default","limit":10}',
+    'call list_jobs {"name":"embed-catch-up","status":"dead","queue":"default","limit":10}',
   ]);
 
   const failCalls = [];
