@@ -653,3 +653,17 @@ test('evaluateEmbedJobSignal: undefined job input is unavailable, never a pass',
   const empty = { available: true, terminal: {}, waiting: {} };
   assert.equal(evaluateEmbedJobSignal(empty, { by_type: [] }).available, false);
 });
+
+test('counterexample: equal finished_at with conflicting outcomes -> the worse outcome wins (review round 3)', async () => {
+  const same = '2026-09-28T10:30:00.123Z';
+  for (const order of [0, 1]) {
+    const clean = job({ id: 41, created_at: '2026-09-28T10:00:00.000Z', finished_at: same });
+    const failed = job({ id: 42, status: 'failed', created_at: '2026-09-28T10:01:00.000Z', finished_at: same, result: null });
+    const r = await overviewFor(healthPayload(1, YOUNG), { jobs: order ? [failed, clean] : [clean, failed] });
+    assertJobOverdue(r, 1, new RegExp(`embed job failed at ${clock(same)}`));
+  }
+  const cleanA = job({ id: 43, created_at: '2026-09-28T10:00:00.000Z', finished_at: same });
+  const withFailures = job({ id: 44, created_at: '2026-09-28T10:01:00.000Z', finished_at: same, result: { embedded: 1, failures: 3 } });
+  const r2 = await overviewFor(healthPayload(1, YOUNG), { jobs: [cleanA, withFailures] });
+  assertJobOverdue(r2, 1, /embed job completed with 3 failures/);
+});

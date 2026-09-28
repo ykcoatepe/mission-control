@@ -547,6 +547,13 @@ function isQueueJob(job, name, status) {
 // {status: [job]}}, waiting: {name: [job]} }) or { available: false } /
 // undefined. Returns { available, reasons } — reasons are overdue causes and
 // may be non-empty even when part of the signal is unavailable.
+// 2 = failed/dead, 1 = completed with failures > 0, 0 = clean completion.
+function embedJobBadness(job) {
+  if (job?.status === 'failed' || job?.status === 'dead') return 2;
+  const failures = job?.result?.failures;
+  return isFiniteNumber(failures) && failures > 0 ? 1 : 0;
+}
+
 function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
   const reasons = [];
   if (!embedJobs || embedJobs.available !== true || !embedJobs.terminal || !embedJobs.waiting) {
@@ -590,7 +597,11 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
             continue;
           }
         }
-        if (!latest || at > latest.at) latest = { job, at };
+        // Equal finish times (ms precision) with conflicting outcomes: the
+        // worse outcome wins, so a tie can never read as clean.
+        if (!latest || at > latest.at || (at === latest.at && embedJobBadness(job) > embedJobBadness(latest.job))) {
+          latest = { job, at };
+        }
       }
     }
   }
