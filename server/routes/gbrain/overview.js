@@ -87,8 +87,18 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const missingValue = missing === null
     ? null
     : missingCatchingUpText || `${formatCount(missing)}${hasMissingEmbeddings ? missingOldestText : ''}`;
+  // Embed-job overdue causes (failed/dead/failures/waiting) and a probe
+  // outage are reported alongside the count; the outage never relaxes the
+  // age verdict.
+  const missingJobReasons = Array.isArray(liveHealth?.metrics?.missingEmbeddingsJobReasons)
+    ? liveHealth.metrics.missingEmbeddingsJobReasons
+    : [];
+  const missingJobReasonText = missingJobReasons.length ? `; ${missingJobReasons.join('; ')}` : '';
   const missingOverdueText = hasMissingEmbeddings
-    ? `Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}.`
+    ? `Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}${missingJobReasonText}.`
+    : null;
+  const embedJobProbeUnavailableText = liveHealth?.metrics?.embedJobProbeUnavailable === true
+    ? 'Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.'
     : null;
   const missingUnavailableText = 'Live health did not report a valid missing-embedding count.';
   const queue = liveHealth?.metrics?.queue || {};
@@ -131,6 +141,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
     ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}${staleOldestText}.`] : []),
     ...(missingUnavailable ? [missingUnavailableText] : []),
     ...(missingOverdueText ? [missingOverdueText] : []),
+    ...(embedJobProbeUnavailableText ? [embedJobProbeUnavailableText] : []),
     ...(staleSourceCount > 0 ? [`${staleSourceCount} source${staleSourceCount === 1 ? '' : 's'} exceeded freshness thresholds.`] : []),
     ...((sourceWarnings || 0) > 0 ? [`${sourceWarnings} live source${sourceWarnings === 1 ? '' : 's'} reported a warning status.`] : []),
     ...(hasRuntimeIntegrationWarning ? ['Integration health warning: runtime readiness is degraded.'] : []),
@@ -274,7 +285,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
       summary: missingUnavailable
         ? 'Live health did not report a valid missing-embedding count; embedding coverage is unverified.'
         : hasMissingEmbeddings
-        ? `Embedding coverage reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText} in the latest live audit.`
+        ? `Embedding coverage reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}${missingJobReasonText} in the latest live audit.`
         : missingCatchingUpText
         ? `Embedding coverage is catching up: ${formatCount(missing)} new chunk${missing === 1 ? '' : 's'} awaiting the next embed tick${missingOldestText}.`
         : 'Embedding coverage and minion queue are clean in the latest audit.',
@@ -300,6 +311,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
         ...(queueUnavailable ? ['Live jobs stats counters were not available; do not treat queue depth as clean.'] : []),
         ...(missingUnavailable ? [missingUnavailableText] : []),
         ...(missingOverdueText ? [missingOverdueText] : []),
+        ...(embedJobProbeUnavailableText ? [embedJobProbeUnavailableText] : []),
       ],
       nextSafeAction: healthUnavailable
         ? 'Restore local GBrain database connectivity, then refresh the live queue probe.'

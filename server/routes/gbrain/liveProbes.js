@@ -467,6 +467,108 @@ function splitMissingEmbeddings(missingEmbeddings, oldestAgeSeconds) {
   return splitByOldestAge(missingEmbeddings, oldestAgeSeconds, MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS);
 }
 
+// Embed-job health signal. The age rule alone cannot see a stuck embedder
+// whose pages keep being rewritten (young age), nor a failing embedder inside
+// the tolerance window. When missing embeddings > 0 the verdict is OVERDUE if
+// the age rule says so, OR the most recent terminal embed / embed-catch-up
+// job (across both names, by finished_at) failed / is dead / completed with
+// result.failures > 0, OR an embed job has been waiting longer than
+// EMBED_JOB_WAITING_TOLERANCE_MINUTES. The job signal can only ADD overdue,
+// never remove it: when the job probe is unavailable or unparseable the
+// verdict is the age rule alone and a caveat says so.
+// Calibration note: 20m waiting = 2 autopilot ticks (600s) — an embed job
+// queued across two ticks without being claimed means the worker is not
+// draining; review with the first live observations (expected ~0% of probes).
+const EMBED_JOB_NAMES = ['embed', 'embed-catch-up'];
+const EMBED_JOB_WAITING_TOLERANCE_MINUTES = 20;
+const EMBED_JOB_TERMINAL_STATUSES = new Set(['completed', 'failed', 'dead']);
+
+function clockText(ms) {
+  const d = new Date(ms);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+// embedJobs: { available: true, jobs: [...] } from probeEmbedJobs, or
+// { available: false, error } / undefined. jobsPayload: `jobs stats --json`.
+// Returns { available, reasons } — reasons are overdue causes (may be
+// non-empty even when part of the probe was unavailable).
+function evaluateEmbedJobSignal(embedJobs, jobsPayload) {
+  const reasons = [];
+  let available = true;
+
+  if (!embedJobs || embedJobs.available !== true || !Array.isArray(embedJobs.jobs)) {
+    available = false;
+  } else {
+    let latest = null;
+    for (const job of embedJobs.jobs) {
+      if (!job || typeof job !== 'object' || Array.isArray(job) || typeof job.status !== 'string') {
+        available = false;
+        continue;
+      }
+      if (!EMBED_JOB_TERMINAL_STATUSES.has(job.status)) continue;
+      const at = Date.parse(job.finished_at ?? job.created_at);
+      if (!Number.isFinite(at)) {
+        available = false;
+        continue;
+      }
+      if (!latest || at > latest.at) latest = { job, at };
+    }
+    if (latest) {
+      const name = typeof latest.job.name === 'string' && EMBED_JOB_NAMES.includes(latest.job.name) ? latest.job.name : 'embed';
+      const failures = latest.job.result?.failures;
+      if (latest.job.status === 'failed' || latest.job.status === 'dead') {
+        reasons.push(`${name} job ${latest.job.status} at ${clockText(latest.at)}`);
+      } else if (typeof failures === 'number' && Number.isFinite(failures) && failures > 0) {
+        reasons.push(`${name} job completed with ${failures} failure${failures === 1 ? '' : 's'} at ${clockText(latest.at)}`);
+      }
+    }
+  }
+
+  const byType = jobsPayload && typeof jobsPayload === 'object' ? jobsPayload.by_type : undefined;
+  if (!Array.isArray(byType)) {
+    available = false;
+  } else {
+    for (const entry of byType) {
+      if (!entry || !EMBED_JOB_NAMES.includes(entry.name)) continue;
+      const waitingNow = entry.waiting_now;
+      const oldest = entry.oldest_waiting_minutes;
+      if (typeof waitingNow !== 'number' || !Number.isFinite(waitingNow)) {
+        available = false;
+        continue;
+      }
+      if (waitingNow <= 0) continue;
+      if (typeof oldest !== 'number' || !Number.isFinite(oldest)) {
+        available = false;
+        continue;
+      }
+      if (oldest > EMBED_JOB_WAITING_TOLERANCE_MINUTES) {
+        reasons.push(`${entry.name} job waiting ${Math.round(oldest)}m`);
+      }
+    }
+  }
+
+  return { available, reasons };
+}
+
+// Bounded: at most one extra child per job name, strictly sequential through
+// the same serialized probe runner (each child reaped before the next), and
+// the first failed / timed-out call stops the chain.
+async function probeEmbedJobs(runProbe, execFilePromise) {
+  const jobs = [];
+  for (const name of EMBED_JOB_NAMES) {
+    const result = await runProbe(
+      execFilePromise,
+      ['call', 'list_jobs', JSON.stringify({ name, limit: 5 })],
+      { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS },
+    );
+    if (result.pending || !result.ok) return { available: false, error: result.error || `list_jobs ${name} failed` };
+    const parsed = parseJsonFromOutput(result.stdout);
+    if (!Array.isArray(parsed)) return { available: false, error: `list_jobs ${name} did not return a JSON array` };
+    jobs.push(...parsed);
+  }
+  return { available: true, jobs };
+}
+
 // A count and its age are read together from the ONE record that owns
 // `countKey`. The count must be a non-negative integer JSON number, the age
 // a finite non-negative JSON number; several owner records are ambiguous.
@@ -504,7 +606,7 @@ function readMissingEmbeddingsRecord(payload) {
   return readCountWithAge(payload, 'missing_embeddings', 'missing_embeddings_oldest_age_seconds');
 }
 
-function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
+function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt, embedJobs) {
   const score = normalizeHealthScore(findNumber(healthPayload, ['brain_score', 'brainScore', 'health_score', 'healthScore', 'score']));
   const pages = findNumber(healthPayload, ['pages', 'page_count', 'total_pages']);
   const chunks = findNumber(healthPayload, ['chunks', 'chunk_count', 'total_chunks']);
@@ -513,10 +615,15 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const missingEmbeddingsUnavailable = missing === null;
   // missingEmbeddings stays the raw count; missingEmbeddingsOverdue is the
   // verdict-bearing part (oldest older than the tolerance).
+  const ageSplit = splitMissingEmbeddings(missing, missingAge);
+  // Job signal only when there is something to embed; it can only add overdue.
+  const jobSignal = Number.isFinite(missing) && missing > 0 ? evaluateEmbedJobSignal(embedJobs, jobsPayload) : null;
+  const missingEmbeddingsJobReasons = jobSignal ? jobSignal.reasons : [];
+  const embedJobProbeUnavailable = Boolean(jobSignal && !jobSignal.available);
   const {
     overdue: missingEmbeddingsOverdue,
     catchingUp: missingEmbeddingsCatchingUp,
-  } = splitMissingEmbeddings(missing, missingAge);
+  } = missingEmbeddingsJobReasons.length > 0 ? { overdue: missing, catchingUp: 0 } : ageSplit;
   const { count: stalePages, lag: staleLag } = readStaleRecord(healthPayload);
   const stalePagesUnavailable = stalePages === null;
   // stalePages stays the raw count; stalePagesOverdue is the verdict-bearing
@@ -552,6 +659,8 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
       missingEmbeddingsCatchingUp,
       missingEmbeddingsUnavailable,
       missingEmbeddingsOldestAgeSeconds: missingAge,
+      missingEmbeddingsJobReasons,
+      embedJobProbeUnavailable,
       stalePages,
       stalePagesOverdue,
       stalePagesCatchingUp,
@@ -778,6 +887,14 @@ function normalizeSourcesText(output, checkedAt) {
   };
 }
 
+// Embed-job probes run only when the health record reports missing
+// embeddings; otherwise the job state cannot change the verdict.
+async function maybeProbeEmbedJobs(healthPayload, runProbe, execFilePromise) {
+  const { count } = readMissingEmbeddingsRecord(healthPayload);
+  if (!(Number.isFinite(count) && count > 0)) return undefined;
+  return probeEmbedJobs(runProbe, execFilePromise);
+}
+
 async function buildLiveGBrainHealth(options = {}) {
   const execFilePromise = options.execFilePromise || defaultExecFilePromise;
   const runProbe = options.probeCommand || runProbeCommand;
@@ -808,7 +925,8 @@ async function buildLiveGBrainHealth(options = {}) {
   };
 
   if (healthResult.ok && healthPayload) {
-    const health = normalizeHealthPayload(healthPayload, jobsPayload, checkedAt);
+    const embedJobs = await maybeProbeEmbedJobs(healthPayload, runProbe, execFilePromise);
+    const health = normalizeHealthPayload(healthPayload, jobsPayload, checkedAt, embedJobs);
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
@@ -818,7 +936,8 @@ async function buildLiveGBrainHealth(options = {}) {
   }
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
-    const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt);
+    const embedJobs = await maybeProbeEmbedJobs(fallbackPayload, runProbe, execFilePromise);
+    const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt, embedJobs);
     return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
   }
 
@@ -900,6 +1019,8 @@ async function buildLiveGBrainVersion(options = {}) {
 module.exports = {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
   MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS,
+  EMBED_JOB_WAITING_TOLERANCE_MINUTES,
+  evaluateEmbedJobSignal,
   splitStalePages,
   splitMissingEmbeddings,
   readStaleRecord,
