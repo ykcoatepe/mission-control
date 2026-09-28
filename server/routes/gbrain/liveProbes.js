@@ -372,9 +372,12 @@ function liveHealthStatus(liveHealth, healthUnavailable = false) {
   const rawStatus = String(liveHealth.status || '').toLowerCase();
   const score = Number(liveHealth.score);
   const stalePages = Number(liveHealth.metrics?.stalePagesOverdue ?? liveHealth.metrics?.stalePages);
-  const missingEmbeddings = Number(liveHealth.metrics?.missingEmbeddings);
+  // Only overdue missing embeddings are verdict-bearing; health objects
+  // without missingEmbeddingsOverdue treat every missing embedding as overdue.
+  const missingEmbeddings = Number(liveHealth.metrics?.missingEmbeddingsOverdue ?? liveHealth.metrics?.missingEmbeddings);
   if (/critical|fail|error|unavailable/.test(rawStatus)) return 'critical';
   if (liveHealth.metrics?.stalePagesUnavailable === true) return 'warning';
+  if (liveHealth.metrics?.missingEmbeddingsUnavailable === true) return 'warning';
   if (Number.isFinite(score) && score < 90) return 'warning';
   if (Number.isFinite(stalePages) && stalePages > 0) return 'warning';
   if (Number.isFinite(missingEmbeddings) && missingEmbeddings > 0) return 'warning';
@@ -431,22 +434,45 @@ function isValidLag(value) {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
-function splitStalePages(stalePages, oldestLagSeconds) {
-  if (!Number.isFinite(stalePages) || stalePages <= 0) {
-    return { overdue: stalePages, catchingUp: 0 };
+// Missing-embedding tolerance. New chunks are embedded by the autopilot embed
+// step, which runs every tick (600s), so a write normally shows up as a
+// missing embedding until the next tick.
+// Calibration note: value 1200s. Basis: live measurement over 2 days (1,495
+// page writes): write-to-embed lag p50 0s, p90 118s, p99 542s, max 1736s;
+// 0.2% of writes exceeded 1200s; autopilot tick 600s. Expected overdue rate
+// <= 0.5% of probes. Review if the first live observations show a higher
+// overdue rate or the tick interval changes. Without a valid oldest age from
+// the same health record (older GBrain, null, non-number, negative), any
+// missing embedding stays overdue (fail-closed).
+const MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS = 1200;
+
+// All-or-nothing on the OLDEST item's age: inside the tolerance the whole
+// raw count is catching up, beyond it (or without a valid age) all of it is
+// overdue.
+function splitByOldestAge(count, oldestAgeSeconds, toleranceSeconds) {
+  if (!Number.isFinite(count) || count <= 0) {
+    return { overdue: count, catchingUp: 0 };
   }
-  if (isValidLag(oldestLagSeconds) && oldestLagSeconds <= STALE_PAGES_LAG_TOLERANCE_SECONDS) {
-    return { overdue: 0, catchingUp: stalePages };
+  if (isValidLag(oldestAgeSeconds) && oldestAgeSeconds <= toleranceSeconds) {
+    return { overdue: 0, catchingUp: count };
   }
-  return { overdue: stalePages, catchingUp: 0 };
+  return { overdue: count, catchingUp: 0 };
 }
 
-// The stale count and its lag are read together from the ONE record that
-// owns `stale_pages`. The count must be a non-negative integer JSON number,
-// the lag a finite non-negative JSON number; several owner records are
-// ambiguous. Anything else is reported as unavailable (count null), which
-// the verdict treats as a warning, never as zero stale pages.
-function readStaleRecord(payload) {
+function splitStalePages(stalePages, oldestLagSeconds) {
+  return splitByOldestAge(stalePages, oldestLagSeconds, STALE_PAGES_LAG_TOLERANCE_SECONDS);
+}
+
+function splitMissingEmbeddings(missingEmbeddings, oldestAgeSeconds) {
+  return splitByOldestAge(missingEmbeddings, oldestAgeSeconds, MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS);
+}
+
+// A count and its age are read together from the ONE record that owns
+// `countKey`. The count must be a non-negative integer JSON number, the age
+// a finite non-negative JSON number; several owner records are ambiguous.
+// Anything else is reported as unavailable (count null), which the verdict
+// treats as a warning, never as zero.
+function readCountWithAge(payload, countKey, ageKey) {
   const owners = [];
   const seen = new Set();
   const stack = [payload];
@@ -458,15 +484,24 @@ function readStaleRecord(payload) {
       for (const child of item) stack.push(child);
       continue;
     }
-    if (Object.prototype.hasOwnProperty.call(item, 'stale_pages')) owners.push(item);
+    if (Object.prototype.hasOwnProperty.call(item, countKey)) owners.push(item);
     for (const value of Object.values(item)) stack.push(value);
   }
-  if (owners.length !== 1) return { count: null, lag: null };
+  if (owners.length !== 1) return { count: null, age: null };
   const [record] = owners;
-  const count = record.stale_pages;
-  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return { count: null, lag: null };
-  const lag = record.stale_pages_oldest_lag_seconds;
-  return { count, lag: isValidLag(lag) ? lag : null };
+  const count = record[countKey];
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 0) return { count: null, age: null };
+  const age = record[ageKey];
+  return { count, age: isValidLag(age) ? age : null };
+}
+
+function readStaleRecord(payload) {
+  const { count, age } = readCountWithAge(payload, 'stale_pages', 'stale_pages_oldest_lag_seconds');
+  return { count, lag: age };
+}
+
+function readMissingEmbeddingsRecord(payload) {
+  return readCountWithAge(payload, 'missing_embeddings', 'missing_embeddings_oldest_age_seconds');
 }
 
 function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
@@ -474,7 +509,14 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const pages = findNumber(healthPayload, ['pages', 'page_count', 'total_pages']);
   const chunks = findNumber(healthPayload, ['chunks', 'chunk_count', 'total_chunks']);
   const embedded = findNumber(healthPayload, ['embedded', 'embedded_chunks', 'embedded_count']);
-  const missing = findNumber(healthPayload, ['missing_embeddings', 'missingEmbeddings', 'missing']);
+  const { count: missing, age: missingAge } = readMissingEmbeddingsRecord(healthPayload);
+  const missingEmbeddingsUnavailable = missing === null;
+  // missingEmbeddings stays the raw count; missingEmbeddingsOverdue is the
+  // verdict-bearing part (oldest older than the tolerance).
+  const {
+    overdue: missingEmbeddingsOverdue,
+    catchingUp: missingEmbeddingsCatchingUp,
+  } = splitMissingEmbeddings(missing, missingAge);
   const { count: stalePages, lag: staleLag } = readStaleRecord(healthPayload);
   const stalePagesUnavailable = stalePages === null;
   // stalePages stays the raw count; stalePagesOverdue is the verdict-bearing
@@ -488,6 +530,8 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
   const status = rawStatus || (
     stalePagesOverdue > 0 || stalePagesUnavailable
       ? 'stale'
+      : missingEmbeddingsOverdue > 0 || missingEmbeddingsUnavailable
+      ? 'warning'
       : score !== null
         ? score >= 90 ? 'healthy' : 'warning'
         : 'unknown'
@@ -504,6 +548,10 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt) {
       chunks,
       embedded,
       missingEmbeddings: missing,
+      missingEmbeddingsOverdue,
+      missingEmbeddingsCatchingUp,
+      missingEmbeddingsUnavailable,
+      missingEmbeddingsOldestAgeSeconds: missingAge,
       stalePages,
       stalePagesOverdue,
       stalePagesCatchingUp,
@@ -520,7 +568,9 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
   const jobsText = String(jobsOutput || '');
   const score = numberFromText(healthText, /Health score:\s*(\d+(?:\.\d+)?)\s*\/\s*10/i);
   const coveragePercent = numberFromText(healthText, /Embed coverage:\s*(\d+(?:\.\d+)?)%/i);
-  const missing = numberFromText(healthText, /Missing embeddings:\s*(\d+)/i);
+  // Whole-line integer only: '0.5', '0junk', '0e3' are malformed -> unavailable.
+  // The text output carries no age, so any missing embedding is overdue.
+  const missing = numberFromText(healthText, /^\s*Missing embeddings:\s*(\d+)\s*$/im);
   // Whole-line integer only: '0.5', '0junk', '0e3' are malformed -> unavailable.
   const stalePages = numberFromText(healthText, /^\s*Stale pages:\s*(\d+)\s*$/im);
   const waiting = numberFromText(jobsText, /Queue health:\s*(\d+)\s+waiting/i);
@@ -533,13 +583,21 @@ function normalizeHealthText(healthOutput, jobsOutput, checkedAt) {
     ok: true,
     mode: 'live-read-only',
     checkedAt,
-    status: stalePages === null || stalePages > 0 ? 'stale' : score !== null && score >= 7 ? 'healthy' : 'warning',
+    status: stalePages === null || stalePages > 0
+      ? 'stale'
+      : missing === null || missing > 0
+      ? 'warning'
+      : score !== null && score >= 7 ? 'healthy' : 'warning',
     score: score !== null ? score * 10 : null,
     metrics: {
       pages: null,
       chunks: null,
       embedded: null,
       missingEmbeddings: missing,
+      missingEmbeddingsOverdue: missing,
+      missingEmbeddingsCatchingUp: 0,
+      missingEmbeddingsUnavailable: missing === null,
+      missingEmbeddingsOldestAgeSeconds: null,
       stalePages,
       stalePagesOverdue: stalePages,
       stalePagesUnavailable: stalePages === null,
@@ -841,8 +899,11 @@ async function buildLiveGBrainVersion(options = {}) {
 
 module.exports = {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
+  MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS,
   splitStalePages,
+  splitMissingEmbeddings,
   readStaleRecord,
+  readMissingEmbeddingsRecord,
   normalizeToolsPayload,
   normalizeFeaturesPayload,
   normalizeProvidersPayload,

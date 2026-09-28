@@ -235,6 +235,10 @@ interface LiveHealthAvailable {
     chunks: number | null
     embedded: number | null
     missingEmbeddings: number | null
+    missingEmbeddingsOverdue?: number | null
+    missingEmbeddingsCatchingUp?: number | null
+    missingEmbeddingsUnavailable?: boolean
+    missingEmbeddingsOldestAgeSeconds?: number | null
     stalePages: number | null
     stalePagesOverdue?: number | null
     stalePagesCatchingUp?: number | null
@@ -630,6 +634,8 @@ export default function GBrain() {
     hasLiveHealth: liveHealthAvailable,
     countersAvailable: Boolean(queueCounters && [queueCounters.waiting, queueCounters.active, queueCounters.stalled].every(Number.isFinite)),
     missingEmbeddings: liveHealthMetrics?.missingEmbeddings ?? null,
+    missingEmbeddingsOverdue: liveHealthMetrics?.missingEmbeddingsOverdue,
+    missingEmbeddingsUnavailable: liveHealthMetrics?.missingEmbeddingsUnavailable,
     stalledJobs: queueCounters?.stalled ?? null,
   })
   const presentedNodes = (data?.nodes || []).map((node) => (

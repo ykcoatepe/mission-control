@@ -100,6 +100,8 @@ function normalizeSnapshot(overview, options = {}) {
     warningCount: Number(overview?.live?.sources?.warningCount || 0),
   };
   const missingEmbeddings = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddings);
+  const missingEmbeddingsOverdue = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddingsOverdue);
+  const missingEmbeddingsOldestAgeSeconds = finiteMetric(overview?.live?.health?.metrics?.missingEmbeddingsOldestAgeSeconds);
   const stalePages = finiteMetric(overview?.live?.health?.metrics?.stalePages);
   const stalePagesOverdue = finiteMetric(overview?.live?.health?.metrics?.stalePagesOverdue);
 
@@ -120,6 +122,8 @@ function normalizeSnapshot(overview, options = {}) {
       embeddings: sanitizeTimelineText(cockpit.embeddings?.value || ''),
       embeddingsDetail: sanitizeTimelineText(cockpit.embeddings?.detail || ''),
       ...(missingEmbeddings === null ? {} : { missingEmbeddings }),
+      ...(missingEmbeddingsOverdue === null ? {} : { missingEmbeddingsOverdue }),
+      ...(missingEmbeddingsOldestAgeSeconds === null ? {} : { missingEmbeddingsOldestAgeSeconds }),
       ...(stalePages === null ? {} : { stalePages }),
       ...(stalePagesOverdue === null ? {} : { stalePagesOverdue }),
       queue: sanitizeTimelineText(cockpit.queue?.value || ''),
@@ -260,6 +264,7 @@ function computeTrustDiff(current, previous) {
     ['health', current.metrics?.health, previous.metrics?.health],
     ['embeddings', current.metrics?.embeddings, previous.metrics?.embeddings],
     ['missingEmbeddings', current.metrics?.missingEmbeddings, previous.metrics?.missingEmbeddings],
+    ['missingEmbeddingsOverdue', current.metrics?.missingEmbeddingsOverdue, previous.metrics?.missingEmbeddingsOverdue],
     ['stalePages', current.metrics?.stalePages, previous.metrics?.stalePages],
     ['stalePagesOverdue', current.metrics?.stalePagesOverdue, previous.metrics?.stalePagesOverdue],
     ['queue', current.metrics?.queue, previous.metrics?.queue],
@@ -292,7 +297,10 @@ function parseQueueBacklog(value) {
 }
 
 function regressionSignals(entry) {
-  const structuredMissingEmbeddings = finiteMetric(entry?.metrics?.missingEmbeddings);
+  // Only overdue missing embeddings are a regression; entries without the
+  // field (older snapshots) count every missing embedding.
+  const structuredMissingEmbeddings = finiteMetric(entry?.metrics?.missingEmbeddingsOverdue)
+    ?? finiteMetric(entry?.metrics?.missingEmbeddings);
   // Only overdue stale pages are a regression; entries without the field
   // (older snapshots) count every stale page.
   const structuredStalePages = finiteMetric(entry?.metrics?.stalePagesOverdue)

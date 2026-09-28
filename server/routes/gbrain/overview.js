@@ -26,6 +26,11 @@ function featureGapDetail(featureGaps = {}) {
   return parts.length ? parts.join('; ') : 'no feature gaps';
 }
 
+// Age suffix for a count judged on its OLDEST item, e.g. ' (oldest 4m)'.
+function oldestAgeText(seconds) {
+  return Number.isFinite(seconds) ? ` (oldest ${Math.max(1, Math.round(seconds / 60))}m)` : '';
+}
+
 function buildGBrainOverview(live = {}, extra = {}) {
   const liveHealth = live.health?.ok ? live.health : null;
   const liveSources = live.sources?.ok ? live.sources : null;
@@ -44,7 +49,16 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const pages = liveHealth?.metrics?.pages ?? liveSources?.totalPages ?? null;
   const chunks = liveHealth?.metrics?.chunks ?? null;
   const embedded = liveHealth?.metrics?.embedded ?? null;
+  // missingEmbeddings is the raw count; only the overdue part is
+  // verdict-bearing (health objects without missingEmbeddingsOverdue treat
+  // every missing embedding as overdue). Unavailable is a warning, never zero.
   const missing = liveHealth?.metrics?.missingEmbeddings ?? null;
+  const missingOverdue = liveHealth?.metrics?.missingEmbeddingsOverdue ?? missing;
+  const missingCatchingUp = liveHealth?.metrics?.missingEmbeddingsCatchingUp ?? 0;
+  const missingAgeSeconds = liveHealth?.metrics?.missingEmbeddingsOldestAgeSeconds ?? null;
+  const missingUnavailable = Boolean(liveHealth) && (
+    liveHealth.metrics?.missingEmbeddingsUnavailable === true
+  );
   // stalePages is the raw count; only the overdue part is verdict-bearing
   // (health objects without stalePagesOverdue treat every stale page as overdue).
   const stalePagesRaw = liveHealth?.metrics?.stalePages ?? null;
@@ -54,9 +68,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
   // The overdue verdict is all-or-nothing on the OLDEST page's age, so counts
   // are always shown as the raw stale count with that age, never as an exact
   // number of overdue pages.
-  const staleOldestText = Number.isFinite(staleLagSeconds)
-    ? ` (oldest ${Math.max(1, Math.round(staleLagSeconds / 60))}m)`
-    : '';
+  const staleOldestText = oldestAgeText(staleLagSeconds);
   const stalePagesCatchingUpText = stalePagesCatchingUp > 0
     ? `${formatCount(stalePagesCatchingUp)} catching up${staleOldestText}`
     : null;
@@ -66,7 +78,19 @@ function buildGBrainOverview(live = {}, extra = {}) {
     ? stalePagesCatchingUpText
     : `${formatCount(stalePagesRaw)}${stalePages > 0 ? staleOldestText : ''}`;
   const coverage = liveHealth?.metrics?.embeddingCoverage ?? null;
-  const hasMissingEmbeddings = Number.isFinite(missing) && missing > 0;
+  // Same all-or-nothing rule as stale pages: raw count with the oldest age.
+  const missingOldestText = oldestAgeText(missingAgeSeconds);
+  const hasMissingEmbeddings = Number.isFinite(missingOverdue) && missingOverdue > 0;
+  const missingCatchingUpText = !hasMissingEmbeddings && missingCatchingUp > 0
+    ? `${formatCount(missingCatchingUp)} catching up${missingOldestText}`
+    : null;
+  const missingValue = missing === null
+    ? null
+    : missingCatchingUpText || `${formatCount(missing)}${hasMissingEmbeddings ? missingOldestText : ''}`;
+  const missingOverdueText = hasMissingEmbeddings
+    ? `Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}.`
+    : null;
+  const missingUnavailableText = 'Live health did not report a valid missing-embedding count.';
   const queue = liveHealth?.metrics?.queue || {};
   const hasLiveQueueCounters = [queue.waiting, queue.active, queue.stalled].every(Number.isFinite);
   const queueUnavailable = Boolean(liveHealth && !hasLiveQueueCounters);
@@ -105,7 +129,8 @@ function buildGBrainOverview(live = {}, extra = {}) {
     ...(sourcesUnavailable ? ['Live source probe unavailable.'] : []),
     ...(liveHealth?.metrics?.stalePagesUnavailable === true ? ['Live health did not report a valid stale-page count.'] : []),
     ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}${staleOldestText}.`] : []),
-    ...(hasMissingEmbeddings ? [`Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}.`] : []),
+    ...(missingUnavailable ? [missingUnavailableText] : []),
+    ...(missingOverdueText ? [missingOverdueText] : []),
     ...(staleSourceCount > 0 ? [`${staleSourceCount} source${staleSourceCount === 1 ? '' : 's'} exceeded freshness thresholds.`] : []),
     ...((sourceWarnings || 0) > 0 ? [`${sourceWarnings} live source${sourceWarnings === 1 ? '' : 's'} reported a warning status.`] : []),
     ...(hasRuntimeIntegrationWarning ? ['Integration health warning: runtime readiness is degraded.'] : []),
@@ -246,8 +271,12 @@ function buildGBrainOverview(live = {}, extra = {}) {
       label: 'Embedding Queues',
       kind: 'queue',
       status: queueStatus,
-      summary: hasMissingEmbeddings
-        ? `Embedding coverage reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'} in the latest live audit.`
+      summary: missingUnavailable
+        ? 'Live health did not report a valid missing-embedding count; embedding coverage is unverified.'
+        : hasMissingEmbeddings
+        ? `Embedding coverage reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText} in the latest live audit.`
+        : missingCatchingUpText
+        ? `Embedding coverage is catching up: ${formatCount(missing)} new chunk${missing === 1 ? '' : 's'} awaiting the next embed tick${missingOldestText}.`
         : 'Embedding coverage and minion queue are clean in the latest audit.',
       proof: {
         label: liveHealth || healthUnavailable ? 'Live queue probe' : 'Queue audit',
@@ -263,18 +292,21 @@ function buildGBrainOverview(live = {}, extra = {}) {
       },
       metrics: [
         { label: 'Coverage', value: coverage !== null ? formatPercent(coverage) : healthUnavailable ? 'Unavailable' : '100%' },
-        { label: 'Missing', value: missing !== null ? formatCount(missing) : healthUnavailable ? 'Unavailable' : '0' },
+        { label: 'Missing', value: missingValue !== null ? missingValue : healthUnavailable || liveHealth ? 'Unavailable' : '0' },
         { label: 'Stalled', value: Number.isFinite(queue.stalled) ? formatCount(queue.stalled) : liveHealth || healthUnavailable ? 'Unavailable' : '0' },
       ],
       risks: [
         ...(healthUnavailable ? ['Live health and jobs probes were unavailable; queue counters are not current.'] : []),
         ...(queueUnavailable ? ['Live jobs stats counters were not available; do not treat queue depth as clean.'] : []),
-        ...(hasMissingEmbeddings ? [`Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}.`] : []),
+        ...(missingUnavailable ? [missingUnavailableText] : []),
+        ...(missingOverdueText ? [missingOverdueText] : []),
       ],
       nextSafeAction: healthUnavailable
         ? 'Restore local GBrain database connectivity, then refresh the live queue probe.'
         : hasMissingEmbeddings
         ? 'Run the embedding repair/backfill path before calling this node clean.'
+        : missingUnavailable
+        ? 'Refresh the live health probe; do not treat embeddings as clean until it reports a valid missing-embedding count.'
         : 'Refresh at a conservative interval to avoid false negatives or extra load.',
     },
     {
@@ -344,7 +376,11 @@ function buildGBrainOverview(live = {}, extra = {}) {
           ? 'health probe unavailable'
           : stalePages > 0
           ? `${formatCount(stalePages)} stale pages`
-          : `${missing !== null ? formatCount(missing) : '0'} missing`,
+          : missingUnavailable
+          ? 'missing-embedding count unavailable'
+          : missingCatchingUpText
+          ? `${formatCount(missing)} missing, catching up${missingOldestText}`
+          : `${missing !== null ? formatCount(missing) : '0'} missing${hasMissingEmbeddings ? missingOldestText : ''}`,
         status: healthStatus,
         proofNodeId: 'queues',
       },
