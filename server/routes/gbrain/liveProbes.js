@@ -7,6 +7,7 @@ const {
   SOURCE_FRESHNESS_THRESHOLDS_HOURS,
   REQUIRED_GBRAIN_TOOLS,
   HEALTH_PROBE_SOFT_TIMEOUT_MS,
+  EMBED_JOB_PROBE_BUDGET_MS,
 } = require('./constants');
 const {
   defaultExecFilePromise,
@@ -470,103 +471,191 @@ function splitMissingEmbeddings(missingEmbeddings, oldestAgeSeconds) {
 // Embed-job health signal. The age rule alone cannot see a stuck embedder
 // whose pages keep being rewritten (young age), nor a failing embedder inside
 // the tolerance window. When missing embeddings > 0 the verdict is OVERDUE if
-// the age rule says so, OR the most recent terminal embed / embed-catch-up
-// job (across both names, by finished_at) failed / is dead / completed with
-// result.failures > 0, OR an embed job has been waiting longer than
+// the age rule says so, OR the most recent terminal embed / embed-catch-up job
+// in the autopilot queue failed / is dead / completed with result.failures > 0,
+// OR an embed job in that queue has been waiting longer than
 // EMBED_JOB_WAITING_TOLERANCE_MINUTES. The job signal can only ADD overdue,
-// never remove it: when the job probe is unavailable or unparseable the
-// verdict is the age rule alone and a caveat says so.
+// never remove it: when it cannot be established (probe failed, timed out,
+// unparseable, malformed rows, no terminal job at all) the verdict is the age
+// rule alone and a caveat says so.
+//
+// Producer seam (GBrain list_jobs): filters by name / status / queue, then
+// ORDER BY created_at DESC LIMIT. A plain name query can therefore return only
+// newer non-terminal rows and hide the latest terminal one, so the terminal
+// job is fetched explicitly per (name, status) with limit 1 and the newest by
+// finished_at wins. Queue scope is EMBED_JOB_QUEUE (where autopilot embed jobs
+// run) so a foreign-queue job can neither clear a failure nor add waiting.
+// `jobs stats` by_type is GLOBAL across queues, so it is only used as a
+// pre-filter: the default-queue waiting set is a subset of the global one, so
+// a global "nothing waiting over the tolerance" clears it without a call;
+// otherwise the queue-scoped waiting list decides.
+//
 // Calibration note: 20m waiting = 2 autopilot ticks (600s) — an embed job
 // queued across two ticks without being claimed means the worker is not
 // draining; review with the first live observations (expected ~0% of probes).
 const EMBED_JOB_NAMES = ['embed', 'embed-catch-up'];
+const EMBED_JOB_QUEUE = 'default';
+const EMBED_JOB_TERMINAL_STATUSES = ['completed', 'failed', 'dead'];
 const EMBED_JOB_WAITING_TOLERANCE_MINUTES = 20;
-const EMBED_JOB_TERMINAL_STATUSES = new Set(['completed', 'failed', 'dead']);
+const EMBED_JOB_WAITING_LIST_LIMIT = 50;
 
 function clockText(ms) {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// embedJobs: { available: true, jobs: [...] } from probeEmbedJobs, or
-// { available: false, error } / undefined. jobsPayload: `jobs stats --json`.
-// Returns { available, reasons } — reasons are overdue causes (may be
-// non-empty even when part of the probe was unavailable).
-function evaluateEmbedJobSignal(embedJobs, jobsPayload) {
+function isFiniteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value);
+}
+
+// True when the GLOBAL by_type row proves no `name` job waits longer than the
+// tolerance in any queue (hence not in EMBED_JOB_QUEUE either).
+function globalWaitingClears(jobsPayload, name) {
+  const byType = jobsPayload && typeof jobsPayload === 'object' ? jobsPayload.by_type : undefined;
+  if (!Array.isArray(byType)) return false;
+  const rows = byType.filter((entry) => entry && entry.name === name);
+  if (rows.length === 0) return true;
+  if (rows.length > 1) return false;
+  const [{ waiting_now: waitingNow, oldest_waiting_minutes: oldest }] = rows;
+  if (!isFiniteNumber(waitingNow) || waitingNow < 0) return false;
+  if (waitingNow === 0) return true;
+  return isFiniteNumber(oldest) && oldest >= 0 && oldest <= EMBED_JOB_WAITING_TOLERANCE_MINUTES;
+}
+
+function isQueueJob(job, name, status) {
+  return Boolean(job) && typeof job === 'object' && !Array.isArray(job)
+    && job.name === name && job.status === status && job.queue === EMBED_JOB_QUEUE;
+}
+
+// embedJobs: result of probeEmbedJobs ({ available: true, terminal: {name:
+// {status: [job]}}, waiting: {name: [job]} }) or { available: false } /
+// undefined. Returns { available, reasons } — reasons are overdue causes and
+// may be non-empty even when part of the signal is unavailable.
+function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
   const reasons = [];
+  if (!embedJobs || embedJobs.available !== true || !embedJobs.terminal || !embedJobs.waiting) {
+    return { available: false, reasons };
+  }
   let available = true;
 
-  if (!embedJobs || embedJobs.available !== true || !Array.isArray(embedJobs.jobs)) {
-    available = false;
-  } else {
-    let latest = null;
-    for (const job of embedJobs.jobs) {
-      if (!job || typeof job !== 'object' || Array.isArray(job) || typeof job.status !== 'string') {
+  let latest = null;
+  for (const name of EMBED_JOB_NAMES) {
+    for (const status of EMBED_JOB_TERMINAL_STATUSES) {
+      const rows = embedJobs.terminal[name]?.[status];
+      if (!Array.isArray(rows) || rows.length > 1) {
         available = false;
         continue;
       }
-      if (!EMBED_JOB_TERMINAL_STATUSES.has(job.status)) continue;
-      const at = Date.parse(job.finished_at ?? job.created_at);
-      if (!Number.isFinite(at)) {
-        available = false;
-        continue;
-      }
-      if (!latest || at > latest.at) latest = { job, at };
-    }
-    if (latest) {
-      const name = typeof latest.job.name === 'string' && EMBED_JOB_NAMES.includes(latest.job.name) ? latest.job.name : 'embed';
-      const failures = latest.job.result?.failures;
-      if (latest.job.status === 'failed' || latest.job.status === 'dead') {
-        reasons.push(`${name} job ${latest.job.status} at ${clockText(latest.at)}`);
-      } else if (typeof failures === 'number' && Number.isFinite(failures) && failures > 0) {
-        reasons.push(`${name} job completed with ${failures} failure${failures === 1 ? '' : 's'} at ${clockText(latest.at)}`);
+      for (const job of rows) {
+        if (!isQueueJob(job, name, status)) {
+          available = false;
+          continue;
+        }
+        const at = Date.parse(job.finished_at);
+        if (!Number.isFinite(at)) {
+          available = false;
+          continue;
+        }
+        if (status === 'completed') {
+          const result = job.result;
+          if (result !== null && result !== undefined && (typeof result !== 'object' || Array.isArray(result))) {
+            available = false;
+            continue;
+          }
+          if (result && Object.prototype.hasOwnProperty.call(result, 'failures')
+            && !(isFiniteNumber(result.failures) && result.failures >= 0)) {
+            available = false;
+            continue;
+          }
+        }
+        if (!latest || at > latest.at) latest = { job, at };
       }
     }
   }
-
-  const byType = jobsPayload && typeof jobsPayload === 'object' ? jobsPayload.by_type : undefined;
-  if (!Array.isArray(byType)) {
+  if (!latest) {
+    // No terminal embed job could be established: never read that as clean.
     available = false;
+  } else if (latest.job.status === 'failed' || latest.job.status === 'dead') {
+    reasons.push(`${latest.job.name} job ${latest.job.status} at ${clockText(latest.at)}`);
   } else {
-    for (const entry of byType) {
-      if (!entry || !EMBED_JOB_NAMES.includes(entry.name)) continue;
-      const waitingNow = entry.waiting_now;
-      const oldest = entry.oldest_waiting_minutes;
-      if (typeof waitingNow !== 'number' || !Number.isFinite(waitingNow)) {
-        available = false;
+    const failures = latest.job.result?.failures;
+    if (isFiniteNumber(failures) && failures > 0) {
+      reasons.push(`${latest.job.name} job completed with ${failures} failure${failures === 1 ? '' : 's'} at ${clockText(latest.at)}`);
+    }
+  }
+
+  for (const name of EMBED_JOB_NAMES) {
+    const rows = embedJobs.waiting[name];
+    if (rows === undefined) {
+      if (!globalWaitingClears(jobsPayload, name)) available = false;
+      continue;
+    }
+    if (!Array.isArray(rows)) {
+      available = false;
+      continue;
+    }
+    let oldest = null;
+    let valid = true;
+    for (const job of rows) {
+      const created = isQueueJob(job, name, 'waiting') ? Date.parse(job.created_at) : NaN;
+      if (!Number.isFinite(created)) {
+        valid = false;
         continue;
       }
-      if (waitingNow <= 0) continue;
-      if (typeof oldest !== 'number' || !Number.isFinite(oldest)) {
-        available = false;
-        continue;
-      }
-      if (oldest > EMBED_JOB_WAITING_TOLERANCE_MINUTES) {
-        reasons.push(`${entry.name} job waiting ${Math.round(oldest)}m`);
-      }
+      if (oldest === null || created < oldest) oldest = created;
+    }
+    if (!valid) available = false;
+    const oldestMinutes = oldest === null ? null : (nowMs - oldest) / 60000;
+    if (oldestMinutes !== null && oldestMinutes > EMBED_JOB_WAITING_TOLERANCE_MINUTES) {
+      reasons.push(`${name} job waiting ${Math.round(oldestMinutes)}m`);
+    } else if (rows.length >= EMBED_JOB_WAITING_LIST_LIMIT) {
+      // Saturated newest-first list: an older waiting job may be hidden.
+      available = false;
     }
   }
 
   return { available, reasons };
 }
 
-// Bounded: at most one extra child per job name, strictly sequential through
-// the same serialized probe runner (each child reaped before the next), and
-// the first failed / timed-out call stops the chain.
-async function probeEmbedJobs(runProbe, execFilePromise) {
-  const jobs = [];
-  for (const name of EMBED_JOB_NAMES) {
+// Bounded and serialized: every list_jobs child goes through the same probe
+// runner (reaped before the next), at most 3 terminal calls per name plus one
+// waiting call per name the global stats cannot clear, all inside
+// EMBED_JOB_PROBE_BUDGET_MS (each call's soft window is capped to the budget
+// left). The first failed / timed-out / unparseable call stops the chain; a
+// timed-out one is reported as `pending` so the caller stops probing too.
+async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, { budgetMs = EMBED_JOB_PROBE_BUDGET_MS, now = Date.now } = {}) {
+  const started = now();
+  const call = async (params) => {
+    const remaining = budgetMs - (now() - started);
+    if (remaining <= 0) return { stop: true, error: 'embed-job probe budget exhausted' };
     const result = await runProbe(
       execFilePromise,
-      ['call', 'list_jobs', JSON.stringify({ name, limit: 5 })],
-      { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS },
+      ['call', 'list_jobs', JSON.stringify(params)],
+      { suppressStartupHooks: true, softTimeoutMs: Math.min(HEALTH_PROBE_SOFT_TIMEOUT_MS, remaining) },
     );
-    if (result.pending || !result.ok) return { available: false, error: result.error || `list_jobs ${name} failed` };
+    if (result.pending) return { stop: true, pending: true, error: result.error || 'list_jobs timed out' };
+    if (!result.ok) return { stop: true, error: result.error || 'list_jobs failed' };
     const parsed = parseJsonFromOutput(result.stdout);
-    if (!Array.isArray(parsed)) return { available: false, error: `list_jobs ${name} did not return a JSON array` };
-    jobs.push(...parsed);
+    if (!Array.isArray(parsed)) return { stop: true, error: 'list_jobs did not return a JSON array' };
+    return { jobs: parsed };
+  };
+  const terminal = {};
+  for (const name of EMBED_JOB_NAMES) {
+    terminal[name] = {};
+    for (const status of EMBED_JOB_TERMINAL_STATUSES) {
+      const r = await call({ name, status, queue: EMBED_JOB_QUEUE, limit: 1 });
+      if (r.stop) return { available: false, pending: Boolean(r.pending), error: r.error };
+      terminal[name][status] = r.jobs;
+    }
   }
-  return { available: true, jobs };
+  const waiting = {};
+  for (const name of EMBED_JOB_NAMES) {
+    if (globalWaitingClears(jobsPayload, name)) continue;
+    const r = await call({ name, status: 'waiting', queue: EMBED_JOB_QUEUE, limit: EMBED_JOB_WAITING_LIST_LIMIT });
+    if (r.stop) return { available: false, pending: Boolean(r.pending), error: r.error };
+    waiting[name] = r.jobs;
+  }
+  return { available: true, terminal, waiting };
 }
 
 // A count and its age are read together from the ONE record that owns
@@ -617,7 +706,10 @@ function normalizeHealthPayload(healthPayload, jobsPayload, checkedAt, embedJobs
   // verdict-bearing part (oldest older than the tolerance).
   const ageSplit = splitMissingEmbeddings(missing, missingAge);
   // Job signal only when there is something to embed; it can only add overdue.
-  const jobSignal = Number.isFinite(missing) && missing > 0 ? evaluateEmbedJobSignal(embedJobs, jobsPayload) : null;
+  const checkedMs = Date.parse(checkedAt);
+  const jobSignal = Number.isFinite(missing) && missing > 0
+    ? evaluateEmbedJobSignal(embedJobs, jobsPayload, Number.isFinite(checkedMs) ? checkedMs : Date.now())
+    : null;
   const missingEmbeddingsJobReasons = jobSignal ? jobSignal.reasons : [];
   const embedJobProbeUnavailable = Boolean(jobSignal && !jobSignal.available);
   const {
@@ -889,10 +981,20 @@ function normalizeSourcesText(output, checkedAt) {
 
 // Embed-job probes run only when the health record reports missing
 // embeddings; otherwise the job state cannot change the verdict.
-async function maybeProbeEmbedJobs(healthPayload, runProbe, execFilePromise) {
+async function maybeProbeEmbedJobs(healthPayload, jobsPayload, runProbe, execFilePromise, options) {
   const { count } = readMissingEmbeddingsRecord(healthPayload);
   if (!(Number.isFinite(count) && count > 0)) return undefined;
-  return probeEmbedJobs(runProbe, execFilePromise);
+  return probeEmbedJobs(runProbe, execFilePromise, jobsPayload, {
+    budgetMs: options.embedJobProbeBudgetMs,
+    now: options.now,
+  });
+}
+
+// Stats backfill follows the same stop rule as the main chain: after a
+// timed-out embed-job probe the database is too contended to keep probing.
+async function finishHealth(health, embedJobs, options) {
+  if (embedJobs?.pending || !needsStatsBackfill(health)) return health;
+  return mergeStatsIntoHealth(health, await buildLiveGBrainStats(options));
 }
 
 async function buildLiveGBrainHealth(options = {}) {
@@ -925,9 +1027,9 @@ async function buildLiveGBrainHealth(options = {}) {
   };
 
   if (healthResult.ok && healthPayload) {
-    const embedJobs = await maybeProbeEmbedJobs(healthPayload, runProbe, execFilePromise);
+    const embedJobs = await maybeProbeEmbedJobs(healthPayload, jobsPayload, runProbe, execFilePromise, options);
     const health = normalizeHealthPayload(healthPayload, jobsPayload, checkedAt, embedJobs);
-    return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
+    return finishHealth(health, embedJobs, options);
   }
 
   const fallbackHealthResult = await runProbe(execFilePromise, ['health', '--source', '__all__', '--json'], { suppressStartupHooks: true, softTimeoutMs: HEALTH_PROBE_SOFT_TIMEOUT_MS });
@@ -936,9 +1038,9 @@ async function buildLiveGBrainHealth(options = {}) {
   }
   const fallbackPayload = parseJsonFromOutput(fallbackHealthResult.stdout);
   if (fallbackHealthResult.ok && fallbackPayload) {
-    const embedJobs = await maybeProbeEmbedJobs(fallbackPayload, runProbe, execFilePromise);
+    const embedJobs = await maybeProbeEmbedJobs(fallbackPayload, jobsPayload, runProbe, execFilePromise, options);
     const health = normalizeHealthPayload(fallbackPayload, jobsPayload, checkedAt, embedJobs);
-    return needsStatsBackfill(health) ? mergeStatsIntoHealth(health, await buildLiveGBrainStats(options)) : health;
+    return finishHealth(health, embedJobs, options);
   }
 
   const textHealth = fallbackHealthResult.ok ? normalizeHealthText(fallbackHealthResult.stdout, jobsResult.stdout, checkedAt) : null;
@@ -1020,7 +1122,9 @@ module.exports = {
   STALE_PAGES_LAG_TOLERANCE_SECONDS,
   MISSING_EMBEDDINGS_LAG_TOLERANCE_SECONDS,
   EMBED_JOB_WAITING_TOLERANCE_MINUTES,
+  EMBED_JOB_QUEUE,
   evaluateEmbedJobSignal,
+  probeEmbedJobs,
   splitStalePages,
   splitMissingEmbeddings,
   readStaleRecord,

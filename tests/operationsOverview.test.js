@@ -352,8 +352,11 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
   const gbrainConstants = require('../server/routes/gbrain/constants');
   assert.equal(
     gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
-    5 * gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000,
+    5 * gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS + gbrainConstants.EMBED_JOB_PROBE_BUDGET_MS
+      + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000,
   );
+  // The embed-job chain (up to 8 serialized list_jobs children) is inside it.
+  assert.equal(gbrainConstants.EMBED_JOB_PROBE_BUDGET_MS, 90_000);
   assert.equal(gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS > 5 * gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS, true);
 });
 

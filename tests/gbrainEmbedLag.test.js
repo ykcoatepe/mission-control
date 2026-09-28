@@ -14,6 +14,7 @@ const {
   liveHealthStatus,
   normalizeHealthText,
   EMBED_JOB_WAITING_TOLERANCE_MINUTES,
+  EMBED_JOB_QUEUE,
   evaluateEmbedJobSignal,
 } = require('../server/routes/gbrain/liveProbes');
 const { normalizeSnapshot, buildActiveRegressionBanner } = require('../server/services/gbrainTimeline');
@@ -21,21 +22,35 @@ const { normalizeSnapshot, buildActiveRegressionBanner } = require('../server/se
 const HEALTHY_EMBED_JOB = {
   id: 1,
   name: 'embed',
+  queue: 'default',
   status: 'completed',
   created_at: '2026-09-28T09:00:00.000Z',
   finished_at: '2026-09-28T09:00:05.000Z',
   result: { dry_run: false, embedded: 1, failures: 0, would_embed: 0 },
 };
 
-// jobs: { embed: [...], 'embed-catch-up': [...] } or a function(name) that
+// Faithful stand-in for GBrain list_jobs (src/core/minions/queue.ts getJobs):
+// filter by the given status / queue / name, ORDER BY created_at DESC, LIMIT
+// (default 50) — the limit applies BEFORE any consumer-side selection.
+function listJobs(rows, params) {
+  return rows
+    .filter((row) => (params.status === undefined || row.status === params.status)
+      && (params.queue === undefined || row.queue === params.queue)
+      && (params.name === undefined || row.name === params.name))
+    .sort((x, y) => Date.parse(y.created_at) - Date.parse(x.created_at))
+    .slice(0, params.limit || 50);
+}
+
+// jobs: array of job rows (all names / queues), or a function(params) that
 // returns { stdout } / throws; byType: `jobs stats --json` by_type rows.
-function execWithHealth(healthPayload, { jobs, byType = [], calls = [] } = {}) {
+function execWithHealth(healthPayload, { jobs = [HEALTHY_EMBED_JOB], byType = [], calls = [], onCall } = {}) {
   const jobsFor = typeof jobs === 'function'
     ? jobs
-    : (name) => ({ stdout: JSON.stringify((jobs || { embed: [HEALTHY_EMBED_JOB], 'embed-catch-up': [] })[name] || []) });
+    : (params) => ({ stdout: JSON.stringify(listJobs(jobs, params)) });
   return async (bin, args) => {
     assert.equal(bin, 'gbrain');
     calls.push(args.join(' '));
+    if (onCall) await onCall(args);
     if (args.join(' ') === 'call --source __all__ get_health') {
       return { stdout: JSON.stringify(healthPayload), stderr: '' };
     }
@@ -43,9 +58,7 @@ function execWithHealth(healthPayload, { jobs, byType = [], calls = [] } = {}) {
       return { stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0, by_type: byType }), stderr: '' };
     }
     if (args[0] === 'call' && args[1] === 'list_jobs' && args.length === 3) {
-      const { name, limit } = JSON.parse(args[2]);
-      assert.equal(limit, 5);
-      return { stderr: '', ...jobsFor(name) };
+      return { stderr: '', ...jobsFor(JSON.parse(args[2])) };
     }
     throw new Error(`Unexpected command ${args.join(' ')}`);
   };
@@ -320,15 +333,26 @@ function assertJobOverdue(r, count, reasonPattern) {
   assert.match(r.queues.summary, reasonPattern);
 }
 
-test('embed-job waiting tolerance is 20 minutes', () => {
+// Young age + unavailable job signal: age-only verdict (catching up) plus the
+// caveat — never a clean "Live trusted".
+function assertJobUnavailable(r, count, label) {
+  assert.equal(r.health.metrics.embedJobProbeUnavailable, true, label);
+  assert.equal(r.health.metrics.missingEmbeddingsOverdue, 0, label);
+  assert.equal(r.health.metrics.missingEmbeddingsCatchingUp, count, label);
+  assert.equal(r.overview.trust.status, 'warning', label);
+  assert.match(r.overview.caveats.join(' '), /Embed-job probe unavailable; the missing-embedding verdict uses embedding age only/, label);
+}
+
+test('embed-job waiting tolerance is 20 minutes; queue scope is default', () => {
   assert.equal(EMBED_JOB_WAITING_TOLERANCE_MINUTES, 20);
+  assert.equal(EMBED_JOB_QUEUE, 'default');
 });
 
-test('failed / dead latest embed job -> overdue even with a young age, reason with HH:MM', async () => {
+test('failed / dead latest terminal embed job -> overdue even with a young age, reason with HH:MM', async () => {
   for (const status of ['failed', 'dead']) {
     const finished = '2026-09-28T10:07:00.000Z';
     const r = await overviewFor(healthPayload(2, YOUNG), {
-      jobs: { embed: [job({ id: 9, status, finished_at: finished, result: null })], 'embed-catch-up': [] },
+      jobs: [HEALTHY_EMBED_JOB, job({ id: 9, status, created_at: '2026-09-28T10:00:00.000Z', finished_at: finished, result: null })],
     });
     assertJobOverdue(r, 2, new RegExp(`embed job ${status} at ${clock(finished)}`));
     assert.deepEqual(r.health.metrics.missingEmbeddingsJobReasons, [`embed job ${status} at ${clock(finished)}`]);
@@ -336,27 +360,44 @@ test('failed / dead latest embed job -> overdue even with a young age, reason wi
   }
 });
 
+test('counterexample: five newer non-terminal jobs hide an older failed terminal job from a limit-5 query -> overdue, never healthy', async () => {
+  const failedAt = '2026-09-28T10:05:00.000Z';
+  const rows = [
+    job({ id: 1, created_at: '2026-09-28T09:00:00.000Z', finished_at: '2026-09-28T09:00:05.000Z' }),
+    job({ id: 2, status: 'failed', created_at: '2026-09-28T10:00:00.000Z', finished_at: failedAt, result: null }),
+    ...[3, 4, 5, 6, 7].map((id) => job({ id, status: 'active', created_at: `2026-09-28T11:0${id}:00.000Z`, finished_at: null, result: null })),
+  ];
+  // The old name-only limit-5 query would see only the five active rows.
+  assert.equal(listJobs(rows, { name: 'embed', limit: 5 }).some((row) => row.status === 'failed'), false);
+  const r = await overviewFor(healthPayload(1, YOUNG), { jobs: rows });
+  assertJobOverdue(r, 1, new RegExp(`embed job failed at ${clock(failedAt)}`));
+});
+
+test('no terminal embed job at all (only non-terminal rows) -> job signal unavailable, never clean', async () => {
+  const rows = [1, 2, 3].map((id) => job({ id, status: 'active', created_at: `2026-09-28T11:0${id}:00.000Z`, finished_at: null, result: null }));
+  assertJobUnavailable(await overviewFor(healthPayload(1, YOUNG), { jobs: rows }), 1, 'no terminal');
+  assertJobUnavailable(await overviewFor(healthPayload(1, YOUNG), { jobs: [] }), 1, 'no jobs');
+});
+
 test('latest embed-catch-up job completed with failures > 0 -> overdue', async () => {
   const finished = '2026-09-28T11:30:00.000Z';
   const r = await overviewFor(healthPayload(4, YOUNG), {
-    jobs: {
-      embed: [HEALTHY_EMBED_JOB],
-      'embed-catch-up': [job({ id: 12, name: 'embed-catch-up', finished_at: finished, result: { embedded: 3, failures: 2 } })],
-    },
+    jobs: [
+      HEALTHY_EMBED_JOB,
+      job({ id: 12, name: 'embed-catch-up', created_at: '2026-09-28T11:29:00.000Z', finished_at: finished, result: { embedded: 3, failures: 2 } }),
+    ],
   });
   assertJobOverdue(r, 4, new RegExp(`embed-catch-up job completed with 2 failures at ${clock(finished)}`));
 });
 
 test('only the MOST RECENT terminal job counts: an older failure followed by a clean run is healthy', async () => {
   const r = await overviewFor(healthPayload(1, YOUNG), {
-    jobs: {
-      embed: [
-        job({ id: 3, status: 'active', finished_at: null }),
-        job({ id: 2, finished_at: '2026-09-28T10:10:00.000Z' }),
-        job({ id: 1, status: 'failed', finished_at: '2026-09-28T09:10:00.000Z' }),
-      ],
-      'embed-catch-up': [job({ id: 7, name: 'embed-catch-up', status: 'dead', finished_at: '2026-09-27T09:10:00.000Z' })],
-    },
+    jobs: [
+      job({ id: 3, status: 'active', created_at: '2026-09-28T10:20:00.000Z', finished_at: null }),
+      job({ id: 2, created_at: '2026-09-28T10:09:00.000Z', finished_at: '2026-09-28T10:10:00.000Z' }),
+      job({ id: 1, status: 'failed', created_at: '2026-09-28T09:09:00.000Z', finished_at: '2026-09-28T09:10:00.000Z' }),
+      job({ id: 7, name: 'embed-catch-up', status: 'dead', created_at: '2026-09-27T09:00:00.000Z', finished_at: '2026-09-27T09:10:00.000Z' }),
+    ],
   });
   assert.equal(r.health.metrics.missingEmbeddingsOverdue, 0);
   assert.equal(r.health.metrics.missingEmbeddingsCatchingUp, 1);
@@ -364,17 +405,52 @@ test('only the MOST RECENT terminal job counts: an older failure followed by a c
   assert.deepEqual(r.overview.caveats, []);
 });
 
-test('embed job waiting > 20m -> overdue with "waiting Nm"; exactly 20m is not', async () => {
+test('counterexample: a newer clean job in a FOREIGN queue cannot clear a default-queue failure', async () => {
+  const failedAt = '2026-09-28T10:05:00.000Z';
+  const r = await overviewFor(healthPayload(1, YOUNG), {
+    jobs: [
+      job({ id: 2, status: 'failed', created_at: '2026-09-28T10:00:00.000Z', finished_at: failedAt, result: null }),
+      job({ id: 3, queue: 'shell', created_at: '2026-09-28T10:30:00.000Z', finished_at: '2026-09-28T10:31:00.000Z' }),
+    ],
+  });
+  assertJobOverdue(r, 1, new RegExp(`embed job failed at ${clock(failedAt)}`));
+});
+
+test('a foreign-queue failure does not add overdue; foreign-queue waiting does not add waiting', async () => {
+  const now = Date.now();
+  const r = await overviewFor(healthPayload(1, YOUNG), {
+    jobs: [
+      HEALTHY_EMBED_JOB,
+      job({ id: 5, queue: 'shell', status: 'failed', created_at: '2026-09-28T10:00:00.000Z', finished_at: '2026-09-28T10:05:00.000Z' }),
+      job({ id: 6, queue: 'shell', status: 'waiting', created_at: new Date(now - 90 * 60000).toISOString(), finished_at: null }),
+    ],
+    // Global stats see the foreign waiting job (by_type is not queue scoped).
+    byType: [{ name: 'embed', waiting_now: 1, oldest_waiting_minutes: 90 }],
+  });
+  assert.equal(r.health.metrics.missingEmbeddingsOverdue, 0);
+  assert.deepEqual(r.health.metrics.missingEmbeddingsJobReasons, []);
+  assert.equal(r.health.metrics.embedJobProbeUnavailable, false);
+  assert.equal(r.core.status, 'healthy');
+  assert.deepEqual(r.overview.caveats, []);
+});
+
+test('default-queue embed job waiting > 20m -> overdue with "waiting Nm"; <= 20m is not', async () => {
+  const now = Date.now();
   const r = await overviewFor(healthPayload(3, YOUNG), {
+    jobs: [HEALTHY_EMBED_JOB, job({ id: 8, status: 'waiting', created_at: new Date(now - 25 * 60000 - 5000).toISOString(), finished_at: null })],
     byType: [{ name: 'embed', waiting_now: 1, oldest_waiting_minutes: 25 }, { name: 'sync', waiting_now: 5, oldest_waiting_minutes: 300 }],
   });
   assertJobOverdue(r, 3, /embed job waiting 25m/);
 
+  // Global stats already prove nothing waits > 20m: no waiting call needed.
+  const calls = [];
   const atLimit = await overviewFor(healthPayload(3, YOUNG), {
     byType: [{ name: 'embed-catch-up', waiting_now: 1, oldest_waiting_minutes: 20 }, { name: 'sync', waiting_now: 5, oldest_waiting_minutes: 300 }],
+    calls,
   });
   assert.equal(atLimit.health.metrics.missingEmbeddingsOverdue, 0);
   assert.equal(atLimit.core.status, 'healthy');
+  assert.ok(!calls.some((c) => c.includes('"status":"waiting"')), calls.join(' | '));
 });
 
 test('healthy latest embed job + young age -> catching up, no caveats', async () => {
@@ -390,22 +466,28 @@ test('healthy latest embed job + young age -> catching up, no caveats', async ()
   assert.deepEqual(r.overview.caveats, []);
 });
 
+test('seam: completed job with present-but-invalid result.failures -> unavailable + caveat, never clean', async () => {
+  for (const failures of ['3', null, -1, NaN, true, {}]) {
+    const rows = [job({ result: { embedded: 1, failures } })];
+    assertJobUnavailable(await overviewFor(healthPayload(2, YOUNG), { jobs: rows }), 2, `failures ${JSON.stringify(failures)}`);
+  }
+  // Absent failures key is not a failure signal.
+  const ok = await overviewFor(healthPayload(2, YOUNG), { jobs: [job({ result: { embedded: 1 } })] });
+  assert.equal(ok.health.metrics.embedJobProbeUnavailable, false);
+  assert.equal(ok.core.status, 'healthy');
+});
+
 test('job probe failure / unparseable -> age-only verdict + caveat; never healthier than the age rule', async () => {
   const failures = {
     throws: () => { throw Object.assign(new Error('boom'), { stderr: 'db busy' }); },
     notJson: () => ({ stdout: 'not json' }),
     object: () => ({ stdout: JSON.stringify({ jobs: [] }) }),
     badEntry: () => ({ stdout: JSON.stringify(['x']) }),
-    badTimestamp: () => ({ stdout: JSON.stringify([job({ finished_at: 'nope', created_at: 'nope' })]) }),
+    badTimestamp: (params) => ({ stdout: JSON.stringify(listJobs([job({ finished_at: 'nope' })], params)) }),
+    wrongQueueRow: (params) => ({ stdout: JSON.stringify(params.status === 'completed' && params.name === 'embed' ? [job({ queue: 'shell' })] : []) }),
   };
   for (const [label, jobs] of Object.entries(failures)) {
-    // Young age: stays catching up (verdict = age rule), caveat surfaces.
-    const young = await overviewFor(healthPayload(2, YOUNG), { jobs });
-    assert.equal(young.health.metrics.missingEmbeddingsOverdue, 0, label);
-    assert.equal(young.health.metrics.missingEmbeddingsCatchingUp, 2, label);
-    assert.equal(young.health.metrics.embedJobProbeUnavailable, true, label);
-    assert.equal(young.core.status, 'healthy', label);
-    assert.match(young.overview.caveats.join(' '), /Embed-job probe unavailable; the missing-embedding verdict uses embedding age only/, label);
+    assertJobUnavailable(await overviewFor(healthPayload(2, YOUNG), { jobs }), 2, label);
     // Old age: still overdue — the outage cannot relax the age rule.
     const old = await overviewFor(healthPayload(2, { missing_embeddings_oldest_age_seconds: 1500 }), { jobs });
     assert.equal(old.health.metrics.missingEmbeddingsOverdue, 2, label);
@@ -414,26 +496,27 @@ test('job probe failure / unparseable -> age-only verdict + caveat; never health
   }
 });
 
-test('jobs stats without by_type -> waiting signal unavailable (caveat), job-list failure still adds overdue', async () => {
-  const noByType = async (bin, args) => {
+test('jobs stats without by_type -> queue-scoped waiting call decides; its failure is a caveat', async () => {
+  const noByType = (listing) => async (bin, args) => {
     if (args.join(' ') === 'call --source __all__ get_health') return { stdout: JSON.stringify(healthPayload(1, YOUNG)), stderr: '' };
     if (args.join(' ') === 'jobs stats --json') return { stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0 }), stderr: '' };
-    if (args[1] === 'list_jobs') {
-      const { name } = JSON.parse(args[2]);
-      return { stdout: JSON.stringify(name === 'embed' ? [job({ status: 'failed' })] : []), stderr: '' };
-    }
+    if (args[1] === 'list_jobs') return listing(JSON.parse(args[2]));
     throw new Error(`Unexpected command ${args.join(' ')}`);
   };
-  const health = await buildLiveGBrainHealth({ execFilePromise: noByType });
-  assert.equal(health.metrics.embedJobProbeUnavailable, true);
-  assert.equal(health.metrics.missingEmbeddingsOverdue, 1);
-  assert.match(health.metrics.missingEmbeddingsJobReasons[0], /^embed job failed at \d\d:\d\d$/);
+  const clean = await buildLiveGBrainHealth({ execFilePromise: noByType((params) => ({ stdout: JSON.stringify(listJobs([HEALTHY_EMBED_JOB], params)) })) });
+  assert.equal(clean.metrics.embedJobProbeUnavailable, false);
+  assert.equal(clean.metrics.missingEmbeddingsOverdue, 0);
+  const broken = await buildLiveGBrainHealth({ execFilePromise: noByType((params) => {
+    if (params.status === 'waiting') throw new Error('down');
+    return { stdout: JSON.stringify(listJobs([job({ status: 'failed' })], params)) };
+  }) });
+  assert.equal(broken.metrics.embedJobProbeUnavailable, true);
 });
 
 test('missing = 0 ignores job state and does not spawn the job probes', async () => {
   const calls = [];
   const r = await overviewFor(healthPayload(0, { missing_embeddings_oldest_age_seconds: null }), {
-    jobs: { embed: [job({ status: 'failed' })], 'embed-catch-up': [] },
+    jobs: [job({ status: 'failed' })],
     byType: [{ name: 'embed', waiting_now: 4, oldest_waiting_minutes: 90 }],
     calls,
   });
@@ -445,7 +528,7 @@ test('missing = 0 ignores job state and does not spawn the job probes', async ()
   assert.ok(!calls.some((c) => c.includes('list_jobs')), calls.join(' | '));
 });
 
-test('job probes are bounded: sequential, one per name, first failure stops the chain', async () => {
+test('job probes are bounded: serialized, queue-scoped per (name, status), first failure stops the chain', async () => {
   const calls = [];
   let inFlight = 0;
   let maxInFlight = 0;
@@ -458,8 +541,12 @@ test('job probes are bounded: sequential, one per name, first failure stops the 
   await buildLiveGBrainHealth({ execFilePromise: wrapped });
   assert.equal(maxInFlight, 1);
   assert.deepEqual(calls.filter((c) => c.includes('list_jobs')), [
-    'call list_jobs {"name":"embed","limit":5}',
-    'call list_jobs {"name":"embed-catch-up","limit":5}',
+    'call list_jobs {"name":"embed","status":"completed","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed","status":"failed","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed","status":"dead","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed-catch-up","status":"completed","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed-catch-up","status":"failed","queue":"default","limit":1}',
+    'call list_jobs {"name":"embed-catch-up","status":"dead","queue":"default","limit":1}',
   ]);
 
   const failCalls = [];
@@ -470,8 +557,47 @@ test('job probes are bounded: sequential, one per name, first failure stops the 
   assert.equal(failCalls.filter((c) => c.includes('list_jobs')).length, 1);
 });
 
+test('slow chain: embed-job probes stop at the shared budget, report unavailable, and fit the Operations deadline', async () => {
+  const gbrainConstants = require('../server/routes/gbrain/constants');
+  let clockMs = 0;
+  const calls = [];
+  // Every command takes just under the soft window on a loaded machine.
+  const perCallMs = gbrainConstants.HEALTH_PROBE_SOFT_TIMEOUT_MS - 1;
+  const health = await buildLiveGBrainHealth({
+    now: () => clockMs,
+    execFilePromise: execWithHealth(healthPayload(1, YOUNG), { calls, onCall: () => { clockMs += perCallMs; } }),
+  });
+  const jobCalls = calls.filter((c) => c.includes('list_jobs')).length;
+  assert.ok(jobCalls >= 1 && jobCalls <= Math.ceil(gbrainConstants.EMBED_JOB_PROBE_BUDGET_MS / perCallMs), `job calls ${jobCalls}`);
+  assert.equal(health.metrics.embedJobProbeUnavailable, true);
+  assert.equal(health.metrics.missingEmbeddingsOverdue, 0);
+  // Whole chain (health + jobs + budgeted job probes + stats backfill) stays
+  // inside the Operations reader deadline with room for the hard-kill tail.
+  assert.ok(clockMs + gbrainConstants.HEALTH_PROBE_HARD_KILL_DELAY_MS < gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
+    `chain ${clockMs}ms vs deadline ${gbrainConstants.GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS}ms`);
+});
+
+test('a timed-out (pending) embed-job probe stops the chain, including the stats backfill', async () => {
+  const calls = [];
+  const payload = healthPayload(1, YOUNG);
+  delete payload.chunk_count;
+  const health = await buildLiveGBrainHealth({
+    execFilePromise: async () => { throw new Error('unused'); },
+    probeCommand: async (_exec, args) => {
+      calls.push(args.join(' '));
+      if (args.join(' ') === 'call --source __all__ get_health') return { ok: true, stdout: JSON.stringify(payload) };
+      if (args.join(' ') === 'jobs stats --json') return { ok: true, stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0, by_type: [] }) };
+      if (args[1] === 'list_jobs') return { ok: false, pending: true, error: 'soft timeout' };
+      throw new Error(`Unexpected command ${args.join(' ')}`);
+    },
+  });
+  assert.equal(health.metrics.embedJobProbeUnavailable, true);
+  assert.equal(calls.filter((c) => c.includes('list_jobs')).length, 1);
+  assert.ok(!calls.some((c) => c.startsWith('stats')), calls.join(' | '));
+});
+
 test('evaluateEmbedJobSignal: undefined job input is unavailable, never a pass', () => {
   assert.deepEqual(evaluateEmbedJobSignal(undefined, { by_type: [] }), { available: false, reasons: [] });
-  assert.deepEqual(evaluateEmbedJobSignal({ available: true, jobs: [] }, { by_type: [] }), { available: true, reasons: [] });
-  assert.equal(evaluateEmbedJobSignal({ available: true, jobs: [] }, { by_type: [{ name: 'embed', waiting_now: 2, oldest_waiting_minutes: null }] }).available, false);
+  const empty = { available: true, terminal: {}, waiting: {} };
+  assert.equal(evaluateEmbedJobSignal(empty, { by_type: [] }).available, false);
 });
