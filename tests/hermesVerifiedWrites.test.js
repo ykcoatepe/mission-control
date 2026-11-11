@@ -133,7 +133,12 @@ test('overdue evidence advances with the injected clock without a scheduler tick
   service.fetchCronJobsForOperations = async () => ({ jobs: [{ id: 'clock', enabled: true, state: { nextRunAtMs: 2000 } }], operationsSource: { schedulers: { openclaw: { sourceSucceeded: true } } } });
   const source = createAutomationSource({ cronService: service, now: () => now });
   await source.refresh(); assert.equal(source.snapshot().data.cron.jobs[0].nextRunOverdue, false);
+  // Just past due is "due now": the scheduler has not had its tick yet.
   now = 3000;
+  assert.equal(source.snapshot().data.cron.jobs[0].nextRunOverdue, false); assert.equal(source.snapshot().data.cron.jobs[0].nextRunDue, true); assert.equal(source.snapshot().data.cron.summary.nextRunAt, null);
+  now = 2000 + 5 * 60_000 - 1;
+  assert.equal(source.snapshot().data.cron.jobs[0].nextRunOverdue, false);
+  now = 2000 + 5 * 60_000;
   assert.equal(source.snapshot().data.cron.jobs[0].nextRunOverdue, true); assert.equal(source.snapshot().data.cron.summary.nextRunAt, null);
 });
 
@@ -304,12 +309,13 @@ test('Hermes model verification includes the observed base URL', () => run(async
   assert.equal(response.status, 409); assert.equal(response.body.error.code, 'upstream_rejected');
 }));
 
-test('next run exactly now is overdue in the job and excluded from the future summary', () => run(async f => {
+test('next run exactly now is due, not yet overdue, and excluded from the future summary', () => run(async f => {
   f.hermes[0].next_run_at = new Date(f.clock.value).toISOString(); fs.writeFileSync(f.jobsFile, JSON.stringify({ jobs: f.hermes }));
   const response = await f.request('POST', '/api/cron/hermes:h1/toggle', { enabled: true }); assert.equal(response.status, 200);
-  assert.equal(response.body.job.nextRunOverdue, true);
+  assert.equal(response.body.job.nextRunOverdue, false); assert.equal(response.body.job.nextRunDue, true);
   const read = (await f.request('GET', '/api/cron')).body;
-  assert.equal(read.jobs.find(job => job.id === 'hermes:h1').nextRunOverdue, true); assert.equal(read.summary.nextRunAt, null);
+  const listed = read.jobs.find(job => job.id === 'hermes:h1');
+  assert.equal(listed.nextRunOverdue, false); assert.equal(listed.nextRunDue, true); assert.equal(read.summary.nextRunAt, null);
 }));
 
 for (const incomplete of [

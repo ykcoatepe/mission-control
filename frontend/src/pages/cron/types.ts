@@ -42,6 +42,8 @@ export interface CronJob {
   verified?: boolean
   /** An active job whose next run is already in the past. It is not "next". */
   nextRunOverdue?: boolean
+  /** Past its time but inside the server's grace window; about to run. */
+  nextRunDue?: boolean
   /** Hermes only: the scheduler's own state, whether it is switched on upstream, and when and why it was paused. */
   schedulerState?: string | null
   upstreamEnabled?: boolean | null

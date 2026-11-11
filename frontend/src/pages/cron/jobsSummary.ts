@@ -42,7 +42,7 @@ export function summarizeJobs(jobs: CronJob[], apiSummary: CronSummary | null | 
     if (status === 'failed') failed++
     else if (status !== 'active') waiting++
     // An overdue run is not "next": the scheduler has not run it when it said it would.
-    const at = job.nextRunOverdue ? null : parseTime(job.nextRun)
+    const at = job.nextRunOverdue || job.nextRunDue ? null : parseTime(job.nextRun)
     if (at !== null && at >= now && (!nextRun || at < nextRun.at)) nextRun = { at, name: job.name }
   }
   if (!nextRun && apiSummary?.nextRunAt) {
