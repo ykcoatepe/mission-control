@@ -52,10 +52,14 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
   const queue = { state: stateOf(j, { warning: j.data?.stalled > 0 }), observedAt: j.meta.observedAt,
     waiting: metric(j.data?.waiting, 'jobs', j), active: metric(j.data?.active, 'jobs', j),
     stalled: metric(j.data?.stalled, 'jobs', j, { warning: j.data?.stalled > 0 }) };
-  const readers = (runtime.data?.readers || []).map((r) => ({ id: r.id, label: r.label,
-    state: stateOf(runtime, { observed: r.observed, warning: true }), observedAt: runtime.meta.observedAt,
-    integration: { configured: r.configured, state: stateOf(runtime, { observed: r.observed, warning: r.configured !== true }),
-      observedAt: runtime.meta.observedAt, evidence: r.evidence }, connection: { state: deriveState({ observed: false }), observedAt: null } }));
+  const readers = (runtime.data?.readers || []).map((r) => {
+    const integration = { configured: r.configured,
+      state: stateOf(runtime, { observed: r.observed === true && typeof r.configured === 'boolean',
+        inactive: r.configured === false }),
+      observedAt: runtime.meta.observedAt, evidence: r.evidence };
+    return { id: r.id, label: r.label, state: integration.state,
+      observedAt: integration.observedAt, integration };
+  });
   const edges = [];
   function edge(from, to, label, measurement, state = measurement.state) {
     edges.push({ from, to, state: deriveState({ observed: state !== 'unavailable', inactive: state === 'inactive',
@@ -67,14 +71,20 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
     edge(s.id, 'gbrain', 'time since source sync', metric(age, 'seconds', ss), s.state);
   }
   edge('queue', 'gbrain', 'embedding jobs waiting', queue.waiting, queue.state);
-  for (const r of readers) edge(r.id, 'gbrain', 'connection not observed', { value: null, unit: 'connection', state: 'unavailable', observedAt: null });
+  for (const r of readers) edges.push({ from: r.id, to: 'gbrain', label: 'configured',
+    state: r.integration.state, observedAt: r.integration.observedAt });
   const sourcesState = stateOf(ss, { critical: sources.some((s) => s.state === 'critical'),
     warning: sources.some((s) => s.state === 'warning') });
-  const readersState = stateOf(runtime, { warning: readers.some((r) => r.state !== 'healthy') });
-  const states = [core.state, sourcesState, queue.state];
+  const readersState = !runtime.data && !runtime.meta.error
+    ? deriveState({ observed: true, inactive: true })
+    : stateOf(runtime, { failed: Boolean(runtime.meta.error) || readers.some((r) => r.state === 'unavailable'),
+      warning: readers.some((r) => r.state === 'warning'),
+      inactive: readers.length === 0 || readers.every((r) => r.state === 'inactive') });
+  const states = [core.state, sourcesState, queue.state, readersState];
   return { schemaVersion: '1', state: deriveState({ observed: true,
     failed: states.includes('unavailable'), critical: states.includes('critical'),
-    warning: states.includes('warning') || readersState !== 'healthy' }),
-    core, sources, sourcesState, queue, readers, readersState, edges };
+    warning: states.includes('warning') }),
+    core, sources, sourcesState, queue, readers, readersState,
+    readersNote: 'connection telemetry is not observable locally', edges };
 }
 module.exports = { buildSynoptic };

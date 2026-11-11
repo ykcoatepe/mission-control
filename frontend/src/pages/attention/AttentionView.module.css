@@ -1,0 +1,97 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.toolbarEnd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+.select {
+  width: 220px;
+}
+
+.count {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.projectCell {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.projectName {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+.restricted {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  max-width: 640px;
+}
+
+.clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-1);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.sub {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.overdue {
+  color: var(--state-critical);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+@media (max-width: 700px) {
+  .toolbarEnd {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .select {
+    width: 100%;
+  }
+}

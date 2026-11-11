@@ -29,7 +29,22 @@ These establish configuration, not a successful connection. No per-reader
 last-call time/count is available from these sources. GBrain search telemetry is
 aggregate and best-effort rather than attributable per reader; raw session or
 transcript bodies are not used. The synoptic therefore omits lastCallAt and
-callCount and reports connection unavailable. Source sync is separate evidence.
+callCount and the entire reader connection object. A top-level `readersNote`
+says `connection telemetry is not observable locally`. Unobservable telemetry
+has no effect on reader state or the aggregate synoptic state. Reader state is
+the integration reading's state: fresh, configured integration is healthy;
+not configured is inactive; a failed integration read is unavailable (including
+when the source retains a previously configured last-good value). Stale
+integration evidence remains warning. An unavailable reading means a read was
+attempted and failed, not that a telemetry source does not exist.
+
+Reader edges carry integration state, the label `configured`, and its observed
+at time, with no measurement or unit. The edge contract distinguishes these
+configuration edges from measured source/queue edges. The reader producer is
+`readReaders` (the four whitelisted local configuration files); the runtime
+source holds that metadata and the synoptic composes it. Legacy Operations
+consumes its existing overview contract, not reader edges. Source sync is
+separate evidence.
 Behind and policy exclusion remain null unless explicitly reported by the
 upstream; disabled sync is inactive, and is not evidence of policy exclusion.
 

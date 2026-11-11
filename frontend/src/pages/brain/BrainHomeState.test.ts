@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canStartAction,
-  hasFreshProofAdvanced,
+  hasFreshReadingAdvanced,
   resolvePendingActionResult,
   resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
@@ -15,7 +15,7 @@ function capability(
     id: 'sync-sources',
     system: 'gbrain',
     label: 'Sync sources',
-    description: 'Sync source evidence',
+    description: 'Sync sources',
     kind: 'maintenance',
     safetyClass: 'W1',
     requiresConfirmation: true,
@@ -28,45 +28,45 @@ function capability(
   }
 }
 
-describe('GBrain proof advancement', () => {
-  const freshProof = (observedAt: string | null) => ({ observedAt, freshness: 'fresh' as const })
+describe('newer reading detection', () => {
+  const fresh = (observedAt: string | null) => ({ observedAt, fresh: true })
 
-  it('rejects missing and invalid first proof', () => {
-    expect(hasFreshProofAdvanced(null, null)).toBe(false)
-    expect(hasFreshProofAdvanced(null, freshProof(null))).toBe(false)
-    expect(hasFreshProofAdvanced(null, freshProof('not-a-timestamp'))).toBe(false)
+  it('rejects missing and invalid first readings', () => {
+    expect(hasFreshReadingAdvanced(null, null)).toBe(false)
+    expect(hasFreshReadingAdvanced(null, fresh(null))).toBe(false)
+    expect(hasFreshReadingAdvanced(null, fresh('not-a-timestamp'))).toBe(false)
   })
 
-  it('accepts a valid fresh first proof', () => {
-    expect(hasFreshProofAdvanced(null, freshProof('2026-07-10T12:00:00.000Z'))).toBe(true)
+  it('accepts a valid fresh first reading', () => {
+    expect(hasFreshReadingAdvanced(null, fresh('2026-07-10T12:00:00.000Z'))).toBe(true)
   })
 
-  it('rejects stale, unchanged, invalid, and older follow-up proof', () => {
+  it('rejects stale, unchanged, invalid, and older follow-up readings', () => {
     const previous = '2026-07-10T12:00:00.000Z'
-    expect(hasFreshProofAdvanced(previous, {
+    expect(hasFreshReadingAdvanced(previous, {
       observedAt: '2026-07-10T12:01:00.000Z',
-      freshness: 'stale',
+      fresh: false,
     })).toBe(false)
-    expect(hasFreshProofAdvanced(previous, freshProof(previous))).toBe(false)
-    expect(hasFreshProofAdvanced(previous, freshProof('invalid'))).toBe(false)
-    expect(hasFreshProofAdvanced(previous, freshProof('2026-07-10T11:59:00.000Z'))).toBe(false)
+    expect(hasFreshReadingAdvanced(previous, fresh(previous))).toBe(false)
+    expect(hasFreshReadingAdvanced(previous, fresh('invalid'))).toBe(false)
+    expect(hasFreshReadingAdvanced(previous, fresh('2026-07-10T11:59:00.000Z'))).toBe(false)
   })
 
-  it('accepts only a later fresh follow-up proof', () => {
-    expect(hasFreshProofAdvanced(
+  it('accepts only a later fresh follow-up reading', () => {
+    expect(hasFreshReadingAdvanced(
       '2026-07-10T12:00:00.000Z',
-      freshProof('2026-07-10T12:00:01.000Z'),
+      fresh('2026-07-10T12:00:01.000Z'),
     )).toBe(true)
   })
 })
 
-describe('GBrain action start policy', () => {
-  it('re-resolves a confirmed W1 from the current capability catalog', () => {
+describe('action start policy', () => {
+  it('re-resolves a confirmed Change from the current capability catalog', () => {
     const current = capability()
     expect(resolveCurrentConfirmedW1([current], current.id)).toBe(current)
   })
 
-  it('rejects missing, disabled, reclassified, or confirmation-free stale W1 capabilities', () => {
+  it('rejects missing, disabled, reclassified, or confirmation-free stale Change capabilities', () => {
     expect(resolveCurrentConfirmedW1([], 'sync-sources')).toBeNull()
     expect(resolveCurrentConfirmedW1([capability({ enabled: false })], 'sync-sources')).toBeNull()
     expect(resolveCurrentConfirmedW1([capability({ safetyClass: 'R0' })], 'sync-sources')).toBeNull()
@@ -93,7 +93,7 @@ describe('GBrain action start policy', () => {
   })
 })
 
-describe('GBrain action success policy', () => {
+describe('action success policy', () => {
   it('keeps soft-timeout payloads pending instead of treating them as failed', () => {
     const payload = {
       ok: false,
@@ -110,28 +110,25 @@ describe('GBrain action success policy', () => {
     expect(resolvePendingActionResult(new Error('command failed'))).toBeNull()
   })
 
-  it('completes non-refresh diagnostics with the returned summary and no proof refresh', () => {
+  it('completes non-refresh checks with the returned summary and no reading refresh', () => {
     expect(resolveActionSuccessPolicy({
       refreshAfter: false,
       summary: 'Storage is reachable',
     })).toEqual({
-      shouldRefreshProof: false,
-      status: {
-        state: 'complete',
-        message: 'Storage is reachable',
-      },
+      shouldRefreshReading: false,
+      status: { state: 'complete', message: 'Storage is reachable' },
     })
   })
 
-  it('keeps refresh-required actions in proof verification', () => {
+  it('keeps refresh-required actions in verifying until a newer reading arrives', () => {
     expect(resolveActionSuccessPolicy({
       refreshAfter: true,
       summary: 'Sources synchronized',
     })).toEqual({
-      shouldRefreshProof: true,
+      shouldRefreshReading: true,
       status: {
         state: 'verifying',
-        message: 'Sources synchronized · loading fresh Operations proof',
+        message: 'Sources synchronized · waiting for a newer reading',
       },
     })
   })

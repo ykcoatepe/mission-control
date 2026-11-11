@@ -5,6 +5,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import UsageSummary from './UsageSummary'
 import type { UsageSummaryProps } from './UsageSummary'
+import type { ProviderCoverage } from './lib'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -32,6 +33,15 @@ async function render(props: Partial<UsageSummaryProps> = {}) {
   await act(async () => createRoot(host).render(createElement(UsageSummary, { ...base, ...props })))
   return host
 }
+
+const coverage = (overrides: Partial<ProviderCoverage>): ProviderCoverage => ({
+  unread: [],
+  partial: [],
+  stale: [],
+  unexplained: false,
+  hasIssues: true,
+  ...overrides,
+})
 
 afterEach(() => {
   document.body.innerHTML = ''
@@ -92,5 +102,52 @@ describe('UsageSummary', () => {
     document.body.innerHTML = ''
     const info = await render({ sourceIssues: ['Still refreshing; figures may change.'], sourceIssueTone: 'info' })
     expect(info.textContent).toContain('Refreshing')
+  })
+
+  it('says the total is partial and names the unread platforms in the estimate notice', async () => {
+    const host = await render({ reliability: 'partial', platformCoverage: coverage({ unread: ['Hermes', 'OpenClaw'] }) })
+    const text = host.textContent ?? ''
+    expect(text).toContain('This total is partial.')
+    expect(text).toContain('Hermes and OpenClaw could not be read and are not counted.')
+    expect(text).toContain('Partial estimate, not an invoice')
+  })
+
+  it('names platforms with incomplete records and stale readings', async () => {
+    const host = await render({ platformCoverage: coverage({ partial: ['Claude Code'], stale: ['Codex App and CLI'] }) })
+    const text = host.textContent ?? ''
+    expect(text).toContain('Claude Code has incomplete records, so its figure may be low.')
+    expect(text).toContain('Codex App and CLI shows the last good reading.')
+    expect(text).not.toContain('could not be read')
+  })
+
+  it('keeps the notice about estimates quiet when every platform was read in full', async () => {
+    const host = await render({ platformCoverage: coverage({ hasIssues: false }) })
+    expect(host.textContent).not.toContain('This total is partial.')
+    expect(host.textContent).toContain('Estimate, not an invoice')
+  })
+
+  it('shows tokens as not read, never 0, when no platform could be read', async () => {
+    const host = await render({ periodTokens: null, platformCoverage: coverage({ unread: ['Claude Code', 'Codex App and CLI'] }) })
+    const text = host.textContent ?? ''
+    expect(text).toMatch(/Tokens.*not read/)
+    expect(text).toContain('No platform could be read')
+    expect(text).not.toMatch(/Tokens0/)
+  })
+
+  it('flags the token figure as partial when a platform is missing', async () => {
+    const host = await render({ platformCoverage: coverage({ unread: ['Hermes'] }) })
+    expect(host.textContent).toContain('1,234 in this period, partial')
+  })
+
+  it('renders the Platforms slot directly after the headline strip, before the notices', async () => {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    await act(async () => createRoot(host).render(
+      createElement(UsageSummary, { ...base }, createElement('section', { 'data-testid': 'slot' }, 'Platforms slot')),
+    ))
+    const strip = host.querySelector('[aria-label="Usage for This month"]')
+    const slot = host.querySelector('[data-testid="slot"]')
+    expect(strip?.parentElement?.nextElementSibling).toBe(slot)
+    expect(slot?.nextElementSibling?.textContent).toContain('Estimate, not an invoice')
   })
 })

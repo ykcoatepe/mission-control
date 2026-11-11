@@ -1,25 +1,18 @@
 import { Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useApi } from '../lib/hooks'
-import { annunciatorFor, attentionSummary } from '../lib/overview'
-import { stateLabel } from '../lib/state'
+import { SIGNALS_POLL_MS, SIGNALS_URL, annunciators, attentionPill, signalsStale } from '../lib/signals'
+import type { SignalsEnvelope } from '../lib/signals'
+import { useNow } from '../lib/useNow'
 import { useRefreshData } from '../lib/useRefreshData'
 import { useTheme } from '../lib/theme'
 import { appRoutes } from '../appRoutes'
-import type { OperationsOverview, OperationSystemId } from '../pages/brain/types'
 import { Kbd } from './ui/Kbd'
 import { IconButton } from './ui/IconButton'
 import { StatePill } from './ui/StatePill'
 import { TimeAgo } from './ui/TimeAgo'
 import { usePageTitle } from './ui/pageTitleContext'
 import styles from './TopBar.module.css'
-
-const SYSTEM_IDS: OperationSystemId[] = ['gbrain', 'hermes', 'openclaw']
-const FALLBACK_LABEL: Record<OperationSystemId, string> = {
-  gbrain: 'GBrain',
-  hermes: 'Hermes',
-  openclaw: 'OpenClaw',
-}
 
 interface TopBarProps {
   onOpenMenu: () => void
@@ -42,12 +35,17 @@ function paletteHint(): string {
 export default function TopBar({ onOpenMenu, onOpenPalette }: TopBarProps) {
   const location = useLocation()
   const pageTitle = usePageTitle()
-  const { data: overview, loading, error } = useApi<OperationsOverview>('/api/operations/overview', 30000)
+  const { data: envelope, loading, error } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
   const { refresh, refreshing } = useRefreshData()
   const { theme, toggleTheme } = useTheme()
+  const now = useNow()
 
   const title = pageTitle ?? routeLabel(location.pathname)
-  const attention = attentionSummary(overview)
+  const signals = envelope?.data ?? null
+  const stale = signalsStale(envelope, error !== null)
+  const lights = annunciators(signals, { loading, now, stale })
+  const pill = attentionPill(signals)
+  const observedAt = envelope?.meta?.observedAt ?? null
   const hint = paletteHint()
   const nextTheme = theme === 'dark' ? 'light' : 'dark'
 
@@ -65,40 +63,26 @@ export default function TopBar({ onOpenMenu, onOpenPalette }: TopBarProps) {
       <div className={styles.spacer} />
 
       <ul className={styles.annunciators} aria-label="Systems">
-        {SYSTEM_IDS.map((id) => {
-          const system = overview?.systems?.[id]
-          const label = system?.label || FALLBACK_LABEL[id]
-          const href = system?.detailHref || '/'
-          const reading = loading && !overview
-          // No overview at all after loading finished: the systems could not be read.
-          const lit = system ? annunciatorFor(system) : reading ? null : { state: 'unavailable' as const, word: stateLabel('unavailable').toLowerCase() }
-          const state = lit?.state ?? 'reading'
-          const showWord = reading || (lit !== null && lit.state !== 'healthy')
-          const word = reading ? 'reading…' : lit?.word
-          return (
-            <li key={id}>
-              <Link
-                to={href}
-                className={styles.annunciator}
-                data-state={state}
-                aria-label={`${label}: ${error && !overview ? 'could not be read' : word}`}
-                title={`${label}: ${error && !overview ? 'could not be read' : word}`}
-              >
-                <span className={styles.annDot} aria-hidden="true" />
-                <span className={styles.annName}>{label}</span>
-                {showWord && <span className={styles.annWord}>{word}</span>}
-              </Link>
-            </li>
-          )
-        })}
+        {lights.map((light) => (
+          <li key={light.id}>
+            <Link
+              to={light.href}
+              className={styles.annunciator}
+              data-state={light.state}
+              aria-label={`${light.label}: ${light.word}`}
+              title={`${light.label}: ${light.word}`}
+            >
+              <span className={styles.annDot} aria-hidden="true" />
+              <span className={styles.annName}>{light.label}</span>
+              {light.lit && <span className={styles.annWord}>{light.word}</span>}
+            </Link>
+          </li>
+        ))}
       </ul>
 
-      {attention && attention.count > 0 && (
-        <Link to="/attention" className={styles.attention} data-state={attention.state}>
-          <StatePill
-            state={attention.state}
-            label={attention.count === 1 ? '1 needs attention' : `${attention.count} need attention`}
-          />
+      {pill && (
+        <Link to="/attention" className={styles.attention} data-state={pill.state}>
+          <StatePill state={pill.state} label={pill.text} />
         </Link>
       )}
 
@@ -109,10 +93,19 @@ export default function TopBar({ onOpenMenu, onOpenPalette }: TopBarProps) {
       </button>
 
       <div className={styles.age} aria-live="off">
+        {stale && (
+          <span
+            className={styles.stale}
+            title={error ? 'The latest read of the shell signals failed; showing the last good reading.' : 'The server is serving an older reading.'}
+          >
+            <span className={styles.staleDot} aria-hidden="true" />
+            <span className={styles.staleText}>Signals stale</span>
+          </span>
+        )}
         <span className={styles.ageText}>
-          {overview?.generatedAt ? (
+          {observedAt ? (
             <>
-              Updated <TimeAgo value={overview.generatedAt} />
+              Updated <TimeAgo value={observedAt} />
             </>
           ) : loading ? (
             'Reading…'

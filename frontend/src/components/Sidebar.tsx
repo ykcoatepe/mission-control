@@ -3,9 +3,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import type { AppRouteDefinition } from '../appRoutes'
 import { useApi } from '../lib/hooks'
-import { normalizeCronStatus } from '../lib/status'
+import { SIGNALS_POLL_MS, SIGNALS_URL, navBadges } from '../lib/signals'
+import type { NavBadge, SignalsEnvelope } from '../lib/signals'
 import { useNavigation } from '../lib/useNavigation'
-import type { CronApiResponse } from '../pages/cron/types'
 import { MissionControlMark } from './MissionControlMark'
 import { cx } from './ui/cx'
 import styles from './Sidebar.module.css'
@@ -28,25 +28,11 @@ const GROUPS: Array<{ key: Section | 'overview'; label: string | null }> = [
   { key: 'run', label: 'Run' },
 ]
 
-interface Badge {
-  count: number
-  tone: 'warning' | 'critical'
-  /** Spoken after the label: "3 failed". */
-  word: string
-}
-
-/** Abnormal-only counts: nothing is shown when the count is zero or unknown. */
-function useNavBadges(): Record<string, Badge | undefined> {
-  const { data: cron } = useApi<CronApiResponse>('/api/cron', 30000)
-  return useMemo(() => {
-    const badges: Record<string, Badge | undefined> = {}
-    const jobs = cron?.jobs
-    if (Array.isArray(jobs)) {
-      const failed = jobs.filter((job) => normalizeCronStatus(job.status, job.enabled) === 'failed').length
-      if (failed > 0) badges['/automations'] = { count: failed, tone: 'critical', word: 'failed' }
-    }
-    return badges
-  }, [cron])
+/** Abnormal-only counts from the shell signals: nothing is shown when a count is zero or not read. */
+function useNavBadges(): Record<string, NavBadge | undefined> {
+  const { data } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
+  const signals = data?.data ?? null
+  return useMemo(() => navBadges(signals), [signals])
 }
 
 export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }: SidebarProps) {

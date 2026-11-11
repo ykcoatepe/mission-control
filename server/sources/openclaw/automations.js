@@ -2,6 +2,22 @@
 const { createSource, SourceReadError } = require('../../core/source');
 
 const AUTOMATIONS_REFRESH_INTERVAL_MS = 30_000;
+
+function summarizeJobs(jobs, nowMs) {
+  const enabled = jobs.filter(job => job.enabled);
+  const nextRuns = enabled.map(job => job.nextRun)
+    .filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && Date.parse(value) > nowMs)
+    .sort((a, b) => Date.parse(a) - Date.parse(b));
+  return {
+    active: enabled.length,
+    paused: jobs.length - enabled.length,
+    // Match the page/sidebar normalizeCronStatus rule; unknown history is
+    // not evidence of a failed last run.
+    failed: enabled.filter(job => ['failed', 'error', 'errored'].includes(String(job.status || '').trim().toLowerCase())).length,
+    nextRunAt: nextRuns[0] || null,
+  };
+}
+
 function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
   const source = createSource({
     id: 'openclaw.automations', now, logger,
@@ -15,13 +31,7 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
           throw new Error('No scheduler observed');
         }
         const jobs = evidence.jobs.map(job => cronService.mapCronJobForApi(job));
-        const nextRuns = jobs.map(job => job.nextRun).filter(v => v && Number.isFinite(Date.parse(v))).sort((a, b) => Date.parse(a) - Date.parse(b));
-        const summary = {
-          active: jobs.filter(job => job.enabled).length,
-          paused: jobs.filter(job => !job.enabled).length,
-          failed: jobs.filter(job => job.status === 'failed').length,
-          nextRunAt: nextRuns[0] || null,
-        };
+        const summary = summarizeJobs(jobs, now());
         const calendar = cronService.syncCalendarWithCronEvidence(evidence);
         return { cron: { jobs, summary, schedulers }, calendar };
       } catch {
@@ -31,7 +41,12 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
   });
   const snapshot = source.snapshot;
   source.snapshot = () => {
-    const snap = snapshot();
+    const stored = snapshot();
+    // A next-run can expire between scheduled reads, including while serving
+    // last-good evidence. Project its summary against the clock without IO.
+    const snap = stored.data ? { ...stored, data: { ...stored.data, cron: {
+      ...stored.data.cron, summary: summarizeJobs(stored.data.cron.jobs, now()),
+    } } } : stored;
     const proofs = Object.values(snap.data?.cron.schedulers || {});
     if (proofs.some(p => !p.sourceSucceeded || p.stale)) {
       return { ...snap, meta: { ...snap.meta, ok: false, stale: true, error: snap.meta.error || { code: 'scheduler_stale', message: 'One or more scheduler readings are unavailable or cached' } } };

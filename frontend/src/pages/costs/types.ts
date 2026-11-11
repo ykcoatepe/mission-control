@@ -63,18 +63,42 @@ export interface AgentUsageData {
   byService?: TokenServiceData[]
 }
 
+/**
+ * One platform's reading from the usage provider registry. A provider that
+ * could not be read has `state: 'unavailable'` and null figures: those are
+ * "not read", never zero.
+ */
+export interface UsageProvider {
+  id: string
+  label: string
+  state: 'ready' | 'stale' | 'unavailable' | string
+  /** ISO time of the provider's last reading; null when never observed. */
+  observedAt: string | null
+  coverage: 'complete' | 'partial' | string
+  /** Tokens in the selected period; null when the provider was not read. */
+  tokens: number | null
+  apiEquivalentUsd: number | null
+  billedUsd: number | null
+  note?: string | null
+}
+
 export interface TokenData {
   source?: string
   /** `anchor` is the `YYYY-MM` month this payload was anchored to, or null for the live period. */
   period?: { key?: 'day' | '7d' | 'month'; anchor?: string | null; start?: string; end?: string }
   daily: TokenDailyEntry[]
+  /** Every platform the backend has a provider for. The page lists exactly these. */
+  providers?: UsageProvider[]
+  /** True when any provider is unread, stale or incomplete. */
+  partial?: boolean
   dailyByModel?: ModelDailyEntry[]
   modelKeys?: string[]
   agents?: AgentUsageData[]
   summary: {
     periodUsd?: number
     previousPeriodUsd?: number
-    periodTokens?: number
+    /** Null when no provider could be read for the period. */
+    periodTokens?: number | null
     todayUsd?: number
     yesterdayUsd?: number
     thisWeekUsd?: number

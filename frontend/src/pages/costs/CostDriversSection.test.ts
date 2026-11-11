@@ -29,9 +29,9 @@ const base: CostDriversSectionProps = {
   setTab: () => {},
   models: [],
   modelApiEquivalentTotal: 0,
-  sources: [],
-  sourcesPending: false,
-  totalSourceTokens: 0,
+  platforms: [],
+  platformsPending: false,
+  totalPlatformTokens: 0,
   sessions: [],
   sessionsLiveOnlyNotice: null,
   awsServices: null,
@@ -68,14 +68,14 @@ describe('CostDriversSection', () => {
     expect(host.textContent).toContain('Local')
   })
 
-  it('marks preserved (stale) source data and explains each source\'s scope', async () => {
+  it('marks preserved (stale) platform data and explains each platform\'s scope', async () => {
     const host = await render({
-      tab: 'sources',
-      sources: [
+      tab: 'platforms',
+      platforms: [
         source({ key: 'claude_code', label: 'Claude Code', status: 'stale' }),
         source({ key: 'codex_cli', label: 'Codex CLI' }),
       ],
-      totalSourceTokens: 2000,
+      totalPlatformTokens: 2000,
     })
     const claude = Array.from(host.querySelectorAll('tbody tr')).find(tr => tr.textContent?.includes('Claude Code'))
     const codex = Array.from(host.querySelectorAll('tbody tr')).find(tr => tr.textContent?.includes('Codex CLI'))
@@ -88,10 +88,23 @@ describe('CostDriversSection', () => {
     expect(titles.some(t => t.includes('codex exec / CLI spawns'))).toBe(true)
   })
 
-  it('shows a loading state instead of sources while the source split is pending', async () => {
-    const host = await render({ tab: 'sources', sourcesPending: true })
+  it('shows a loading state instead of platforms while the platform split is pending', async () => {
+    const host = await render({ tab: 'platforms', platformsPending: true })
     expect(host.querySelector('table')).toBeNull()
-    expect(host.textContent).toContain('By source')
+    expect(host.textContent).toContain('By platform')
+    expect(host.textContent).not.toContain('By source')
+  })
+
+  it('uses one vocabulary and leaves tokens and cost to the Platforms panel', async () => {
+    const host = await render({
+      tab: 'platforms',
+      platforms: [source({ key: 'codex', label: 'Codex App and CLI', tokens: 500 })],
+      totalPlatformTokens: 1000,
+    })
+    const headers = Array.from(host.querySelectorAll('th')).map(th => th.textContent)
+    expect(headers).toEqual(['Platform', 'Share of tokens', 'Top model', 'Billing'])
+    expect(host.textContent).toContain('50.0%')
+    expect(host.textContent).not.toMatch(/\bsource\b/i)
   })
 
   it('flags live sessions as not belonging to the month in view, only when asked to', async () => {

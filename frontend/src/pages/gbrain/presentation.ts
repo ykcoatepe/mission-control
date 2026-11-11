@@ -1,19 +1,5 @@
 export type GBrainEvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
 
-export interface OperationalStateInput {
-  hasData: boolean
-  loading: boolean
-  trustStatus: GBrainEvidenceStatus
-  incidentStatus?: GBrainEvidenceStatus | null
-  incidentIsCurrent?: boolean
-  caveatCount: number
-}
-
-export interface OperationalState {
-  status: GBrainEvidenceStatus
-  label: string
-}
-
 export interface TimelineDeltaEntry {
   trust: {
     status: GBrainEvidenceStatus
@@ -37,18 +23,11 @@ export interface QueueEvidenceInput {
   stalledJobs: number | null
 }
 
-const statusRank: Record<GBrainEvidenceStatus, number> = {
-  inactive: 0,
-  healthy: 1,
-  warning: 2,
-  critical: 3,
-}
-
 function evidenceStatusLabel(status: GBrainEvidenceStatus) {
-  if (status === 'healthy') return 'Verified'
-  if (status === 'warning') return 'Caveat'
-  if (status === 'critical') return 'Failing'
-  return 'Read-only'
+  if (status === 'healthy') return 'Normal'
+  if (status === 'warning') return 'Warning'
+  if (status === 'critical') return 'Critical'
+  return 'Not read'
 }
 
 function sourceSyncLabel(status: GBrainEvidenceStatus) {
@@ -111,23 +90,6 @@ function compiledTruthLabel(entry: TimelineDeltaEntry) {
   return 'Current'
 }
 
-export function deriveOperationalState(input: OperationalStateInput): OperationalState {
-  if (input.loading) return { status: 'inactive', label: 'Checking live proof' }
-  if (!input.hasData) return { status: 'inactive', label: 'No live proof' }
-
-  const statuses = [input.trustStatus, input.incidentIsCurrent === false ? null : input.incidentStatus]
-    .filter((status): status is GBrainEvidenceStatus => Boolean(status))
-  if (input.caveatCount > 0) statuses.push('warning')
-  const status = statuses.reduce<GBrainEvidenceStatus>((mostSevere, current) => (
-    statusRank[current] > statusRank[mostSevere] ? current : mostSevere
-  ), 'inactive')
-
-  if (status === 'critical') return { status, label: 'Action required' }
-  if (status === 'warning') return { status, label: 'Degraded' }
-  if (status === 'healthy') return { status, label: 'Operational' }
-  return { status, label: 'Read-only' }
-}
-
 export function deriveQueueEvidenceStatus(input: QueueEvidenceInput): GBrainEvidenceStatus {
   if (!input.hasLiveHealth) return input.fallbackStatus
   if (input.missingEmbeddingsUnavailable === true) return 'warning'
@@ -145,11 +107,11 @@ export function timelineDeltaLines(
 
   const values: { label: string; from: string | number | null | undefined; to: string | number | null | undefined }[] = [
     {
-      label: 'Proof state',
+      label: 'State',
       from: evidenceStatusLabel(previous.trust.status),
       to: evidenceStatusLabel(current.trust.status),
     },
-    { label: 'Trust', from: previous.trust.score, to: current.trust.score },
+    { label: 'Quality', from: previous.trust.score, to: current.trust.score },
     { label: 'Health', from: previous.metrics.health, to: current.metrics.health },
     { label: 'Embeddings', from: previous.metrics.embeddings, to: current.metrics.embeddings },
     {
@@ -158,7 +120,7 @@ export function timelineDeltaLines(
       to: missingEmbeddingsLabel(current),
     },
     {
-      label: 'Compiled truth',
+      label: 'Link extraction',
       from: compiledTruthLabel(previous),
       to: compiledTruthLabel(current),
     },
@@ -168,7 +130,7 @@ export function timelineDeltaLines(
       from: sourceSyncLabel(previous.sourceFreshness.status),
       to: sourceSyncLabel(current.sourceFreshness.status),
     },
-    { label: 'Caveats', from: previous.metrics.caveats, to: current.metrics.caveats },
+    { label: 'Notes', from: previous.metrics.caveats, to: current.metrics.caveats },
   ]
 
   return values.flatMap(({ label, from, to }) => {

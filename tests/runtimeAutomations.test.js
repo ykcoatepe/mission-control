@@ -4,6 +4,7 @@ const express = require('express');
 const { createAutomationSource } = require('../server/sources/openclaw/automations');
 const { buildCronRouter } = require('../server/routes/cron');
 const { buildCalendarRouter } = require('../server/routes/calendar');
+const { buildSignalsRouter } = require('../server/routes/signals');
 const { errorHandler } = require('../server/core/http');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -29,7 +30,7 @@ function fixture() {
 
 test('automation source keeps last good with typed stale failure; never invents unknown jobs', async () => {
   const f = fixture();
-  const source = createAutomationSource({ cronService: f.service });
+  const source = createAutomationSource({ cronService: f.service, now: () => Date.parse('2026-11-11T00:00:00Z') });
   assert.equal(source.snapshot().data, null);
   await source.refresh();
   const first = source.snapshot();
@@ -43,6 +44,48 @@ test('automation source keeps last good with typed stale failure; never invents 
   assert.doesNotMatch(JSON.stringify(after.meta), /sensitive/);
 });
 
+test('summary next run ignores past, paused, invalid and clock-boundary times, including while cached', async () => {
+  let clock = Date.parse('2026-11-11T12:00:00Z');
+  const f = fixture();
+  const jobs = [
+    { enabled: true, nextRun: '2026-06-07T15:20:00Z' },
+    { enabled: false, nextRun: '2026-11-11T12:00:01Z' },
+    { enabled: true, nextRun: '2026-11-11T12:00:00Z' },
+    { enabled: true, nextRun: 'not-a-date' },
+    { enabled: true, nextRun: null },
+    { enabled: true, nextRun: '2026-11-11T12:02:00Z' },
+    { enabled: true, nextRun: '2026-11-11T12:01:00Z' },
+  ];
+  f.service.fetchCronJobsForOperations = async () => ({ jobs, operationsSource: { schedulers: { openclaw: proof, hermes: proof } } });
+  f.service.mapCronJobForApi = job => job;
+  const source = createAutomationSource({ cronService: f.service, now: () => clock });
+  assert.equal((await source.refresh()).data.cron.summary.nextRunAt, '2026-11-11T12:01:00Z');
+  clock = Date.parse('2026-11-11T12:01:00Z');
+  assert.equal(source.snapshot().data.cron.summary.nextRunAt, '2026-11-11T12:02:00Z');
+  clock = Date.parse('2026-11-11T12:02:01Z');
+  assert.equal(source.snapshot().data.cron.summary.nextRunAt, null);
+});
+
+test('summary failures match enabled last-run status rules, never paused or unknown history entries', async () => {
+  const f = fixture();
+  const jobs = [
+    { enabled: false, status: 'failed' },
+    { enabled: false, status: 'error' },
+    { enabled: true, status: 'unknown', history: [{ status: 'unknown' }] },
+    { enabled: true, status: undefined },
+    { enabled: true, status: 'active', history: [{ status: 'ok' }, { status: 'failed' }] },
+    { enabled: true, status: 'failed' },
+    { enabled: true, status: ' ERROR ' },
+    { enabled: true, status: 'errored' },
+  ];
+  f.service.fetchCronJobsForOperations = async () => ({ jobs, operationsSource: { schedulers: { openclaw: proof, hermes: proof } } });
+  f.service.mapCronJobForApi = job => job;
+  const source = createAutomationSource({ cronService: f.service });
+  assert.equal((await source.refresh()).data.cron.summary.failed, 3);
+  jobs.splice(5);
+  assert.equal((await source.refresh()).data.cron.summary.failed, 0);
+});
+
 test('cron/calendar GETs never read upstream or write, including cold and stale snapshots', async () => {
   const f = fixture();
   const source = createAutomationSource({ cronService: f.service });
@@ -50,6 +93,12 @@ test('cron/calendar GETs never read upstream or write, including cold and stale 
   app.use(express.json());
   app.use(buildCronRouter({ cronService: f.service, automationSource: source, openclawExec: () => { throw new Error('GET spawned'); } }));
   app.use(buildCalendarRouter({ calendarService: f.service, automationSource: source }));
+  const unavailableSource = { snapshot: () => ({ data: null, meta: { ok: false, stale: true } }) };
+  app.use(buildSignalsRouter({
+    operationsOverviewService: { getOverview: async () => null },
+    loopsSource: unavailableSource, launchdSource: unavailableSource, reachabilitySource: unavailableSource,
+    automationsSnapshot: () => source.snapshot(),
+  }));
   app.use(errorHandler({ logger: { error() {} } }));
   const server = app.listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r));
@@ -70,6 +119,11 @@ test('cron/calendar GETs never read upstream or write, including cold and stale 
       assert.equal(response.status, 200);
       assert.equal((await response.json()).meta.stale, true);
     }
+    const signals = await (await fetch(base + '/api/signals')).json();
+    assert.deepEqual(signals.data.automations, {
+      failed: source.snapshot().data.cron.summary.failed,
+      nextRunAt: source.snapshot().data.cron.summary.nextRunAt,
+    });
     assert.deepEqual(f.counts(), before);
     const invalid = await fetch(base + '/api/cron/x/toggle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"enabled":"false"}' });
     assert.equal(invalid.status, 400);

@@ -9,8 +9,8 @@ function readReaders({ homeDir = os.homedir() } = {}) {
   function inspect(id, label, suffix, detect) {
     try {
       const text = fs.readFileSync(path.join(homeDir, suffix), 'utf8');
-      return { id, label, observed: true, configured: detect(text), evidence: 'local MCP configuration', connection: 'unavailable' };
-    } catch { return { id, label, observed: false, configured: null, evidence: 'local MCP configuration not read', connection: 'unavailable' }; }
+      return { id, label, observed: true, configured: detect(text), evidence: 'local MCP configuration' };
+    } catch { return { id, label, observed: false, configured: null, evidence: 'local MCP configuration not read' }; }
   }
   return [
     inspect('hermes', 'Hermes', '.hermes/profiles/hmudur/config.yaml', (t) => /mcp_servers:\s*[\s\S]*?\bgbrain:/i.test(t)),

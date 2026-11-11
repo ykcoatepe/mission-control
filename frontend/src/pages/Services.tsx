@@ -1,12 +1,10 @@
-import { EmptyState, Page } from '../components/ui'
+import { Page } from '../components/ui'
+import ServicesView from './services/ServicesView'
 
 export default function Services() {
   return (
-    <Page title="Services" description="Background services and gateways." width="narrow">
-      <EmptyState
-        title="This screen is being built"
-        description="It will appear here once its readings are connected."
-      />
+    <Page title="Services" description="Is everything that should be running, running?">
+      <ServicesView />
     </Page>
   )
 }

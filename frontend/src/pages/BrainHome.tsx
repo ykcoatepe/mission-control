@@ -1,228 +1,153 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCallback, useRef, useState } from 'react'
-import PageTransition from '../components/PageTransition'
+import { useQueryClient } from '@tanstack/react-query'
+import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { ErrorState, Page, Skeleton, Tabs, resolveTab } from '../components/ui'
 import { useApi } from '../lib/hooks'
-import { postGBrainAction } from './gbrain/api'
 import { ActionConfirmDialog } from './brain/ActionConfirmDialog'
-import {
-  ActionStatusBanner,
-  BrainHomeError,
-  BrainHomeSkeleton,
-  canStartAction,
-  hasFreshProofAdvanced,
-  resolvePendingActionResult,
-  resolveActionSuccessPolicy,
-  resolveCurrentConfirmedW1,
-  type ActionStartMode,
-} from './brain/BrainHomeState'
-import { DecisionInbox } from './brain/DecisionInbox'
-import { EvidenceDrawer } from './brain/EvidenceDrawer'
-import { EvidenceTimeline } from './brain/EvidenceTimeline'
-import { GBrainTriggerShelf } from './brain/GBrainTriggerShelf'
-import { GlobalSearch } from './brain/GlobalSearch'
-import { LivingBrainMap } from './brain/LivingBrainMap'
-import { selectionFromAttention, selectionFromEvidence, selectionFromSystem } from './brain/lib'
+import { ActionStatusNotice } from './brain/ActionStatusNotice'
+import { HealthView, type BrainData } from './brain/HealthView'
+import { KnowledgeView } from './brain/KnowledgeView'
+import { VerdictLine } from './brain/VerdictLine'
+import { buildBrainModel, deriveVerdict, linkExtractionCondition } from './brain/lib'
+import { useGBrainActions } from './brain/useGBrainActions'
 import styles from './brain/BrainHome.module.css'
-import { SystemStatusRail } from './brain/SystemStatusRail'
 import type {
-  ActionStatus,
-  DrawerSelection,
-  OperationCapability,
+  HealthReading,
+  Meta,
   OperationsOverview,
+  SourcesReading,
+  SynopticEnvelope,
+  TimelineReading,
 } from './brain/types'
 
-type ActionRun = {
-  capability: OperationCapability
-  previousObservedAt: string | null
-}
+const VIEW_TABS = [
+  { id: 'health', label: 'Health' },
+  { id: 'knowledge', label: 'Knowledge' },
+]
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'GBrain action failed'
-}
+const POLL_MS = 30_000
+const CHECK_ACTION = 'doctor-fast'
+
+const FAILED_META: Meta = { ok: false, stale: true, observedAt: null, ageMs: null, error: null }
+const FAILED_HEALTH: HealthReading = { ok: false, meta: FAILED_META }
 
 export default function BrainHome() {
+  const [params] = useSearchParams()
   const queryClient = useQueryClient()
-  const { data, loading, error, refetch } = useApi<OperationsOverview>(
-    '/api/operations/overview',
-    30_000,
+  // /gbrain?q=term opens the Knowledge view.
+  const defaultView = params.get('q') ? 'knowledge' : 'health'
+  const view = resolveTab(VIEW_TABS, params.get('view'), defaultView)
+
+  const synoptic = useApi<SynopticEnvelope>('/api/gbrain/synoptic', POLL_MS)
+  const health = useApi<HealthReading>('/api/gbrain/health', POLL_MS)
+  const sources = useApi<SourcesReading>('/api/gbrain/sources', POLL_MS)
+  const timeline = useApi<TimelineReading>('/api/gbrain/timeline?limit=50', 2 * POLL_MS)
+  const overview = useApi<OperationsOverview>('/api/operations/overview', POLL_MS)
+
+  const envelope = synoptic.data
+  const syn = envelope?.data ?? null
+  const synopticFailed = Boolean(synoptic.error)
+  const meta = useMemo<Meta | null>(
+    () => (envelope ? { ...envelope.meta, stale: envelope.meta.stale || synopticFailed } : null),
+    [envelope, synopticFailed],
   )
-  const [selection, setSelection] = useState<DrawerSelection | null>(null)
-  const [pendingAction, setPendingAction] = useState<OperationCapability | null>(null)
-  const [runningAction, setRunningAction] = useState<string | null>(null)
-  const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null)
-  const returnFocusRef = useRef<HTMLButtonElement | null>(null)
-  const executionRef = useRef<string | null>(null)
+  const healthArg: HealthReading | null | undefined = health.data ?? (health.error ? FAILED_HEALTH : undefined)
+  const sourcesArg = sources.data && sources.data.ok !== false ? sources.data : null
+  const capabilities = overview.data?.capabilities ?? null
 
-  const refreshActionProof = async (run: ActionRun) => {
-    try {
-      await queryClient.invalidateQueries({ queryKey: ['api', '/api/gbrain/overview'] })
-      await queryClient.invalidateQueries({
-        queryKey: ['api', '/api/operations/overview'],
-        refetchType: 'none',
-      })
-      const refreshed = await refetch()
-      const nextGBrain = refreshed.data?.systems.gbrain
-      const proofAdvanced = !refreshed.error
-        && hasFreshProofAdvanced(run.previousObservedAt, nextGBrain)
+  const model = useMemo(
+    () => (syn ? buildBrainModel(syn, { sources: sourcesArg, health: healthArg }) : null),
+    [syn, sourcesArg, healthArg],
+  )
+  const verdict = useMemo(
+    () => deriveVerdict(model, meta, linkExtractionCondition(healthArg)),
+    [model, meta, healthArg],
+  )
 
-      setActionStatus({
-        state: proofAdvanced ? 'verified' : 'pending-proof',
-        message: proofAdvanced
-          ? 'Action completed and newer fresh GBrain proof loaded'
-          : 'Action completed; newer fresh GBrain proof is pending or unavailable',
-      })
-    } catch {
-      setActionStatus({
-        state: 'pending-proof',
-        message: 'Action completed; Operations proof could not be refreshed',
-      })
-    }
-  }
-
-  const actionMutation = useMutation({
-    mutationFn: ({ capability }: ActionRun) => postGBrainAction(capability.id, capability.requiresConfirmation),
-    onMutate: ({ capability }) => {
-      setRunningAction(capability.id)
-      setActionStatus({ state: 'running', message: `${capability.label} is running` })
-    },
-    onSuccess: async (result, run) => {
-      const successPolicy = resolveActionSuccessPolicy(result)
-      setActionStatus(successPolicy.status)
-      if (!successPolicy.shouldRefreshProof) return
-      await refreshActionProof(run)
-    },
-    onError: (mutationError, run) => {
-      const pendingResult = resolvePendingActionResult(mutationError)
-      if (pendingResult) {
-        setActionStatus({
-          state: 'pending-proof',
-          message: pendingResult.summary || pendingResult.error || 'Action timed out; cleanup is still running',
-        })
-        if (pendingResult.refreshAfter === true) void refreshActionProof(run)
-        return
-      }
-      setActionStatus({ state: 'failed', message: errorMessage(mutationError) })
-    },
-    onSettled: () => {
-      executionRef.current = null
-      setRunningAction(null)
-      setPendingAction(null)
-    },
+  const reading = meta ? { observedAt: meta.observedAt, fresh: meta.ok && !meta.stale } : null
+  const actions = useGBrainActions({
+    capabilities,
+    reading,
+    refreshReadings: () =>
+      queryClient.invalidateQueries({
+        predicate: (query) => {
+          const key = query.queryKey[1]
+          return (
+            query.queryKey[0] === 'api' &&
+            typeof key === 'string' &&
+            (key.startsWith('/api/gbrain/synoptic') ||
+              key.startsWith('/api/gbrain/health') ||
+              key.startsWith('/api/gbrain/sources') ||
+              key.startsWith('/api/gbrain/timeline') ||
+              key.startsWith('/api/operations/overview'))
+          )
+        },
+      }),
   })
 
-  const closePendingAction = useCallback(() => setPendingAction(null), [])
+  const checkAction = capabilities?.find((capability) => capability.id === CHECK_ACTION)
+  const data: BrainData | null =
+    syn && model
+      ? {
+          syn,
+          model,
+          verdict,
+          health: healthArg,
+          sources: sourcesArg,
+          timeline: timeline.data && timeline.data.entries !== null ? timeline.data : null,
+          timelineStale: Boolean(timeline.data?.meta.stale) || Boolean(timeline.error),
+          capabilities,
+          caveats: overview.data?.systems?.gbrain?.caveats ?? [],
+        }
+      : null
 
-  const beginAction = (capability: OperationCapability, mode: ActionStartMode) => {
-    if (!data || !canStartAction(capability, mode, executionRef.current)) return
-
-    executionRef.current = capability.id
-    setPendingAction(null)
-    actionMutation.mutate({
-      capability,
-      previousObservedAt: data.systems.gbrain.observedAt,
-    })
+  const confirmContext = {
+    state: verdict.state,
+    freshness: !meta ? 'not read' : meta.stale ? 'stale' : 'fresh',
+    note: verdict.conditions[0] ? `${verdict.conditions[0].text}.` : null,
   }
 
-  const requestAction = (capability: OperationCapability, trigger: HTMLButtonElement) => {
-    if (executionRef.current || actionMutation.isPending) return
-
-    returnFocusRef.current = trigger
-    if (capability.safetyClass === 'W1') {
-      if (!canStartAction(capability, 'confirmed', null)) {
-        setActionStatus({
-          state: 'failed',
-          message: 'Action was not started because its confirmation policy is unavailable',
-        })
-        return
-      }
-      setPendingAction(capability)
-      return
-    }
-    if (capability.safetyClass === 'R0') beginAction(capability, 'direct')
-  }
-
-  const confirmAction = () => {
-    if (!pendingAction || executionRef.current || actionMutation.isPending) return
-    if (!data) {
-      setPendingAction(null)
-      setActionStatus({
-        state: 'failed',
-        message: 'Action was not started because current capability evidence is unavailable',
-      })
-      return
-    }
-
-    const currentCapability = resolveCurrentConfirmedW1(
-      data.capabilities,
-      pendingAction.id,
-    )
-    if (!currentCapability) {
-      setPendingAction(null)
-      setActionStatus({
-        state: 'failed',
-        message: 'Action was not started because its current capability policy changed',
-      })
-      return
-    }
-    beginAction(currentCapability, 'confirmed')
-  }
-
-  if (loading) return <BrainHomeSkeleton />
-  if (error || !data) {
-    return (
-      <BrainHomeError
-        message={error || 'Operations overview did not return evidence.'}
-        onRetry={() => { void refetch() }}
-      />
-    )
-  }
+  const head = (
+    <div className={styles.head}>
+      {synoptic.loading ? (
+        <Skeleton lines={2} label="Reading GBrain" />
+      ) : (
+        <VerdictLine
+          verdict={verdict}
+          probeAt={meta?.observedAt ?? null}
+          stale={Boolean(meta?.stale)}
+          verifying={actions.verifying}
+          onRunCheck={checkAction ? () => actions.request(checkAction) : undefined}
+          runCheckDisabled={!checkAction?.enabled || actions.running !== null}
+          running={actions.running === CHECK_ACTION}
+        />
+      )}
+      {actions.status && <ActionStatusNotice status={actions.status} />}
+      <Tabs tabs={VIEW_TABS} ariaLabel="Brain views" queryParam="view" defaultValue={defaultView} />
+    </div>
+  )
 
   return (
-    <PageTransition>
-      <div className={styles.page}>
-        <header className={styles.pageHeader}>
-          <div className={styles.pageTitle}>
-            <span>Mission Control</span>
-            <h1>Shared Brain</h1>
-            <p>OpenClaw, Hermes, and GBrain evidence in one read-first surface.</p>
-          </div>
-          <GlobalSearch overview={data} />
-        </header>
-
-        <SystemStatusRail
-          systems={[data.systems.gbrain, data.systems.hermes, data.systems.openclaw]}
+    <Page title="Brain" tabs={head}>
+      {view === 'knowledge' ? (
+        <KnowledgeView />
+      ) : synoptic.loading ? (
+        <Skeleton variant="block" size="lg" label="Reading GBrain" />
+      ) : !data ? (
+        <ErrorState
+          title="GBrain could not be read"
+          message="The synoptic reading is not available, so nothing is shown as normal."
+          onRetry={() => void synoptic.refetch()}
         />
-
-        <div className={styles.primaryGrid}>
-          <LivingBrainMap
-            overview={data}
-            onSelectSystem={(system) => setSelection(selectionFromSystem(system))}
-          />
-          <DecisionInbox
-            items={data.attention}
-            onSelect={(item) => setSelection(selectionFromAttention(item, data.evidence))}
-          />
-        </div>
-
-        <GBrainTriggerShelf
-          actions={data.capabilities}
-          runningAction={runningAction}
-          onRequestRun={requestAction}
-        />
-        <EvidenceTimeline
-          evidence={data.evidence}
-          onSelect={(item) => setSelection(selectionFromEvidence(item))}
-        />
-        <EvidenceDrawer selection={selection} onClose={() => setSelection(null)} />
-        <ActionConfirmDialog
-          action={pendingAction}
-          proof={data.systems.gbrain}
-          returnFocusRef={returnFocusRef}
-          onCancel={closePendingAction}
-          onConfirm={confirmAction}
-        />
-        {actionStatus ? <ActionStatusBanner status={actionStatus} /> : null}
-      </div>
-    </PageTransition>
+      ) : (
+        <HealthView data={data} running={actions.running} onRun={actions.request} />
+      )}
+      <ActionConfirmDialog
+        action={actions.pending}
+        context={confirmContext}
+        onCancel={actions.cancel}
+        onConfirm={actions.confirm}
+      />
+    </Page>
   )
 }

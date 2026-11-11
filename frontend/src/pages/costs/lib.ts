@@ -1,7 +1,8 @@
 // Pure helper functions and constants for the Costs page.
 // No hooks, no JSX — safe to import from any context.
 
-import type { TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem } from './types'
+import type { TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem, UsageProvider } from './types'
+import type { UiState } from '../../lib/state'
 
 // ---------------------------------------------------------------------------
 // Formatters
@@ -1028,4 +1029,127 @@ export function hasUsableAgentSplitData(data?: Pick<TokenData, 'agents' | 'perio
     const serviceUsage = (agent.byService || []).some(service => Number(service.tokens || 0) > 0 || Number(service.cost || 0) > 0)
     return summaryTokens > 0 || summaryCost > 0 || serviceUsage
   })
+}
+
+// ---------------------------------------------------------------------------
+// Platforms (usage providers)
+// ---------------------------------------------------------------------------
+
+export interface ProviderRow {
+  id: string
+  label: string
+  /** False when the platform could not be read for the period: its figures are null, not zero. */
+  read: boolean
+  uiState: UiState
+  /** The word beside the state dot: Ready, Stale, Partial or Not read. */
+  stateWord: 'Ready' | 'Stale' | 'Partial' | 'Not read'
+  /** Server verdict for `Freshness`; undefined lets the age decide. Null for unread rows (no age to show). */
+  freshness: 'stale' | null | undefined
+  observedAt: string | null
+  coverage: 'complete' | 'partial' | 'unknown'
+  tokens: number | null
+  apiEquivalentUsd: number | null
+  billedUsd: number | null
+  note: string | null
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * One row per platform the payload lists, in payload order, and nothing else.
+ * A platform is unread when the server says so (`unavailable`, or any state it
+ * does not know) or when it gave no token reading: unread rows carry null
+ * figures even if the payload sent numbers, so no caller can render them as 0.
+ */
+export function providerRows(providers: UsageProvider[] | null | undefined): ProviderRow[] {
+  if (!Array.isArray(providers)) return []
+  return providers.map(provider => {
+    const state = String(provider.state ?? '').toLowerCase()
+    const tokens = finiteOrNull(provider.tokens)
+    const read = (state === 'ready' || state === 'stale') && tokens !== null
+    const coverage = provider.coverage === 'complete' || provider.coverage === 'partial' ? provider.coverage : 'unknown'
+    const stale = read && state === 'stale'
+    const partial = read && coverage !== 'complete'
+    const note = typeof provider.note === 'string' && provider.note.trim() ? provider.note.trim() : null
+    return {
+      id: String(provider.id),
+      label: provider.label || String(provider.id),
+      read,
+      uiState: !read ? 'unavailable' : stale || partial ? 'warning' : 'healthy',
+      stateWord: !read ? 'Not read' : stale ? 'Stale' : partial ? 'Partial' : 'Ready',
+      freshness: !read ? null : stale ? 'stale' : undefined,
+      observedAt: provider.observedAt ?? null,
+      coverage,
+      tokens: read ? tokens : null,
+      apiEquivalentUsd: read ? finiteOrNull(provider.apiEquivalentUsd) : null,
+      billedUsd: read ? finiteOrNull(provider.billedUsd) : null,
+      note,
+    }
+  })
+}
+
+export interface ProviderCoverage {
+  /** Platforms that could not be read: left out of every total. */
+  unread: string[]
+  /** Read, but the platform says its records are incomplete: its figure may be low. */
+  partial: string[]
+  /** Read from a last good scan because the latest one failed. */
+  stale: string[]
+  /** The backend marks the payload partial although no platform explains it. */
+  unexplained: boolean
+  /** True when any total on the page is partial. */
+  hasIssues: boolean
+}
+
+export const NO_PROVIDER_ISSUES: ProviderCoverage = {
+  unread: [],
+  partial: [],
+  stale: [],
+  unexplained: false,
+  hasIssues: false,
+}
+
+export function summarizeProviderCoverage(rows: ProviderRow[], payloadPartial = false): ProviderCoverage {
+  const unread = rows.filter(row => !row.read).map(row => row.label)
+  const stale = rows.filter(row => row.read && row.stateWord === 'Stale').map(row => row.label)
+  const partial = rows.filter(row => row.read && row.coverage !== 'complete' && row.stateWord !== 'Stale').map(row => row.label)
+  const unexplained = payloadPartial && unread.length + stale.length + partial.length === 0
+  return { unread, partial, stale, unexplained, hasIssues: unread.length + stale.length + partial.length > 0 || unexplained }
+}
+
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? ''
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+}
+
+/** The sentences that make a partial total explicit; empty when every platform was read in full. */
+export function providerCoverageSentences(coverage: ProviderCoverage): string[] {
+  if (!coverage.hasIssues) return []
+  const verb = (names: string[], one: string, many: string) => (names.length === 1 ? one : many)
+  const sentences = ['This total is partial.']
+  if (coverage.unread.length) {
+    sentences.push(`${joinNames(coverage.unread)} could not be read and ${verb(coverage.unread, 'is', 'are')} not counted.`)
+  }
+  if (coverage.partial.length) {
+    sentences.push(`${joinNames(coverage.partial)} ${verb(coverage.partial, 'has', 'have')} incomplete records, so ${verb(coverage.partial, 'its figure', 'their figures')} may be low.`)
+  }
+  if (coverage.stale.length) {
+    sentences.push(`${joinNames(coverage.stale)} ${verb(coverage.stale, 'shows', 'show')} the last good reading.`)
+  }
+  if (coverage.unexplained) sentences.push('The backend marks some usage as missing.')
+  return sentences
+}
+
+/**
+ * The period's token total from the ledger summary. A `periodTokens` the server
+ * sent as null means no platform could be read: that is "not read" (null), and
+ * must not fall through to a month or lifetime figure. Only a payload that
+ * predates `periodTokens` falls back to the older fields.
+ */
+export function ledgerTokenReading(summary: Pick<NonNullable<TokenData['summary']>, 'periodTokens' | 'thisMonthTokens' | 'totalTokens'> | null | undefined): number | null {
+  if (!summary) return null
+  if (summary.periodTokens !== undefined) return finiteOrNull(summary.periodTokens)
+  return finiteOrNull(summary.thisMonthTokens) ?? finiteOrNull(summary.totalTokens)
 }

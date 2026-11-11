@@ -1,6 +1,8 @@
+import type { ReactNode } from 'react'
 import { Notice, Stat, StatRow } from '../../components/ui'
 import type { UiState } from '../../lib/state'
-import { calculateTrend, formatCompactTokenValue, formatCurrency, formatTokens } from './lib'
+import { calculateTrend, formatCompactTokenValue, formatCurrency, formatTokens, NO_PROVIDER_ISSUES, providerCoverageSentences } from './lib'
+import type { ProviderCoverage } from './lib'
 import styles from './UsageSummary.module.css'
 
 type Trend = ReturnType<typeof calculateTrend>
@@ -22,11 +24,16 @@ export interface UsageSummaryProps {
   /** Billed / tracked spend for the period; null when billing coverage is unavailable. */
   trackedSpend: number | null
   trackedNote: string | null
-  periodTokens: number
+  /** Null when no platform could be read: shown as "not read", never 0. */
+  periodTokens: number | null
   reliability: string
   /** One sentence per source problem; empty when all sources were read. */
   sourceIssues: string[]
   sourceIssueTone: UiState | 'info'
+  /** Which platforms are unread, partial or stale; makes the estimate notice say the total is partial. */
+  platformCoverage?: ProviderCoverage
+  /** Rendered directly under the headline strip (the Platforms panel). */
+  children?: ReactNode
 }
 
 function trendText(trend: Trend) {
@@ -36,7 +43,18 @@ function trendText(trend: Trend) {
   return `${trend.direction === 'up' ? 'Up' : 'Down'} ${trend.percentage.toFixed(trend.percentage >= 100 ? 0 : 1)}%`
 }
 
-function estimateNotice(reliability: string): { tone: UiState | 'info'; title: string; body: string } {
+function estimateNotice(reliability: string, coverage: ProviderCoverage): { tone: UiState | 'info'; title: string; body: string } {
+  const base = baseEstimateNotice(reliability)
+  if (!coverage.hasIssues) return base
+  const partialEstimate = reliability === 'estimated' || reliability === 'partial'
+  return {
+    tone: 'warning',
+    title: partialEstimate ? 'Partial estimate, not an invoice' : base.title,
+    body: `${providerCoverageSentences(coverage).join(' ')} ${base.body}`,
+  }
+}
+
+function baseEstimateNotice(reliability: string): { tone: UiState | 'info'; title: string; body: string } {
   const note = 'API equivalent is what this usage would cost at public list prices. It is an estimate, not an invoice; tracked spend is what billing data shows.'
   switch (reliability) {
     case 'partial':
@@ -84,13 +102,15 @@ export default function UsageSummary({
   reliability,
   sourceIssues,
   sourceIssueTone,
+  platformCoverage = NO_PROVIDER_ISSUES,
+  children,
 }: UsageSummaryProps) {
   const isEstimate = mode === 'api-equivalent'
   const trendLine = trendText(trend)
   const headlineHint = previousPeriodCost === null
     ? 'No previous period to compare'
     : `${trendLine ? `${trendLine} ` : ''}${compareLabel} (${formatCurrency(previousPeriodCost)})`
-  const notice = isEstimate ? estimateNotice(reliability) : null
+  const notice = isEstimate ? estimateNotice(reliability, platformCoverage) : null
 
   return (
     <>
@@ -123,11 +143,15 @@ export default function UsageSummary({
         )}
         <Stat
           label="Tokens"
-          value={formatCompactTokenValue(periodTokens)}
-          hint={`${formatTokens(periodTokens)} in this period`}
+          value={periodTokens === null ? null : formatCompactTokenValue(periodTokens)}
+          hint={periodTokens === null
+            ? 'No platform could be read'
+            : `${formatTokens(periodTokens)} in this period${platformCoverage.hasIssues ? ', partial' : ''}`}
         />
       </StatRow>
       </div>
+
+      {children}
 
       {notice && (
         <Notice tone={notice.tone} title={notice.title}>

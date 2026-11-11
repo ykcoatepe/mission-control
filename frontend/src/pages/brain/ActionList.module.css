@@ -1,0 +1,28 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-3);
+}
+
+.item > button {
+  flex: 0 0 auto;
+  min-width: 168px;
+  justify-content: center;
+}
+
+.text {
+  flex: 1 1 200px;
+  min-width: 0;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}

@@ -1,0 +1,30 @@
+.platform {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+.state {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-3);
+  white-space: nowrap;
+}
+
+.note {
+  max-width: 560px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.pad {
+  padding: var(--sp-4);
+}
+
+.footnote {
+  margin: 0;
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}

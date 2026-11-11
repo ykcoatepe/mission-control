@@ -168,7 +168,8 @@ test('synoptic whitelists per-reader config, omits unobservable counts, propagat
   assert.equal(service.synopticSnapshot().data, null);
   await service.refresh(); let syn = service.synopticSnapshot();
   assert.equal(syn.data.core.pages.value, 12); assert.equal(syn.data.readers[0].integration.state, 'healthy');
-  assert.equal(syn.data.readers[0].connection.state, 'unavailable');
+  assert.equal(Object.hasOwn(syn.data.readers[0], 'connection'), false);
+  assert.equal(syn.data.readers[0].state, 'healthy');
   assert.doesNotMatch(JSON.stringify(syn), /private|callCount|lastCallAt/);
   failed = true; await service.refresh(); syn = service.synopticSnapshot();
   assert.equal(syn.data.core.quality.value, 100); assert.equal(syn.data.core.quality.state, 'unavailable');
@@ -181,7 +182,7 @@ test('reader discovery returns metadata only and cannot fabricate call activity 
   const readers = readReaders({ homeDir: home });
   assert.equal(readers.find((r) => r.id === 'codex').configured, true);
   assert.equal(readers.find((r) => r.id === 'hermes').observed, false);
-  assert.doesNotMatch(JSON.stringify(readers), /private|token|callCount|lastCallAt/);
+  assert.doesNotMatch(JSON.stringify(readers), /private|token|callCount|lastCallAt|connection/);
   fs.rmSync(home, { recursive: true });
 });
 
@@ -270,4 +271,51 @@ test('synoptic aggregates source warnings and propagates explicit critical quali
   let s = buildSynoptic(input); assert.equal(s.sourcesState, 'warning'); assert.equal(s.state, 'warning');
   input.live.health.status = 'critical'; s = buildSynoptic(input);
   assert.equal(s.core.quality.state, 'critical'); assert.equal(s.core.state, 'critical'); assert.equal(s.state, 'critical');
+});
+
+function readerSynopticFixture(readers, runtimeMeta = {}) {
+  const now = Date.parse('2026-11-11T08:00:00.000Z');
+  const values = {
+    health: { score: 100, components: {} }, stats: { pages: 12, chunks: 34, embedded: 34 }, version: { version: '1.2' },
+    sources: { sources: [{ id: 'project', syncEnabled: true, lastSyncAt: new Date(now).toISOString() }] },
+    jobs: { waiting: 0, active: 0, stalled: 0 }, runtime: { readers },
+  };
+  return buildSynoptic({ now: () => now, live: { health: { status: 'healthy' } }, probeSnapshot: (name) => ({
+    data: values[name], meta: { ok: true, stale: false, error: null, observedAt: new Date(now).toISOString(), ageMs: 0,
+      ...(name === 'runtime' ? runtimeMeta : {}) },
+  }) });
+}
+
+test('unobservable connection telemetry never degrades configured readers or the synoptic', () => {
+  const readers = ['hermes', 'codex', 'claude-code', 'openclaw'].map((id) => ({
+    id, label: id, configured: true, observed: true, evidence: 'local configuration',
+  }));
+  readers.push({ id: 'disabled', label: 'Disabled', configured: false, observed: true, evidence: 'local configuration' });
+  const s = readerSynopticFixture(readers);
+  assert.equal(s.state, 'healthy'); assert.equal(s.readersState, 'healthy');
+  assert.equal(s.readersNote, 'connection telemetry is not observable locally');
+  for (const reader of s.readers) {
+    assert.equal(reader.state, reader.integration.configured ? 'healthy' : 'inactive');
+    assert.equal(reader.state, reader.integration.state);
+    assert.equal(Object.hasOwn(reader, 'connection'), false);
+    const edge = s.edges.find((e) => e.from === reader.id);
+    assert.equal(edge.state, reader.state); assert.equal(edge.label, 'configured');
+    assert.equal(Object.hasOwn(edge, 'measurement'), false); assert.equal(Object.hasOwn(edge, 'unit'), false);
+  }
+  const inactive = readerSynopticFixture([readers.at(-1)]);
+  assert.equal(inactive.readersState, 'inactive'); assert.equal(inactive.state, 'healthy');
+});
+
+test('failed integration readings remain unavailable, including cached configured readers', () => {
+  for (const [reader, meta] of [
+    [{ id: 'codex', label: 'Codex', observed: false, configured: null, evidence: 'configuration read failed' }, {}],
+    [{ id: 'codex', label: 'Codex', observed: true, configured: true, evidence: 'cached configuration' },
+      { ok: false, stale: true, error: { code: 'gbrain_read_failed', message: 'Read failed' } }],
+  ]) {
+    const s = readerSynopticFixture([reader], meta);
+    assert.equal(s.readers[0].state, 'unavailable'); assert.equal(s.readers[0].integration.state, 'unavailable');
+    assert.equal(s.readersState, 'unavailable'); assert.equal(s.state, 'unavailable');
+    assert.equal(s.edges.find((e) => e.from === 'codex').state, 'unavailable');
+    assert.equal(Object.hasOwn(s.readers[0], 'connection'), false);
+  }
 });

@@ -52,12 +52,16 @@ import {
   isModelColumnKey,
   isModelMetricKey,
   modelColorKey,
+  providerRows,
+  summarizeProviderCoverage,
+  ledgerTokenReading,
 } from './costs/lib'
 import type { DayUsageEntry } from './costs/lib'
 import { nextStaleRetry } from './costs/staleRetry'
 import type { CostsTokenData, StaleRetryState } from './costs/staleRetry'
 import PeriodControls from './costs/PeriodControls'
 import UsageSummary from './costs/UsageSummary'
+import ProvidersPanel from './costs/ProvidersPanel'
 import BudgetPanel from './costs/BudgetPanel'
 import AwsCreditsPanel from './costs/AwsCreditsPanel'
 import DailySpendSection from './costs/DailySpendSection'
@@ -631,6 +635,13 @@ export default function Costs() {
         ? (tokenData?.summary?.periodUsd ?? tokenData?.summary?.thisMonthUsd) || 0
         : 0
   const trackedValueAvailable = hasAwsData || ledgerActive
+  // The tracked-spend reading itself: null (not read) when billing gave no
+  // figure, so the strip shows "—" instead of a made-up $0.00.
+  const trackedSpendReading: number | null = hasAwsData
+    ? awsCosts?.total ?? null
+    : ledgerActive
+      ? tokenData?.summary?.periodUsd ?? tokenData?.summary?.thisMonthUsd ?? null
+      : null
 
   const apiEquivalentReliability = ledgerActive
     ? tokenData?.apiEquivalentReliability || 'unavailable'
@@ -705,7 +716,8 @@ export default function Costs() {
     ? 'partial'
     : apiEquivalentReliability
   const chartDayCount = chartData.length || apiEquivalentDays.length
-  const periodTokens = ledgerActive ? totalTokens : codexbarPeriodTokens
+  // Null = no platform could be read; the headline shows "not read", never 0.
+  const periodTokens = ledgerActive ? ledgerTokenReading(tokenData?.summary) : codexbarPeriodTokens
   const monthlyBudgetBase = budgetSpendValue({
     hasAwsData,
     awsTotal: awsCosts?.total ?? null,
@@ -828,6 +840,17 @@ export default function Costs() {
   })
   const totalAgentTokens = agentSplit.reduce((sum, agent) => sum + agent.tokens, 0)
 
+  // Platforms: exactly the providers the payload lists. A costs payload for a
+  // different period/month is pending, so its providers are not shown either.
+  const platformRows = useMemo(
+    () => (costsPeriodPending ? [] : providerRows(tokenData?.providers)),
+    [costsPeriodPending, tokenData?.providers],
+  )
+  const platformCoverage = useMemo(
+    () => summarizeProviderCoverage(platformRows, !costsPeriodPending && tokenData?.partial === true),
+    [costsPeriodPending, platformRows, tokenData?.partial],
+  )
+
   // One note for every source that is missing, old or still loading.
   const unavailableSources = ([
     ['OpenClaw', tokenData?.meta?.openclawStatus],
@@ -835,7 +858,9 @@ export default function Costs() {
     ['Claude Code', tokenData?.meta?.claudeCodeStatus],
   ] as const).filter(([, status]) => status === 'unavailable').map(([name]) => name)
   const sourceIssues: string[] = []
-  if (unavailableSources.length > 0) {
+  // The Platforms table and the estimate notice already name unread platforms;
+  // the older per-source status sentence is only the fallback without providers.
+  if (platformRows.length === 0 && unavailableSources.length > 0) {
     sourceIssues.push(`${unavailableSources.join(', ')} could not be read, so totals may be low.`)
   }
   if (tokenData?.meta?.stale) {
@@ -897,13 +922,16 @@ export default function Costs() {
           dailyPace={metricDailyAverage}
           projection={metricProjectedMonthly}
           completePeriod={viewingPastMonth}
-          trackedSpend={trackedValueAvailable ? currentPeriodCost : null}
+          trackedSpend={trackedValueAvailable ? trackedSpendReading : null}
           trackedNote={trackedNote}
           periodTokens={periodTokens}
           reliability={apiEquivalentDisplayReliability}
           sourceIssues={sourceIssues}
           sourceIssueTone={sourceIssueTone}
-        />
+          platformCoverage={platformCoverage}
+        >
+          <ProvidersPanel periodName={periodName} rows={platformRows} pending={costsPeriodPending} />
+        </UsageSummary>
 
         <div className={costsStyles.split}>
           <div ref={dailySpendRef} className={costsStyles.main}>
@@ -955,9 +983,9 @@ export default function Costs() {
           setTab={setDriverTab}
           models={allTokenBreakdown}
           modelApiEquivalentTotal={apiEquivalentBreakdownTotal}
-          sources={agentSplit as AgentSplitItem[]}
-          sourcesPending={agentSplitPending}
-          totalSourceTokens={totalAgentTokens}
+          platforms={agentSplit as AgentSplitItem[]}
+          platformsPending={agentSplitPending}
+          totalPlatformTokens={totalAgentTokens}
           sessions={topSessions}
           sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live sessions only: not scoped to ${anchoredMonthLabel}.` : null}
           awsServices={awsServices}

@@ -20,7 +20,7 @@ import {
 import type { AgentUsageData, AggregatedBreakdownItem } from './types'
 import styles from './CostDriversSection.module.css'
 
-export type DriverTab = 'aws' | 'models' | 'sources' | 'sessions'
+export type DriverTab = 'aws' | 'models' | 'platforms' | 'sessions'
 
 export interface AgentSplitItem extends AgentUsageData {
   tokens: number
@@ -56,9 +56,10 @@ export interface CostDriversSectionProps {
   models: AggregatedBreakdownItem[]
   /** Sum of API-equivalent cost across models that have one. */
   modelApiEquivalentTotal: number
-  sources: AgentSplitItem[]
-  sourcesPending: boolean
-  totalSourceTokens: number
+  /** Per-platform split of the period: share, top model and billing mix. Tokens and cost sit in the Platforms panel. */
+  platforms: AgentSplitItem[]
+  platformsPending: boolean
+  totalPlatformTokens: number
   sessions: TopSession[]
   /** Set when the period is a past month: sessions are live, not that month's. */
   sessionsLiveOnlyNotice: string | null
@@ -132,18 +133,18 @@ export default function CostDriversSection({
   setTab,
   models,
   modelApiEquivalentTotal,
-  sources,
-  sourcesPending,
-  totalSourceTokens,
+  platforms,
+  platformsPending,
+  totalPlatformTokens,
   sessions,
   sessionsLiveOnlyNotice,
   awsServices,
 }: CostDriversSectionProps) {
-  const hasSources = sourcesPending || sources.length > 0
+  const hasPlatforms = platformsPending || platforms.length > 0
   const tabs: Array<{ id: DriverTab; label: string }> = [
     ...(awsServices ? [{ id: 'aws' as const, label: 'By AWS service' }] : []),
     { id: 'models', label: 'By model' },
-    ...(hasSources ? [{ id: 'sources' as const, label: 'By source' }] : []),
+    ...(hasPlatforms ? [{ id: 'platforms' as const, label: 'By platform' }] : []),
     { id: 'sessions', label: 'Live sessions' },
   ]
   const fallbackTab: DriverTab = awsServices ? 'aws' : 'models'
@@ -188,10 +189,12 @@ export default function CostDriversSection({
     { key: 'tracked', header: 'Tracked spend', align: 'end', mono: true, cell: item => formatCurrency(item.cost) },
   ]
 
-  const sourceColumns: DataTableColumn<AgentSplitItem>[] = [
+  // Tokens and API-equivalent cost per platform are in the Platforms panel
+  // above; this view only adds what that table does not show.
+  const platformColumns: DataTableColumn<AgentSplitItem>[] = [
     {
-      key: 'source',
-      header: 'Source',
+      key: 'platform',
+      header: 'Platform',
       cell: agent => {
         const details = SOURCE_SCOPES[agent.key]
         return (
@@ -206,13 +209,6 @@ export default function CostDriversSection({
       },
     },
     {
-      key: 'api',
-      header: 'API equivalent',
-      align: 'end',
-      mono: true,
-      cell: agent => apiEquivalentText(agent.apiEquivalentCost, agent.apiEquivalentAvailable),
-    },
-    {
       key: 'share',
       header: 'Share of tokens',
       mobileLabel: 'Share',
@@ -222,11 +218,10 @@ export default function CostDriversSection({
       cell: agent => (
         <ShareCell
           label={agent.label}
-          pct={totalSourceTokens > 0 ? (agent.tokens / totalSourceTokens) * 100 : null}
+          pct={totalPlatformTokens > 0 ? (agent.tokens / totalPlatformTokens) * 100 : null}
         />
       ),
     },
-    { key: 'tokens', header: 'Tokens', align: 'end', mono: true, cell: agent => <TokenCell tokens={agent.tokens} /> },
     {
       key: 'model',
       header: 'Top model',
@@ -281,19 +276,19 @@ export default function CostDriversSection({
         empty={<EmptyState title="No AWS services billed" description="Live billing returned no services for this period." />}
       />
     )
-  } else if (active === 'sources') {
-    content = sourcesPending ? (
+  } else if (active === 'platforms') {
+    content = platformsPending ? (
       <div className={styles.pad}>
-        <Skeleton variant="block" label="Loading usage by source" />
+        <Skeleton variant="block" label="Loading usage by platform" />
       </div>
     ) : (
       <DataTable
-        caption="Usage by source"
-        columns={sourceColumns}
-        rows={sources}
+        caption="Usage by platform"
+        columns={platformColumns}
+        rows={platforms}
         rowKey={agent => agent.key}
         maxHeight="520px"
-        empty={<EmptyState title="No source data yet" description="Usage by source appears once the usage ledger has been read." />}
+        empty={<EmptyState title="No platform data yet" description="The split by platform appears once the usage ledger has been read." />}
       />
     )
   } else if (active === 'sessions') {

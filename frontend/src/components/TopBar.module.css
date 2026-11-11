@@ -142,6 +142,23 @@
   white-space: nowrap;
 }
 
+.stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-right: var(--sp-1);
+  color: var(--state-warning);
+  font-weight: var(--fw-medium);
+}
+
+.staleDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--r-full);
+  background: var(--state-warning);
+}
+
 .spinning svg {
   animation: topbar-spin 800ms linear infinite;
 }
@@ -155,6 +172,7 @@
 @media (max-width: 1199px) {
   .annName,
   .annWord,
+  .staleText,
   .ageText {
     position: absolute;
     width: 1px;

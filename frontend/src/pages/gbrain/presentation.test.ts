@@ -1,42 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { deriveOperationalState, deriveQueueEvidenceStatus, timelineDeltaLines } from './presentation'
+import { deriveQueueEvidenceStatus, timelineDeltaLines } from './presentation'
 
 describe('GBrain presentation model', () => {
-  it('reports one degraded aggregate state while keeping proof trust independent', () => {
-    expect(deriveOperationalState({
-      hasData: true,
-      loading: false,
-      trustStatus: 'warning',
-      incidentStatus: 'warning',
-      caveatCount: 1,
-    })).toEqual({ status: 'warning', label: 'Degraded' })
-
-    expect(deriveOperationalState({
-      hasData: true,
-      loading: false,
-      trustStatus: 'healthy',
-      incidentStatus: 'warning',
-      incidentIsCurrent: false,
-      caveatCount: 0,
-    })).toEqual({ status: 'healthy', label: 'Operational' })
-  })
-
-  it('keeps loading and missing proof distinct from a healthy state', () => {
-    expect(deriveOperationalState({
-      hasData: false,
-      loading: true,
-      trustStatus: 'inactive',
-      caveatCount: 0,
-    })).toEqual({ status: 'inactive', label: 'Checking live proof' })
-
-    expect(deriveOperationalState({
-      hasData: false,
-      loading: false,
-      trustStatus: 'inactive',
-      caveatCount: 0,
-    })).toEqual({ status: 'inactive', label: 'No live proof' })
-  })
-
   it('describes only material changes between timeline snapshots', () => {
     const previous = {
       trust: { status: 'healthy' as const, score: 100 },
@@ -50,13 +15,13 @@ describe('GBrain presentation model', () => {
     }
 
     expect(timelineDeltaLines(current, previous)).toEqual([
-      'Proof state Verified → Caveat',
-      'Caveats 0 → 1',
+      'State Normal → Warning',
+      'Notes 0 → 1',
     ])
     expect(timelineDeltaLines(current, current)).toEqual([])
   })
 
-  it('names compiled truth and source sync changes without conflating them', () => {
+  it('names link extraction and source sync changes without conflating them', () => {
     const previous = {
       trust: { status: 'healthy' as const, score: 100 },
       metrics: { embeddingsDetail: '0 missing', missingEmbeddings: 0, stalePages: 0, caveats: '0' },
@@ -69,15 +34,15 @@ describe('GBrain presentation model', () => {
     }
 
     expect(timelineDeltaLines(current, previous)).toEqual([
-      'Proof state Verified → Caveat',
+      'State Normal → Warning',
       'Missing embeddings 0 → 3',
-      'Compiled truth Current → 1 stale page',
+      'Link extraction Current → 1 stale page',
       'Source sync Fresh → Stale',
-      'Caveats 0 → 1',
+      'Notes 0 → 1',
     ])
   })
 
-  it('shows catching-up pages as a compiled truth change without calling them stale', () => {
+  it('shows catching-up pages as a link extraction change without calling them stale', () => {
     const base = {
       trust: { status: 'healthy' as const, score: 100 },
       sourceFreshness: { status: 'healthy' as const },
@@ -86,8 +51,8 @@ describe('GBrain presentation model', () => {
     const catchingUp = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 0, caveats: '0' } }
     const overdue = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 3, caveats: '0' } }
 
-    expect(timelineDeltaLines(catchingUp, clean)).toEqual(['Compiled truth Current → Current · 3 catching up'])
-    expect(timelineDeltaLines(overdue, catchingUp)).toEqual(['Compiled truth Current · 3 catching up → 3 stale pages'])
+    expect(timelineDeltaLines(catchingUp, clean)).toEqual(['Link extraction Current → Current · 3 catching up'])
+    expect(timelineDeltaLines(overdue, catchingUp)).toEqual(['Link extraction Current · 3 catching up → 3 stale pages'])
   })
 
   it('labels missing embeddings as raw count, catching up inside tolerance and with the oldest age when overdue', () => {

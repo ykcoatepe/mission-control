@@ -10,11 +10,15 @@ export interface SourceGroup extends Evidence { id: string; label: string; items
 export interface Reader extends Evidence {
   id: string; label: string;
   integration: Evidence & { configured: boolean | null; evidence: string };
-  connection: Evidence;
 }
-export interface Edge extends Evidence {
+export interface MeasuredEdge extends Evidence {
   from: string; to: string; label: string; unit: string; measurement: Measurement;
 }
+/** Configuration evidence only; connection/call telemetry is not observed. */
+export interface ReaderIntegrationEdge extends Evidence {
+  from: string; to: string; label: 'configured'; unit?: never; measurement?: never;
+}
+export type Edge = MeasuredEdge | ReaderIntegrationEdge;
 export interface GBrainSynoptic {
   schemaVersion: '1'; state: State;
   core: Evidence & {
@@ -23,7 +27,8 @@ export interface GBrainSynoptic {
   };
   sources: SourceGroup[]; sourcesState: State;
   queue: Evidence & { waiting: Measurement; active: Measurement; stalled: Measurement };
-  readers: Reader[]; readersState: State; edges: Edge[];
+  readers: Reader[]; readersState: State;
+  readersNote: 'connection telemetry is not observable locally'; edges: Edge[];
 }
 export interface Meta {
   ok: boolean; stale: boolean; observedAt: string | null; ageMs: number | null;
