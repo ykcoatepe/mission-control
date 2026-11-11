@@ -1,14 +1,14 @@
 const os = require('os');
 const express = require('express');
 const { httpError } = require('../core/http');
+const { homeRelativePath } = require('../core/scrub');
 
 // Task workspace paths are shown home-relative (no absolute home path in a
 // response). Task text (titles, bodies) is the operator's own content and is
 // returned as written.
 function homeRelativeBoard(board, homeDir) {
-  const home = String(homeDir || '').replace(/\/+$/, '');
-  if (!home || !board?.columns || typeof board.columns !== 'object') return board;
-  const shorten = (value) => (typeof value === 'string' && (value === home || value.startsWith(`${home}/`)) ? `~${value.slice(home.length)}` : value);
+  if (!board?.columns || typeof board.columns !== 'object') return board;
+  const shorten = (value) => homeRelativePath(value, { homeDir });
   const columns = Object.fromEntries(Object.entries(board.columns).map(([status, tasks]) => [status,
     Array.isArray(tasks) ? tasks.map((task) => (task && typeof task === 'object' && 'workspace_path' in task
       ? { ...task, workspace_path: shorten(task.workspace_path) } : task)) : tasks]));

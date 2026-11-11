@@ -1,27 +1,19 @@
 const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
-const STATE_RANK = {
-  critical: 5,
-  warning: 4,
-  unavailable: 3,
-  inactive: 2,
-  healthy: 1,
-};
+const { STATE_RANK, worstState, stateRank } = require('../core/state');
+const { scrubText } = require('../core/scrub');
 const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
+// The worst system state by the one ordering (server/core/state.js); with no
+// system it is healthy, as before.
 function deriveOverallStatus(systems) {
-  return Object.values(systems).reduce((worst, system) => (
-    STATE_RANK[system.state] > STATE_RANK[worst] ? system.state : worst
-  ), 'healthy');
+  return worstState(Object.values(systems).map((system) => system.state), { empty: 'healthy' });
 }
 
 function cleanText(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
-  return value
-    .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]+\b/g, '[redacted]')
-    .replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
+  return scrubText(value);
 }
 
 function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
@@ -774,7 +766,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
   const attention = Object.values(adapted)
     .flatMap((value) => value.attention)
     .sort((a, b) => (
-      STATE_RANK[b.severity] - STATE_RANK[a.severity] || a.id.localeCompare(b.id)
+      stateRank(b.severity) - stateRank(a.severity) || a.id.localeCompare(b.id)
     ));
   const state = deriveOverallStatus(systems);
   return {

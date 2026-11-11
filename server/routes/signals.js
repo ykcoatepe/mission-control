@@ -16,7 +16,8 @@
 
 const express = require('express');
 const { asyncHandler, sendEnvelope } = require('../core/http');
-const { STATE_RANK, composeMeta } = require('../services/operationsOverview');
+const { composeMeta } = require('../services/operationsOverview');
+const { worstState } = require('../core/state');
 const { loopsView } = require('../sources/mloop');
 
 const LOOP_SEVERITY = { error: 'critical', warning: 'warning' };
@@ -51,7 +52,7 @@ function attentionSignal(overview, loops) {
     if (LOOP_SEVERITY[item.severity]) severities.push(LOOP_SEVERITY[item.severity]);
   }
   if (!overview && !loops) return null;
-  const worst = severities.reduce((w, s) => (!w || (STATE_RANK[s] || 0) > (STATE_RANK[w] || 0) ? s : w), null);
+  const worst = worstState(severities, { empty: null });
   return { count: severities.length, worst };
 }
 

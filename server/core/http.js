@@ -12,6 +12,7 @@
 //   listRoutes       the mounted route table (for tests and diagnostics)
 
 const crypto = require('crypto');
+const { scrubText } = require('./scrub');
 
 // The one canonicalization of a request target. Used by the guard, the audit,
 // the request log and apiBoundary, so they can never disagree.
@@ -137,13 +138,10 @@ function isAuthored(error) {
   return Boolean(error && error[AUTHORED] === true);
 }
 
-// Defence in depth for authored messages: no absolute path under a home or
-// temp directory, no bearer value, ever leaves in a response.
+// Defence in depth for authored messages: the one sanitizer (core/scrub.js)
+// removes credentials and turns home paths into ~/..., leaving URLs alone.
 function safeMessage(value) {
-  return String(value).split('\n')[0]
-    .replace(/(?:[A-Za-z]:)?(?:\/(?:Users|home|private|var|tmp|root|Volumes)\/)[^\s'"`,;)]*/g, '[path]')
-    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-    .slice(0, 300);
+  return scrubText(String(value).split('\n')[0]).slice(0, 300);
 }
 
 function requestContext({ logger = console, now = Date.now, idFactory = () => crypto.randomUUID() } = {}) {

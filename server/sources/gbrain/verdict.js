@@ -1,13 +1,12 @@
 'use strict';
-const { worstState } = require('./state');
-const STATES = ['healthy', 'warning', 'critical', 'unavailable', 'inactive'];
+const { worstState, isState } = require('../../core/state');
 const caveatStates = new Set(['warning', 'critical', 'unavailable']);
 function verdictCaveats(verdict) {
   return verdict.reasons.filter((r) => caveatStates.has(r.state)).map((r) => r.text);
 }
 function isGBrainVerdict(value) {
-  return value && STATES.includes(value.state) && Array.isArray(value.reasons)
-    && value.reasons.every((r) => r && typeof r.elementId === 'string' && STATES.includes(r.state)
+  return value && isState(value.state) && Array.isArray(value.reasons)
+    && value.reasons.every((r) => r && typeof r.elementId === 'string' && isState(r.state)
       && typeof r.text === 'string' && r.text.length > 0);
 }
 /** The sole aggregate verdict. Every HTTP consumer transports this result unchanged. */

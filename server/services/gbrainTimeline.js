@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { stateRank } = require('../core/state');
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_LIMIT = 50;
@@ -263,7 +264,7 @@ function computeTrustDiff(current, previous) {
 }
 
 function severityRank(status) {
-  return { inactive: 0, healthy: 1, warning: 2, critical: 3 }[normalizeStatus(status)] || 0;
+  return stateRank(normalizeStatus(status), 'inactive');
 }
 
 function parseTimelineCount(value, pattern) {

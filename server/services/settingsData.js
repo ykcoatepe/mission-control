@@ -3,6 +3,7 @@ const path = require('path');
 const os = require('os');
 const { redact, publicMcView, validateMcConfig, PUBLIC_MODULE_IDS } = require('../core/config');
 const { httpError } = require('../core/http');
+const { homeRelativePath } = require('../core/scrub');
 
 function normalizeMonthlyBudget(monthly) {
   if (monthly === null) return null;
@@ -133,12 +134,9 @@ function createSettingsService({
   gatewayReachability = null,
 }) {
   const fs = fsImpl;
-  // Display paths are home-relative: no absolute home path in a response.
-  const homeRelative = (value) => {
-    if (typeof value !== 'string' || !value) return value || null;
-    const home = String(homeDir || '').replace(/\/+$/, '');
-    return home && (value === home || value.startsWith(`${home}/`)) ? `~${value.slice(home.length)}` : value;
-  };
+  // Display paths are home-relative (core/scrub.js): no absolute home path
+  // in a response, whichever alias of home the config uses.
+  const homeRelative = (value) => (value ? homeRelativePath(value, { homeDir }) : null);
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
 
   function readCurrentMcConfig() {
