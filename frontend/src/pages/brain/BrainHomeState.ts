@@ -1,6 +1,6 @@
 import { canStartGBrainAction, resolveGBrainAction } from '../gbrain/actionPolicy'
 import type { GBrainActionResult } from '../gbrain/types'
-import type { ActionStatus, OperationCapability } from './types'
+import type { ActionStatus, OperationCapability, TimelineReading } from './types'
 
 export type ActionStartMode = 'direct' | 'confirmed'
 
@@ -65,4 +65,24 @@ export function resolveCurrentConfirmedW1(
   requestedActionId: string,
 ) {
   return resolveGBrainAction(capabilities, requestedActionId, 'confirmed', null)
+}
+
+export type TimelineState = 'ready' | 'stale' | 'loading' | 'unavailable'
+
+/**
+ * The readings ledger as the page may show it. The server answers an unreadable
+ * ledger with 503 (and a payload with `entries: null` when it was never read):
+ * both are "unavailable", never an empty list. A ledger that was read and then
+ * failed to refresh is shown, marked stale.
+ */
+export function resolveTimeline(input: {
+  data: TimelineReading | null
+  failed: boolean
+  loading: boolean
+}): { reading: TimelineReading | null; state: TimelineState } {
+  const { data, failed, loading } = input
+  if (data && data.entries !== null) {
+    return { reading: data, state: data.meta?.stale || failed ? 'stale' : 'ready' }
+  }
+  return { reading: null, state: loading && !failed ? 'loading' : 'unavailable' }
 }

@@ -1,10 +1,21 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { ApiError } from '../../lib/hooks'
+import { resolvePendingActionResult } from '../brain/BrainHomeState'
 import { postGBrainAction } from './api'
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+}
+
+function lastRequest(mock: ReturnType<typeof vi.fn>) {
+  const [url, init] = mock.mock.calls[0] as [string, RequestInit]
+  return { url, init, headers: new Headers(init.headers) }
+}
 
 describe('postGBrainAction', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('posts only the requested action and returns the result body', async () => {
+  it('posts only the requested action, with the write header, and returns the result body', async () => {
     const payload = {
       ok: true,
       action: 'doctor-fast',
@@ -12,18 +23,19 @@ describe('postGBrainAction', () => {
       checkedAt: '2026-07-10T12:00:00.000Z',
       refreshAfter: true,
     }
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => payload })
+    const fetchMock = vi.fn().mockResolvedValue(json(payload))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(postGBrainAction('doctor-fast')).resolves.toEqual(payload)
-    expect(fetchMock).toHaveBeenCalledWith('/api/gbrain/actions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'doctor-fast' }),
-    })
+    const { url, init, headers } = lastRequest(fetchMock)
+    expect(url).toBe('/api/gbrain/actions')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe(JSON.stringify({ action: 'doctor-fast' }))
+    expect(headers.get('x-mc-request')).toBe('1')
+    expect(headers.get('content-type')).toBe('application/json')
   })
 
-  it('retains useful non-2xx JSON payload on the thrown error', async () => {
+  it('keeps the action result on the thrown error and uses its message', async () => {
     const payload = {
       ok: false,
       action: 'sync-sources',
@@ -31,11 +43,28 @@ describe('postGBrainAction', () => {
       error: 'Another GBrain action is already running',
       checkedAt: '2026-07-10T12:00:00.000Z',
     }
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, json: async () => payload }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload, 409)))
 
     const error = await postGBrainAction('sync-sources').catch((reason: unknown) => reason)
-    expect(error).toBeInstanceOf(Error)
-    expect(error).toMatchObject({ message: payload.error, payload })
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 409, message: payload.error, payload })
+  })
+
+  it('reads the central error contract when the lane is quarantined (503)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(json({ error: { code: 'gbrain_action_quarantined', message: 'Action lane is quarantined' } }, 503)),
+    )
+    const error = await postGBrainAction('doctor-fast').catch((reason: unknown) => reason)
+    expect(error).toMatchObject({ status: 503, code: 'gbrain_action_quarantined', message: 'Action lane is quarantined' })
+    expect(resolvePendingActionResult(error)).toBeNull()
+  })
+
+  it('a timed-out action that is still cleaning up stays recognisable as pending', async () => {
+    const payload = { ok: false, status: 'timed-out', pending: true, error: 'GBrain action timed out.', checkedAt: '2026-07-10T12:00:00.000Z' }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload, 504)))
+    const error = await postGBrainAction('sync-sources', true).catch((reason: unknown) => reason)
+    expect(resolvePendingActionResult(error)).toMatchObject({ pending: true })
   })
 
   it('sends explicit confirmation for confirmed actions', async () => {
@@ -45,14 +74,10 @@ describe('postGBrainAction', () => {
       status: 'completed',
       checkedAt: '2026-07-10T12:00:00.000Z',
     }
-    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => payload })
+    const fetchMock = vi.fn().mockResolvedValue(json(payload))
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(postGBrainAction('sync-sources', true)).resolves.toEqual(payload)
-    expect(fetchMock).toHaveBeenCalledWith('/api/gbrain/actions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'sync-sources', confirmed: true }),
-    })
+    expect(lastRequest(fetchMock).init.body).toBe(JSON.stringify({ action: 'sync-sources', confirmed: true }))
   })
 })

@@ -5,7 +5,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { health, minimalSynoptic, synoptic } from './brain/fixtures'
+import { health, minimalSynoptic, synoptic, withVerdict } from './brain/fixtures'
 import type { OperationCapability } from './brain/types'
 
 const mocks = vi.hoisted(() => ({
@@ -125,13 +125,14 @@ describe('Brain home: verdict and readings', () => {
   })
 
   it('never presents a missing core reading or a stale snapshot as normal', async () => {
-    const syn = synoptic()
+    // The payload verdict carries the reason, as the server builds it.
+    const syn = withVerdict(synoptic(), { elementId: 'gbrain-core', state: 'unavailable', text: 'GBrain core reading unavailable.' })
     syn.core = { ...syn.core, state: 'unavailable', pages: { ...syn.core.pages, value: null, state: 'unavailable', observedAt: null } }
     setup({ synoptic: { data: syn, meta: meta('2026-11-11T08:00:00.000Z', { stale: true }) } })
     const { host, render, root } = mount()
     await render()
     expect(host.textContent).not.toContain('GBrain is normal')
-    expect(host.textContent).toContain('needs attention')
+    expect(host.textContent).toContain('GBrain readings are incomplete: GBrain core reading unavailable')
     expect(host.textContent).toContain('stale')
     expect(host.querySelector('[data-syn-id="core"]')?.textContent).toContain('—')
     await act(async () => root.unmount())
@@ -151,6 +152,28 @@ describe('Brain home: verdict and readings', () => {
     const { host, render, root } = mount()
     await render()
     expect(host.textContent).toContain('GBrain could not be read')
+    expect(host.textContent).not.toContain('GBrain is normal')
+    await act(async () => root.unmount())
+  })
+
+  it('shows an unreadable timeline (503, so no data) as could not be read, never as an empty list', async () => {
+    setup()
+    mocks.timeline = null
+    const { host, render, root } = mount()
+    await render()
+    expect(host.textContent).toContain('Recent readings could not be read.')
+    expect(host.textContent).not.toContain('No readings have been recorded yet.')
+    await act(async () => root.unmount())
+  })
+
+  it('takes the verdict line from the payload verdict: a reason the blocks do not show still reaches the page', async () => {
+    const syn = withVerdict(synoptic(), { elementId: 'embed-job-probe', state: 'unavailable', text: 'Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.' })
+    setup({ synoptic: { data: syn, meta: meta('2026-11-11T08:00:00.000Z') } })
+    const { host, render, root } = mount()
+    await render()
+    expect(host.querySelector('[role="status"][class*="sentence"]')?.textContent ?? host.textContent).toContain(
+      'GBrain readings are incomplete: Embed-job probe unavailable',
+    )
     expect(host.textContent).not.toContain('GBrain is normal')
     await act(async () => root.unmount())
   })

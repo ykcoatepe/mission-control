@@ -5,8 +5,9 @@ import {
   resolvePendingActionResult,
   resolveActionSuccessPolicy,
   resolveCurrentConfirmedW1,
+  resolveTimeline,
 } from './BrainHomeState'
-import type { OperationCapability } from './types'
+import type { OperationCapability, TimelineReading } from './types'
 
 function capability(
   overrides: Partial<OperationCapability> = {},
@@ -131,5 +132,41 @@ describe('action success policy', () => {
         message: 'Sources synchronized · waiting for a newer reading',
       },
     })
+  })
+})
+
+describe('resolveTimeline', () => {
+  const reading = (overrides: Partial<TimelineReading> = {}): TimelineReading => ({
+    entries: [],
+    retainedEntryCount: 0,
+    meta: { ok: true, stale: false, observedAt: '2026-11-11T08:00:00.000Z', ageMs: 1, error: null },
+    ...overrides,
+  })
+
+  it('an empty ledger that was read is ready: nothing recorded yet', () => {
+    expect(resolveTimeline({ data: reading(), failed: false, loading: false })).toMatchObject({ state: 'ready' })
+  })
+
+  it('an unreadable ledger (503, so no data) is unavailable, never an empty list', () => {
+    expect(resolveTimeline({ data: null, failed: true, loading: false })).toEqual({ reading: null, state: 'unavailable' })
+  })
+
+  it('a payload with entries: null was never read, so it is unavailable too', () => {
+    expect(resolveTimeline({ data: reading({ entries: null }), failed: false, loading: false })).toEqual({
+      reading: null,
+      state: 'unavailable',
+    })
+  })
+
+  it('a ledger that was read and then failed to refresh stays visible, marked stale', () => {
+    expect(resolveTimeline({ data: reading(), failed: true, loading: false })).toMatchObject({ state: 'stale' })
+    expect(
+      resolveTimeline({ data: reading({ meta: { ok: true, stale: true, observedAt: null, ageMs: null, error: null } }), failed: false, loading: false }),
+    ).toMatchObject({ state: 'stale' })
+  })
+
+  it('shows loading only while nothing has failed', () => {
+    expect(resolveTimeline({ data: null, failed: false, loading: true })).toEqual({ reading: null, state: 'loading' })
+    expect(resolveTimeline({ data: null, failed: true, loading: true })).toMatchObject({ state: 'unavailable' })
   })
 })

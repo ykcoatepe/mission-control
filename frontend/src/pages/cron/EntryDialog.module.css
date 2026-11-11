@@ -50,3 +50,29 @@
     grid-template-columns: 1fr;
   }
 }
+
+.readOnly {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.readOnlyLabel {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+}
+
+.readOnlyValue {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-h);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
+.override {
+  color: var(--text-3);
+}

@@ -48,7 +48,9 @@ function estimateNotice(reliability: string, coverage: ProviderCoverage): { tone
   if (!coverage.hasIssues) return base
   const partialEstimate = reliability === 'estimated' || reliability === 'partial'
   return {
-    tone: 'warning',
+    // Partial records alone are a standing condition on this machine: one quiet note.
+    // Anything else (a platform not read, stale, an unresolved overlap) is a warning.
+    tone: coverage.standingOnly ? 'info' : 'warning',
     title: partialEstimate ? 'Partial estimate, not an invoice' : base.title,
     body: `${providerCoverageSentences(coverage).join(' ')} ${base.body}`,
   }
@@ -146,7 +148,7 @@ export default function UsageSummary({
           value={periodTokens === null ? null : formatCompactTokenValue(periodTokens)}
           hint={periodTokens === null
             ? 'No platform could be read'
-            : `${formatTokens(periodTokens)} in this period${platformCoverage.hasIssues ? ', partial' : ''}`}
+            : `${formatTokens(periodTokens)} in this period`}
         />
       </StatRow>
       </div>

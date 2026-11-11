@@ -1,7 +1,8 @@
 // Pure helper functions and constants for the Costs page.
 // No hooks, no JSX — safe to import from any context.
 
-import type { TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem, UsageProvider } from './types'
+import type {
+  TokenServiceData, CodexBarDailyEntry, TokenData, ChartDataRow, ChartSeriesItem, UsageMissingProvider, UsageProvider } from './types'
 import type { UiState } from '../../lib/state'
 
 // ---------------------------------------------------------------------------
@@ -56,6 +57,29 @@ export function parseMonthlyBudgetInput(input: string) {
   }
 
   return { monthly, error: null }
+}
+
+/**
+ * What the budget form would send. The server accepts a finite number that is
+ * zero or positive, or `null` for "no budget" (POST /api/settings/budget). The
+ * form never sends 0 or an empty string to mean "none": that is the explicit
+ * "No monthly budget" choice, which sends `null`.
+ *
+ * `ok: false` with `error: null` means there is nothing to save yet (blank input).
+ */
+export type BudgetDraft = { ok: true; monthly: number | null } | { ok: false; error: string | null }
+
+export function parseBudgetDraft(input: string, noBudget: boolean): BudgetDraft {
+  if (noBudget) return { ok: true, monthly: null }
+  const parsed = parseMonthlyBudgetInput(input)
+  if (parsed.error) return { ok: false, error: parsed.error }
+  if (parsed.monthly === null) return { ok: false, error: null }
+  return { ok: true, monthly: parsed.monthly }
+}
+
+/** A saved budget is a positive number; null, 0, or anything else means no cap is in force. */
+export function savedBudgetCap(monthly: unknown): number | null {
+  return typeof monthly === 'number' && Number.isFinite(monthly) && monthly > 0 ? monthly : null
 }
 
 export function formatSessionName(key: string, displayName?: string): string {
@@ -1071,13 +1095,17 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
     const read = (state === 'ready' || state === 'stale') && tokens !== null
     const coverage = provider.coverage === 'complete' || provider.coverage === 'partial' ? provider.coverage : 'unknown'
     const stale = read && state === 'stale'
+    // A read platform whose records are known to be incomplete (partial coverage) is a
+    // standing condition, not a fault: its word says so and its note carries the detail.
+    // Only a coverage the page does not recognise keeps the amber dot.
     const partial = read && coverage !== 'complete'
+    const standingPartial = partial && coverage === 'partial'
     const note = typeof provider.note === 'string' && provider.note.trim() ? provider.note.trim() : null
     return {
       id: String(provider.id),
       label: provider.label || String(provider.id),
       read,
-      uiState: !read ? 'unavailable' : stale || partial ? 'warning' : 'healthy',
+      uiState: !read ? 'unavailable' : stale || (partial && !standingPartial) ? 'warning' : 'healthy',
       stateWord: !read ? 'Not read' : stale ? 'Stale' : partial ? 'Partial' : 'Ready',
       freshness: !read ? null : stale ? 'stale' : undefined,
       observedAt: provider.observedAt ?? null,
@@ -1093,30 +1121,61 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
 export interface ProviderCoverage {
   /** Platforms that could not be read: left out of every total. */
   unread: string[]
-  /** Read, but the platform says its records are incomplete: its figure may be low. */
+  /** Read, but the platform says its records are incomplete: its figure may be low. A standing condition. */
   partial: string[]
   /** Read from a last good scan because the latest one failed. */
   stale: string[]
+  /** Sentences for window problems the payload names beyond a platform being unread (overlap, unpriced usage). */
+  gaps: string[]
   /** The backend marks the payload partial although no platform explains it. */
   unexplained: boolean
   /** True when any total on the page is partial. */
   hasIssues: boolean
+  /** Partial records are the only issue: calm, nothing to act on. Any other cause is a warning. */
+  standingOnly: boolean
 }
 
 export const NO_PROVIDER_ISSUES: ProviderCoverage = {
   unread: [],
   partial: [],
   stale: [],
+  gaps: [],
   unexplained: false,
   hasIssues: false,
+  standingOnly: false,
 }
 
-export function summarizeProviderCoverage(rows: ProviderRow[], payloadPartial = false): ProviderCoverage {
+/** Why a platform is listed in a costs payload's `missingProviders` (server/sources/usage/index.js). */
+const MISSING_REASON_SENTENCE: Record<string, (label: string) => string> = {
+  ownership_overlap_unresolved: label => `${label} overlaps another platform and could not be attributed with certainty.`,
+  api_equivalent_unavailable: label => `${label} has no public price for its models, so it adds nothing to the API equivalent.`,
+  partially_priced_usage: label => `Some ${label} usage has no public price and is not in the API equivalent.`,
+}
+
+export function summarizeProviderCoverage(
+  rows: ProviderRow[],
+  payloadPartial = false,
+  missing: readonly UsageMissingProvider[] = [],
+): ProviderCoverage {
   const unread = rows.filter(row => !row.read).map(row => row.label)
   const stale = rows.filter(row => row.read && row.stateWord === 'Stale').map(row => row.label)
   const partial = rows.filter(row => row.read && row.coverage !== 'complete' && row.stateWord !== 'Stale').map(row => row.label)
-  const unexplained = payloadPartial && unread.length + stale.length + partial.length === 0
-  return { unread, partial, stale, unexplained, hasIssues: unread.length + stale.length + partial.length > 0 || unexplained }
+  // `usage_unavailable` and `window_not_observed` are an unread platform: the Platforms rows already say so.
+  const gaps = missing.flatMap(item => {
+    const label = item.label || item.id
+    const sentence = MISSING_REASON_SENTENCE[item.reason]
+    if (sentence) return [sentence(label)]
+    if (item.reason === 'usage_unavailable' || item.reason === 'window_not_observed') {
+      if (!unread.includes(label)) unread.push(label)
+      return []
+    }
+    return []
+  })
+  const explained = unread.length + stale.length + partial.length + gaps.length > 0
+  const unexplained = payloadPartial && !explained
+  const hasIssues = explained || unexplained
+  const standingOnly = partial.length > 0 && unread.length + stale.length + gaps.length === 0 && !unexplained
+  return { unread, partial, stale, gaps, unexplained, hasIssues, standingOnly }
 }
 
 export function joinNames(names: string[]): string {
@@ -1138,7 +1197,10 @@ export function providerCoverageSentences(coverage: ProviderCoverage): string[] 
   if (coverage.stale.length) {
     sentences.push(`${joinNames(coverage.stale)} ${verb(coverage.stale, 'shows', 'show')} the last good reading.`)
   }
+  sentences.push(...coverage.gaps)
   if (coverage.unexplained) sentences.push('The backend marks some usage as missing.')
+  // Partial records alone are a standing condition: say where the detail is.
+  if (coverage.standingOnly) sentences.push('The Platforms table above has each platform\'s note.')
   return sentences
 }
 

@@ -38,8 +38,10 @@ const coverage = (overrides: Partial<ProviderCoverage>): ProviderCoverage => ({
   unread: [],
   partial: [],
   stale: [],
+  gaps: [],
   unexplained: false,
   hasIssues: true,
+  standingOnly: false,
   ...overrides,
 })
 
@@ -134,9 +136,34 @@ describe('UsageSummary', () => {
     expect(text).not.toMatch(/Tokens0/)
   })
 
-  it('flags the token figure as partial when a platform is missing', async () => {
+  it('says "partial" once: the token figure carries no second partial flag', async () => {
     const host = await render({ platformCoverage: coverage({ unread: ['Hermes'] }) })
-    expect(host.textContent).toContain('1,234 in this period, partial')
+    expect(host.textContent).toContain('1,234 in this period')
+    expect(host.textContent).not.toContain('in this period, partial')
+  })
+
+  it('partial records alone make one calm info notice that points at the Platforms table', async () => {
+    const host = await render({
+      reliability: 'estimated',
+      platformCoverage: coverage({ partial: ['Claude Code', 'Codex'], standingOnly: true }),
+    })
+    const text = host.textContent ?? ''
+    expect(text).toContain('Claude Code and Codex have incomplete records')
+    expect(text).toContain("The Platforms table above has each platform's note.")
+    expect(text.match(/This total is partial\./g)).toHaveLength(1)
+    expect(host.querySelectorAll('[data-tone]')).toHaveLength(1)
+    expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('info')
+  })
+
+  it('a platform that was not read keeps the warning tone', async () => {
+    const host = await render({ platformCoverage: coverage({ unread: ['Hermes'] }) })
+    expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning')
+    expect(host.textContent).toContain('Hermes could not be read and is not counted.')
+  })
+
+  it('names unresolved window gaps from the payload', async () => {
+    const host = await render({ platformCoverage: coverage({ gaps: ['Codex overlaps another platform and could not be attributed with certainty.'] }) })
+    expect(host.textContent).toContain('Codex overlaps another platform')
   })
 
   it('renders the Platforms slot directly after the headline strip, before the notices', async () => {

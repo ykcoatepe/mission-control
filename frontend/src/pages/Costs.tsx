@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useApi, fetchJson } from '../lib/hooks'
+import { ApiError, describeApiError, fetchJson, postJson, retryOnce, useApi, writeFailureMessage } from '../lib/hooks'
 import { ErrorState, Page, Skeleton, useToast } from '../components/ui'
 import type { UiState } from '../lib/state'
 import costsStyles from './costs/Costs.module.css'
@@ -36,7 +36,8 @@ import {
   monthKeyLabel,
   readNumericField,
   hasUsableAgentSplitData,
-  parseMonthlyBudgetInput,
+  parseBudgetDraft,
+  savedBudgetCap,
   trackedSpendPresentation,
   apiEquivalentMetricValues,
   apiEquivalentPeriodValue,
@@ -158,6 +159,7 @@ export default function Costs() {
   const costsQuery = useQuery<TokenData, Error>({
     queryKey: ['api', costsPath],
     queryFn: () => fetchJson<TokenData>(costsPath),
+    retry: retryOnce,
     refetchInterval: (query) => {
       const decision = nextStaleRetry(
         query.state.data as CostsTokenData | undefined,
@@ -198,50 +200,52 @@ export default function Costs() {
   // Falls back to the browser clock only before the first payload arrives.
   const viewingPastMonth = isPastMonthAnchor(activeMonthAnchor, calendarNow, serverMonth)
   const loading = costsQuery.isLoading
-  const error: string | null = costsQuery.error ? String(costsQuery.error.message || 'Unknown error') : null
+  const error: string | null = costsQuery.error ? describeApiError(costsQuery.error, 'Unknown error') : null
 
   // ---- budget / budgetInput — initialized once when tokenData first arrives ----
   // Using render-phase sentinel pattern (same as Calendar.tsx formKey) to avoid
   // setState-in-effect which is an ESLint error in this repo.
   const [budgetSeenKey, setBudgetSeenKey] = useState<string | undefined>(undefined)
-  const [budget, setBudget] = useState<number>(0)
+  // The saved monthly cap; null = no budget.
+  const [budget, setBudget] = useState<number | null>(null)
   const [budgetInput, setBudgetInput] = useState<string>('')
+  const [noBudget, setNoBudget] = useState(true)
+  // The server validates the amount too; its 400 message shows next to the field.
+  const [budgetServerError, setBudgetServerError] = useState<string | null>(null)
 
-  const budgetFromData = tokenData?.budget?.monthly ?? 0
+  const budgetFromData = savedBudgetCap(tokenData?.budget?.monthly)
   // Derive a stable key from whether we have data yet
   const budgetDataKey = tokenData ? 'loaded' : undefined
   if (budgetDataKey !== undefined && budgetDataKey !== budgetSeenKey) {
     setBudgetSeenKey(budgetDataKey)
     setBudget(budgetFromData)
-    setBudgetInput(budgetFromData.toString())
+    setBudgetInput(budgetFromData === null ? '' : String(budgetFromData))
+    setNoBudget(budgetFromData === null)
   }
 
   // ---- saveBudget mutation ----
   const saveBudgetMutation = useMutation({
-    mutationFn: (monthly: number) =>
-      fetchJson('/api/settings/budget', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ monthly }),
-      }),
+    mutationFn: (monthly: number | null) => postJson('/api/settings/budget', { monthly }),
     onSuccess: (_data, monthly) => {
-      setBudget(monthly)
+      setBudget(savedBudgetCap(monthly))
+      setBudgetServerError(null)
       void queryClient.invalidateQueries({ queryKey: ['api', costsPath] })
-      toast.show('success', 'Budget saved')
+      toast.show('success', monthly === null ? 'Budget removed' : 'Budget saved')
     },
-    onError: () => {
-      toast.show('error', 'Budget could not be saved')
+    onError: (error) => {
+      if (error instanceof ApiError && error.status === 400) setBudgetServerError(error.message)
+      toast.show('error', writeFailureMessage('Budget could not be saved', error))
     },
   })
 
   const savingBudget = saveBudgetMutation.isPending
-  const budgetValidation = parseMonthlyBudgetInput(budgetInput)
-  const budgetError = budgetValidation.error
-  const canSaveBudget = !savingBudget && !!budgetInput.trim() && !budgetError
+  const budgetDraft = parseBudgetDraft(budgetInput, noBudget)
+  const budgetError = budgetDraft.ok ? budgetServerError : budgetDraft.error
+  const canSaveBudget = !savingBudget && budgetDraft.ok
 
   const saveBudget = () => {
-    if (budgetValidation.monthly === null) return
-    saveBudgetMutation.mutate(budgetValidation.monthly)
+    if (!budgetDraft.ok) return
+    saveBudgetMutation.mutate(budgetDraft.monthly)
   }
 
   // A finished month is not projected — it is simply totalled.
@@ -725,9 +729,9 @@ export default function Costs() {
     ledgerMonthSpend: tokenData?.summary?.thisMonthUsd ?? null,
     trackedSpendComplete: trackedSpend.projectionAvailable && trackedValueAvailable,
   })
-  const budgetUsage = budget > 0 && monthlyBudgetBase !== null ? monthlyBudgetBase / budget : null
+  const budgetUsage = budget !== null && monthlyBudgetBase !== null ? monthlyBudgetBase / budget : null
   const budgetUsagePct = budgetUsage === null ? null : Math.round(budgetUsage * 100)
-  const budgetRemaining = budget > 0 && monthlyBudgetBase !== null ? budget - monthlyBudgetBase : null
+  const budgetRemaining = budget !== null && monthlyBudgetBase !== null ? budget - monthlyBudgetBase : null
 
   const creditsUsed = hasAwsData && awsCosts ? awsCosts.credits - awsCosts.remaining : 0
   const burnRate = hasAwsData && awsCosts && creditsUsed > 0
@@ -847,8 +851,12 @@ export default function Costs() {
     [costsPeriodPending, tokenData?.providers],
   )
   const platformCoverage = useMemo(
-    () => summarizeProviderCoverage(platformRows, !costsPeriodPending && tokenData?.partial === true),
-    [costsPeriodPending, platformRows, tokenData?.partial],
+    () => summarizeProviderCoverage(
+      platformRows,
+      !costsPeriodPending && tokenData?.partial === true,
+      costsPeriodPending ? [] : tokenData?.missingProviders ?? [],
+    ),
+    [costsPeriodPending, platformRows, tokenData?.missingProviders, tokenData?.partial],
   )
 
   // One note for every source that is missing, old or still loading.
@@ -863,7 +871,8 @@ export default function Costs() {
   if (platformRows.length === 0 && unavailableSources.length > 0) {
     sourceIssues.push(`${unavailableSources.join(', ')} could not be read, so totals may be low.`)
   }
-  if (tokenData?.meta?.stale) {
+  // A stale platform is already a row (and one sentence) in the Platforms table and its note.
+  if (tokenData?.meta?.stale && platformRows.length === 0) {
     sourceIssues.push('Showing the last good reading; the latest scan did not complete.')
   }
   if (codexbarCosts?.stale) {
@@ -956,7 +965,15 @@ export default function Costs() {
             <BudgetPanel
               budget={budget}
               budgetInput={budgetInput}
-              setBudgetInput={setBudgetInput}
+              setBudgetInput={value => {
+                setBudgetInput(value)
+                setBudgetServerError(null)
+              }}
+              noBudget={noBudget}
+              setNoBudget={value => {
+                setNoBudget(value)
+                setBudgetServerError(null)
+              }}
               saveBudget={saveBudget}
               savingBudget={savingBudget}
               canSaveBudget={canSaveBudget}

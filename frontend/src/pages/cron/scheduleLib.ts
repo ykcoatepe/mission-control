@@ -1,5 +1,13 @@
 import type { UiState } from '../../lib/state'
 
+/** Fields a person may override on a scheduler-linked entry. Everything else about it is the scheduler's. */
+export const CRON_OVERRIDABLE_FIELDS = ['title', 'schedule', 'assignee', 'notes'] as const
+export type OverridableField = (typeof CRON_OVERRIDABLE_FIELDS)[number]
+
+/** Fields the server accepts on a PATCH of an entry nobody links to the scheduler. */
+export const MANUAL_EDITABLE_FIELDS = ['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes'] as const
+export type EditableField = (typeof MANUAL_EDITABLE_FIELDS)[number]
+
 export interface CalendarEntry {
   id: string
   title: string
@@ -12,15 +20,197 @@ export interface CalendarEntry {
   linkedJobId: string | null
   notes?: string
   updatedAt?: string
+  /** Fields a person overrode on a linked entry (a subset of the overridable fields). */
+  userOverrides?: string[]
+  /** What the scheduler last derived for the overridable fields: the value "Reset" returns to. */
+  cronDerived?: Partial<Record<OverridableField, string>> | null
+}
+
+/** The calendar read's own account of rows it set aside (GET /api/calendar `diagnostics`). */
+export interface CalendarDiagnostics {
+  quarantined: { count: number; ids: Array<string | number | null> }
+  duplicates: { count: number; ids: Array<string | number | null> }
+}
+
+export interface CalendarMeta {
+  ok?: boolean
+  stale?: boolean
+  error?: { code?: string; message?: string } | null
 }
 
 export interface CalendarPayload {
   entries: CalendarEntry[]
-  warning?: string
+  diagnostics?: CalendarDiagnostics
+  sync?: { ok: boolean; error: { code?: string; message?: string } | null }
+  meta?: CalendarMeta
+}
+
+/** A scheduler-linked entry: the scheduler owns its status and next run. */
+export function isLinkedEntry(entry: Pick<CalendarEntry, 'source' | 'linkedJobId'>): boolean {
+  return entry.source === 'cron' && Boolean(entry.linkedJobId)
+}
+
+export function isOverridden(entry: Pick<CalendarEntry, 'userOverrides'>, field: string): boolean {
+  return Boolean(entry.userOverrides?.includes(field))
+}
+
+/** The value the scheduler last derived for an overridable field, when it is known. */
+export function scheduleValue(entry: Pick<CalendarEntry, 'cronDerived'>, field: OverridableField): string | null {
+  const value = entry.cronDerived?.[field]
+  return typeof value === 'string' ? value : null
+}
+
+/** Where a linked entry's job is switched on and off. */
+export function jobHref(entry: Pick<CalendarEntry, 'linkedJobId'>): string | null {
+  return entry.linkedJobId ? `/automations?view=jobs&job=${encodeURIComponent(entry.linkedJobId)}` : null
+}
+
+export interface EntryForm {
+  title: string
+  schedule: string
+  startsAt: string | null
+  status: string
+  assignee: string
+  source: string
+  linkedTaskId: string
+  notes: string
+}
+
+export function formFromEntry(entry: CalendarEntry | null): EntryForm {
+  return {
+    title: entry?.title ?? '',
+    schedule: entry?.schedule ?? '',
+    startsAt: entry?.startsAt ?? null,
+    status: entry?.status ?? 'scheduled',
+    assignee: entry?.assignee ?? 'Mudur',
+    source: entry?.source ?? 'manual',
+    linkedTaskId: entry?.linkedTaskId ?? '',
+    notes: entry?.notes ?? '',
+  }
+}
+
+/**
+ * The body of POST /api/calendar. Never an id (the server generates it), never a
+ * link to a scheduler job (rejected with 400): linked entries are made by the
+ * schedule sync.
+ */
+export function buildCreatePayload(form: EntryForm): Record<string, unknown> {
+  return {
+    title: form.title.trim(),
+    schedule: form.schedule.trim(),
+    startsAt: form.startsAt,
+    status: form.status,
+    assignee: form.assignee,
+    source: form.source === 'assistant' ? 'assistant' : 'manual',
+    linkedTaskId: form.linkedTaskId.trim() || null,
+    notes: form.notes,
+  }
+}
+
+function sameValue(field: EditableField, a: string | null | undefined, b: string | null | undefined): boolean {
+  if (field === 'startsAt') return (a ?? null) === (b ?? null)
+  const norm = (value: string | null | undefined) => (field === 'title' || field === 'schedule' ? String(value ?? '').trim() : String(value ?? ''))
+  return norm(a) === norm(b)
+}
+
+/**
+ * The body of PATCH /api/calendar/:id: only fields that changed, and only fields
+ * the server lets this entry change.
+ *
+ *  - A linked entry takes title, schedule, assignee and notes. Its status and
+ *    start time are the scheduler's: a PATCH containing them is rejected (400),
+ *    so they are never sent, however the form looks.
+ *  - `null` clears the person's override and returns the field to the schedule's
+ *    value. `reset` lists the fields the person asked to reset; only fields that
+ *    are overridden can be.
+ *  - The id is in the URL, never in the body.
+ */
+export function buildUpdatePatch(
+  entry: CalendarEntry,
+  form: EntryForm,
+  reset: ReadonlySet<string> = new Set(),
+): Record<string, unknown> {
+  const linked = isLinkedEntry(entry)
+  const fields: readonly EditableField[] = linked ? CRON_OVERRIDABLE_FIELDS : MANUAL_EDITABLE_FIELDS
+  const patch: Record<string, unknown> = {}
+  for (const field of fields) {
+    if (linked && reset.has(field) && isOverridden(entry, field)) {
+      patch[field] = null
+      continue
+    }
+    const next = form[field]
+    const current = entry[field]
+    if (sameValue(field, next, current)) continue
+    patch[field] = field === 'title' || field === 'schedule' ? String(next ?? '').trim() : next
+  }
+  return patch
+}
+
+// ---- what the read says about its own quality ----
+
+export interface CalendarNotice {
+  id: string
+  tone: UiState | 'info'
+  title: string
+  body: string
+}
+
+function idList(ids: Array<string | number | null> | undefined): string {
+  const shown = (ids ?? []).filter((id): id is string | number => id !== null).slice(0, 5).map(String)
+  const extra = (ids?.length ?? 0) - shown.length
+  return shown.length ? ` (${shown.join(', ')}${extra > 0 ? `, and ${extra} more` : ''})` : ''
+}
+
+/** Quarantined or duplicate rows block every calendar write until they are corrected in the file. */
+export function writesBlocked(payload: Pick<CalendarPayload, 'diagnostics'> | null | undefined): boolean {
+  const d = payload?.diagnostics
+  return Boolean(d && (d.quarantined.count > 0 || d.duplicates.count > 0))
+}
+
+const SCHEDULER_CODES = new Set(['calendar_scheduler_stale', 'calendar_scheduler_unavailable'])
+
+/**
+ * The quiet notices for a calendar read: rows the server set aside, duplicate
+ * ids, and a schedule that is behind the scheduler. One notice per cause; the
+ * numbers come from the payload's own diagnostics, the wording from here.
+ */
+export function calendarNotices(payload: CalendarPayload | null | undefined): CalendarNotice[] {
+  if (!payload) return []
+  const notices: CalendarNotice[] = []
+  const quarantined = payload.diagnostics?.quarantined
+  const duplicates = payload.diagnostics?.duplicates
+  const blocked = 'The file is left as it is, and changes to the schedule are paused until it is corrected.'
+  if (quarantined && quarantined.count > 0) {
+    notices.push({
+      id: 'quarantined',
+      tone: 'warning',
+      title: 'Some schedule rows were set aside',
+      body: `${quarantined.count} malformed ${quarantined.count === 1 ? 'row was' : 'rows were'} left out${idList(quarantined.ids)}. ${blocked}`,
+    })
+  }
+  if (duplicates && duplicates.count > 0) {
+    notices.push({
+      id: 'duplicates',
+      tone: 'warning',
+      title: 'Some schedule rows share an id',
+      body: `${duplicates.count} duplicate ${duplicates.count === 1 ? 'row was' : 'rows were'} found${idList(duplicates.ids)}; only the first row of each is shown. ${blocked}`,
+    })
+  }
+  const error = payload.meta?.error ?? payload.sync?.error ?? null
+  const code = error?.code ?? ''
+  if (SCHEDULER_CODES.has(code) && error?.message) {
+    notices.push({ id: code, tone: 'info', title: 'Schedule may be behind', body: error.message })
+  } else if (!quarantined?.count && !duplicates?.count && payload.meta?.stale && error?.message
+    && code !== 'calendar_entries_quarantined' && code !== 'calendar_duplicate_ids') {
+    notices.push({ id: 'stale', tone: 'info', title: 'Showing the last good reading', body: error.message })
+  }
+  return notices
 }
 
 export const STATUS_OPTIONS = ['scheduled', 'active', 'running', 'done', 'failed', 'disabled', 'cancelled']
 export const SOURCE_OPTIONS = ['cron', 'assistant', 'manual']
+/** A person can create manual and assistant entries; cron entries come from the schedule sync. */
+export const CREATE_SOURCE_OPTIONS = ['manual', 'assistant']
 export const ASSIGNEE_OPTIONS = ['Mudur', 'Yordam']
 
 /** A scheduled entry is the normal case and stays quiet: no dot, no colour. */

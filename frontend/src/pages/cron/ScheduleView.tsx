@@ -18,20 +18,26 @@ import {
   cx,
   useToast,
 } from '../../components/ui'
-import { useApi } from '../../lib/hooks'
+import { postJson, sendJson, useApi, writeFailureMessage } from '../../lib/hooks'
 import { useNow } from '../../lib/useNow'
+import { Link } from 'react-router-dom'
 import EntryDialog from './EntryDialog'
+import type { EntryChange } from './EntryDialog'
 import type { CalendarEntry, CalendarPayload } from './scheduleLib'
 import {
   ASSIGNEE_OPTIONS,
   SOURCE_OPTIONS,
+  calendarNotices,
   entryState,
   formatDayHeader,
   formatTimeLabel,
   formatWeekRange,
   isDisabledEntry,
+  isLinkedEntry,
+  jobHref,
   startOfWeek,
   toDayKey,
+  writesBlocked,
 } from './scheduleLib'
 import styles from './ScheduleView.module.css'
 
@@ -142,46 +148,34 @@ export default function ScheduleView() {
   const handleSync = async () => {
     setSyncing(true)
     try {
-      const response = await fetch('/api/calendar/sync-cron', { method: 'POST' })
-      if (!response.ok) {
-        const detail = await response.text()
-        throw new Error(detail || `HTTP ${response.status}`)
-      }
+      await postJson('/api/calendar/sync-cron')
       await refetch()
     } catch (err) {
-      toast.show('error', `Schedule sync failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      toast.show('error', writeFailureMessage('Schedule sync failed', err))
     } finally {
       setSyncing(false)
     }
   }
 
-  const handleSave = async (payload: Partial<CalendarEntry>) => {
-    try {
-      const method = payload.id ? 'PATCH' : 'POST'
-      const path = payload.id ? `/api/calendar/${encodeURIComponent(payload.id)}` : '/api/calendar'
-      const response = await fetch(path, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      })
-      if (!response.ok) {
-        const detail = await response.text()
-        throw new Error(detail || `HTTP ${response.status}`)
-      }
-      await refetch()
-    } catch (err) {
-      toast.show('error', `Schedule save failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
-      throw err
+  /** Throws when the server refuses, so the dialog can show its message and stay open. */
+  const saveEntry = async (change: EntryChange) => {
+    if (change.kind === 'create') {
+      await postJson('/api/calendar', change.payload)
+    } else {
+      await sendJson(`/api/calendar/${encodeURIComponent(change.id)}`, 'PATCH', change.patch)
     }
+    await refetch()
   }
 
+  // Only an entry nobody links to the scheduler has a status of its own. A linked
+  // entry's status is the job's: its switch is in Jobs, not here.
   const handleToggleDetailStatus = async () => {
-    if (!detailEntry) return
+    if (!detailEntry || isLinkedEntry(detailEntry)) return
     const nextStatus = isDisabledEntry(detailEntry) ? 'scheduled' : 'disabled'
     try {
-      await handleSave({ id: detailEntry.id, status: nextStatus })
-    } catch {
-      // handleSave already reported it.
+      await saveEntry({ kind: 'update', id: detailEntry.id, patch: { status: nextStatus } })
+    } catch (err) {
+      toast.show('error', writeFailureMessage('Schedule save failed', err))
     }
   }
 
@@ -218,6 +212,9 @@ export default function ScheduleView() {
   }
 
   const detailState = detailEntry ? entryState(detailEntry.status) : null
+  const notices = calendarNotices(data)
+  const blocked = writesBlocked(data)
+  const detailJobHref = detailEntry && isLinkedEntry(detailEntry) ? jobHref(detailEntry) : null
 
   return (
     <div className={styles.view}>
@@ -256,12 +253,13 @@ export default function ScheduleView() {
           <Button
             icon={<RefreshCw size={14} />}
             loading={syncing}
+            disabled={blocked}
             onClick={handleSync}
             title="Refresh the schedule from the cron jobs"
           >
             Sync from cron
           </Button>
-          <Button variant="primary" icon={<Plus size={14} />} onClick={() => setEditing({ entry: null })}>
+          <Button variant="primary" icon={<Plus size={14} />} disabled={blocked} onClick={() => setEditing({ entry: null })}>
             New entry
           </Button>
         </div>
@@ -291,9 +289,11 @@ export default function ScheduleView() {
         </div>
       </div>
 
-      {data?.warning && (
-        <Notice tone="warning">Showing cached schedule data. {data.warning}</Notice>
-      )}
+      {notices.map((notice) => (
+        <Notice key={notice.id} tone={notice.tone} title={notice.title}>
+          {notice.body}
+        </Notice>
+      ))}
 
       <div className={cx(styles.grid, mode === 'today' && styles.gridToday)}>
         {visibleDays.map((day) => {
@@ -364,15 +364,21 @@ export default function ScheduleView() {
         footer={
           detailEntry ? (
             <div className={styles.footer}>
-              <Button icon={<Pencil size={14} />} onClick={() => setEditing({ entry: detailEntry })}>
+              <Button icon={<Pencil size={14} />} disabled={blocked} onClick={() => setEditing({ entry: detailEntry })}>
                 Edit
               </Button>
               <Button icon={<Copy size={14} />} onClick={handleCopyJobId}>
                 {copiedId === (detailEntry.linkedJobId || detailEntry.id) ? 'Copied' : 'Copy job id'}
               </Button>
-              <Button variant={isDisabledEntry(detailEntry) ? 'primary' : 'secondary'} onClick={handleToggleDetailStatus}>
-                {isDisabledEntry(detailEntry) ? 'Enable' : 'Disable'}
-              </Button>
+              {!isLinkedEntry(detailEntry) && (
+                <Button
+                  variant={isDisabledEntry(detailEntry) ? 'primary' : 'secondary'}
+                  disabled={blocked}
+                  onClick={handleToggleDetailStatus}
+                >
+                  {isDisabledEntry(detailEntry) ? 'Enable' : 'Disable'}
+                </Button>
+              )}
             </div>
           ) : undefined
         }
@@ -421,6 +427,12 @@ export default function ScheduleView() {
                 </div>
               )}
             </dl>
+            {detailJobHref && (
+              <p className={styles.notesBody}>
+                Status and next run come from the scheduler. Turn this job on or off in{' '}
+                <Link to={detailJobHref}>Automations, Jobs</Link>.
+              </p>
+            )}
             {detailEntry.notes && (
               <section className={styles.notes} aria-label="Notes">
                 <h3 className={styles.notesTitle}>Notes</h3>
@@ -436,7 +448,7 @@ export default function ScheduleView() {
           key={editing.entry?.id ?? 'new'}
           entry={editing.entry}
           onClose={() => setEditing(null)}
-          onSave={handleSave}
+          onSave={saveEntry}
         />
       )}
     </div>

@@ -30,12 +30,18 @@
 }
 
 .form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.formRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--sp-2);
 }
 
-.form > :first-child {
+.formRow > :first-child {
   min-width: 0;
 }

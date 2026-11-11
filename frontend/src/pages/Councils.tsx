@@ -1,6 +1,6 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import { RefreshCcw } from 'lucide-react'
-import { useApi } from '../lib/hooks'
+import { fetchJson, useApi } from '../lib/hooks'
 import {
   isOpenDecisionStatus,
   normalizeDecisionStatus,
@@ -189,8 +189,7 @@ export default function Councils() {
 
   const loadTimeline = async (decision: Decision) => {
     try {
-      const r = await fetch(`/api/councils/decisions/${safeSegment(decision.decisionId)}/timeline`)
-      const j = await r.json() as TimelinePayload
+      const j = await fetchJson<TimelinePayload>(`/api/councils/decisions/${safeSegment(decision.decisionId)}/timeline`)
       setTimeline(j.events || [])
       setTimelineState('ready')
     } catch {

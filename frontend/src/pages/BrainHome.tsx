@@ -8,7 +8,8 @@ import { ActionStatusNotice } from './brain/ActionStatusNotice'
 import { HealthView, type BrainData } from './brain/HealthView'
 import { KnowledgeView } from './brain/KnowledgeView'
 import { VerdictLine } from './brain/VerdictLine'
-import { buildBrainModel, deriveVerdict, linkExtractionCondition } from './brain/lib'
+import { buildBrainModel, deriveVerdict } from './brain/lib'
+import { resolveTimeline } from './brain/BrainHomeState'
 import { useGBrainActions } from './brain/useGBrainActions'
 import styles from './brain/BrainHome.module.css'
 import type {
@@ -55,14 +56,14 @@ export default function BrainHome() {
   const sourcesArg = sources.data && sources.data.ok !== false ? sources.data : null
   const capabilities = overview.data?.capabilities ?? null
 
-  const model = useMemo(
-    () => (syn ? buildBrainModel(syn, { sources: sourcesArg, health: healthArg }) : null),
-    [syn, sourcesArg, healthArg],
-  )
-  const verdict = useMemo(
-    () => deriveVerdict(model, meta, linkExtractionCondition(healthArg)),
-    [model, meta, healthArg],
-  )
+  const model = useMemo(() => (syn ? buildBrainModel(syn) : null), [syn])
+  // The verdict is the payload's `verdict { state, reasons[] }`, formatted. Nothing here decides a second one.
+  const verdict = useMemo(() => deriveVerdict(syn, meta), [syn, meta])
+  const timelineReading = resolveTimeline({
+    data: timeline.data,
+    failed: Boolean(timeline.error),
+    loading: timeline.loading,
+  })
 
   const reading = meta ? { observedAt: meta.observedAt, fresh: meta.ok && !meta.stale } : null
   const actions = useGBrainActions({
@@ -94,17 +95,17 @@ export default function BrainHome() {
           verdict,
           health: healthArg,
           sources: sourcesArg,
-          timeline: timeline.data && timeline.data.entries !== null ? timeline.data : null,
-          timelineStale: Boolean(timeline.data?.meta?.stale) || Boolean(timeline.error),
+          timeline: timelineReading.reading,
+          timelineStale: timelineReading.state === 'stale',
           capabilities,
-          caveats: overview.data?.systems?.gbrain?.caveats ?? [],
         }
       : null
 
+  const attentionReason = verdict.conditions.find((condition) => condition.state !== 'inactive')
   const confirmContext = {
     state: verdict.state,
     freshness: !meta ? 'not read' : meta.stale ? 'stale' : 'fresh',
-    note: verdict.conditions[0] ? `${verdict.conditions[0].text}.` : null,
+    note: attentionReason ? `${attentionReason.text}.` : null,
   }
 
   const head = (
@@ -135,8 +136,8 @@ export default function BrainHome() {
         <Skeleton variant="block" size="lg" label="Reading GBrain" />
       ) : !data ? (
         <ErrorState
-          title="GBrain could not be read"
-          message="The synoptic reading is not available, so nothing is shown as normal."
+          title={synoptic.failure?.status === 503 ? 'GBrain has no reading yet' : 'GBrain could not be read'}
+          message={`${synoptic.error ?? 'The synoptic reading is not available'}. Nothing is shown as normal.`}
           onRetry={() => void synoptic.refetch()}
         />
       ) : (

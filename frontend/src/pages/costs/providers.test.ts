@@ -80,10 +80,12 @@ describe('providerRows', () => {
     expect(row.freshness).toBe('stale')
   })
 
-  it('maps partial coverage on a read provider to a warning, not healthy', () => {
+  it('shows known partial coverage in words and keeps it calm; an unknown coverage stays amber', () => {
     const [partial, unknown] = providerRows([provider({ coverage: 'partial' }), provider({ coverage: 'something' })])
-    expect(partial.uiState).toBe('warning')
+    // Claude Code and Codex are normally partial here: a standing condition, not an alarm.
+    expect(partial.uiState).toBe('healthy')
     expect(partial.stateWord).toBe('Partial')
+    expect(partial.coverage).toBe('partial')
     expect(unknown.coverage).toBe('unknown')
     expect(unknown.uiState).toBe('warning')
   })
@@ -119,6 +121,45 @@ describe('summarizeProviderCoverage', () => {
     expect(summary.partial).toEqual(['B'])
     expect(summary.stale).toEqual(['C'])
     expect(summary.hasIssues).toBe(true)
+    expect(summary.standingOnly).toBe(false)
+  })
+
+  it('partial records alone are a standing condition, not a warning', () => {
+    const summary = summarizeProviderCoverage(providerRows([
+      provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial' }),
+      provider({ id: 'codex', label: 'Codex', coverage: 'partial' }),
+      provider({ id: 'hermes', label: 'Hermes' }),
+    ]), true)
+    expect(summary.standingOnly).toBe(true)
+    expect(summary.hasIssues).toBe(true)
+    expect(summary.unexplained).toBe(false)
+    expect(providerCoverageSentences(summary).join(' ')).toContain('Claude Code and Codex have incomplete records')
+  })
+
+  it('turns the payload missingProviders reasons into sentences and never double-counts an unread platform', () => {
+    const rows = providerRows([
+      provider({ id: 'hermes', label: 'Hermes', state: 'unavailable', tokens: null }),
+      provider({ id: 'codex', label: 'Codex' }),
+    ])
+    const summary = summarizeProviderCoverage(rows, true, [
+      { id: 'hermes', label: 'Hermes', reason: 'usage_unavailable' },
+      { id: 'codex', label: 'Codex', reason: 'ownership_overlap_unresolved' },
+      { id: 'openclaw', label: 'OpenClaw', reason: 'window_not_observed' },
+    ])
+    expect(summary.unread).toEqual(['Hermes', 'OpenClaw'])
+    expect(summary.gaps).toEqual(['Codex overlaps another platform and could not be attributed with certainty.'])
+    expect(summary.standingOnly).toBe(false)
+    expect(summary.unexplained).toBe(false)
+  })
+
+  it('a partial window with an unpriced platform is not "standing only"', () => {
+    const summary = summarizeProviderCoverage(
+      providerRows([provider({ coverage: 'partial' })]),
+      true,
+      [{ id: 'codex', label: 'Codex', reason: 'partially_priced_usage' }],
+    )
+    expect(summary.standingOnly).toBe(false)
+    expect(summary.gaps[0]).toContain('has no public price')
   })
 
   it('trusts the backend partial flag when no platform explains it', () => {

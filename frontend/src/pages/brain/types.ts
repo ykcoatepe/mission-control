@@ -83,6 +83,19 @@ export interface SynopticQueue extends Evidence {
   stalled?: Measurement
 }
 
+/** One reason behind the verdict; `elementId` names the block, source, reader or probe it is about. */
+export interface VerdictReason {
+  elementId: string
+  state: UiState
+  text: string
+}
+
+/** The single operational verdict (server/sources/gbrain/verdict.js). Every consumer transports it unchanged. */
+export interface PayloadVerdict {
+  state: UiState
+  reasons: VerdictReason[]
+}
+
 /**
  * Version 1 of the contract (server/sources/gbrain/contract.d.ts). Members the
  * page tolerates missing are optional here, so the compiler forces a guard.
@@ -90,6 +103,8 @@ export interface SynopticQueue extends Evidence {
 export interface GBrainSynoptic {
   schemaVersion: '1'
   state: UiState
+  /** The one verdict. The page formats it and never derives another. */
+  verdict?: PayloadVerdict
   core: SynopticCore
   sources: SynopticSourceGroup[]
   sourcesState?: UiState

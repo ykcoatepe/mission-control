@@ -30,7 +30,7 @@ test('R2 export/import restores redacted scalars, containers and embedded forms 
     providers: { apiKeys: ['SENTINEL_ARRAY'], tokens: { primary: 'SENTINEL_OBJECT' } },
     connection: 'postgres://tester:SENTINEL_PASSWORD@localhost/db',
     prose: 'Authorization: Bearer SENTINEL_BEARER',
-    nested: [{ note: 'Bearer SENTINEL_ARRAY_BEARER' }, 'password=SENTINEL_INLINE'],
+    nested: [{ id: 'note-a', note: 'Bearer SENTINEL_ARRAY_BEARER' }, { id: 'note-b', note: 'password=SENTINEL_INLINE' }],
   };
   const f = fixture(original);
   const exported = f.service.getExportConfig();
@@ -47,10 +47,10 @@ test('R2 embedded URL placeholders preserve the whole original value', () => {
   assert.deepEqual(f.writes, [original]);
 });
 
-test('R2 placeholder without an existing value omits the field or array element', () => {
+test('R2 placeholder without an existing object-path value omits the field', () => {
   const f = fixture({ name: 'Console' });
-  f.upload({ name: 'Renamed', providers: { apiKey: '[redacted]' }, notes: ['Bearer [redacted]', 'public'], authorization: 'Bearer [redacted]' });
-  assert.deepEqual(f.writes, [{ name: 'Renamed', providers: {}, notes: ['public'] }]);
+  f.upload({ name: 'Renamed', providers: { apiKey: '[redacted]' }, authorization: 'Bearer [redacted]' });
+  assert.deepEqual(f.writes, [{ name: 'Renamed', providers: {} }]);
 });
 
 test('R2 validates imported document before any write or upload deletion', () => {
@@ -139,4 +139,199 @@ test('R1 unreadable OpenClaw config is not mistaken for a missing config', async
   await assert.rejects(f.service.setModelRouting({ main: 'valid/model' }), { code: 'settings_config_unavailable' });
   await assert.rejects(f.service.setHeartbeatInterval('30m'), { code: 'settings_config_unavailable' });
   assert.equal(f.calls.length, 0);
+});
+
+
+test('array identity: reordered providers retain their own secrets', () => {
+  const original = { providers: [{ name: 'alpha', apiKey: 'SECRET_ALPHA' }, { name: 'beta', apiKey: 'SECRET_BETA' }] };
+  const f = fixture(original);
+  const exported = f.service.getExportConfig();
+  assert.doesNotMatch(JSON.stringify(exported), /SECRET_/);
+  exported.providers.reverse();
+  f.upload(exported);
+  assert.deepEqual(f.writes, [{ providers: [original.providers[1], original.providers[0]] }]);
+});
+
+test('array identity: renamed, missing or redacted identities reject safely without write or delete', () => {
+  const originals = [
+    { name: 'IDENTITY_PRIVATE', apiKey: 'SECRET_PRIVATE' },
+    { id: 'IDENTITY_PRIVATE', name: 'weaker', apiKey: 'SECRET_PRIVATE' },
+    { key: 'IDENTITY_PRIVATE', apiKey: 'SECRET_PRIVATE' },
+  ];
+  for (const current of originals) {
+    const f = fixture({ providers: [current] });
+    const exported = f.service.getExportConfig();
+    const identity = Object.hasOwn(current, 'id') ? 'id' : Object.hasOwn(current, 'name') ? 'name' : 'key';
+    exported.providers[0][identity] = 'RENAMED_PRIVATE';
+    assert.throws(() => f.upload(exported), (error) => {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /\$.*\[0\]/);
+      assert.doesNotMatch(error.message, /IDENTITY_PRIVATE|RENAMED_PRIVATE|SECRET_PRIVATE/);
+      return true;
+    });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
+});
+
+test('array identity: a stronger id cannot fall back to a matching weaker name', () => {
+  for (const imported of [
+    { name: 'shared', apiKey: '[redacted]' },
+    { id: 'changed', name: 'shared', apiKey: '[redacted]' },
+  ]) {
+    const f = fixture({ providers: [{ id: 'stable', name: 'shared', apiKey: 'SECRET_STABLE' }] });
+    assert.throws(() => f.upload({ providers: [imported] }), { status: 400 });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
+});
+
+test('array identity: duplicate imported or current identities reject before write or delete', () => {
+  for (const duplicateCurrent of [false, true]) {
+    const current = duplicateCurrent
+      ? [{ id: 'same', apiKey: 'SECRET_ONE' }, { id: 'same', apiKey: 'SECRET_TWO' }]
+      : [{ id: 'same', apiKey: 'SECRET_ONE' }, { id: 'other', apiKey: 'SECRET_TWO' }];
+    const f = fixture({ providers: current });
+    const imported = duplicateCurrent
+      ? [{ id: 'same', apiKey: '[redacted]' }]
+      : [{ id: 'same', apiKey: '[redacted]' }, { id: 'same', apiKey: '[redacted]' }];
+    assert.throws(() => f.upload({ providers: imported }), { status: 400 });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
+});
+
+test('array identity: new real secrets are accepted and removed providers stay removed', () => {
+  const original = { providers: [{ id: 'alpha', apiKey: 'SECRET_ALPHA' }, { id: 'removed', apiKey: 'SECRET_REMOVED' }] };
+  const f = fixture(original);
+  f.upload({ providers: [{ id: 'new', apiKey: 'SECRET_NEW' }, { id: 'alpha', apiKey: '[redacted]' }] });
+  assert.deepEqual(f.writes, [{ providers: [{ id: 'new', apiKey: 'SECRET_NEW' }, original.providers[0]] }]);
+});
+
+test('array identity: nested identified arrays restore independently after both reorderings', () => {
+  const original = { providers: [
+    { id: 'alpha', children: [{ id: 'x', apiKey: 'SECRET_AX' }, { id: 'y', apiKey: 'SECRET_AY' }] },
+    { id: 'beta', children: [{ id: 'x', apiKey: 'SECRET_BX' }] },
+  ] };
+  const f = fixture(original);
+  const exported = f.service.getExportConfig();
+  exported.providers.reverse();
+  exported.providers[1].children.reverse();
+  f.upload(exported);
+  assert.deepEqual(f.writes, [{ providers: [original.providers[1], { id: 'alpha', children: [...original.providers[0].children].reverse() }] }]);
+});
+
+test('array identity: anonymous array placeholders always reject rather than restore by index', () => {
+  for (const providers of [['[redacted]'], [{ apiKey: '[redacted]' }], [{ name: '[redacted]', apiKey: '[redacted]' }]]) {
+    const f = fixture({ providers: [{ apiKey: 'SECRET_ANONYMOUS' }] });
+    assert.throws(() => f.upload({ providers }), { status: 400 });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
+});
+
+test('array identity: scout query q is scoped to the real scout.queries path', () => {
+  const original = { scout: { queries: [{ q: 'query one', category: 'a', source: 'b', weight: 1, apiKey: 'SECRET_QUERY' }] } };
+  const f = fixture(original);
+  f.upload(f.service.getExportConfig());
+  assert.deepEqual(f.writes, [original]);
+  const generic = fixture({ providers: [{ q: 'query one', apiKey: 'SECRET_QUERY' }] });
+  assert.throws(() => generic.upload({ providers: [{ q: 'query one', apiKey: '[redacted]' }] }), { status: 400 });
+  assert.equal(generic.writes.length, 0);
+});
+
+test('array identity: a missing placeholder field in a matched entity rejects with a useful safe path', () => {
+  const f = fixture({ providers: [{ id: 'PRIVATE_IDENTITY', name: 'Provider' }] });
+  assert.throws(() => f.upload({ providers: [{ id: 'PRIVATE_IDENTITY', name: 'Provider', apiKey: '[redacted]' }] }), (error) => {
+    assert.equal(error.status, 400);
+    assert.match(error.message, /\$\.providers\[0\]\.apiKey/);
+    assert.doesNotMatch(error.message, /PRIVATE_IDENTITY|SENTINEL|SECRET/);
+    return true;
+  });
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.files.has('/fixture/upload.json'), true);
+});
+
+test('array identity: a new real-secret element may lack identity or add a stronger identity field', () => {
+  const original = { providers: [{ name: 'alpha', apiKey: 'SECRET_ALPHA' }] };
+  const f = fixture(original);
+  f.upload({ providers: [{ apiKey: 'SECRET_NEW_ANONYMOUS' }, { id: 'new', apiKey: 'SECRET_NEW_ID' }, { name: 'alpha', apiKey: '[redacted]' }] });
+  assert.deepEqual(f.writes, [{ providers: [{ apiKey: 'SECRET_NEW_ANONYMOUS' }, { id: 'new', apiKey: 'SECRET_NEW_ID' }, original.providers[0]] }]);
+});
+
+test('array identity: nested anonymous array cannot inherit its parent identity', () => {
+  const f = fixture({ providers: [{ id: 'alpha', nested: [{ apiKey: 'SECRET_NESTED' }] }] });
+  assert.throws(() => f.upload({ providers: [{ id: 'alpha', nested: [{ apiKey: '[redacted]' }] }] }), { status: 400 });
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.files.has('/fixture/upload.json'), true);
+});
+
+test('array identity: nonarray whole credential containers still restore whole', () => {
+  const original = { apiKeys: ['SECRET_A', 'SECRET_B'], providers: [{ id: 'alpha', credentials: { nested: ['SECRET_C'] } }] };
+  const f = fixture(original);
+  const exported = f.service.getExportConfig();
+  assert.equal(exported.apiKeys, '[redacted]');
+  assert.equal(exported.providers[0].credentials, '[redacted]');
+  f.upload(exported);
+  assert.deepEqual(f.writes, [original]);
+});
+
+
+test('array identity: removed unidentified current records cannot supply or block restored secrets', () => {
+  const original = { providers: [{ id: 'alpha', apiKey: 'SECRET_ALPHA' }, { apiKey: 'SECRET_REMOVED' }] };
+  const f = fixture(original);
+  f.upload({ providers: [{ id: 'alpha', apiKey: '[redacted]' }] });
+  assert.deepEqual(f.writes, [{ providers: [original.providers[0]] }]);
+  const unmatched = fixture(original);
+  assert.throws(() => unmatched.upload({ providers: [{ id: 'new', apiKey: '[redacted]' }] }), { status: 400 });
+  assert.equal(unmatched.writes.length, 0);
+  assert.equal(unmatched.files.has('/fixture/upload.json'), true);
+});
+
+test('array identity: identity matching is typed and redacted key identities fail closed', () => {
+  const typed = fixture({ providers: [{ id: 1, apiKey: 'SECRET_NUMERIC' }] });
+  assert.throws(() => typed.upload({ providers: [{ id: '1', apiKey: '[redacted]' }] }), { status: 400 });
+  assert.equal(typed.writes.length, 0);
+  assert.equal(typed.files.has('/fixture/upload.json'), true);
+  const keyed = fixture({ providers: [{ key: 'PRIVATE_IDENTITY', apiKey: 'SECRET_KEYED' }] });
+  const exported = keyed.service.getExportConfig();
+  assert.equal(exported.providers[0].key, '[redacted]');
+  assert.throws(() => keyed.upload(exported), { status: 400 });
+  assert.equal(keyed.writes.length, 0);
+  assert.equal(keyed.files.has('/fixture/upload.json'), true);
+});
+
+test('array identity: unknown property labels and identity values are never reflected in errors', () => {
+  const f = fixture({ providers: [{ id: 'PRIVATE_IDENTITY', apiKey: 'SECRET_KEYED' }] });
+  assert.throws(() => f.upload({ providers: [{ id: 'PRIVATE_IDENTITY', PRIVATE_PROPERTY: { apiKey: '[redacted]' } }] }), (error) => {
+    assert.equal(error.status, 400);
+    assert.match(error.message, /\$\.providers\[0\]\.property\[1\]\.apiKey/);
+    assert.doesNotMatch(error.message, /PRIVATE_PROPERTY|PRIVATE_IDENTITY|SECRET_KEYED/);
+    return true;
+  });
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.files.has('/fixture/upload.json'), true);
+});
+
+test('array identity: a marker already stored as a current secret is never persisted as restored evidence', () => {
+  for (const currentValue of ['[redacted]', 'Bearer [redacted]', { nested: ['[redacted]'] }]) {
+    const f = fixture({ providers: [{ id: 'alpha', token: currentValue }] });
+    assert.throws(() => f.upload({ providers: [{ id: 'alpha', token: '[redacted]' }] }), (error) => {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /\$\.providers\[0\]\.token/);
+      assert.doesNotMatch(error.message, /alpha/);
+      return true;
+    });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
+});
+
+test('object restoration: a current marker is unavailable, including within a whole credential container', () => {
+  for (const currentValue of ['[redacted]', { nested: ['Bearer [redacted]'] }]) {
+    const f = fixture({ credentials: currentValue });
+    assert.throws(() => f.upload({ credentials: '[redacted]' }), { status: 400 });
+    assert.equal(f.writes.length, 0);
+    assert.equal(f.files.has('/fixture/upload.json'), true);
+  }
 });

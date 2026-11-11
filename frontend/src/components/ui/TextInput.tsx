@@ -11,7 +11,7 @@ export function TextInput({ invalid, className, type = 'text', ...rest }: TextIn
     <input
       {...rest}
       type={type}
-      aria-invalid={invalid || undefined}
+      aria-invalid={invalid || rest['aria-invalid'] || undefined}
       className={cx(styles.control, styles.input, className)}
     />
   )

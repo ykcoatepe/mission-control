@@ -13,7 +13,7 @@ import {
 } from '../../components/ui'
 import { apiQueryOptions } from '../../lib/hooks'
 import styles from './KnowledgeView.module.css'
-import { MIN_QUERY_LENGTH, pageUrl, searchUrl } from './lib'
+import { MIN_QUERY_LENGTH, describeLookupFailure, pageUrl, searchUrl } from './lib'
 import type { Envelope, PageData, SearchData, SearchResult } from './types'
 
 const DEBOUNCE_MS = 300
@@ -74,7 +74,7 @@ export function KnowledgeView() {
         enabled={url !== null}
         settling={settling}
         loading={search.isFetching && !search.data}
-        error={search.error ? String(search.error.message) : null}
+        failure={search.error ?? null}
         envelope={search.data ?? null}
         onRetry={() => void search.refetch()}
         onSelect={setSlug}
@@ -88,7 +88,7 @@ function SearchResults({
   enabled,
   settling,
   loading,
-  error,
+  failure,
   envelope,
   onRetry,
   onSelect,
@@ -96,7 +96,7 @@ function SearchResults({
   enabled: boolean
   settling: boolean
   loading: boolean
-  error: string | null
+  failure: Error | null
   envelope: Envelope<SearchData> | null
   onRetry: () => void
   onSelect: (slug: string) => void
@@ -110,17 +110,15 @@ function SearchResults({
     )
   }
   if (loading) return <Skeleton lines={4} label="Searching" />
-  if (error && !envelope) {
-    return <ErrorState title="Search could not be read" message="GBrain did not return results." onRetry={onRetry} />
-  }
   const data = envelope?.data
   if (!envelope || !data) {
-    return <ErrorState title="Search could not be read" message="GBrain did not return results." onRetry={onRetry} />
+    const problem = describeLookupFailure(failure, 'Search')
+    return <ErrorState title={problem.title} message={problem.message} onRetry={onRetry} retryLabel={problem.kind === 'busy' ? 'Try again' : 'Retry'} />
   }
   const results: SearchResult[] = data.results
   return (
     <div className={styles.results} aria-busy={settling || undefined}>
-      {(envelope.meta.stale || error) && (
+      {(envelope.meta.stale || failure) && (
         <Notice tone="warning">These results are from an earlier reading and may be out of date.</Notice>
       )}
       {(data.withheld ?? 0) > 0 && (
@@ -167,11 +165,7 @@ function PageDrawer({ slug, onClose }: { slug: string | null; onClose: () => voi
       {query.isLoading ? (
         <Skeleton lines={8} label="Loading page" />
       ) : query.error || !page ? (
-        <ErrorState
-          title="This page could not be read"
-          message="GBrain did not return the page."
-          onRetry={() => void query.refetch()}
-        />
+        <PageProblem error={query.error} onRetry={() => void query.refetch()} />
       ) : (
         <div className={styles.page}>
           {query.data?.meta.stale && (
@@ -183,5 +177,17 @@ function PageDrawer({ slug, onClose }: { slug: string | null; onClose: () => voi
         </div>
       )}
     </Drawer>
+  )
+}
+
+function PageProblem({ error, onRetry }: { error: Error | null; onRetry: () => void }) {
+  const problem = describeLookupFailure(error, 'This page')
+  return (
+    <ErrorState
+      title={problem.title}
+      message={problem.message}
+      onRetry={onRetry}
+      retryLabel={problem.kind === 'busy' ? 'Try again' : 'Retry'}
+    />
   )
 }

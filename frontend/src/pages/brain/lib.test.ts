@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  alignWithVerdict,
   buildBrainModel,
   collapseIncidents,
   currentNotes,
@@ -8,16 +9,18 @@ import {
   deriveSourceSync,
   deriveVerdict,
   describeElement,
+  describeLookupFailure,
   describeIncident,
   fmtAge,
   fmtCount,
   groupBlockId,
-  linkExtractionCondition,
   plainWords,
   readerBlockId,
+  reasonsForBlock,
   recentReadings,
 } from './lib'
-import { META, health, minimalSynoptic, sources, synoptic } from './fixtures'
+import { ApiError } from '../../lib/hooks'
+import { META, health, minimalSynoptic, synoptic, verdictOf, withVerdict } from './fixtures'
 import type { GBrainSynoptic, TimelineEntry } from './types'
 
 const AT = '2026-11-11T08:19:30.000Z'
@@ -27,6 +30,7 @@ function withStaleGroup(): GBrainSynoptic {
   return {
     ...base,
     state: 'warning',
+    verdict: verdictOf({ elementId: 'mission-control', state: 'warning', text: 'mission-control: source evidence is stale.' }),
     sources: [
       {
         id: 'projects',
@@ -74,91 +78,163 @@ describe('verdict', () => {
   it('is normal with a healthy configured reader, which is a quiet block with the payload line label', () => {
     const syn = synoptic()
     const model = buildBrainModel(syn)
-    const verdict = deriveVerdict(model, META)
+    const verdict = deriveVerdict(syn, META)
     expect(verdict.state).toBe('healthy')
     expect(verdict.text).toBe('GBrain is normal')
     expect(model.states[readerBlockId('hermes')]).toBe('healthy')
     expect(model.readers[0].sub).toBe('configured')
     expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'healthy', label: 'configured' })
-    expect(model.conditions).toEqual([])
+    expect(verdict.conditions).toEqual([])
   })
 
   it('shows the readers note once in Notes and no old workaround', () => {
     const syn = synoptic()
-    const model = buildBrainModel(syn)
-    const notes = currentNotes(deriveVerdict(model, META), [], syn.readersNote).map((n) => n.text)
+    const notes = currentNotes(deriveVerdict(syn, META), [], syn.readersNote).map((n) => n.text)
     expect(notes).toEqual(['Connection telemetry is not observable locally.'])
-    expect(currentNotes(deriveVerdict(model, META), [], undefined)).toEqual([])
+    expect(currentNotes(deriveVerdict(syn, META), [], undefined)).toEqual([])
   })
 
-  it('takes the reader state from the payload and counts readers toward the verdict', () => {
-    for (const [state, expected] of [
-      ['warning', 'GBrain needs attention: Hermes needs attention'],
-      ['critical', 'GBrain needs attention: Hermes needs attention'],
-      ['unavailable', 'GBrain readings are incomplete: Hermes could not be read'],
-    ] as const) {
-      const syn = synoptic()
-      syn.readers[0] = { ...syn.readers[0], state }
-      const model = buildBrainModel(syn)
-      expect(model.states[readerBlockId('hermes')]).toBe(state)
-      expect(deriveVerdict(model, META)).toMatchObject({ state, text: expected })
-    }
-    // Healthy integration evidence plus a failing reader state is not re-derived: the payload decides.
-    const syn = synoptic()
-    syn.readers[1] = { ...syn.readers[1], state: 'inactive', integration: { ...syn.readers[1].integration!, configured: null, state: 'inactive' } }
-    expect(deriveVerdict(buildBrainModel(syn), META).state).toBe('healthy')
-  })
-
-  it('names the specific condition for a stale source', () => {
-    const model = buildBrainModel(withStaleGroup(), {
-      sources: sources([{ id: 'mission-control', freshness: { status: 'warning' } }]),
-    })
-    const verdict = deriveVerdict(model, META)
-    expect(verdict.state).toBe('warning')
-    expect(verdict.text).toBe('GBrain needs attention: 1 source is stale')
-    const edge = model.edges.find((e) => e.blockId === groupBlockId('projects'))
-    expect(edge).toMatchObject({ state: 'warning', label: '3h · 2 behind' })
-  })
-
-  it('does not claim staleness it cannot show', () => {
-    const model = buildBrainModel(withStaleGroup())
-    expect(deriveVerdict(model, META).text).toBe('GBrain needs attention: 1 source is behind')
-  })
-
-  it('puts critical before warning and counts the rest', () => {
-    const syn = withStaleGroup()
-    syn.queue = { ...syn.queue, state: 'critical' }
-    const verdict = deriveVerdict(buildBrainModel(syn), META)
-    expect(verdict.state).toBe('critical')
-    expect(verdict.text).toMatch(/^GBrain needs attention: .* \(and 1 more\)$/)
-  })
-
-  it('treats unread data as incomplete, never as normal', () => {
-    const syn = synoptic()
-    syn.core = {
-      ...syn.core,
-      state: 'unavailable',
-      pages: { ...syn.core.pages, value: null, state: 'unavailable', observedAt: null },
-      chunks: { ...syn.core.chunks, value: null, state: 'unavailable', observedAt: null },
-    }
-    const model = buildBrainModel(syn)
-    const verdict = deriveVerdict(model, META)
+  it('is the payload verdict: same state, first reason as the sentence, the rest counted', () => {
+    const syn = withVerdict(
+      synoptic(),
+      { elementId: 'queue', state: 'warning', text: 'Queue requires attention.' },
+      { elementId: 'hermes', state: 'unavailable', text: 'Hermes: integration unavailable.' },
+      { elementId: 'gbrain.health', state: 'critical', text: 'GBrain core requires attention (quality 40).' },
+    )
+    const verdict = deriveVerdict(syn, META)
+    // The server ranks a failed reading above critical and warning; the page keeps that order.
     expect(verdict.state).toBe('unavailable')
-    expect(verdict.text).toBe('GBrain readings are incomplete: GBrain core readings could not be read')
-    expect(model.core.rows.find((r) => r.label === 'Pages')?.value).toBe('—')
+    expect(verdict.state).toBe(syn.verdict?.state)
+    expect(verdict.state).toBe(syn.state)
+    expect(verdict.text).toBe('GBrain readings are incomplete: Hermes: integration unavailable (and 2 more)')
+    expect(verdict.conditions.map((c) => c.id)).toEqual(['hermes', 'gbrain.health', 'queue'])
+
+    const critical = withVerdict(synoptic(), syn.verdict!.reasons[0], syn.verdict!.reasons[2])
+    expect(deriveVerdict(critical, META)).toMatchObject({ state: 'critical', text: 'GBrain needs attention: GBrain core requires attention (quality 40) (and 1 more)' })
   })
 
-  it('is not normal when the reading itself is stale or missing', () => {
-    const stale = deriveVerdict(buildBrainModel(synoptic()), { ...META, stale: true })
-    expect(stale.state).toBe('warning')
-    expect(stale.text).toContain('the last reading is stale')
+  it('uses the incomplete wording only when the payload verdict is unavailable', () => {
+    const syn = withVerdict(synoptic(), { elementId: 'embed-job-probe', state: 'unavailable', text: 'Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.' })
+    expect(deriveVerdict(syn, META)).toMatchObject({
+      state: 'unavailable',
+      text: 'GBrain readings are incomplete: Embed-job probe unavailable; the missing-embedding verdict uses embedding age only',
+    })
+  })
+
+  it('never derives a second verdict from the blocks: a lit block under a healthy payload verdict stays healthy', () => {
+    const syn = synoptic()
+    syn.readers[0] = { ...syn.readers[0], state: 'critical' }
+    syn.queue = { ...syn.queue, state: 'warning' }
+    expect(deriveVerdict(syn, META)).toMatchObject({ state: 'healthy', text: 'GBrain is normal' })
+  })
+
+  it('lists inactive reasons but they never degrade the verdict', () => {
+    const syn = withVerdict(synoptic(), { elementId: 'off', state: 'inactive', text: 'off: sync disabled.' })
+    const verdict = deriveVerdict(syn, META)
+    expect(verdict).toMatchObject({ state: 'healthy', text: 'GBrain is normal' })
+    expect(verdict.conditions).toEqual([{ id: 'off', state: 'inactive', text: 'off: sync disabled' }])
+    expect(currentNotes(verdict, [], undefined).map((n) => n.state)).toEqual(['inactive'])
+  })
+
+  it('does not trust a payload with no verdict, and does not repair it', () => {
+    const syn = { ...synoptic(), verdict: undefined }
+    expect(deriveVerdict(syn, META)).toMatchObject({ state: 'unavailable', text: 'GBrain did not report a verdict' })
+    expect(deriveVerdict({ verdict: { state: 'fine', reasons: [] } } as unknown as GBrainSynoptic, META).state).toBe('unavailable')
     expect(deriveVerdict(null, null)).toMatchObject({ state: 'unavailable', text: 'GBrain could not be read' })
   })
 
-  it('counts a reader whose own configuration is wrong', () => {
+  it('treats unread data as incomplete, never as normal', () => {
+    const syn = minimalSynoptic()
+    const verdict = deriveVerdict(syn, META)
+    expect(verdict.state).toBe('unavailable')
+    expect(verdict.text).toBe('GBrain readings are incomplete: GBrain core reading unavailable')
+    expect(buildBrainModel(syn).core.rows.find((r) => r.label === 'Pages')?.value).toBe('—')
+  })
+
+  it('shows a healthy verdict on a stale reading as caution, the rule the top bar uses', () => {
+    const stale = deriveVerdict(synoptic(), { ...META, stale: true })
+    expect(stale.state).toBe('warning')
+    expect(stale.text).toBe('GBrain needs attention: the last reading is stale')
+    // An unhealthy verdict keeps the payload's own state on a stale reading.
+    expect(deriveVerdict(withStaleGroup(), { ...META, stale: true }).state).toBe('warning')
+    expect(deriveVerdict(minimalSynoptic(), { ...META, stale: true }).state).toBe('unavailable')
+  })
+
+  it('names the specific stale source from the payload, and the line keeps its own reading', () => {
+    const syn = withStaleGroup()
+    const verdict = deriveVerdict(syn, META)
+    expect(verdict.state).toBe('warning')
+    expect(verdict.text).toBe('GBrain needs attention: mission-control: source evidence is stale')
+    const edge = buildBrainModel(syn).edges.find((e) => e.blockId === groupBlockId('projects'))
+    expect(edge).toMatchObject({ state: 'warning', label: '3h · 2 behind' })
+  })
+})
+
+describe('the readings strip cannot disagree with the verdict', () => {
+  it('a reading may not be lit under a healthy verdict, nor critical under a warning one', () => {
+    expect(alignWithVerdict('warning', 'healthy')).toBe('healthy')
+    expect(alignWithVerdict('critical', 'healthy')).toBe('healthy')
+    expect(alignWithVerdict('critical', 'warning')).toBe('warning')
+    expect(alignWithVerdict('critical', 'critical')).toBe('critical')
+    // A failed reading outranks everything in the server's verdict.
+    expect(alignWithVerdict('critical', 'unavailable')).toBe('critical')
+    expect(alignWithVerdict('warning', 'unavailable')).toBe('warning')
+    expect(alignWithVerdict('warning', 'critical')).toBe('warning')
+    // Not read is not an alarm, and it is never turned green.
+    expect(alignWithVerdict('unavailable', 'healthy')).toBe('unavailable')
+    expect(alignWithVerdict('inactive', 'healthy')).toBe('inactive')
+  })
+
+  it('shows the link extraction backlog with its figure but not a colour the verdict does not have', () => {
     const syn = synoptic()
-    syn.readers[0] = { ...syn.readers[0], state: 'inactive', integration: { ...syn.readers[0].integration!, configured: false, state: 'inactive' } }
-    expect(deriveVerdict(buildBrainModel(syn), META).text).toBe('GBrain needs attention: Hermes is not configured')
+    const behind = health({ stalePages: 3, stalePagesOverdue: 3 })
+    const quiet = deriveReadings(syn, buildBrainModel(syn), behind, deriveVerdict(syn, META).state)
+    expect(quiet.linkExtraction).toMatchObject({ value: '3', unit: 'pages behind', state: 'healthy' })
+
+    const warn = withVerdict(synoptic(), { elementId: 'stale-pages', state: 'warning', text: 'Stale pages need link extraction.' })
+    const lit = deriveReadings(warn, buildBrainModel(warn), behind, deriveVerdict(warn, META).state)
+    expect(lit.linkExtraction).toMatchObject({ value: '3', state: 'warning' })
+  })
+
+  it('takes the queue state from the payload alone: the health reading adds figures, not an opinion', () => {
+    const syn = synoptic()
+    const model = buildBrainModel(syn)
+    expect(model.states.queue).toBe('healthy')
+    const readings = deriveReadings(syn, model, health({ missingEmbeddings: 5, missingEmbeddingsOverdue: 5, queue: { waiting: 0, active: 0, stalled: 2 } }), 'healthy')
+    expect(readings.queue.state).toBe('healthy')
+  })
+
+  it('every reading state is within what the verdict allows, for every verdict state', () => {
+    const rank = { healthy: 0, inactive: 0, warning: 2, critical: 3 } as const
+    const allowed = { healthy: 0, inactive: 0, warning: 2, critical: 3, unavailable: 3 } as const
+    for (const verdictState of ['healthy', 'warning', 'critical', 'unavailable', 'inactive'] as const) {
+      const syn = withStaleGroup()
+      syn.core.quality = { ...syn.core.quality, state: 'critical' }
+      const readings = deriveReadings(syn, buildBrainModel(syn), health({ stalePages: 2, stalePagesOverdue: 2 }), verdictState)
+      for (const reading of [readings.quality, readings.sourceSync, readings.linkExtraction, readings.queue]) {
+        if (reading.state === 'warning' || reading.state === 'critical') {
+          expect(rank[reading.state], `${verdictState}: ${reading.state}`).toBeLessThanOrEqual(allowed[verdictState])
+        }
+      }
+    }
+  })
+})
+
+describe('reasons per block', () => {
+  it('attach the payload reasons to the block they are about', () => {
+    const syn = withVerdict(
+      synoptic(),
+      { elementId: 'mission-control', state: 'warning', text: 'mission-control: source evidence is stale.' },
+      { elementId: 'queue', state: 'warning', text: 'Queue requires attention.' },
+      { elementId: 'hermes', state: 'inactive', text: 'Hermes: integration not configured.' },
+      { elementId: 'gbrain-core', state: 'warning', text: 'GBrain core requires attention (quality 80).' },
+    )
+    expect(reasonsForBlock(groupBlockId('projects'), syn).map((r) => r.elementId)).toEqual(['mission-control'])
+    expect(reasonsForBlock(groupBlockId('reference'), syn)).toEqual([])
+    expect(reasonsForBlock('queue', syn).map((r) => r.elementId)).toEqual(['queue'])
+    expect(reasonsForBlock(readerBlockId('hermes'), syn).map((r) => r.elementId)).toEqual(['hermes'])
+    expect(reasonsForBlock('core', syn).map((r) => r.elementId)).toEqual(['gbrain-core'])
+    expect(describeElement('queue', syn, buildBrainModel(syn))?.notes).toEqual(['Queue requires attention.'])
   })
 })
 
@@ -180,13 +256,6 @@ describe('link extraction', () => {
     })
     expect(deriveLinkExtraction(health({ stalePages: 3, stalePagesOverdue: 3 }))).toMatchObject({ value: '3', unit: 'pages behind', state: 'warning' })
     expect(deriveLinkExtraction(health({ stalePages: 1, stalePagesOverdue: 1 }))).toMatchObject({ value: '1', unit: 'page behind' })
-  })
-
-  it('feeds the verdict only when it is not current', () => {
-    expect(linkExtractionCondition(undefined)).toEqual([])
-    expect(linkExtractionCondition(health())).toEqual([])
-    expect(linkExtractionCondition(health({ stalePages: 1, stalePagesOverdue: 1 }))[0].text).toBe('1 page awaiting link extraction')
-    expect(linkExtractionCondition(health({}, { ok: false }))[0].state).toBe('unavailable')
   })
 })
 
@@ -213,17 +282,13 @@ describe('readings', () => {
 
   it('shows a null queue as a dash and an overdue embedding backlog as a warning', () => {
     const syn = synoptic()
-    const readings = deriveReadings(syn, buildBrainModel(syn), health())
+    const readings = deriveReadings(syn, buildBrainModel(syn), health(), 'healthy')
     expect(readings.queue.value).toBe(0)
     expect(readings.queue.state).toBe('healthy')
 
-    const backlog = buildBrainModel(syn, { health: health({ missingEmbeddings: 5, missingEmbeddingsOverdue: 5 }) })
-    expect(backlog.states.queue).toBe('warning')
-    expect(backlog.conditions[0].text).toBe('5 chunks overdue for embedding')
-
     const unread = synoptic()
     unread.queue = { ...unread.queue, state: 'unavailable', waiting: { value: null, unit: 'jobs', state: 'unavailable', observedAt: null } }
-    const r = deriveReadings(unread, buildBrainModel(unread), undefined)
+    const r = deriveReadings(unread, buildBrainModel(unread), undefined, 'unavailable')
     expect(r.queue.value).toBeNull()
     expect(r.queue.state).toBe('unavailable')
     expect(buildBrainModel(unread).edges.find((e) => e.blockId === 'queue')?.label).toBe('not read')
@@ -232,7 +297,7 @@ describe('readings', () => {
   it('keeps quality null when it was not read', () => {
     const syn = synoptic()
     syn.core.quality = { ...syn.core.quality, value: null, state: 'unavailable', observedAt: null }
-    expect(deriveReadings(syn, buildBrainModel(syn), undefined).quality).toEqual({ value: null, state: 'unavailable' })
+    expect(deriveReadings(syn, buildBrainModel(syn), undefined, 'unavailable').quality).toEqual({ value: null, state: 'unavailable' })
   })
 })
 
@@ -308,10 +373,10 @@ describe('optional fields never crash the page', () => {
     it(`builds the model, readings, verdict, notes and every detail from ${name}`, () => {
       const syn = make()
       const model = buildBrainModel(syn)
-      const readings = deriveReadings(syn, model, undefined)
+      const readings = deriveReadings(syn, model, undefined, 'unavailable')
       expect(readings.quality.value).toBeNull()
       expect(readings.queue.value).toBeNull()
-      const verdict = deriveVerdict(model, META)
+      const verdict = deriveVerdict(syn, META)
       expect(['healthy', 'unavailable']).toContain(verdict.state)
       expect(() => currentNotes(verdict, [], syn.readersNote)).not.toThrow()
       expect(model.core.rows.map((r) => r.value)).toEqual(['—', '—', '—'])
@@ -334,7 +399,7 @@ describe('optional fields never crash the page', () => {
 
   it('reads missing measurements as not read, never as normal', () => {
     const model = buildBrainModel(minimalSynoptic())
-    expect(deriveVerdict(model, META).state).toBe('unavailable')
+    expect(deriveVerdict(minimalSynoptic(), META).state).toBe('unavailable')
     expect(model.edges.find((e) => e.blockId === 'queue')).toMatchObject({ label: 'not read', state: 'unavailable' })
     expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ label: 'not read', state: 'unavailable' })
     expect(model.readers[0].sub).toBe('not read')
@@ -346,7 +411,7 @@ describe('optional fields never crash the page', () => {
     expect(deriveSourceSync(syn.sources).value).toBe('2 of 3')
     const bare = { ok: true, meta: META }
     expect(deriveLinkExtraction(bare)).toMatchObject({ state: 'unavailable' })
-    expect(buildBrainModel(syn, { health: bare, sources: { meta: META } }).states.queue).toBeDefined()
+    expect(buildBrainModel(syn).states.queue).toBeDefined()
     expect(describeElement('queue', syn, buildBrainModel(syn), { health: bare, sources: { meta: META } })).not.toBeNull()
   })
 
@@ -377,8 +442,7 @@ describe('recovered regressions', () => {
   })
 
   it('never lets history change the current verdict', () => {
-    const model = buildBrainModel(synoptic())
-    expect(deriveVerdict(model, META).state).toBe('healthy')
+    expect(deriveVerdict(synoptic(), META).state).toBe('healthy')
   })
 })
 
@@ -405,5 +469,37 @@ describe('recent readings', () => {
     before.metrics = { health: '100/100', embeddings: '100%', queue: '0 / 0 / 0', caveats: '0' }
     expect(recentReadings([many, before])[0].headline).toMatch(/^(.* · ){3}\+\d+ more$/)
     expect(recentReadings([entry('1', 'healthy', '100/100')], 0)).toEqual([])
+  })
+})
+
+describe('lookup failures', () => {
+  it('429 is "busy, try again" and honours Retry-After, not a broken brain', () => {
+    const busy = new ApiError({ status: 429, code: 'lane_busy', message: 'busy', retryAfterMs: 3000 })
+    expect(describeLookupFailure(busy, 'Search')).toEqual({
+      kind: 'busy',
+      title: 'Search is busy',
+      message: 'The server is busy, try again in 3 seconds.',
+    })
+    expect(describeLookupFailure(busy, 'This page')).toMatchObject({ kind: 'busy', title: 'The page is busy' })
+    expect(describeLookupFailure(new ApiError({ status: 429, code: 'x', message: 'x' }), 'Search').message).toBe(
+      'The server is busy, try again in a moment.',
+    )
+  })
+
+  it('503 is "not available" with the server reason', () => {
+    const down = new ApiError({ status: 503, code: 'gbrain_lane_quarantined', message: 'Lookup lane is quarantined' })
+    expect(describeLookupFailure(down, 'Search')).toEqual({
+      kind: 'unavailable',
+      title: 'Search is not available',
+      message: 'Lookup lane is quarantined',
+    })
+  })
+
+  it('anything else is an error with the server message, or a plain fallback', () => {
+    expect(describeLookupFailure(new ApiError({ status: 400, code: 'invalid_query', message: 'q must be 1-300 characters' }), 'Search')).toMatchObject({
+      kind: 'error',
+      message: 'q must be 1-300 characters',
+    })
+    expect(describeLookupFailure(null, 'This page')).toMatchObject({ kind: 'error', title: 'This page could not be read' })
   })
 })

@@ -82,6 +82,18 @@ export interface UsageProvider {
   note?: string | null
 }
 
+/**
+ * A platform that makes the period's total partial for a reason beyond "not
+ * read" (GET /api/costs `missingProviders`). Reasons the server uses:
+ * `usage_unavailable`, `window_not_observed`, `ownership_overlap_unresolved`,
+ * `api_equivalent_unavailable`, `partially_priced_usage`.
+ */
+export interface UsageMissingProvider {
+  id: string
+  label: string
+  reason: string
+}
+
 export interface TokenData {
   source?: string
   /** `anchor` is the `YYYY-MM` month this payload was anchored to, or null for the live period. */
@@ -89,8 +101,10 @@ export interface TokenData {
   daily: TokenDailyEntry[]
   /** Every platform the backend has a provider for. The page lists exactly these. */
   providers?: UsageProvider[]
-  /** True when any provider is unread, stale or incomplete. */
+  /** True when this period's total is partial: a provider is unread, stale or incomplete. Per window. */
   partial?: boolean
+  /** Platforms behind a partial window, with the reason. Empty when the only issue is a standing partial record. */
+  missingProviders?: UsageMissingProvider[]
   dailyByModel?: ModelDailyEntry[]
   modelKeys?: string[]
   agents?: AgentUsageData[]
@@ -113,12 +127,12 @@ export interface TokenData {
     previousPeriodApiEquivalentReliability?: string
     apiEquivalentUsd?: number | null
     note?: string
-    budget?: { monthly: number; warning?: number }
+    budget?: { monthly: number | null; warning?: number }
   }
   byService: TokenServiceData[]
   costReliability?: 'normalized' | 'partial_unknown' | string
   apiEquivalentReliability?: 'estimated' | 'partial' | 'not_applicable' | 'unavailable' | 'no_usage' | string
-  budget?: { monthly: number }
+  budget?: { monthly: number | null }
   meta?: {
     updatedAt?: string
     refreshing?: boolean
@@ -169,11 +183,9 @@ export interface SessionData {
   displayName?: string
 }
 
+/** The only parts of GET /api/config the Usage page reads (`modules.aws`, `aws.enabled`). */
 export interface ConfigData {
-  modules: {
-    aws?: boolean
-    [key: string]: boolean | undefined
-  }
+  modules?: Record<string, boolean | undefined>
   aws?: {
     enabled?: boolean
   }

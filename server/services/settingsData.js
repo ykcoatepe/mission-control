@@ -19,21 +19,90 @@ function validateSettingsDocument(document) {
   if (Object.hasOwn(document.budget || {}, 'monthly')) normalizeMonthlyBudget(document.budget.monthly);
 }
 
-// The exporter may replace a whole credential container or a substring of an
-// ordinary string. Importing either form keeps the current value as a whole;
-// never combine a redacted prefix/suffix with a secret from another document.
+// Object-path placeholders preserve an existing value whole, including whole
+// credential containers. Array entries need a stable identity: their position
+// is never evidence that they refer to the same entity after an edit.
 const OMIT_REDACTED = Symbol('omit-redacted');
-function restoreRedactedValues(imported, current, hasCurrent = false) {
+function containsRedactedValue(value) {
+  if (typeof value === 'string') return /\[redacted\]/i.test(value);
+  if (Array.isArray(value)) return value.some(containsRedactedValue);
+  return value != null && typeof value === 'object' && Object.values(value).some(containsRedactedValue);
+}
+
+function isIdentityObject(value) {
+  return value != null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function arrayIdentity(value, field) {
+  if (!field || !isIdentityObject(value) || !Object.hasOwn(value, field)) return null;
+  const identity = value[field];
+  if (typeof identity === 'string' && identity.trim() && !containsRedactedValue(identity)) return `string:${identity}`;
+  if (typeof identity === 'number' && Number.isFinite(identity)) return `number:${identity}`;
+  return null;
+}
+
+// Public structural labels make failures useful; unknown property names use
+// ordinals, since arbitrary extension keys can themselves contain secrets.
+const SAFE_IMPORT_PATH_FIELDS = new Set([
+  'providers', 'provider', 'nested', 'children', 'items', 'groups', 'scout',
+  'queries', 'q', 'category', 'source', 'weight', 'id', 'name', 'key', 'apiKey',
+  'apiKeys', 'api_key', 'api_keys', 'token', 'tokens', 'secret', 'password',
+  'credentials', 'authorization', 'connection', 'gateway', 'auth', 'budget',
+  'monthly', 'modules', 'ollama', 'hermes', 'security', 'aws', 'notion',
+]);
+function importFieldPath(parent, key, index) {
+  return SAFE_IMPORT_PATH_FIELDS.has(key) ? `${parent}.${key}` : `${parent}.property[${index}]`;
+}
+
+function arrayIdentityError(path) {
+  // Paths contain public structural labels/ordinals and array indices, never
+  // identity values or untrusted property names.
+  return httpError(400, 'redacted_identity_required', `Redacted array value requires a unique matching identity at ${path}`);
+}
+
+function restoreRedactedValues(imported, current, hasCurrent = false, path = [], safePath = '$', inArrayEntry = false) {
   if (typeof imported === 'string' && /\[redacted\]/i.test(imported)) {
+    if (!hasCurrent && inArrayEntry) throw arrayIdentityError(safePath);
+    // A previously persisted marker is not a genuine secret. This also checks
+    // whole containers so a backup cannot re-save unknown nested credentials.
+    if (hasCurrent && containsRedactedValue(current)) {
+      throw httpError(400, 'redacted_value_unavailable', `Current value cannot restore a redacted field at ${safePath}`);
+    }
     return hasCurrent ? structuredClone(current) : OMIT_REDACTED;
   }
   if (Array.isArray(imported)) {
-    return imported.map((value, index) => restoreRedactedValues(value, current?.[index], Array.isArray(current) && Object.hasOwn(current, index)))
-      .filter((value) => value !== OMIT_REDACTED);
+    if (!containsRedactedValue(imported)) return structuredClone(imported);
+    const previous = Array.isArray(current) ? current : [];
+    // Existing identity policy dominates. A new real-secret entry with an id
+    // must not change a name-based array's established matching policy.
+    const fields = path.length === 2 && path[0] === 'scout' && path[1] === 'queries'
+      ? ['id', 'name', 'key', 'q'] : ['id', 'name', 'key'];
+    const field = fields.find((candidate) => previous.some((entry) => isIdentityObject(entry) && Object.hasOwn(entry, candidate)));
+    const currentByIdentity = new Map();
+    for (const [index, entry] of previous.entries()) {
+      const identity = arrayIdentity(entry, field);
+      // An unidentified old entry may simply have been removed. It can never
+      // supply a restored value, so leave it out of the matching index.
+      if (identity === null) continue;
+      if (currentByIdentity.has(identity)) throw arrayIdentityError(`${safePath}[${index}]`);
+      currentByIdentity.set(identity, entry);
+    }
+    const importedIdentities = new Set();
+    for (const [index, entry] of imported.entries()) {
+      const identity = arrayIdentity(entry, field);
+      if (identity !== null && importedIdentities.has(identity)) throw arrayIdentityError(`${safePath}[${index}]`);
+      if (identity !== null) importedIdentities.add(identity);
+      if (containsRedactedValue(entry) && (identity === null || !currentByIdentity.has(identity))) throw arrayIdentityError(`${safePath}[${index}]`);
+    }
+    return imported.map((entry, index) => {
+      if (!containsRedactedValue(entry)) return structuredClone(entry);
+      const matched = currentByIdentity.get(arrayIdentity(entry, field));
+      return restoreRedactedValues(entry, matched, true, [...path, index], `${safePath}[${index}]`, true);
+    });
   }
   if (imported && typeof imported === 'object') {
-    return Object.fromEntries(Object.entries(imported).map(([key, value]) => [key,
-      restoreRedactedValues(value, current?.[key], current != null && typeof current === 'object' && Object.hasOwn(current, key)),
+    return Object.fromEntries(Object.entries(imported).map(([key, value], index) => [key,
+      restoreRedactedValues(value, current?.[key], current != null && typeof current === 'object' && Object.hasOwn(current, key), [...path, key], importFieldPath(safePath, key, index), inArrayEntry),
     ]).filter(([, value]) => value !== OMIT_REDACTED));
   }
   return imported;

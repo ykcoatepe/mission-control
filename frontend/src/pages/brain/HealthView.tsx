@@ -35,7 +35,6 @@ export interface BrainData {
   timeline: TimelineReading | null
   timelineStale: boolean
   capabilities: OperationCapability[] | null
-  caveats: string[]
 }
 
 export function HealthView({
@@ -51,10 +50,12 @@ export function HealthView({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const { acknowledged, acknowledge } = useAcknowledgedIncidents()
 
-  const readings = deriveReadings(syn, model, health)
+  const readings = deriveReadings(syn, model, health, verdict.state)
   const detail = selectedId ? describeElement(selectedId, syn, model, { sources, health }) : null
   const recovered = collapseIncidents(timeline?.incidentBanners, acknowledged)
-  const notes = currentNotes(verdict, data.caveats, syn.readersNote)
+  // The notes are the verdict's own reasons. The Operations overview repeats them as caveats, from a
+  // different reading, so they are not listed a second time.
+  const notes = currentNotes(verdict, [], syn.readersNote)
   const rows = recentReadings(timeline?.entries)
 
   const runFromDetail = (action: OperationCapability) => {

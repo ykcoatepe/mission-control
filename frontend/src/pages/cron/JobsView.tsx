@@ -30,7 +30,7 @@ import { normalizeCronStatus } from '../../lib/status'
 import {
   buildCronModelOptions,
   buildCronOverlapMarkers,
-  cronFetch,
+  cronRequest,
   errorMessage,
   getCronScheduler,
   getCronSchedulerLabel,
@@ -176,42 +176,27 @@ export default function JobsView() {
 
   const toggleMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronFetch(`/api/cron/${job.id}/toggle`, {
-        method: 'POST',
-        body: JSON.stringify({ enabled: !job.enabled, scheduler: getCronScheduler(job) }),
-      }),
+      cronRequest(`/api/cron/${job.id}/toggle`, 'POST', { enabled: !job.enabled, scheduler: getCronScheduler(job) }),
   })
 
   const runMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronFetch(`/api/cron/${job.id}/run`, {
-        method: 'POST',
-        body: JSON.stringify({ scheduler: getCronScheduler(job) }),
-      }),
+      cronRequest(`/api/cron/${job.id}/run`, 'POST', { scheduler: getCronScheduler(job) }),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronFetch(`/api/cron/${job.id}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ scheduler: getCronScheduler(job) }),
-      }),
+      cronRequest(`/api/cron/${job.id}`, 'DELETE', { scheduler: getCronScheduler(job) }),
   })
 
   const createMutation = useMutation({
     mutationFn: (job: CreateCronJobPayload) =>
-      cronFetch('/api/cron/create', {
-        method: 'POST',
-        body: JSON.stringify({ job }),
-      }),
+      cronRequest('/api/cron/create', 'POST', { job }),
   })
 
   const modelMutation = useMutation({
     mutationFn: ({ job, model }: { job: CronJob; model: string }) =>
-      cronFetch(`/api/cron/${job.id}/model`, {
-        method: 'PATCH',
-        body: JSON.stringify({ model, scheduler: getCronScheduler(job) }),
-      }),
+      cronRequest(`/api/cron/${job.id}/model`, 'PATCH', { model, scheduler: getCronScheduler(job) }),
   })
 
   const handleToggle = async (job: CronJob) => {

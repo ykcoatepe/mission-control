@@ -1,4 +1,4 @@
-import type { GBrainSynoptic, HealthReading, Meta, SourcesReading } from './types'
+import type { GBrainSynoptic, HealthReading, Meta, PayloadVerdict, SourcesReading, VerdictReason } from './types'
 
 const AT = '2026-11-11T08:19:30.000Z'
 const m = (value: number | null, unit = 'chunks', state: 'healthy' | 'warning' | 'critical' | 'unavailable' | 'inactive' = 'healthy') => ({
@@ -10,11 +10,34 @@ const m = (value: number | null, unit = 'chunks', state: 'healthy' | 'warning' |
 
 export const META: Meta = { ok: true, stale: false, observedAt: AT, ageMs: 1000, error: null }
 
+/** The server's precedence (server/sources/gbrain/state.js): a failed reading outranks critical, then warning. */
+const RANK = { unavailable: 0, critical: 1, warning: 2, healthy: 3, inactive: 4 } as const
+
+/**
+ * A payload verdict the way the server builds it: the most severe non-inactive
+ * reason decides (unavailable > critical > warning), and a verdict with no such reason is healthy.
+ */
+export function verdictOf(...reasons: VerdictReason[]): PayloadVerdict {
+  const attention = reasons.filter((reason) => reason.state !== 'inactive')
+  const state = attention.reduce<VerdictReason['state']>(
+    (worst, reason) => (RANK[reason.state] < RANK[worst] ? reason.state : worst),
+    'healthy',
+  )
+  return { state, reasons }
+}
+
+/** The same payload with a verdict (and the matching top-level state), as the server sends it. */
+export function withVerdict(syn: GBrainSynoptic, ...reasons: VerdictReason[]): GBrainSynoptic {
+  const verdict = verdictOf(...reasons)
+  return { ...syn, state: verdict.state, verdict }
+}
+
 /** Only what the contract requires: no optional object, no note, no component list. */
 export function minimalSynoptic(): GBrainSynoptic {
   return {
     schemaVersion: '1',
     state: 'unavailable',
+    verdict: verdictOf({ elementId: 'gbrain-core', state: 'unavailable', text: 'GBrain core reading unavailable.' }),
     core: { state: 'unavailable', observedAt: null },
     sources: [],
     queue: { state: 'unavailable', observedAt: null },
@@ -44,6 +67,7 @@ export function synoptic(overrides: Partial<GBrainSynoptic> = {}): GBrainSynopti
   return {
     schemaVersion: '1',
     state: 'healthy',
+    verdict: verdictOf(),
     core: {
       version: { value: '0.60.599.0', unit: 'version', observedAt: AT, state: 'healthy' },
       pages: m(63313, 'pages'),

@@ -1,3 +1,4 @@
+import { describeApiError, sendJson } from '../../lib/hooks'
 import type {
   CronJob,
   CronModelResponse,
@@ -189,26 +190,20 @@ export function rowStaggerDelay(index: number, base: number, step: number, capIn
 
 // ── Write helper ──────────────────────────────────────────────────────────
 
+/** Readable text for any failure: the server's own message for 400/409, "busy" for 429, "not available" for 503. */
 export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return describeApiError(err, String(err))
 }
 
 /**
- * Fetch wrapper for cron write endpoints: resolves on 2xx, otherwise throws
- * an Error carrying the server's `{ error }` message when one is present.
+ * Cron write endpoints: resolves on 2xx, otherwise throws the shared `ApiError`
+ * carrying the server's `{ error: { code, message } }`. Goes through `sendJson`,
+ * which adds the write-guard header.
  */
-export async function cronFetch(url: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (res.ok) return
-  let message = `HTTP ${res.status}`
-  try {
-    const body = await res.json()
-    if (body && typeof body.error === 'string' && body.error) message = body.error
-  } catch {
-    // non-JSON error body; keep the HTTP status message
-  }
-  throw new Error(message)
+export async function cronRequest(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<void> {
+  await sendJson(url, method, body)
 }

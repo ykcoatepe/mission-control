@@ -1,11 +1,14 @@
+import { describeApiError, isBusyError, isUnavailableError } from '../../lib/hooks'
 import { worstState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
-import { deriveQueueEvidenceStatus, timelineDeltaLines } from '../gbrain/presentation'
+import { timelineDeltaLines } from '../gbrain/presentation'
 import type {
   GBrainSynoptic,
   HealthReading,
   IncidentBanner,
   Meta,
+  PayloadVerdict,
+  VerdictReason,
   SourceRecord,
   SourcesReading,
   SynopticReader,
@@ -96,7 +99,6 @@ export interface BrainModel {
   groups: BlockModel[]
   queue: BlockModel
   edges: EdgeModel[]
-  conditions: Condition[]
   /** The displayed state of every block, by id. */
   states: Record<string, UiState>
 }
@@ -122,29 +124,6 @@ function readerSub(reader: SynopticReader): string {
 
 function recordFor(sources: SourcesReading | null | undefined, id: string): SourceRecord | undefined {
   return sources?.sources?.find((record) => record.id === id)
-}
-
-function problemWord(item: SynopticSourceGroup['items'][number], record: SourceRecord | undefined): string | null {
-  if (record?.freshness?.status === 'warning') return 'stale'
-  if ((item.behind ?? 0) > 0) return 'behind'
-  return null
-}
-
-function groupConditionText(group: SynopticSourceGroup, sources: SourcesReading | null | undefined): string | null {
-  if (group.state === 'unavailable') return `${group.label} sources could not be read`
-  const bad = group.items.filter((item) => item.state === 'warning' || item.state === 'critical')
-  if (bad.length === 0) return `${group.label} sources need attention`
-  const words = new Set(bad.map((item) => problemWord(item, recordFor(sources, item.id))))
-  const word = words.size === 1 ? [...words][0] : null
-  const subject = `${bad.length} ${plural(bad.length, 'source')}`
-  if (word) return `${subject} ${bad.length === 1 ? 'is' : 'are'} ${word}`
-  return `${subject} ${bad.length === 1 ? 'needs' : 'need'} attention`
-}
-
-function metricProblem(name: string, state: UiState, belowNormal = false): string {
-  if (state === 'unavailable') return `${name} could not be read`
-  if (state === 'critical') return `${name} is failing`
-  return belowNormal ? `${name} is below normal` : `${name} needs attention`
 }
 
 const SEVERITY_ORDER: Record<UiState, number> = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 }
@@ -181,58 +160,18 @@ export function deriveLinkExtraction(health: HealthReading | null | undefined): 
   }
 }
 
-function queueEvidenceState(health: HealthReading | null | undefined, synQueue: GBrainSynoptic['queue']): UiState {
-  if (!health || health.ok === false || !health.metrics) return synQueue.state
-  const metrics = health.metrics
-  const counters = metrics.queue
-  const evidence = deriveQueueEvidenceStatus({
-    fallbackStatus: 'inactive',
-    hasLiveHealth: true,
-    countersAvailable: Boolean(
-      counters && [counters.waiting, counters.active, counters.stalled].every((value) => Number.isFinite(value)),
-    ),
-    missingEmbeddings: metrics.missingEmbeddings ?? null,
-    missingEmbeddingsOverdue: metrics.missingEmbeddingsOverdue,
-    missingEmbeddingsUnavailable: metrics.missingEmbeddingsUnavailable,
-    stalledJobs: counters?.stalled ?? null,
-  })
-  return worstState([synQueue.state, evidence])
-}
-
 export interface ModelContext {
   sources?: SourcesReading | null
   health?: HealthReading | null
 }
 
-/** Turn the synoptic payload into blocks, lines and conditions. Pure: no time, no network. */
-export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): BrainModel {
+/** Turn the synoptic payload into blocks and lines. Pure: no time, no network. It forms no verdict of its own. */
+export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
   const states: Record<string, UiState> = {}
-  const conditions: Condition[] = []
 
   // ---- core ----
   const core = syn.core
-  const coreMetrics: Array<[string, UiState, boolean]> = [
-    ['Quality score', stateOf(core.quality), true],
-    ['GBrain version', stateOf(core.version), false],
-    ['Page count', stateOf(core.pages), false],
-    ['Chunk count', stateOf(core.chunks), false],
-    ['Embedded chunk count', stateOf(core.embedded), false],
-  ]
-  const coreProblems = coreMetrics.filter(([, state]) => state !== 'healthy' && state !== 'inactive')
   const coreState = core.state
-  if (coreState !== 'healthy' && coreState !== 'inactive') {
-    const allUnread = coreProblems.length > 1 && coreProblems.every(([, state]) => state === 'unavailable')
-    const first = coreProblems[0]
-    conditions.push({
-      id: CORE_ID,
-      state: coreState,
-      text: allUnread
-        ? 'GBrain core readings could not be read'
-        : first
-          ? metricProblem(first[0], first[1], first[2])
-          : 'The core reading needs attention',
-    })
-  }
   states[CORE_ID] = coreState
   const version = core.version?.value ?? null
   const coreModel: CoreModel = {
@@ -264,10 +203,6 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     else sub = off > 0 ? `all fresh · ${off} off` : 'all fresh'
     groups.push({ id, kind: 'group', label: group.label, state: group.state, sub, count: group.items.length })
     states[id] = group.state
-    if (group.state === 'warning' || group.state === 'critical' || group.state === 'unavailable') {
-      const text = groupConditionText(group, ctx.sources)
-      if (text) conditions.push({ id, state: group.state, text })
-    }
 
     const active = group.items.filter((item) => item.state !== 'inactive')
     const ages = active.flatMap((item) => {
@@ -303,14 +238,6 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     const state = reader.state
     readers.push({ id, kind: 'reader', label: reader.label, state, sub: readerSub(reader), count: null })
     states[id] = state
-    const notConfigured = reader.integration?.configured === false
-    if (state === 'warning' || state === 'critical' || state === 'unavailable' || notConfigured) {
-      conditions.push({
-        id,
-        state: notConfigured && (state === 'inactive' || state === 'healthy') ? 'warning' : state,
-        text: notConfigured ? `${reader.label} is not configured` : state === 'unavailable' ? `${reader.label} could not be read` : `${reader.label} needs attention`,
-      })
-    }
     const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.label === 'configured')
     const edgeState: UiState = payloadEdge?.state ?? state
     const label =
@@ -327,18 +254,10 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
   }
 
   // ---- queue ----
-  const queueState = queueEvidenceState(ctx.health, syn.queue)
+  // The queue's state is the payload's. The health reading adds numbers to its detail, never a second opinion.
+  const queueState = syn.queue.state
   const q = syn.queue
-  const stalled = q.stalled?.value ?? null
-  const overdue = ctx.health?.metrics?.missingEmbeddingsOverdue ?? null
   states[QUEUE_ID] = queueState
-  if (queueState !== 'healthy' && queueState !== 'inactive') {
-    let text = 'The embedding queue needs attention'
-    if (queueState === 'unavailable') text = 'The embedding queue could not be read'
-    else if (typeof stalled === 'number' && stalled > 0) text = `${fmtCount(stalled)} embedding ${plural(stalled, 'job')} stalled`
-    else if (typeof overdue === 'number' && overdue > 0) text = `${fmtCount(overdue)} ${plural(overdue, 'chunk')} overdue for embedding`
-    conditions.push({ id: QUEUE_ID, state: queueState, text })
-  }
   const queueModel: BlockModel = {
     id: QUEUE_ID,
     kind: 'queue',
@@ -362,7 +281,6 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     groups,
     queue: queueModel,
     edges,
-    conditions: sortConditions(conditions),
     states,
   }
 }
@@ -372,27 +290,57 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
 export interface Verdict {
   state: UiState
   text: string
+  /** The payload's own reasons, most severe first. Inactive reasons are listed but never degrade the state. */
   conditions: Condition[]
 }
 
-/** One sentence from the worst condition. Stale or missing readings never read as normal. */
-export function deriveVerdict(
-  model: BrainModel | null,
-  meta: Meta | null,
-  extra: Condition[] = [],
-): Verdict {
-  if (!model) return { state: 'unavailable', text: 'GBrain could not be read', conditions: [] }
-  const all = [...extra, ...model.conditions]
-  if (meta?.stale) all.push({ id: 'meta', state: 'warning', text: 'the last reading is stale' })
-  const conditions = sortConditions(all)
-  const first = conditions[0]
-  if (!first) return { state: 'healthy', text: 'GBrain is normal', conditions }
-  const more = conditions.length - 1
-  const suffix = more > 0 ? ` (and ${more} more)` : ''
-  if (first.state === 'unavailable') {
-    return { state: 'unavailable', text: `GBrain readings are incomplete: ${first.text}${suffix}`, conditions }
+const KNOWN_STATES: readonly UiState[] = ['healthy', 'warning', 'critical', 'unavailable', 'inactive']
+
+/** The payload verdict, if it has the shape the contract promises; otherwise null (never repaired). */
+export function readPayloadVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null | undefined): PayloadVerdict | null {
+  const v = syn?.verdict
+  if (!v || !KNOWN_STATES.includes(v.state) || !Array.isArray(v.reasons)) return null
+  const reasons = v.reasons.filter(
+    (r: VerdictReason) => r && typeof r.elementId === 'string' && KNOWN_STATES.includes(r.state) && typeof r.text === 'string' && r.text.trim(),
+  )
+  return { state: v.state, reasons }
+}
+
+/** The server's precedence for a verdict (state.js deriveState): unavailable outranks critical, then warning. */
+const VERDICT_ORDER: Record<UiState, number> = { unavailable: 0, critical: 1, warning: 2, healthy: 3, inactive: 4 }
+
+const sentence = (text: string) => text.trim().replace(/[.\s]+$/, '')
+
+/**
+ * The page's one verdict. It is the payload's `verdict { state, reasons[] }`,
+ * which the Operations overview and the top-bar signal carry unchanged: this
+ * function formats it and never decides. The one thing it adds is the reading's
+ * age: a healthy verdict on a stale reading is shown as caution, the same rule
+ * the top bar applies, so the two cannot disagree.
+ */
+export function deriveVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null | undefined, meta: Meta | null): Verdict {
+  if (!syn) return { state: 'unavailable', text: 'GBrain could not be read', conditions: [] }
+  const payload = readPayloadVerdict(syn)
+  if (!payload) return { state: 'unavailable', text: 'GBrain did not report a verdict', conditions: [] }
+  const conditions: Condition[] = payload.reasons
+    .map((reason, index) => ({ condition: { id: reason.elementId, state: reason.state, text: sentence(reason.text) }, index }))
+    .sort((a, b) => VERDICT_ORDER[a.condition.state] - VERDICT_ORDER[b.condition.state] || a.index - b.index)
+    .map(({ condition }) => condition)
+  const attention = conditions.filter((condition) => condition.state !== 'inactive')
+  const first = attention[0]
+  if (!first) {
+    if (payload.state === 'healthy' || payload.state === 'inactive') {
+      return meta?.stale
+        ? { state: 'warning', text: 'GBrain needs attention: the last reading is stale', conditions }
+        : { state: payload.state, text: 'GBrain is normal', conditions }
+    }
+    const generic = payload.state === 'unavailable' ? 'GBrain readings are incomplete' : 'GBrain needs attention'
+    return { state: payload.state, text: generic, conditions }
   }
-  return { state: first.state, text: `GBrain needs attention: ${first.text}${suffix}`, conditions }
+  const more = attention.length - 1
+  const suffix = more > 0 ? ` (and ${more} more)` : ''
+  const lead = payload.state === 'unavailable' ? 'GBrain readings are incomplete' : 'GBrain needs attention'
+  return { state: payload.state, text: `${lead}: ${first.text}${suffix}`, conditions }
 }
 
 // ---- readings (the four stats) ----
@@ -427,31 +375,42 @@ export function deriveSourceSync(groups: SynopticSourceGroup[]): ReadingSet['sou
   }
 }
 
-export function deriveReadings(syn: GBrainSynoptic, model: BrainModel, health: HealthReading | null | undefined): ReadingSet {
+/**
+ * A reading's colour may not claim more than the verdict does. The verdict is the
+ * only judgment; a figure can still be shown, but a healthy verdict never sits
+ * beside a lit tile, and a warning verdict never sits beside a critical one.
+ * "Not read" is not an alarm and is kept.
+ */
+export function alignWithVerdict(state: UiState, verdictState: UiState): UiState {
+  // A failed reading outranks everything in the server's verdict: any lit tile is consistent with it.
+  if (verdictState === 'unavailable') return state
+  if (state === 'critical' && verdictState !== 'critical') {
+    return verdictState === 'warning' ? 'warning' : 'healthy'
+  }
+  if (state === 'warning' && (verdictState === 'healthy' || verdictState === 'inactive')) return 'healthy'
+  return state
+}
+
+export function deriveReadings(
+  syn: GBrainSynoptic,
+  model: BrainModel,
+  health: HealthReading | null | undefined,
+  verdictState: UiState,
+): ReadingSet {
   const link = deriveLinkExtraction(health)
   const q = syn.queue
+  const sync = deriveSourceSync(syn.sources)
   return {
-    quality: { value: syn.core.quality?.value ?? null, state: stateOf(syn.core.quality) },
-    sourceSync: deriveSourceSync(syn.sources),
-    linkExtraction: { value: link.value, unit: link.unit, state: link.state, hint: LINK_EXTRACTION_HINT },
+    quality: { value: syn.core.quality?.value ?? null, state: alignWithVerdict(stateOf(syn.core.quality), verdictState) },
+    sourceSync: { ...sync, state: alignWithVerdict(sync.state, verdictState) },
+    // The only reading that comes from a second endpoint (health): its figure is shown, its colour follows the verdict.
+    linkExtraction: { value: link.value, unit: link.unit, state: alignWithVerdict(link.state, verdictState), hint: LINK_EXTRACTION_HINT },
     queue: {
       value: q.waiting?.value ?? null,
-      state: model.states[QUEUE_ID] ?? q.state,
+      state: alignWithVerdict(model.states[QUEUE_ID] ?? q.state, verdictState),
       hint: `${fmtCount(q.active?.value)} active · ${fmtCount(q.stalled?.value)} stalled`,
     },
   }
-}
-
-/** The link extraction condition is separate from the synoptic and feeds the verdict. */
-export function linkExtractionCondition(health: HealthReading | null | undefined): Condition[] {
-  if (health === undefined) return []
-  const link = deriveLinkExtraction(health)
-  if (link.state === 'warning') {
-    const n = link.pages ?? 0
-    return [{ id: 'link-extraction', state: 'warning', text: `${fmtCount(n)} ${plural(n, 'page')} awaiting link extraction` }]
-  }
-  if (link.state === 'unavailable') return [{ id: 'link-extraction', state: 'unavailable', text: 'link extraction could not be read' }]
-  return []
 }
 
 // ---- element detail ----
@@ -531,6 +490,22 @@ function measuredRow<T extends string | number>(
   }
 }
 
+/** Which payload verdict reasons are about a block (by the element ids the server uses). */
+export function reasonsForBlock(blockId: string, syn: GBrainSynoptic): VerdictReason[] {
+  const reasons = readPayloadVerdict(syn)?.reasons ?? []
+  const coreReasons = new Set(['gbrain-core', 'embed-job-probe', 'missing-embeddings', 'stale-pages'])
+  const mine = (elementId: string): boolean => {
+    if (blockId === CORE_ID) return coreReasons.has(elementId) || (elementId.startsWith('gbrain.') && elementId !== 'gbrain.sources')
+    if (blockId === QUEUE_ID) return elementId === 'queue'
+    if (blockId.startsWith('group:')) {
+      const group = syn.sources.find((g) => groupBlockId(g.id) === blockId)
+      return Boolean(group?.items.some((item) => item.id === elementId))
+    }
+    return readerBlockId(elementId) === blockId
+  }
+  return reasons.filter((reason) => mine(reason.elementId))
+}
+
 /** Everything the detail panel shows for a block or a line. Null when the element does not exist. */
 export function describeElement(
   elementId: string,
@@ -547,7 +522,7 @@ export function describeElement(
   if (!block) return null
   const edge = isEdge ? model.edges.find((e) => e.id === elementId) : undefined
   if (isEdge && !edge) return null
-  const notes = model.conditions.filter((c) => c.id === blockId).map((c) => `${c.text.charAt(0).toUpperCase()}${c.text.slice(1)}.`)
+  const notes = reasonsForBlock(blockId, syn).map((reason) => `${sentence(reason.text)}.`)
   const rows: DetailRow[] = []
   const items: DetailItem[] = []
   let observedAt: string | null = null
@@ -761,4 +736,36 @@ export function pageUrl(slug: string): string {
 /** Class-W2 actions are never listed: they cannot be started from here. */
 export function visibleActions<T extends { safetyClass: string }>(capabilities: T[]): T[] {
   return capabilities.filter((capability) => capability.safetyClass !== 'W2')
+}
+
+// ---- lookups that can be busy or unavailable ----
+
+export interface LookupFailure {
+  kind: 'busy' | 'unavailable' | 'error'
+  title: string
+  message: string
+}
+
+/**
+ * What to say when a brain lookup (search, page read) fails. A lookup runs a
+ * bounded command on request: when the queue is full the server answers 429 with
+ * a Retry-After, which is "busy, try again", not a failure of the brain; 503 is
+ * "not available" (the envelope has `data: null`); anything else is an error.
+ */
+export function describeLookupFailure(error: unknown, subject: 'Search' | 'This page'): LookupFailure {
+  if (isBusyError(error)) {
+    return { kind: 'busy', title: `${subject === 'Search' ? 'Search' : 'The page'} is busy`, message: describeApiError(error) }
+  }
+  if (isUnavailableError(error)) {
+    return {
+      kind: 'unavailable',
+      title: `${subject} is not available`,
+      message: describeApiError(error, 'GBrain is not available right now.'),
+    }
+  }
+  return {
+    kind: 'error',
+    title: subject === 'Search' ? 'Search could not be read' : 'This page could not be read',
+    message: error ? describeApiError(error, 'GBrain did not return a result.') : 'GBrain did not return a result.',
+  }
 }

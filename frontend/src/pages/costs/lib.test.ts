@@ -6,6 +6,8 @@ import {
   formatCompactTokenValue,
   formatComparisonValue,
   parseMonthlyBudgetInput,
+  parseBudgetDraft,
+  savedBudgetCap,
   canonicalModelName,
   formatSessionName,
   hashColor,
@@ -381,6 +383,40 @@ describe('parseMonthlyBudgetInput', () => {
   it('rejects negative and invalid values', () => {
     expect(parseMonthlyBudgetInput('-10')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
     expect(parseMonthlyBudgetInput('nope')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
+  })
+})
+
+describe('parseBudgetDraft', () => {
+  it('"No monthly budget" sends null whatever the input holds', () => {
+    expect(parseBudgetDraft('', true)).toEqual({ ok: true, monthly: null })
+    expect(parseBudgetDraft('123', true)).toEqual({ ok: true, monthly: null })
+  })
+
+  it('a typed amount sends that finite, non-negative number', () => {
+    expect(parseBudgetDraft('150', false)).toEqual({ ok: true, monthly: 150 })
+    expect(parseBudgetDraft('0', false)).toEqual({ ok: true, monthly: 0 })
+  })
+
+  it('blank input is never turned into 0 or null: there is nothing to save', () => {
+    expect(parseBudgetDraft('', false)).toEqual({ ok: false, error: null })
+    expect(parseBudgetDraft('   ', false)).toEqual({ ok: false, error: null })
+  })
+
+  it('rejects negative, non-numeric and non-finite amounts with a message', () => {
+    for (const bad of ['-1', 'abc', '1e999', 'Infinity', 'NaN']) {
+      expect(parseBudgetDraft(bad, false)).toEqual({ ok: false, error: 'Budget must be zero or positive.' })
+    }
+  })
+})
+
+describe('savedBudgetCap', () => {
+  it('only a positive finite number is a cap; null and 0 mean no budget', () => {
+    expect(savedBudgetCap(200)).toBe(200)
+    expect(savedBudgetCap(null)).toBeNull()
+    expect(savedBudgetCap(undefined)).toBeNull()
+    expect(savedBudgetCap(0)).toBeNull()
+    expect(savedBudgetCap('50')).toBeNull()
+    expect(savedBudgetCap(Number.NaN)).toBeNull()
   })
 })
 

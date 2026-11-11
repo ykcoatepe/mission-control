@@ -196,9 +196,25 @@ list is `unavailable`). `toUiState` also accepts the legacy health colours
 
 ### Legacy adapters
 
-`PageTransition` keeps its old props but is a thin pass-through (it renders its
-children, no animation). Only the Setup page still imports it. Do not use it in
-new code; replace it when Setup is migrated.
+None. `PageTransition` was removed with the Setup migration; every page is on
+this kit and these tokens.
+
+### API layer (`lib/hooks.ts`)
+
+Pages talk to the backend through one module.
+
+- **Reads:** `useApi(url, interval?)` returns `{ data, loading, error, failure, refetch }`;
+  `error` is a readable sentence and `failure` is the typed `ApiError` (`status`, `code`,
+  `message`, `retryAfterMs`) for pages that treat 429 or 503 differently.
+- **Errors:** every API error is `{ error: { code, message } }` with a real status. 400 and 409
+  carry a message meant for the person (validation, conflict): show it next to what it is
+  about. 429 means busy: say so and honour `Retry-After` (`describeApiError`). A 503 (an
+  envelope with `data: null`, or an unavailable service) is a "not available" state, never an
+  empty list.
+- **Writes:** `sendJson`, `postJson` and `postForm` are the only way a page writes. They add
+  the header `X-MC-Request: 1` that the server's write guard requires (report-only today,
+  enforced later). `lib/writeGuard.test.ts` fails when a raw `fetch` appears outside
+  `lib/hooks.ts`.
 
 ## 5. Shell
 
@@ -210,10 +226,15 @@ new code; replace it when Setup is migrated.
 └──────────┴───────────────────────────────────────────────────────────┘
 ```
 
+- **Where the shell reads.** The page-title/top bar and the sidebar badges read `GET /api/signals`
+  (30 s poll): system annunciators, the attention count, failed automations and down services.
+  The brand name and the module list come from `GET /api/config`, an allowlist of `name`,
+  `subtitle`, `modules` and `aws.enabled`; nothing else exists there. No page reads another
+  field from it.
 - **Sidebar.** Brand (mark + name from `/api/config`), then single-line items
   (icon + label) in groups: Brain (no label), Operate, Know, Run; Settings
   and Audit at the bottom. A count appears on an item only when something there
-  is abnormal: Automations = enabled jobs whose last run failed (red). Collapses
+  is abnormal (from `/api/signals`): Automations = enabled jobs whose last run failed (red). Collapses
   to a 56px icon rail with tooltips (choice persists in `localStorage`
   `mc-sidebar-collapsed`). Under 900px it is an off-canvas drawer opened from the
   top bar's menu button (scrim, Esc, closes on navigation).
@@ -223,7 +244,7 @@ new code; replace it when Setup is migrated.
   not, each links to its `detailHref`; neutral "reading…" until the first load
   completes; a "healthy" system whose reading is stale or unread is lit as
   stale or not read), the attention pill ("2 need attention", links to `/attention`,
-  hidden at zero), the command palette trigger, data age of the overview with a
+  hidden at zero), the command palette trigger, data age of the signals reading with a
   refresh button (refetches all on-screen API reads) and theme toggle (dark/light,
   `data-theme` on `<html>`, persisted as `mc-theme`, default dark). There is no
   assistant chat.

@@ -18,7 +18,7 @@ export interface SelectProps extends ComponentProps<'select'> {
 export function Select({ options, invalid, className, children, ...rest }: SelectProps) {
   return (
     <div className={cx(styles.selectWrap, className)}>
-      <select {...rest} aria-invalid={invalid || undefined} className={cx(styles.control, styles.select)}>
+      <select {...rest} aria-invalid={invalid || rest['aria-invalid'] || undefined} className={cx(styles.control, styles.select)}>
         {options
           ? options.map((option) => (
               <option key={option.value} value={option.value} disabled={option.disabled}>

@@ -1,14 +1,17 @@
 import type { FormEvent } from 'react'
-import { Button, Field, Meter, Mono, Panel, TextInput } from '../../components/ui'
+import { Button, Field, Meter, Mono, Panel, Switch, TextInput } from '../../components/ui'
 import type { UiState } from '../../lib/state'
 import { formatCurrency } from './lib'
 import styles from './BudgetPanel.module.css'
 
 interface BudgetPanelProps {
-  /** Saved monthly cap; 0 = none. */
-  budget: number
+  /** Saved monthly cap; null = no budget. */
+  budget: number | null
   budgetInput: string
   setBudgetInput: (v: string) => void
+  /** The explicit "no budget" choice: saving it removes the cap (sends null). */
+  noBudget: boolean
+  setNoBudget: (v: boolean) => void
   saveBudget: () => void
   savingBudget: boolean
   canSaveBudget: boolean
@@ -32,6 +35,8 @@ export default function BudgetPanel({
   budget,
   budgetInput,
   setBudgetInput,
+  noBudget,
+  setNoBudget,
   saveBudget,
   savingBudget,
   canSaveBudget,
@@ -42,7 +47,7 @@ export default function BudgetPanel({
   monthlyBudgetBase,
   spendLabel,
 }: BudgetPanelProps) {
-  const progressKnown = budget > 0 && monthlyBudgetBase !== null && budgetUsage !== null
+  const progressKnown = budget !== null && monthlyBudgetBase !== null && budgetUsage !== null
     && budgetRemaining !== null && budgetUsagePct !== null
 
   const onSubmit = (event: FormEvent) => {
@@ -76,7 +81,7 @@ export default function BudgetPanel({
                 </span>
               </div>
             </>
-          ) : budget > 0 ? (
+          ) : budget !== null ? (
             <>
               <Meter label="Budget used" value={null} />
               <p className={styles.muted}>
@@ -89,23 +94,27 @@ export default function BudgetPanel({
         </div>
 
         <form className={styles.form} onSubmit={onSubmit}>
-          <Field label="Monthly budget (USD)" error={budgetError}>
-            {control => (
-              <TextInput
-                {...control}
-                type="number"
-                min="0"
-                step="0.01"
-                inputMode="decimal"
-                value={budgetInput}
-                onChange={event => setBudgetInput(event.target.value)}
-                placeholder="Enter an amount"
-              />
-            )}
-          </Field>
-          <Button type="submit" variant="primary" disabled={!canSaveBudget} loading={savingBudget}>
-            Save
-          </Button>
+          <div className={styles.formRow}>
+            <Field label="Monthly budget (USD)" error={budgetError}>
+              {control => (
+                <TextInput
+                  {...control}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={noBudget ? '' : budgetInput}
+                  onChange={event => setBudgetInput(event.target.value)}
+                  disabled={noBudget}
+                  placeholder={noBudget ? 'No budget' : 'Enter an amount'}
+                />
+              )}
+            </Field>
+            <Button type="submit" variant="primary" disabled={!canSaveBudget} loading={savingBudget}>
+              Save
+            </Button>
+          </div>
+          <Switch checked={noBudget} onChange={setNoBudget} label="No monthly budget" />
         </form>
       </div>
     </Panel>

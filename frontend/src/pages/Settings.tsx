@@ -1,7 +1,9 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Download, Upload } from 'lucide-react'
-import { useApi } from '../lib/hooks'
+import { describeApiError, isApiError, postForm, postJson, useApi } from '../lib/hooks'
+import { changedRouting, heartbeatError, routingErrors } from './settings/lib'
+import type { Routing, RoutingField } from './settings/lib'
 import { useTheme } from '../lib/theme'
 import type { Theme } from '../lib/theme'
 import {
@@ -20,14 +22,13 @@ import {
 import type { SelectOption } from '../components/ui'
 import styles from './Settings.module.css'
 
+/** GET /api/settings. The gateway token is never part of it. */
 interface OpenClawConfig {
-  model?: string
-  available_models?: string[]
-  gateway_port?: number
-  token?: string
-  memory_path?: string
-  skills_path?: string
-  bedrock_region?: string
+  model?: string | null
+  gateway_port?: number | null
+  memory_path?: string | null
+  skills_path?: string | null
+  bedrock_region?: string | null
   system?: {
     mission_control_version?: string
     openclaw_version?: string | null
@@ -49,36 +50,33 @@ interface ModelInfo {
   tags?: string[]
 }
 
-interface Routing {
-  main: string
-  subagent: string
-  heartbeat: string
-}
-
 interface SaveMessages {
   success: string
   error: string
 }
 
-/** One save path for every write on this page: busy flag per action and a toast with the outcome. */
+type SaveResult = { ok: true } | { ok: false; error: unknown; message: string }
+
+/**
+ * One save path for every write on this page: busy flag per action and a toast
+ * with the outcome. A failure toast carries the server's reason; the caller
+ * also gets the error back, to show a 400 next to the field it is about.
+ */
 function useSaver() {
   const toast = useToast()
   const [busy, setBusy] = useState<string | null>(null)
 
   const run = useCallback(
-    async (key: string, request: () => Promise<Response>, messages: SaveMessages): Promise<boolean> => {
+    async (key: string, request: () => Promise<unknown>, messages: SaveMessages): Promise<SaveResult> => {
       setBusy(key)
       try {
-        const res = await request()
-        if (res.ok) {
-          toast.show('success', messages.success)
-          return true
-        }
-        toast.show('error', messages.error)
-        return false
-      } catch {
-        toast.show('error', messages.error)
-        return false
+        await request()
+        toast.show('success', messages.success)
+        return { ok: true }
+      } catch (error) {
+        const message = describeApiError(error)
+        toast.show('error', `${messages.error}: ${message}`)
+        return { ok: false, error, message }
       } finally {
         setBusy(null)
       }
@@ -86,22 +84,13 @@ function useSaver() {
     [toast],
   )
 
-  const postJson = useCallback(
+  const post = useCallback(
     (key: string, url: string, body: unknown, messages: SaveMessages) =>
-      run(
-        key,
-        () =>
-          fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body),
-          }),
-        messages,
-      ),
+      run(key, () => postJson(url, body), messages),
     [run],
   )
 
-  return { busy, run, postJson }
+  return { busy, run, post }
 }
 
 type Saver = ReturnType<typeof useSaver>
@@ -113,11 +102,10 @@ const THEME_OPTIONS: { value: Theme; label: string }[] = [
 
 const HEARTBEAT_OPTIONS: SelectOption[] = [
   { value: '', label: 'Choose an interval' },
-  { value: '30min', label: 'Every 30 minutes' },
+  { value: '30m', label: 'Every 30 minutes' },
   { value: '1h', label: 'Every hour' },
   { value: '2h', label: 'Every 2 hours' },
   { value: '4h', label: 'Every 4 hours' },
-  { value: 'off', label: 'Off' },
 ]
 
 export default function Settings() {
@@ -152,6 +140,8 @@ function ModelsPanel({ saver }: { saver: Saver }) {
   const routingApi = useApi<ModelRoutingData>('/api/settings/model-routing')
   const [draft, setDraft] = useState<Partial<Routing>>({})
   const [saved, setSaved] = useState<Routing | null>(null)
+  // What the server said about the last save, next to the fields that were sent.
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<RoutingField, string>>>({})
 
   const loading = models.loading || routingApi.loading
   const error = routingApi.error ?? models.error
@@ -182,30 +172,44 @@ function ModelsPanel({ saver }: { saver: Saver }) {
     const routing: Routing = { ...baseline, ...draft }
     const dirty = (Object.keys(routing) as (keyof Routing)[]).some((k) => routing[k] !== baseline[k])
     const list = models.data ?? []
-    const set = (key: keyof Routing) => (e: ChangeEvent<HTMLSelectElement>) =>
+    const set = (key: keyof Routing) => (e: ChangeEvent<HTMLSelectElement>) => {
       setDraft((prev) => ({ ...prev, [key]: e.target.value }))
+      setFieldErrors((prev) => ({ ...prev, [key]: undefined }))
+    }
 
     const onSave = async () => {
-      const ok = await saver.postJson('routing', '/api/settings/model-routing', routing, {
+      // A partial update: only the fields that changed are sent.
+      const changed = changedRouting(baseline, routing)
+      const invalid = routingErrors(changed)
+      if (Object.keys(invalid).length > 0) {
+        setFieldErrors(invalid)
+        return
+      }
+      setFieldErrors({})
+      const result = await saver.post('routing', '/api/settings/model-routing', changed, {
         success: 'Model routing saved',
         error: 'Model routing could not be saved',
       })
-      if (ok) {
+      if (result.ok) {
         setSaved(routing)
         setDraft({})
+      } else if (isApiError(result.error) && result.error.status === 400) {
+        // The server validates every model value; say so next to the fields that were sent.
+        const sent = Object.keys(changed) as RoutingField[]
+        setFieldErrors(Object.fromEntries(sent.map((field) => [field, result.message])))
       }
     }
 
     body = (
       <div className={styles.form}>
         <div className={styles.fields}>
-          <Field label="Main model" hint="Used for the main assistant.">
+          <Field label="Main model" hint="Used for the main assistant." error={fieldErrors.main}>
             {(c) => <Select {...c} value={routing.main} onChange={set('main')} options={modelOptions(list, routing.main, false)} />}
           </Field>
-          <Field label="Sub-agent model" hint="Used by sub-agents the assistant starts.">
+          <Field label="Sub-agent model" hint="Used by sub-agents the assistant starts." error={fieldErrors.subagent}>
             {(c) => <Select {...c} value={routing.subagent} onChange={set('subagent')} options={modelOptions(list, routing.subagent, false)} />}
           </Field>
-          <Field label="Heartbeat model" hint="Used for scheduled heartbeat checks.">
+          <Field label="Heartbeat model" hint="Used for scheduled heartbeat checks." error={fieldErrors.heartbeat}>
             {(c) => <Select {...c} value={routing.heartbeat} onChange={set('heartbeat')} options={modelOptions(list, routing.heartbeat, true)} />}
           </Field>
         </div>
@@ -237,19 +241,38 @@ function ModelsPanel({ saver }: { saver: Saver }) {
 
 function HeartbeatPanel({ saver }: { saver: Saver }) {
   const [interval, setInterval] = useState('')
+  const [error, setError] = useState<string | null>(null)
 
-  const onSave = () =>
-    saver.postJson('heartbeat', '/api/settings/heartbeat', { interval }, {
+  const onSave = async () => {
+    const invalid = heartbeatError(interval)
+    if (invalid) {
+      setError(invalid)
+      return
+    }
+    setError(null)
+    const result = await saver.post('heartbeat', '/api/settings/heartbeat', { interval }, {
       success: 'Heartbeat interval saved',
       error: 'Heartbeat interval could not be saved',
     })
+    if (!result.ok && isApiError(result.error) && result.error.status === 400) setError(result.message)
+  }
 
   return (
     <Panel title="Heartbeat" description="How often the assistant checks in on its own.">
       <div className={styles.form}>
         <div className={styles.fields}>
-          <Field label="Check interval" hint="The current interval is not readable here. Choose one to change it.">
-            {(c) => <Select {...c} value={interval} onChange={(e) => setInterval(e.target.value)} options={HEARTBEAT_OPTIONS} />}
+          <Field label="Check interval" hint="The current interval is not readable here. Choose one to change it." error={error}>
+            {(c) => (
+              <Select
+                {...c}
+                value={interval}
+                onChange={(e) => {
+                  setInterval(e.target.value)
+                  setError(null)
+                }}
+                options={HEARTBEAT_OPTIONS}
+              />
+            )}
           </Field>
         </div>
         <div className={styles.actions}>
@@ -329,6 +352,8 @@ function ConnectionPanel() {
 function BackupPanel({ saver }: { saver: Saver }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const [imported, setImported] = useState(false)
+  // The server names the offending path when it refuses a document; keep that visible.
+  const [importError, setImportError] = useState<string | null>(null)
 
   const onExport = () => {
     window.location.href = '/api/settings/export'
@@ -339,14 +364,16 @@ function BackupPanel({ saver }: { saver: Saver }) {
     const file = input.files?.[0]
     if (!file) return
     setImported(false)
+    setImportError(null)
     const formData = new FormData()
     formData.append('config', file)
-    const ok = await saver.run(
+    const result = await saver.run(
       'import',
-      () => fetch('/api/settings/import', { method: 'POST', body: formData }),
+      () => postForm('/api/settings/import', formData),
       { success: 'Configuration imported. Restart required.', error: 'Configuration could not be imported' },
     )
-    if (ok) setImported(true)
+    if (result.ok) setImported(true)
+    else setImportError(result.message)
     input.value = ''
   }
 
@@ -375,6 +402,11 @@ function BackupPanel({ saver }: { saver: Saver }) {
             onChange={onFile}
           />
         </div>
+        {importError && (
+          <Notice tone="critical" title="This file was not imported">
+            {importError}
+          </Notice>
+        )}
         {imported && (
           <Notice tone="warning" title="Restart required">
             The imported configuration takes effect after a restart.
