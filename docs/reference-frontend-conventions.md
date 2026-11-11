@@ -84,7 +84,6 @@ Reusable primitives live in `src/components/`:
 | `GlassCard` | Frosted panel wrapper |
 | `StatusBadge` | State pill and dot |
 | `AnimatedCounter` | Animated numeric value |
-| `PageTransition` | Route/page transition |
 
 Reuse a primitive when it preserves the established hierarchy and behavior.
 User-visible status surfaces need loading, empty, stale, unavailable, and error
