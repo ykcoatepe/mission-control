@@ -6,6 +6,8 @@
 //   await source.refresh();     // single-flight read; never throws
 //   source.snapshot();          // { data, meta: { ok, stale, observedAt, ageMs, error, latencyMs, source } }
 //   source.get();               // snapshot now, background refresh if older than ttlMs
+//                               // (starts an upstream read: never call it from a GET
+//                               // handler; routes use snapshot(), the scheduler refreshes)
 //
 // Rules:
 //   - A failed, timed-out or empty read never replaces last-good data. It

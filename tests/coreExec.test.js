@@ -214,3 +214,91 @@ test('a real child is killed on shutdown', async () => {
   assert.equal(result.error.code, 'shutdown');
   assert.equal(exec.status().children, 0);
 });
+
+// --- review round 1: TERM -> KILL escalation, classification by kill reason ---
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+// A real child that records its pid, then traps SIGTERM.
+function trappingChild(onTerm) {
+  const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-exec-trap-')), 'pid');
+  const script = `require('fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`
+    + `process.on('SIGTERM', () => { ${onTerm} });`
+    + 'setInterval(() => {}, 1000);';
+  return { args: ['-e', script], pidFile };
+}
+
+async function waitForFile(file) {
+  for (let i = 0; i < 100 && !fs.existsSync(file); i += 1) await new Promise((r) => setTimeout(r, 20));
+  return Number(fs.readFileSync(file, 'utf8'));
+}
+
+test('counter-example: a child that ignores SIGTERM is SIGKILLed and the lane is released', async () => {
+  const exec = createExec({ killGraceMs: 200 });
+  const child = trappingChild('/* ignore */');
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 600 });
+  const pid = await waitForFile(child.pidFile);
+  const started = Date.now();
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.error.code, 'timeout');
+  assert.ok(Date.now() - started < 3000, 'bounded escalation');
+  assert.equal(pidAlive(pid), false, 'the child must be dead');
+  assert.equal(exec.status().lanes.openclaw.running, 0, 'lane released');
+  const next = await exec.run(process.execPath, ['-e', 'process.stdout.write("next")'], { lane: 'openclaw' });
+  assert.equal(next.ok, true);
+  assert.equal(next.stdout, 'next');
+});
+
+test('counter-example: a child that exits 0 from its SIGTERM handler is still a timeout', async () => {
+  const exec = createExec({ killGraceMs: 200 });
+  const child = trappingChild('process.stdout.write("bye"); process.exit(0);');
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 600 });
+  await waitForFile(child.pidFile);
+  const result = await pending;
+  assert.equal(result.ok, false, 'exit 0 after our SIGTERM is not success');
+  assert.equal(result.timedOut, true);
+  assert.equal(result.error.code, 'timeout');
+  assert.equal(exec.status().lanes.openclaw.running, 0);
+});
+
+test('counter-example: shutdown kills a SIGTERM-ignoring child and drain() confirms it', async () => {
+  const exec = createExec({ killGraceMs: 200 });
+  const child = trappingChild('/* ignore */');
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 60_000 });
+  const pid = await waitForFile(child.pidFile);
+  assert.equal(exec.killAll(), 1);
+  assert.equal(await exec.drain(3000), true);
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.error.code, 'shutdown');
+  assert.equal(pidAlive(pid), false);
+});
+
+test('a child that cannot be verified dead after SIGKILL still releases the lane', async () => {
+  // Fake child: ignores every signal and never calls back.
+  const kills = [];
+  const exec = createExec({
+    killGraceMs: 30,
+    execFileImpl: () => ({ pid: 9, kill: (signal) => kills.push(signal) }),
+  });
+  const result = await exec.run('stuck', [], { lane: 'openclaw', timeoutMs: 20 });
+  assert.deepEqual(kills, ['SIGTERM', 'SIGKILL']);
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.error.code, 'kill_unverified');
+  assert.equal(exec.status().lanes.openclaw.running, 0);
+  assert.equal(exec.status().children, 0);
+});

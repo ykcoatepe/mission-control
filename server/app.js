@@ -33,6 +33,7 @@ const {
   requestContext,
   apiNotFound,
   errorHandler,
+  isApiPath,
 } = require('./core/http');
 const { createGuard, createAuditLog, auditWrites } = require('./core/guard');
 const { createEventLoopMonitor, buildHealthPayload } = require('./core/health');
@@ -169,7 +170,10 @@ function createApp(deps = {}) {
   app.use(guard.middleware);
   app.use(express.json());
 
-  app.use(express.static(config.paths.frontendDist));
+  // Static files never answer an API path (any case, encoding or slash
+  // variant): a file at frontend/dist/api/health must not shadow the route.
+  const serveDist = express.static(config.paths.frontendDist);
+  app.use((req, res, next) => (isApiPath(req.originalUrl || req.url) ? next() : serveDist(req, res, next)));
   app.use('/public', express.static(config.paths.publicDir));
   app.use('/data', (req, res) => {
     res.status(404).json({ error: 'Not found' });
@@ -272,6 +276,9 @@ function createApp(deps = {}) {
     fetchImpl,
     now,
   });
+  // The visible-sessions list is a scheduled source; GET /api/sessions only
+  // reads its snapshot.
+  scheduler.register(sessionsService.visibleSessionsSource, { intervalMs: 30_000, jitterMs: 2000 });
   const operationsOverviewService = createOperationsOverviewService({
     readers: createOperationsReaders({
       statusService,
@@ -482,7 +489,9 @@ function createApp(deps = {}) {
   // SPA catch-all: serve index.html for all non-API routes.
   // Express 5 uses path-to-regexp v8 and no longer accepts bare `*`.
   app.get(/^\/(?!api(?:\/|$)).*/, (req, res, next) => {
-    res.sendFile('index.html', { root: config.paths.frontendDist }, (error) => {
+    // The regex is case-sensitive; /API/... and encoded variants are API too.
+    if (isApiPath(req.originalUrl || req.url)) return apiNotFound()(req, res);
+    return res.sendFile('index.html', { root: config.paths.frontendDist }, (error) => {
       if (error) next(error);
     });
   });

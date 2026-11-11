@@ -35,7 +35,20 @@ const BUILTIN_DEFAULTS = Object.freeze({
   memoryPath: '',
 });
 
-const SECRET_KEY_PATTERN = /(token|secret|password|apikey|api_key|accesskey|access_key|braveapikey)/i;
+// A key names a credential when, ignoring case and - _ . separators, it
+// contains one of these words, or ends in Key/Token (braveApiKey, clientToken,
+// private-key). Matched on the key before looking at the value, so arrays and
+// objects under a credential key are redacted whole.
+const SECRET_WORDS = ['token', 'secret', 'password', 'passwd', 'passphrase', 'apikey', 'authorization',
+  'cookie', 'credential', 'privatekey', 'accesskey', 'secretkey', 'sessionkey', 'bearer'];
+
+function isSecretKey(keyName) {
+  const raw = String(keyName || '');
+  if (!raw) return false;
+  const squashed = raw.toLowerCase().replace(/[-_.\s]/g, '');
+  if (SECRET_WORDS.some((word) => squashed.includes(word))) return true;
+  return /[a-z0-9](Key|Token)$/.test(raw) || /(^|[-_.])(key|token)$/i.test(raw);
+}
 
 function resolveEnvPlaceholders(value, env = process.env) {
   if (typeof value !== 'string') return value;
@@ -210,14 +223,30 @@ function loadConfig({
   return deepFreeze(config);
 }
 
+function existingMode(fsImpl, file) {
+  try {
+    return fsImpl.statSync(file).mode & 0o777;
+  } catch {
+    return null;
+  }
+}
+
+function redactSecretValue(value) {
+  if (value === '' || value === null || value === undefined) return value;
+  if (typeof value === 'boolean') return value; // "is configured" flags are not secrets
+  return '[redacted]';
+}
+
+// Redact by key first, then recurse: whatever sits under a credential key
+// (string, number, array, object) is replaced whole.
 function redact(value, keyName = '') {
+  if (keyName && isSecretKey(keyName)) return redactSecretValue(value);
   if (Array.isArray(value)) return value.map((item) => redact(item));
   if (isPlainObject(value)) {
     const out = {};
     for (const [key, inner] of Object.entries(value)) out[key] = redact(inner, key);
     return out;
   }
-  if (SECRET_KEY_PATTERN.test(keyName) && typeof value === 'string') return value ? '[redacted]' : '';
   return value;
 }
 
@@ -241,7 +270,12 @@ function createConfigStore({ config, fsImpl = fsDefault, logger = console } = {}
     seq += 1;
     const tmp = `${filePath}.tmp-${process.pid}-${seq}-${crypto.randomBytes(4).toString('hex')}`;
     try {
-      fsImpl.writeFileSync(tmp, text, 'utf8');
+      // The temp file is created 0600 (never world-readable, whatever the
+      // umask) and takes the target's existing mode before the rename, so a
+      // 0600 config stays 0600. A new config file is 0600.
+      const mode = existingMode(fsImpl, filePath) ?? 0o600;
+      fsImpl.writeFileSync(tmp, text, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fsImpl.chmodSync(tmp, mode);
       fsImpl.renameSync(tmp, filePath);
       writes += 1;
     } catch (error) {
@@ -288,9 +322,11 @@ module.exports = {
   createConfigStore,
   publicView,
   redact,
+  isSecretKey,
   resolveEnvPlaceholders,
   validateMcConfig,
   checkGatewayToken,
   deepFreeze,
+  existingMode,
   BUILTIN_DEFAULTS,
 };

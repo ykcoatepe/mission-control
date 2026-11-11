@@ -301,7 +301,8 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
     assert.deepEqual(treeState(ROOT), before.root, 'a GET wrote under the project root');
     assert.deepEqual(treeState(HOME), before.home, 'a GET wrote under HOME');
     assert.deepEqual(directSpawns, [], 'a route spawned a process outside the core runner');
-    assert.ok(execCalls.every((call) => call.file === config.openclawBin), 'only OpenClaw went through the runner in this sweep');
+    // A request never spawns: not directly, and not through the runner.
+    assert.deepEqual(execCalls, [], 'a swept GET started a process through the core runner');
     assert.deepEqual(networkCalls.filter((url) => !/^http:\/\/127\.0\.0\.1:1\//.test(url)), [], 'no network beyond the (fake) local gateway');
 
     // JSON 404 contract.
@@ -402,6 +403,53 @@ test('boot smoke: mutating requests are audited; report-only guard passes them',
       ['POST', '/api/quick/emails', 200, false],
     ]);
     assert.equal(app.locals.runtime.guard.status().counters.writeReported, 1);
+  } finally {
+    app.locals.runtime.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// --- review round 1: static files and the SPA never answer /api/* ----------
+test('boot smoke: a file at frontend/dist/api/health cannot shadow the API', async () => {
+  const distRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-boot-dist-'));
+  fs.writeFileSync(path.join(distRoot, 'mc-config.json'), JSON.stringify({ name: 'Dist Test', gateway: { port: 1 } }));
+  fs.mkdirSync(path.join(distRoot, 'frontend', 'dist', 'api', 'nope'), { recursive: true });
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'api', 'health'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'api', 'nope', 'index.html'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'index.html'), '<!doctype html>SPA');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'app.js'), 'console.log(1)');
+  const config = loadConfig({ rootDir: distRoot, homeDir: HOME, env: {} });
+  const app = createApp({
+    config,
+    exec: createExec({ execFileImpl: fakeExecFile }),
+    logger: { log() {}, warn() {}, error() {} },
+    services: {
+      gbrainOverviewService: { readSnapshot: unavailable },
+      hermesKanbanService: { profile: 'test', getBoard: unavailable },
+      hermesGatewayHealthService: { getHealth: async () => ({ ok: false }) },
+      notionActivity: { fetchNotionActivity: async () => null },
+    },
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  app.locals.runtime.setBoundPort(port);
+  try {
+    for (const urlPath of ['/api/health', '/API/health', '/api/health/']) {
+      const response = await request(port, { urlPath });
+      assert.equal(response.status, 200, urlPath);
+      assert.equal(response.json?.service, 'mission-control', `${urlPath} must come from the API, not the file`);
+    }
+    for (const urlPath of ['/api/nope', '/api/nope/', '/API/nope', '/%61pi/nope']) {
+      const response = await request(port, { urlPath });
+      assert.equal(response.status, 404, urlPath);
+      assert.equal(response.json?.error?.code, 'not_found', `${urlPath} must be the JSON 404`);
+      assert.doesNotMatch(response.body, /SHADOW|SPA/);
+    }
+    const asset = await request(port, { urlPath: '/app.js' });
+    assert.equal(asset.status, 200, 'ordinary static files still serve');
+    const spa = await request(port, { urlPath: '/attention' });
+    assert.match(spa.body, /SPA/, 'non-API paths still get the SPA');
   } finally {
     app.locals.runtime.dispose();
     await new Promise((resolve) => server.close(resolve));

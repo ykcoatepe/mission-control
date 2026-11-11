@@ -49,6 +49,8 @@ function createExec({
   defaultTimeoutMs = DEFAULT_TIMEOUT_MS,
   defaultMaxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
   killSignal = 'SIGTERM',
+  // Wait after SIGTERM before SIGKILL, and after SIGKILL before giving up.
+  killGraceMs = 2_000,
 } = {}) {
   const laneConfig = { ...DEFAULT_LANES, ...lanes };
   const laneState = new Map();
@@ -69,7 +71,7 @@ function createExec({
     });
   }
 
-  const children = new Set();
+  const children = new Map(); // child -> terminate(reason)
   const inFlightByKey = new Map();
   let closed = false;
 
@@ -101,14 +103,50 @@ function createExec({
       return;
     }
     let child;
-    let timedOut = false;
     let timer = null;
-    const done = (error, stdout, stderr) => {
+    // Set when this runner decides to end the child. The classification of
+    // the result depends on it, never on the exit code: a child that exits 0
+    // from its SIGTERM handler still timed out.
+    let killReason = null; // 'timeout' | 'shutdown'
+    const killTimers = [];
+    let exited = false;
+
+    const clearTimers = () => {
       if (timer) clearTimeoutImpl(timer);
+      while (killTimers.length) clearTimeoutImpl(killTimers.pop());
+    };
+
+    const killedResult = (out, err, extra = {}) => ({
+      ok: false,
+      code: null,
+      signal: null,
+      stdout: out,
+      stderr: err,
+      timedOut: killReason === 'timeout',
+      truncated: false,
+      latencyMs: now() - startedAt,
+      queuedMs,
+      error: killReason === 'timeout'
+        ? { code: 'timeout', message: `Timed out after ${job.timeoutMs} ms` }
+        : { code: 'shutdown', message: 'Killed during shutdown' },
+      ...extra,
+    });
+
+    const done = (error, stdout, stderr) => {
+      clearTimers();
       if (child) children.delete(child);
+      if (job.settled) return;
       const latencyMs = now() - startedAt;
       const out = stdout == null ? '' : String(stdout);
       const err = stderr == null ? '' : String(stderr);
+      if (killReason) {
+        settle(lane, job, killedResult(out, err, {
+          code: Number.isInteger(error?.code) ? error.code : (error ? null : 0),
+          signal: error?.signal || null,
+          latencyMs,
+        }));
+        return;
+      }
       if (!error) {
         settle(lane, job, {
           ok: true, code: 0, signal: null, stdout: out, stderr: err,
@@ -118,11 +156,8 @@ function createExec({
       }
       const truncated = error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
       const exitCode = Number.isInteger(error.code) ? error.code : null;
-      const wasTimeout = timedOut && !truncated;
       let errorInfo = null;
       if (truncated) errorInfo = { code: 'max_output', message: `Output exceeded ${job.maxOutputBytes} bytes` };
-      else if (wasTimeout) errorInfo = { code: 'timeout', message: `Timed out after ${job.timeoutMs} ms` };
-      else if (closed) errorInfo = { code: 'shutdown', message: 'Killed during shutdown' };
       else if (exitCode == null && error.signal) errorInfo = { code: 'signal', message: `Terminated by ${error.signal}` };
       else if (exitCode == null) errorInfo = { code: String(error.code || 'spawn_failed'), message: 'Process could not be run' };
       settle(lane, job, {
@@ -131,12 +166,49 @@ function createExec({
         signal: error.signal || null,
         stdout: out,
         stderr: err,
-        timedOut: wasTimeout,
+        timedOut: false,
         truncated,
         latencyMs,
         queuedMs,
         error: errorInfo,
       });
+    };
+
+    // Bounded TERM -> KILL escalation. The lane is released when the child's
+    // exit is observed (the normal callback, or the 'exit' event when a
+    // grandchild keeps the pipes open). If even SIGKILL cannot be verified
+    // within the grace period, the call settles with kill_unverified so the
+    // lane is never held forever.
+    const terminate = (reason) => {
+      if (killReason || job.settled) return;
+      killReason = reason;
+      if (timer) clearTimeoutImpl(timer);
+      try {
+        child?.kill(killSignal);
+      } catch {}
+      const escalate = setTimeoutImpl(() => {
+        if (job.settled) return;
+        if (!exited) {
+          try {
+            child?.kill('SIGKILL');
+          } catch {}
+        }
+        const giveUp = setTimeoutImpl(() => {
+          if (job.settled) return;
+          if (child) children.delete(child);
+          settle(lane, job, killedResult('', '', {
+            error: exited
+              ? (killReason === 'timeout'
+                ? { code: 'timeout', message: `Timed out after ${job.timeoutMs} ms` }
+                : { code: 'shutdown', message: 'Killed during shutdown' })
+              : { code: 'kill_unverified', message: 'Child did not exit after SIGKILL' },
+          }));
+        }, killGraceMs);
+        giveUp?.unref?.();
+        killTimers.push(giveUp);
+      }, killGraceMs);
+      escalate?.unref?.();
+      killTimers.push(escalate);
     };
 
     try {
@@ -145,6 +217,8 @@ function createExec({
         env: job.env,
         encoding: 'utf8',
         maxBuffer: job.maxOutputBytes,
+        // Used by execFile only when maxBuffer is exceeded.
+        killSignal: 'SIGKILL',
         windowsHide: true,
         shell: false,
       }, done);
@@ -153,13 +227,25 @@ function createExec({
       return;
     }
     if (job.settled) return; // the callback ran synchronously
-    if (child) children.add(child);
-    timer = setTimeoutImpl(() => {
-      timedOut = true;
-      try {
-        child?.kill(killSignal);
-      } catch {}
-    }, job.timeoutMs);
+    if (child) {
+      children.set(child, terminate);
+      if (typeof child.once === 'function') {
+        child.once('exit', () => {
+          exited = true;
+          if (!killReason) return;
+          // Killed and exited: give the close callback a moment to deliver
+          // output, then release the lane regardless.
+          const closeWait = setTimeoutImpl(() => {
+            if (job.settled) return;
+            children.delete(child);
+            settle(lane, job, killedResult('', ''));
+          }, 250);
+          closeWait?.unref?.();
+          killTimers.push(closeWait);
+        });
+      }
+    }
+    timer = setTimeoutImpl(() => terminate('timeout'), job.timeoutMs);
     timer?.unref?.();
   }
 
@@ -221,9 +307,10 @@ function createExec({
     return promise;
   }
 
-  // Kill every running child and fail every queued call. After this the
-  // runner refuses new work.
-  function killAll(signal = killSignal) {
+  // Terminate every running child (TERM, then KILL after killGraceMs) and
+  // fail every queued call. After this the runner refuses new work. Returns
+  // the number of children signalled; drain() resolves when they are gone.
+  function killAll() {
     closed = true;
     for (const lane of laneState.values()) {
       const queued = lane.queue.splice(0);
@@ -234,14 +321,29 @@ function createExec({
         job.resolve(failure('shutdown', 'Process runner is shut down', { queuedMs: now() - job.enqueuedAt }));
       }
     }
-    let killed = 0;
-    for (const child of children) {
+    let signalled = 0;
+    for (const terminate of [...children.values()]) {
       try {
-        child.kill(signal);
-        killed += 1;
+        terminate('shutdown');
+        signalled += 1;
       } catch {}
     }
-    return killed;
+    return signalled;
+  }
+
+  // Resolves true when no child is left, false after timeoutMs.
+  function drain(timeoutMs = 3 * killGraceMs) {
+    const deadline = now() + timeoutMs;
+    return new Promise((resolve) => {
+      const check = () => {
+        if (children.size === 0) return resolve(true);
+        if (now() >= deadline) return resolve(false);
+        const t = setTimeoutImpl(check, 25);
+        t?.unref?.();
+        return undefined;
+      };
+      check();
+    });
   }
 
   function status() {
@@ -259,7 +361,7 @@ function createExec({
     return { closed, children: children.size, lanes: out };
   }
 
-  return { run, killAll, status, lanes: Object.freeze(Object.keys(laneConfig)) };
+  return { run, killAll, drain, status, lanes: Object.freeze(Object.keys(laneConfig)) };
 }
 
 module.exports = { createExec, DEFAULT_LANES };

@@ -290,7 +290,9 @@ function createSessionsService({
     // none yet, the legacy sessions.json file fallback is served and meta
     // says so: ok false, source 'openclaw.sessions.file-fallback'.
     async listVisibleSessions(limit = 25) {
-      const snapshot = visibleSessionsSource.get();
+      // GET is pure: serve memory only. The scheduler refreshes the source
+      // (registered in server/app.js); a cold source serves the file fallback.
+      const snapshot = visibleSessionsSource.snapshot();
       if (snapshot.data) {
         return {
           ...normalizeVisibleSessionsPayload(snapshot.data, limit),

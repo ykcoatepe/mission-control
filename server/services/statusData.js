@@ -1,3 +1,5 @@
+const { readOperationsSource } = require('./sessionsData');
+
 function heartbeatValueToSeconds(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value > 1e12 ? Math.floor(value / 1000) : value;
@@ -303,7 +305,12 @@ function createStatusService({
         ? new Date().toISOString()
         : null;
 
-      const sessionList = Array.isArray(sessions?.sessions) ? sessions.sessions : null;
+      // Token usage counts as observed only when the sessions read itself
+      // succeeded (provenance sourceSucceeded === true). A failed read comes
+      // back as an empty list, which would otherwise pass every() and report
+      // "used: 0, observed: true".
+      const sessionsSucceeded = readOperationsSource(sessions)?.sourceSucceeded === true;
+      const sessionList = sessionsSucceeded && Array.isArray(sessions?.sessions) ? sessions.sessions : null;
       const tokensObserved = sessionList != null && sessions?.meta?.ok !== false && !sessions?.error && sessionList.every((session) => Number.isFinite(session.totalTokens));
       const tokenUsage = {
         used: tokensObserved ? sessionList.reduce((sum, session) => sum + session.totalTokens, 0) : null,

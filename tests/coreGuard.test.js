@@ -199,3 +199,44 @@ test('auditWrites records mutating /api requests only, without bodies', async ()
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// --- review round 1: API paths are matched like Express routes them ---------
+const { isApiPath } = require('../server/core/http');
+
+test('isApiPath follows Express: case, trailing slash, encoding, repeated slashes', () => {
+  for (const p of ['/api', '/api/', '/API/settings/budget', '/Api/x/', '/api/settings/budget/', '//api/x', '/%61pi/x', '/%41PI/x', '/api%2Fx', '/api/x?y=1', '/%E0%A4%A']) {
+    assert.equal(isApiPath(p), true, p);
+  }
+  for (const p of ['/', '/apix', '/assets/api.js', '/public/x', '/healthz']) {
+    assert.equal(isApiPath(p), false, p);
+  }
+});
+
+test('counter-example: case and slash variants cannot skip the write guard or the audit', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-audit-case-'));
+  const auditLog = createAuditLog({ file: path.join(dir, 'a.json'), logger: quiet });
+  const guard = createGuard({ port: PORT, writeGuardMode: 'enforce', logger: quiet });
+  const app = express();
+  app.use(auditWrites({ auditLog }));
+  app.use(guard.middleware);
+  // Express routing is case-insensitive and not strict about trailing slashes.
+  app.post('/api/settings/budget', (req, res) => res.json({ reached: true }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const port = server.address().port;
+    const variants = ['/API/settings/budget', '/Api/Settings/Budget', '/api/settings/budget/', '/%61pi/settings/budget'];
+    for (const urlPath of variants) {
+      const response = await request(port, { method: 'POST', path: urlPath, headers: goodHost });
+      assert.equal(response.status, 403, `${urlPath} must hit the write guard`);
+      assert.equal(response.body.error.code, 'write_guard');
+    }
+    const reached = await request(port, { method: 'POST', path: '/API/settings/budget', headers: { ...goodHost, 'X-MC-Request': '1' } });
+    assert.equal(reached.status, 200, 'the uppercase path really reaches the route');
+    await new Promise((r) => setTimeout(r, 20));
+    const audited = auditLog.readEntries().map((e) => [e.path, e.status]);
+    assert.deepEqual(audited, [...variants.map((v) => [v, 403]), ['/API/settings/budget', 200]]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

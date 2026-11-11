@@ -11,6 +11,25 @@
 
 const crypto = require('crypto');
 
+// Classify a request path the way Express routes it, conservatively:
+// case-insensitive, percent-decoded, repeated slashes collapsed, trailing
+// slash ignored. A path that cannot be decoded counts as API (guards apply).
+function normalizeRequestPath(rawUrl) {
+  let value = String(rawUrl || '').split('?')[0].split('#')[0];
+  try {
+    value = decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+  return value.replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function isApiPath(rawUrl) {
+  const value = normalizeRequestPath(rawUrl);
+  if (value === null) return true;
+  return value === '/api' || value.startsWith('/api/');
+}
+
 function asyncHandler(fn) {
   return function asyncRoute(req, res, next) {
     return Promise.resolve()
@@ -34,7 +53,7 @@ function requestContext({ logger = console, now = Date.now, idFactory = () => cr
     req.id = /^[A-Za-z0-9._-]{1,64}$/.test(incoming) ? incoming : idFactory();
     res.setHeader('X-Request-Id', req.id);
     const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
-    if (pathOnly.startsWith('/api/') || pathOnly === '/api' || pathOnly === '/healthz') {
+    if (isApiPath(pathOnly) || normalizeRequestPath(pathOnly) === '/healthz') {
       res.on('finish', () => {
         try {
           logger.log(JSON.stringify({
@@ -154,6 +173,8 @@ function listRoutes(appOrRouter) {
 }
 
 module.exports = {
+  isApiPath,
+  normalizeRequestPath,
   asyncHandler,
   httpError,
   requestContext,

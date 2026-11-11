@@ -152,3 +152,103 @@ test('importRaw validates JSON, keeps a backup and writes atomically', () => {
   assert.equal(JSON.parse(fs.readFileSync(config.paths.mcConfig, 'utf8')).name, 'New');
   assert.equal(JSON.parse(fs.readFileSync(`${config.paths.mcConfig}.backup.42`, 'utf8')).name, 'Old');
 });
+
+// --- review round 1: atomic writers keep restrictive modes ---------------
+const { createAuditLog } = require('../server/core/guard');
+const { writeJsonFileAtomic } = require('../server/services/jsonFiles');
+
+function withUmask(mask, fn) {
+  const previous = process.umask(mask);
+  try {
+    return fn();
+  } finally {
+    process.umask(previous);
+  }
+}
+const modeOf = (file) => fs.statSync(file).mode & 0o777;
+
+test('counter-example: persisting a 0600 config under umask 022 keeps it 0600', () => {
+  const { root, home } = tempRoot({ mc: { name: 'Secret', gateway: { token: 't' } } });
+  const config = loadConfig({ rootDir: root, homeDir: home, env: {} });
+  fs.chmodSync(config.paths.mcConfig, 0o600);
+  withUmask(0o022, () => {
+    const store = createConfigStore({ config, logger: quiet });
+    store.legacyObject().name = 'Changed';
+    store.persist();
+    assert.equal(modeOf(config.paths.mcConfig), 0o600);
+    store.importRaw('{"name":"Imported"}', { now: () => 7 });
+    assert.equal(modeOf(config.paths.mcConfig), 0o600);
+  });
+});
+
+test('a new config file is created 0600; an existing mode is preserved', () => {
+  const { root, home } = tempRoot({ defaults: { name: 'T' } });
+  const config = loadConfig({ rootDir: root, homeDir: home, env: {} });
+  withUmask(0o022, () => createConfigStore({ config, logger: quiet }).persist());
+  assert.equal(modeOf(config.paths.mcConfig), 0o600);
+  fs.chmodSync(config.paths.mcConfig, 0o640);
+  withUmask(0o022, () => createConfigStore({ config, logger: quiet }).persist({ name: 'U' }));
+  assert.equal(modeOf(config.paths.mcConfig), 0o640);
+});
+
+test('audit log and JSON file writers create 0600 files and keep existing modes', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-modes-'));
+  const auditFile = path.join(dir, 'audit', 'events.json');
+  withUmask(0o022, () => {
+    createAuditLog({ file: auditFile, logger: quiet }).record({ path: '/api/x' });
+    assert.equal(modeOf(auditFile), 0o600);
+    const jsonFile = path.join(dir, 'hidden.json');
+    writeJsonFileAtomic(jsonFile, ['a']);
+    assert.equal(modeOf(jsonFile), 0o600);
+    fs.chmodSync(jsonFile, 0o600);
+    writeJsonFileAtomic(jsonFile, ['a', 'b']);
+    assert.equal(modeOf(jsonFile), 0o600);
+  });
+  assert.deepEqual(fs.readdirSync(dir).sort(), ['audit', 'hidden.json']);
+});
+
+// --- review round 1: structured secrets -----------------------------------
+const { redact, isSecretKey } = require('../server/core/config');
+
+test('counter-example: secrets inside arrays and objects under credential keys are redacted', () => {
+  const input = {
+    gateway: { token: ['secret-a'], auth: { token: { value: 'secret-b' } }, port: 18789 },
+    apiKey: { value: 'secret-c' },
+    'api-key': 'secret-d',
+    api_key: 'secret-e',
+    Authorization: 'Bearer secret-f',
+    headers: [{ cookie: 'sid=secret-g' }, { name: 'x', authorization: ['secret-h'] }],
+    credentials: { user: 'u', pass: 'secret-i' },
+    privateKey: '-----BEGIN secret-j',
+    braveApiKey: 'secret-k',
+    clientToken: 12345,
+    sessionKey: 'secret-l',
+    nested: [[{ password: 'secret-m' }]],
+    tokenConfigured: true,
+    name: 'Mission Control',
+    keyboard: 'not-a-secret',
+    emptyToken: '',
+  };
+  const out = redact(JSON.parse(JSON.stringify(input)));
+  const text = JSON.stringify(out);
+  assert.doesNotMatch(text, /secret-|12345/);
+  assert.equal(out.gateway.port, 18789);
+  assert.equal(out.gateway.token, '[redacted]');
+  assert.equal(out.apiKey, '[redacted]');
+  assert.equal(out.headers[1].name, 'x');
+  assert.equal(out.tokenConfigured, true, 'boolean flags stay');
+  assert.equal(out.name, 'Mission Control');
+  assert.equal(out.keyboard, 'not-a-secret');
+  assert.equal(out.emptyToken, '');
+});
+
+test('isSecretKey covers credential names and leaves ordinary keys', () => {
+  for (const key of ['token', 'gatewayToken', 'GATEWAY_TOKEN', 'secret', 'clientSecret', 'password', 'apiKey', 'api-key',
+    'api_key', 'API_KEY', 'authorization', 'Authorization', 'cookie', 'set-cookie', 'credential', 'credentials',
+    'privateKey', 'private_key', 'braveApiKey', 'accessKeyId', 'secretAccessKey', 'refreshToken', 'x-api-key']) {
+    assert.equal(isSecretKey(key), true, key);
+  }
+  for (const key of ['name', 'port', 'keyboard', 'monkeyPatch', 'modules', 'author', 'keys', 'workspace']) {
+    assert.equal(isSecretKey(key), false, key);
+  }
+});

@@ -54,17 +54,15 @@ test('counter-example: a failed sessions read is never served as an authoritativ
     now: () => t,
   });
 
-  await service.listVisibleSessions(25);
-  await settle();
+  // The scheduler refreshes the source; GETs only read it.
+  await service.visibleSessionsSource.refresh();
   let list = await service.listVisibleSessions(25);
   assert.equal(list.count, 1);
   assert.equal(list.meta.ok, true);
 
   mode = 'fail';
-  t += 31_000; // past the 30 s TTL: the next read refreshes
-  await service.listVisibleSessions(25);
-  await settle();
-  await settle();
+  t += 31_000; // next scheduled refresh fails
+  await service.visibleSessionsSource.refresh();
   list = await service.listVisibleSessions(25);
   assert.equal(list.count, 1, 'last-good sessions survive the failed read');
   assert.equal(list.sessions[0].key, 'agent:main:main');
@@ -75,8 +73,7 @@ test('counter-example: a failed sessions read is never served as an authoritativ
 
 test('with no good read yet, the file fallback is served and labelled as not ok', async () => {
   const service = makeSessions(async () => failed());
-  await service.listVisibleSessions(25);
-  await settle();
+  await service.visibleSessionsSource.refresh();
   const list = await service.listVisibleSessions(25);
   assert.deepEqual(list.sessions, []);
   assert.equal(list.meta.ok, false);
@@ -212,4 +209,70 @@ test('status source keeps the last observed status when the CLI later fails', as
   } finally {
     global.fetch = originalFetch;
   }
+});
+
+// --- review round 1: token usage needs a successful sessions read ----------
+async function observedStatusWithSessions(fetchSessionsImpl) {
+  const memoryPath = tempDir('mc-status-tokens-');
+  const originalFetch = global.fetch;
+  global.fetch = async () => { throw new Error('no network'); };
+  try {
+    const statusService = createStatusService({
+      mcConfig: { name: 'MC' },
+      memoryPath,
+      prettyModelName: (m) => m || '—',
+      getOpenclawDefaultModelKey: () => '',
+      fetchNotionActivity: async () => null,
+      fetchSessions: fetchSessionsImpl,
+      readRuntimeSnapshot: () => null,
+      writeRuntimeSnapshot: () => {},
+      runtimeSnapshotTtl: { status: 60_000 },
+      gatewayPort: 1,
+      openclawCli: async (args) => (args[0] === 'status'
+        ? { ok: true, stdout: 'Agents │ 2\n', stderr: '' }
+        : { ok: false, code: 1, stdout: '', stderr: '' }),
+      fs,
+      path,
+      processEnv: { HOME: memoryPath },
+      refreshOnRead: false,
+    });
+    return await statusService.readObservedStatus();
+  } finally {
+    global.fetch = originalFetch;
+  }
+}
+
+test('counter-example: a failed sessions read never yields observed token usage of 0', async () => {
+  const status = await observedStatusWithSessions(async () => failed());
+  assert.equal(status.tokenUsage.observed, false);
+  assert.equal(status.tokenUsage.used, null);
+
+  const plain = await observedStatusWithSessions(async () => ({ count: 0, sessions: [] }));
+  assert.equal(plain.tokenUsage.observed, false, 'no provenance is not success');
+  assert.equal(plain.tokenUsage.used, null);
+});
+
+test('a successful sessions read gives observed token usage', async () => {
+  const status = await observedStatusWithSessions(async () => ok([{ key: 'a', totalTokens: 10 }, { key: 'b', totalTokens: 5 }]));
+  assert.equal(status.tokenUsage.observed, true);
+  assert.equal(status.tokenUsage.used, 15);
+  const empty = await observedStatusWithSessions(async () => ok([]));
+  assert.equal(empty.tokenUsage.observed, true, 'a real empty list is observed');
+  assert.equal(empty.tokenUsage.used, 0);
+});
+
+test('counter-example: GET on a cold sessions source starts no upstream read', async () => {
+  let reads = 0;
+  const service = makeSessions(async () => { reads += 1; return ok([{ key: 'a' }]); });
+  const list = await service.listVisibleSessions(25);
+  await settle();
+  await settle();
+  assert.equal(reads, 0, 'a GET started a sessions read');
+  assert.equal(list.meta.ok, false);
+  assert.equal(list.meta.source, 'openclaw.sessions.file-fallback');
+  await service.visibleSessionsSource.refresh();
+  assert.equal(reads, 1);
+  await service.listVisibleSessions(25);
+  await settle();
+  assert.equal(reads, 1, 'nor on a warm one');
 });

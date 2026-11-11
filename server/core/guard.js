@@ -20,6 +20,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { isApiPath } = require('./http');
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const LOOPBACK_NAMES = ['localhost', '127.0.0.1', '[::1]'];
@@ -138,7 +139,7 @@ function createGuard({
             verdict = () => forbidden(res, origin.code, origin.message);
           } else {
             const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
-            const isApi = pathOnly === '/api' || pathOnly.startsWith('/api/');
+            const isApi = isApiPath(pathOnly);
             req.writeGuard = { header: checkWriteHeader(req), mode };
             if (isApi && !req.writeGuard.header) {
               if (mode === 'enforce') {
@@ -213,8 +214,14 @@ function createAuditLog({
     seq += 1;
     const tmp = `${file}.tmp-${process.pid}-${seq}-${crypto.randomBytes(4).toString('hex')}`;
     try {
-      fsImpl.mkdirSync(path.dirname(file), { recursive: true });
-      fsImpl.writeFileSync(tmp, JSON.stringify(bounded, null, 1), 'utf8');
+      fsImpl.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+      let mode = 0o600;
+      try {
+        mode = fsImpl.statSync(file).mode & 0o777;
+      } catch {}
+      // Created 0600 regardless of umask; keeps the existing file's mode.
+      fsImpl.writeFileSync(tmp, JSON.stringify(bounded, null, 1), { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      fsImpl.chmodSync(tmp, mode);
       fsImpl.renameSync(tmp, file);
       return entry;
     } catch (error) {
@@ -235,7 +242,7 @@ function auditWrites({ auditLog }) {
   return function auditWritesMiddleware(req, res, next) {
     const method = String(req.method || 'GET').toUpperCase();
     const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
-    if (SAFE_METHODS.has(method) || !(pathOnly === '/api' || pathOnly.startsWith('/api/'))) return next();
+    if (SAFE_METHODS.has(method) || !isApiPath(pathOnly)) return next();
     res.on('finish', () => {
       auditLog.record({
         requestId: req.id || null,

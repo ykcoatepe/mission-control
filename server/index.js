@@ -43,7 +43,15 @@ function start({ rootDir = path.join(__dirname, '..'), logger = console } = {}) 
       process.exit(exitCode);
     }, SHUTDOWN_GRACE_MS);
     force.unref();
-    server.close(() => process.exit(exitCode));
+    // Exit only after the runner has seen every child gone (TERM, then KILL),
+    // so a child that ignores SIGTERM is not left orphaned.
+    const childrenGone = Promise.resolve(runtime.exec?.drain?.()).catch(() => false);
+    server.close(() => {
+      childrenGone.then((clean) => {
+        if (clean === false) logger.warn('[shutdown] some children could not be verified as exited');
+        process.exit(exitCode);
+      });
+    });
     server.closeIdleConnections?.();
   }
 
