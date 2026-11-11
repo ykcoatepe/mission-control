@@ -29,7 +29,7 @@ function createGBrainOverviewService(options = {}) {
   let timelineSummary = null;
   let refreshInFlight = null;
   const empty = (name) => ({ data: null, meta: { ok: false, stale: true, observedAt: null, ageMs: null, error: null, latencyMs: null, source: `gbrain.${name}` } });
-  const probeSnapshot = (name) => sources[name]?.snapshot() || empty(name);
+  const probeSnapshot = (name) => name === 'timeline' ? timeline.snapshot() : sources[name]?.snapshot() || empty(name);
   function legacy(name) {
     const s = probeSnapshot(name);
     return s.data ? { ...s.data, meta: s.meta } : { ok: false, status: 'unavailable', mode: 'live-read-only', checkedAt: null, error: 'GBrain reading unavailable', meta: s.meta };
@@ -48,13 +48,18 @@ function createGBrainOverviewService(options = {}) {
       live.sources.freshness = summarizeSourceFreshness(live.sources.sources, at);
     }
     const runtime = probeSnapshot('runtime');
-    const snapshot = { live, integrationRuntime: { ...(runtime.data || {}), meta: runtime.meta }, meta: combineMeta(Object.values(sources).map((s) => s.snapshot()), 'gbrain.overview') };
+    const timelineSnapshot = timeline.snapshot();
+    const parts = Object.values(sources).map((s) => s.snapshot());
+    if (timelineSnapshot.data !== null || timelineSnapshot.meta.error) parts.push(timelineSnapshot);
+    const snapshot = { live, integrationRuntime: { ...(runtime.data || {}), meta: runtime.meta }, meta: combineMeta(parts, 'gbrain.overview') };
     return { ...snapshot, overview: buildFromSnapshot(snapshot) };
   }
   function buildFromSnapshot(snapshot, extra = {}) {
     const synoptic = buildSynoptic({ probeSnapshot, live: snapshot.live, now });
+    const summary = timelineSummary && timeline.snapshot().meta.error
+      ? { ...timelineSummary, status: 'warning', warning: 'Timeline ledger unavailable', lastCaptureReason: 'failed' } : timelineSummary;
     return { ...buildGBrainOverview(snapshot.live, { integrationRuntime: snapshot.integrationRuntime,
-      ...(timelineSummary ? { timelineSummary, incidentBanner: timelineSummary.incidentBanner || null, incidentBanners: timelineSummary.incidentBanners || [] } : {}),
+      ...(summary ? { timelineSummary: summary, incidentBanner: summary.incidentBanner || null, incidentBanners: summary.incidentBanners || [] } : {}),
       ...extra, verdict: synoptic.verdict, sourcesState: synoptic.sourcesState }),
       unavailable: synoptic.verdict.state === 'unavailable', meta: snapshot.meta };
   }
@@ -85,11 +90,15 @@ function createGBrainOverviewService(options = {}) {
       }));
       // Sole ledger writer: only the scheduler/explicit refresh reaches here.
       // The ledger's change/heartbeat, retention, fingerprint and lock rules stay intact.
-      if (probeSnapshot('health').data || probeSnapshot('sources').data) {
-        const result = await timelineService.captureOverview(getOverview());
-        timelineSummary = result?.timelineSummary || null;
+      try {
+        if (probeSnapshot('health').data || probeSnapshot('sources').data) {
+          const result = await timelineService.captureOverview(getOverview());
+          timelineSummary = result?.timelineSummary || null;
+        }
+      } finally {
+        // Capture failure must not leave an earlier healthy timeline snapshot visible.
+        await timeline.refresh();
       }
-      await timeline.refresh();
       return readSnapshot();
     })().finally(() => { refreshInFlight = null; });
     return refreshInFlight;
@@ -99,7 +108,7 @@ function createGBrainOverviewService(options = {}) {
       status: () => ({ sources: Object.values(sources).map((source) => source.status()) }) }, { intervalMs: REFRESH_INTERVAL_MS, jitterMs: 1500 });
     scheduler.register(graph, { intervalMs: 120_000, jitterMs: 1500 });
   }
-  return { readSnapshot, getOverview, buildFromSnapshot, timelineService, probeSnapshot, refresh, register,
+  return { actionExec: options.exec, readSnapshot, getOverview, buildFromSnapshot, timelineService, probeSnapshot, refresh, register,
     integrationSnapshot, synopticSnapshot, overviewSnapshot, timelineSnapshot, lookups, graph, sources };
 }
 module.exports = { createGBrainOverviewService, combineMeta };

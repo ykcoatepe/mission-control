@@ -5,13 +5,38 @@ const { redact, validateMcConfig } = require('../core/config');
 const { httpError } = require('../core/http');
 
 function normalizeMonthlyBudget(monthly) {
-  const normalized = Number(monthly ?? 0);
-  if (!Number.isFinite(normalized) || normalized < 0) {
-    const error = new Error('monthly budget must be zero or positive');
+  if (monthly === null) return null;
+  if (typeof monthly !== 'number' || !Number.isFinite(monthly) || monthly < 0) {
+    const error = httpError(400, 'invalid_budget', 'monthly budget must be a finite number, zero or positive, or null');
     error.statusCode = 400;
     throw error;
   }
-  return normalized;
+  return monthly;
+}
+
+function validateSettingsDocument(document) {
+  if (validateMcConfig(document).length) throw httpError(400, 'invalid_config', 'Invalid configuration');
+  if (Object.hasOwn(document.budget || {}, 'monthly')) normalizeMonthlyBudget(document.budget.monthly);
+}
+
+// The exporter may replace a whole credential container or a substring of an
+// ordinary string. Importing either form keeps the current value as a whole;
+// never combine a redacted prefix/suffix with a secret from another document.
+const OMIT_REDACTED = Symbol('omit-redacted');
+function restoreRedactedValues(imported, current, hasCurrent = false) {
+  if (typeof imported === 'string' && /\[redacted\]/i.test(imported)) {
+    return hasCurrent ? structuredClone(current) : OMIT_REDACTED;
+  }
+  if (Array.isArray(imported)) {
+    return imported.map((value, index) => restoreRedactedValues(value, current?.[index], Array.isArray(current) && Object.hasOwn(current, index)))
+      .filter((value) => value !== OMIT_REDACTED);
+  }
+  if (imported && typeof imported === 'object') {
+    return Object.fromEntries(Object.entries(imported).map(([key, value]) => [key,
+      restoreRedactedValues(value, current?.[key], current != null && typeof current === 'object' && Object.hasOwn(current, key)),
+    ]).filter(([, value]) => value !== OMIT_REDACTED));
+  }
+  return imported;
 }
 
 function createSettingsService({
@@ -35,17 +60,34 @@ function createSettingsService({
   const fs = fsImpl;
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
 
+  function readCurrentMcConfig() {
+    if (!missionControlConfigPath) return structuredClone(mcConfig);
+    let current;
+    try {
+      current = JSON.parse(fs.readFileSync(missionControlConfigPath, 'utf8'));
+      validateSettingsDocument(current);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return structuredClone(mcConfig);
+      throw httpError(503, 'settings_config_unavailable', 'Current configuration could not be read safely');
+    }
+    return current;
+  }
+
   function persistMcConfig(next) {
+    validateSettingsDocument(next);
     if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
     configStore.persist(next);
+    for (const key of Object.keys(mcConfig)) if (!Object.hasOwn(next, key)) delete mcConfig[key];
     Object.assign(mcConfig, next);
   }
 
   function readOpenclawConfigSafe() {
-    if (!fs.existsSync(openclawConfigPath)) return null;
     try {
-      return JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
-    } catch {
+      const parsed = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid config document');
+      return parsed;
+    } catch (error) {
+      if (error?.code === 'ENOENT') return null;
       throw httpError(503, 'settings_config_unavailable', 'OpenClaw configuration could not be read');
     }
   }
@@ -112,25 +154,30 @@ function createSettingsService({
     return { main, subagent, heartbeat };
   }
 
-  async function setModelRouting({ main, subagent, heartbeat }) {
-    if ([main, subagent, heartbeat].some((value) => value != null && typeof value !== 'string')) {
-      throw httpError(400, 'invalid_model', 'Model fields must be strings');
+  async function setModelRouting(body = {}) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'invalid_model', 'Model fields must be strings');
+    const paths = {
+      main: 'agents.defaults.model.primary',
+      subagent: 'agents.defaults.subagents.model.primary',
+      heartbeat: 'agents.defaults.heartbeat.model',
+    };
+    const provided = Object.keys(paths).filter((field) => Object.hasOwn(body, field));
+    // Validate the complete patch before executing its first mutation.
+    for (const field of provided) {
+      const value = body[field];
+      if (field === 'heartbeat' && value === '') continue;
+      if (typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(value)) {
+        throw httpError(400, 'invalid_model', 'Model fields must contain a valid model identifier');
+      }
     }
-    if (main) {
-      await openclawExec(['config', 'set', 'agents.defaults.model.primary', String(main)], 15000);
+    if (provided.length) readOpenclawConfigSafe();
+    for (const field of provided) {
+      const value = body[field];
+      await openclawExec(value === ''
+        ? ['config', 'unset', paths[field]]
+        : ['config', 'set', paths[field], value], 15000);
     }
-    if (subagent) {
-      await openclawExec(['config', 'set', 'agents.defaults.subagents.model.primary', String(subagent)], 15000);
-    }
-    if (heartbeat) {
-      await openclawExec(['config', 'set', 'agents.defaults.heartbeat.model', String(heartbeat)], 15000);
-    } else {
-      try {
-        await openclawExec(['config', 'unset', 'agents.defaults.heartbeat.model'], 15000);
-      } catch {}
-    }
-
-    await reloadGatewayConfig();
+    if (provided.length) await reloadGatewayConfig();
     return { status: 'saved' };
   }
 
@@ -144,13 +191,16 @@ function createSettingsService({
     if (!/^\d+(?:ms|s|m|h|d)$/.test(normalized)) {
       throw httpError(400, 'invalid_interval', 'interval must be a duration such as 30m');
     }
+    readOpenclawConfigSafe();
     await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', normalized], 15000);
     await reloadGatewayConfig();
     return { status: 'saved' };
   }
 
   function updateBudget(monthly) {
-    const next = { ...mcConfig, budget: { monthly: normalizeMonthlyBudget(monthly) } };
+    const normalized = normalizeMonthlyBudget(monthly);
+    const current = readCurrentMcConfig();
+    const next = { ...current, budget: { ...current.budget, monthly: normalized } };
     persistMcConfig(next);
     return { status: 'saved', budget: mcConfig.budget };
   }
@@ -209,7 +259,7 @@ function createSettingsService({
   }
 
   function updateSetup({ dashboardName, gateway, modules, scout }) {
-    const next = JSON.parse(JSON.stringify(mcConfig));
+    const next = readCurrentMcConfig();
     if (dashboardName) {
       if (typeof dashboardName !== 'string') throw httpError(400, 'invalid_config', 'dashboardName must be a string');
       next.name = dashboardName;
@@ -218,7 +268,6 @@ function createSettingsService({
     if (gateway != null) next.gateway = { ...next.gateway, ...gateway };
     if (modules != null) next.modules = { ...next.modules, ...modules };
     if (scout != null) next.scout = { ...next.scout, ...scout };
-    if (validateMcConfig(next).length) throw httpError(400, 'invalid_config', 'Invalid configuration');
     persistMcConfig(next);
     return { success: true, config: getPublicConfig() };
   }
@@ -231,9 +280,12 @@ function createSettingsService({
     const configContent = fs.readFileSync(filePath, 'utf8');
     let imported;
     try { imported = JSON.parse(configContent); } catch { throw httpError(400, 'invalid_config', 'Invalid configuration JSON'); }
-    if (validateMcConfig(imported).length) throw httpError(400, 'invalid_config', 'Invalid configuration');
+    validateSettingsDocument(imported);
+    const current = readCurrentMcConfig();
+    const resolved = restoreRedactedValues(imported, current, true);
+    validateSettingsDocument(resolved);
     if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
-    configStore.importRaw(configContent);
+    configStore.importRaw(JSON.stringify(resolved, null, 2));
     fs.unlinkSync(filePath);
 
     return {

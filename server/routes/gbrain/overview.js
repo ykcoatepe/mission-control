@@ -373,7 +373,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
         status: integrationHealth.thinkRuntime.status === 'inactive' ? 'warning' : integrationHealth.thinkRuntime.status,
         proofNodeId: 'gbrain-core',
       },
-      autopilot: { label: 'Operator actions', value: 'Allowlisted', detail: `${listGBrainActions().length} local actions; probes remain read-only`, status: 'healthy', proofNodeId: 'gbrain-core' },
+      autopilot: { label: 'Operator actions', value: 'Allowlisted', detail: `${listGBrainActions().length} local actions; probes remain read-only`, status: 'inactive', proofNodeId: 'gbrain-core' },
       bridge: { label: 'Bridge proof', value: 'Not read', detail: 'Reader calls have not been observed', status: 'inactive', proofNodeId: 'hermes' },
       caveats: {
         label: 'Caveats',
@@ -410,6 +410,8 @@ function buildGBrainOverview(live = {}, extra = {}) {
     overview.verdict = extra.verdict;
     overview.state = extra.verdict.state;
     overview.trust.status = extra.verdict.state;
+    overview.cockpit.health.status = extra.verdict.state;
+    overview.cockpit.version.status = extra.verdict.state;
     overview.trust.label = extra.verdict.state === 'healthy' ? 'Operational' : `GBrain ${extra.verdict.state}`;
     overview.caveats = verdictCaveats(extra.verdict);
     if (extra.sourcesState) {

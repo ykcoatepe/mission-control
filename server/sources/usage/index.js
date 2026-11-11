@@ -1,4 +1,5 @@
 'use strict';
+const { composeUsageSnapshots } = require('./ownership');
 const { createUsageRegistry, localDate } = require('./registry');
 const { estimateApiEquivalentCost, lastReviewed } = require('../../services/costSanity');
 const { rangeForPeriod } = require('../../services/claudeCodeUsage');
@@ -34,25 +35,22 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
     let registry;
     if (!providers) {
         const deps = {
-            exec: runner, now, projectRoot, home, env, fs
+            exec: runner, now, projectRoot, home, env, fs, dataDir
         };
-        const getHermesCoverage = () => {
-            const snap = registry?.snapshots().find(s => s.id === 'hermes');
-            return snap?.meta.ok && !snap.meta.stale ? snap.data.days.filter(d => rowTokens(d) > 0 || d.billedUsd > 0).map(d => d.date) : [];
-        };
-        providers = PROVIDER_MODULES.map(name => require(`./providers/${name}`).createProvider({ ...deps, getHermesCoverage }));
+        providers = PROVIDER_MODULES.map(name => require(`./providers/${name}`).createProvider(deps));
     }
     registry = createUsageRegistry({
         providers, now, fs, dataDir, logger, scheduler
     });
-    function snapshots() { return registry.snapshots(); }
+    function snapshots() { return composeUsageSnapshots(registry.snapshots()); }
     function meta(snaps) {
         const stale = snaps.length === 0 || snaps.some(s => !s.meta.ok || s.meta.stale || s.data?.until < localDate(new Date(now())));
-        const partial = stale || snaps.some(s => s.data?.coverage !== 'complete');
+        const unresolvedOverlaps = snaps.flatMap(s=>s.data?.unresolvedOverlaps || []);
+        const partial = stale || unresolvedOverlaps.length>0 || snaps.some(s => s.data?.coverage !== 'complete');
         const times = snaps.map(s => s.meta.observedAt).filter(Boolean).sort();
         const latencies = snaps.map(s => s.meta.latencyMs).filter(Number.isFinite);
         return {
-            ok: !stale, stale, partial, observedAt: times[0] || null, ageMs: times.length ? Math.max(0, now() - Date.parse(times[0])) : null, error: stale ? { code: 'usage_partial', message: 'Some usage providers are unavailable, stale or incomplete' } : null, latencyMs: latencies.length ? Math.max(...latencies) : null, source: 'usage.registry', updatedAt: times.at(-1) || null, refreshing: snaps.some(s => !s.data && !s.meta.error), rateCardLastReviewed: lastReviewed
+            ok: !stale && !unresolvedOverlaps.length, stale, partial, unresolvedOverlaps, observedAt: times[0] || null, ageMs: times.length ? Math.max(0, now() - Date.parse(times[0])) : null, error: unresolvedOverlaps.length ? {code:'usage_overlap_unresolved',message:'Provider ownership overlap is unresolved'} : stale ? { code: 'usage_partial', message: 'Some usage providers are unavailable, stale or incomplete' } : null, latencyMs: latencies.length ? Math.max(...latencies) : null, source: 'usage.registry', updatedAt: times.at(-1) || null, refreshing: snaps.some(s => !s.data && !s.meta.error), rateCardLastReviewed: lastReviewed
         };
     }
     function hasCoverage(snap, keys) { return !!snap.data && snap.data.since <= keys[0] && snap.data.until >= keys.at(-1); }
@@ -64,7 +62,7 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const value = observed ? totals(rows, snap.id) : { tokens: null, apiEquivalentUsd: null, billedUsd: null };
         const omittedPrices = rows.some(row => !Number.isFinite(price(row, snap.id).usd));
         const incompleteCoverage = observed && (!hasCoverage(snap, keys) || snap.data.coverage !== 'complete');
-        const reason = !snap.data ? 'usage_unavailable' : !observed ? 'window_not_observed'
+        const reason = !snap.data ? 'usage_unavailable' : !observed ? 'window_not_observed' : snap.data.unresolvedOverlaps?.some(o=>keys.includes(o.date)) ? 'ownership_overlap_unresolved'
             : value.apiEquivalentUsd === null ? 'api_equivalent_unavailable'
             : omittedPrices ? 'partially_priced_usage' : null;
         return { ...value, observed, rows, reason,

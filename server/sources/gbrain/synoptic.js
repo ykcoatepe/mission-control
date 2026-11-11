@@ -84,7 +84,7 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
       warning: readers.some((r) => r.state === 'warning'),
       inactive: readers.length === 0 || readers.every((r) => r.state === 'inactive') });
   const verdict = buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live,
-    probes: Object.fromEntries(['health', 'stats', 'jobs', 'sources', 'version', 'tools', 'features', 'providers', 'hermesProxy', 'runtime']
+    probes: Object.fromEntries(['health', 'stats', 'jobs', 'sources', 'version', 'tools', 'features', 'providers', 'hermesProxy', 'runtime', 'timeline']
       .map((name) => [name, probeSnapshot(name)])) });
   return { schemaVersion: '1', state: verdict.state, verdict,
     core, sources, sourcesState, queue, readers, readersState,

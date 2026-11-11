@@ -48,3 +48,20 @@ expired provider readings and another provider's failures do not set that flag.
 `codexbarScan` records invocation state, source and attempt/success timestamps;
 `lastGoodScanAgeMs` and `scanErrorClass` are separate. Scanner diagnostics survive
 an identity-bound cache reload; command output and error text never enter them.
+
+Ownership candidates are intrinsic source metadata:
+`ownership: [{owner,date,model,inputTokens,outputTokens,cacheReadTokens,cacheWriteTokens,billedUsd,latestUsageAt?}]`.
+They must be a subset of `days`. An ownership-bearing observation is stored as
+partial with `coverageReasons: ['ownership_pending']`; other producer coverage
+reasons are preserved. `ownership.js` resolves from current snapshots, including
+owner freshness, completeness, matching date/model counts and observation time.
+An unresolved candidate remains visible with a typed reason; it is never cached
+as an authoritative complete composition. Counts are not altered in source caches.
+
+Claude/Codex indexes use path identity, size, mtime, inode, complete-line byte
+offset and hashed append anchors. Only changed/new files read source bytes;
+append-only files resume at the committed offset. Truncation, rotation or changed
+anchors rebuild the file. Corrupt manifests/count files are ignored and rebuilt.
+Count records are externally sorted and merged with fixed batches/fan-in, so
+neither full transcripts nor an unbounded request-ID map is held in memory.
+See `../PERFORMANCE.md` for measured cold/recurring CPU, RSS and tradeoffs.

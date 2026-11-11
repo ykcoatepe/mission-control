@@ -11,9 +11,18 @@ function isGBrainVerdict(value) {
       && typeof r.text === 'string' && r.text.length > 0);
 }
 /** The sole aggregate verdict. Every HTTP consumer transports this result unchanged. */
-function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live, probes = {} }) {
+function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live, probes = {}, legacyOverview }) {
   const reasons = [];
   function add(elementId, state, text) { reasons.push({ elementId, state, text }); }
+  // Legacy callers supply the old presentation contract. Adapt it to the same
+  // reason model here; no consumer may independently reconstruct its state.
+  if (legacyOverview) {
+    core = { state: legacyOverview.trust.status, quality: { value: legacyOverview.trust.score } };
+    sources = []; sourcesState = 'healthy'; queue = { state: 'inactive' };
+    readers = []; readersState = 'inactive'; live = legacyOverview.live || {};
+    for (const text of legacyOverview.caveats) add('legacy-caveat', core.state === 'critical' ? 'critical' : 'warning', text);
+    if (live.sources?.freshness?.staleCount > 0) add('sources', 'warning', 'Source freshness threshold exceeded.');
+  }
   for (const [name, snapshot] of Object.entries(probes)) {
     if (snapshot.meta.error) add(`gbrain.${name}`, 'unavailable', `${name} probe unavailable.`);
     else if (snapshot.data !== null && snapshot.meta.stale) add(`gbrain.${name}`, 'warning', `${name} evidence is stale.`);

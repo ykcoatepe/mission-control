@@ -1,4 +1,4 @@
-const { isGBrainVerdict, verdictCaveats } = require('../sources/gbrain/verdict');
+const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
 const STATE_RANK = {
   critical: 5,
   warning: 4,
@@ -673,9 +673,7 @@ function adaptGBrain(overview, generatedAt) {
   const caveats = overview.caveats.map((item) => cleanText(String(item)));
   const staleSources = overview.live.sources.freshness.staleCount;
   const sourceStale = staleSources > 0;
-  const state = trustState === 'healthy' && (caveats.length || sourceStale)
-    ? 'warning'
-    : trustState;
+  const state = buildGBrainVerdict({ legacyOverview: overview }).state;
   const proof = evidence(
     'gbrain:trust',
     'gbrain',

@@ -1,5 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { httpError } = require('../core/http');
+
+// Identity/linkage belongs to the scheduler. These presentation fields may
+// be explicitly owned by a user; all other cron fields refresh from evidence.
+const CALENDAR_EDITABLE_FIELDS = ['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes'];
 
 function writeJsonFileAtomic(filePath, value) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -392,8 +397,15 @@ function createCronService({
   }
 
   function patchHermesCronJob(sourceId = '', patch = {}) {
-    const parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
-    const jobs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
+    let parsed;
+    let jobs;
+    try {
+      parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
+      jobs = Array.isArray(parsed) ? parsed : parsed?.jobs;
+      if (!Array.isArray(jobs) || jobs.some(job => !job || typeof job !== 'object' || Array.isArray(job) || typeof job.id !== 'string')) throw new Error('Invalid jobs');
+    } catch {
+      throw httpError(409, 'hermes_cron_unavailable', 'Hermes cron data is unreadable; no changes were made');
+    }
     const index = jobs.findIndex((candidate) => String(candidate.id) === String(sourceId));
     if (index === -1) {
       const error = new Error(`Hermes cron job not found: ${sourceId}`);
@@ -625,6 +637,8 @@ function createCronService({
       createdAt: toIsoOrNull(entry.createdAt) || nowIso,
       updatedAt: toIsoOrNull(entry.updatedAt) || nowIso,
       lastSyncedAt: toIsoOrNull(entry.lastSyncedAt) || toIsoOrNull(entry.updatedAt) || nowIso,
+      userOverrides: Array.isArray(entry.userOverrides)
+        ? [...new Set(entry.userOverrides.filter(field => CALENDAR_EDITABLE_FIELDS.includes(field)))] : [],
     };
   }
 
@@ -645,6 +659,10 @@ function createCronService({
       const parsed = JSON.parse(fs.readFileSync(calendarFile, 'utf8'));
       const payload = Array.isArray(parsed) ? { entries: parsed } : (parsed || {});
       if (!Array.isArray(payload.entries)) throw new Error('Calendar entries missing');
+      if (strict && payload.entries.some(entry => !entry || typeof entry !== 'object' || Array.isArray(entry)
+        || typeof entry.id !== 'string' || !entry.id
+        || (entry.userOverrides !== undefined && (!Array.isArray(entry.userOverrides)
+          || entry.userOverrides.some(field => !CALENDAR_EDITABLE_FIELDS.includes(field)))))) throw new Error('Invalid calendar entries');
       return {
         entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
         updatedAt: toIsoOrNull(payload.updatedAt),
@@ -652,9 +670,7 @@ function createCronService({
       };
     } catch (error) {
       if (strict) {
-        const unavailable = new Error('Calendar data unavailable');
-        unavailable.code = 'calendar_unavailable';
-        throw unavailable;
+        throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
       }
       console.error('[Calendar read]', error.message);
       return { entries: [], updatedAt: null, lastCronSyncAt: null, error: error.message };
@@ -686,21 +702,23 @@ function createCronService({
 
     const syncedCronEntries = cronJobs.map((job) => {
       const previous = existingCronEntries.get(String(job.id)) || {};
-      return normalizeCalendarEntry({
+      const derived = {
         ...previous,
         id: previous.id || `cron-${job.id}`,
         title: job.name || previous.title || String(job.id || 'Cron job'),
         schedule: job.schedule?.expr || job.schedule?.kind || previous.schedule || '',
-        startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : previous.startsAt || null,
+        startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
         status: normalizeCronRunStatus(job),
         assignee: previous.assignee || 'Mudur',
         source: 'cron',
         linkedJobId: job.id,
-        notes: job.payload?.text || job.payload?.message || previous.notes || '',
+        notes: job.payload?.text ?? job.payload?.message ?? previous.notes ?? '',
         createdAt: previous.createdAt || syncedAtIso,
         updatedAt: syncedAtIso,
         lastSyncedAt: syncedAtIso,
-      }, syncedAtIso);
+      };
+      for (const field of previous.userOverrides || []) derived[field] = previous[field];
+      return normalizeCalendarEntry(derived, syncedAtIso);
     });
 
     return {
@@ -743,19 +761,21 @@ function createCronService({
 
   function createCalendarEntry(payload = {}) {
     const nowIso = new Date().toISOString();
+    if (payload.linkedJobId != null) throw httpError(400, 'invalid_calendar_link', 'Scheduler-linked entries are created by cron sync');
     if (!String(payload.title || '').trim()) {
       const error = new Error('title required');
       error.statusCode = 400;
       throw error;
     }
 
-    const current = readCalendarDataSafe();
+    const current = readCalendarDataSafe({ strict: true });
     const entry = normalizeCalendarEntry({
       ...payload,
       id: payload.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       createdAt: nowIso,
       updatedAt: nowIso,
       lastSyncedAt: nowIso,
+      userOverrides: [],
     }, nowIso);
 
     const next = writeCalendarDataSafe({
@@ -769,7 +789,7 @@ function createCronService({
   }
 
   function updateCalendarEntry(id, payload = {}) {
-    const current = readCalendarDataSafe();
+    const current = readCalendarDataSafe({ strict: true });
     const idx = current.entries.findIndex((entry) => entry.id === id);
     if (idx < 0) {
       const error = new Error('Calendar entry not found');
@@ -779,9 +799,15 @@ function createCronService({
 
     const existing = current.entries[idx];
     const nowIso = new Date().toISOString();
+    const editedFields = CALENDAR_EDITABLE_FIELDS.filter(field => Object.hasOwn(payload, field));
+    const patch = Object.fromEntries(editedFields.map(field => [field, payload[field]]));
+    const candidate = normalizeCalendarEntry({ ...existing, ...patch }, nowIso);
+    const changedFields = editedFields.filter(field => candidate[field] !== existing[field]);
     const updated = normalizeCalendarEntry({
       ...existing,
-      ...payload,
+      ...patch,
+      userOverrides: existing.source === 'cron'
+        ? [...new Set([...(existing.userOverrides || []), ...changedFields])] : existing.userOverrides,
       id: existing.id,
       createdAt: existing.createdAt,
       updatedAt: nowIso,

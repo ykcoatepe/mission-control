@@ -1307,12 +1307,12 @@ async function testGBrainActionRunsOnlyAllowlistedCommand() {
   for (const [action, expectedCalls] of expected.entries()) {
     const calls = [];
     const optionsByCall = [];
-    const execFilePromise = async (bin, args, options) => {
+    const exec = { run: async (bin, args, options) => {
       assert.equal(bin, 'gbrain');
       calls.push(args);
       optionsByCall.push(options);
       return {
-        stdout: JSON.stringify({
+        ok: true, stdout: JSON.stringify({
           ok_count: 2,
           error_count: 0,
           repoPath: '/Users/example/private',
@@ -1321,9 +1321,9 @@ async function testGBrainActionRunsOnlyAllowlistedCommand() {
         }),
         stderr: 'Synced /Users/example/private with sk-secret',
       };
-    };
+    } };
 
-    const result = await runGBrainAction(action, { execFilePromise, confirmed: true });
+    const result = await runGBrainAction(action, { exec, confirmed: true });
     const serialized = JSON.stringify(result);
 
     assert.equal(result.ok, true);
@@ -1331,10 +1331,10 @@ async function testGBrainActionRunsOnlyAllowlistedCommand() {
     assert.equal(result.pending, false);
     assert.deepEqual(calls, Array.isArray(expectedCalls[0]) ? expectedCalls : [expectedCalls]);
     if (action === 'sync-sources' || action === 'retry-failed-sync') {
-      assert.equal(optionsByCall[0].timeout, 120000);
-      assert.equal(optionsByCall[1].timeout, 120000);
+      assert.equal(optionsByCall[0].timeoutMs, 120000);
+      assert.equal(optionsByCall[1].timeoutMs, 120000);
     } else if (action === 'embed-missing') {
-      assert.equal(optionsByCall[0].timeout, 1800000);
+      assert.equal(optionsByCall[0].timeoutMs, 1800000);
     }
     assert.doesNotMatch(serialized, /\/Users\/example/);
     assert.doesNotMatch(serialized, /sk-secret/);

@@ -95,7 +95,9 @@ function createApp(deps = {}) {
   const services = deps.services || {};
   const config = deps.config || loadConfig({ rootDir });
   const configStore = deps.configStore || createConfigStore({ config, logger });
-  const exec = deps.exec || createExec({ now, lanes: deps.execLanes });
+  // gbrain area: isolate actions; scheduled probes and lookups keep their own lanes.
+  const execLanes = { ...deps.execLanes, ...require('./routes/gbrain/actionsExecutor').GBRAIN_ACTION_EXEC_LANES };
+  const exec = deps.exec || createExec({ now, lanes: execLanes });
   const scheduler = deps.scheduler || createScheduler({ now, logger });
 
   // Legacy names kept so the wiring below reads like the old server.js.
@@ -173,11 +175,9 @@ function createApp(deps = {}) {
   }));
 
   // --- services ----------------------------------------------------------
-// gbrain area: scheduler owns all probes; the shared runner owns the gbrain lane.
   const gbrainOverviewService = services.gbrainOverviewService
     || createGBrainOverviewService({ projectRoot, mcConfig, exec, now });
   gbrainOverviewService.register?.(scheduler);
-  // end gbrain area
   const hermesKanbanService = services.hermesKanbanService || createHermesKanbanService({ mcConfig });
   const hermesGatewayHealthService = services.hermesGatewayHealthService || createHermesGatewayHealthService({
     profile: hermesKanbanService.profile,
@@ -380,7 +380,8 @@ function createApp(deps = {}) {
   app.get('/api/health', (req, res) => res.json(healthPayload()));
   app.get('/healthz', (req, res) => res.json(livenessPayload()));
 
-  app.use(buildGBrainRouter({ projectRoot, mcConfig, gbrainOverviewService }));
+  app.use(buildGBrainRouter({ projectRoot, mcConfig, gbrainOverviewService, exec }));
+  // end gbrain area
   app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
   app.use(buildOperationsRouter({ operationsOverviewService }));
   app.use(buildStatusRouter({ statusService, statusSource }));

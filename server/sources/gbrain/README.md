@@ -2,7 +2,7 @@
 
 `gbrain.refresh` is registered with the core scheduler every 180 seconds. It
 refreshes independent last-good sources with at most two readers at once. Every
-CLI uses the shared core runner's `gbrain` lane, fixed argv, 45-second execution
+scheduled CLI uses the shared core runner's `gbrain` lane, fixed argv, 45-second execution
 and 10-second lane-wait budgets, and a 2 MiB output cap. The source itself times
 out at 60 seconds. Heavy reads do not run on HTTP requests. Evidence becomes
 stale after 360 seconds; failure immediately marks it unavailable without losing
@@ -68,7 +68,7 @@ supports neighbourhoods only and makes no claim to globally top-linked pages.
 bounded interest in memory and returns an envelope. On a cold key it returns
 503/gbrain_graph_pending until the next scheduler pass (within two minutes when
 the lane is available). Each neighbourhood source has a 15-minute TTL; at most
-16 are retained. Graph jobs use depth=1, direction=both; the runner bounds bytes
+16 primary entries plus at most 6 staging entries are retained. Graph jobs use depth=1, direction=both; the runner bounds bytes
 and time. `degree` is the number of incident edges in the returned subgraph,
 not global degree. Unknown title/type are null. The `around` parameter is
 required; no default neighbourhood is presented as a top-N global graph.
@@ -76,11 +76,11 @@ required; no default neighbourhood is presented as a top-N global graph.
 Suggested wording for **server/core/README.md**, intentionally not edited:
 
 > Exception: explicit user-initiated GBrain search and page lookups may run
-> read-only CLI commands through the shared gbrain lane with validated bounded
+> read-only CLI commands through the bounded lookup lane with validated bounded
 > inputs, single-flight and a short per-query TTL cache. Dashboard and graph
 > GETs continue to compose scheduled memory snapshots and never write files.
 
-Search/page caches retain at most 100 keys, expire after 15 seconds and preserve
+Search/page caches retain at most 100 primary keys plus 6 staging keys, expire after 15 seconds and preserve
 last-good results with stale/error metadata if refresh fails. A page slug must
 match `[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*`, at most 240
 characters; encode embedded slashes in the route parameter. Search requires
@@ -147,3 +147,46 @@ and fresh (last_sync_at 2026-11-11T09:03:40.616Z, 24h threshold); the earlier nu
 timestamp was not the current observation. tk-omc-ain had sync_enabled=false,
 and was not applicable/inactive regardless of its last sync timestamp. No source
 was manually exempted and no source configuration was changed.
+
+## Review-fix round 1 (G1-G4)
+
+- G1: `safeText` uses core `redactString` for all page/search string fields,
+  plus page-specific short API secrets, database URLs and JSON-encoded examples.
+  Valid encoded string literals are re-encoded only if a credential was redacted.
+  Redaction runs before truncating the 40,000-byte page window. Ordinary prose,
+  slugs, numeric counters and credential-free URLs are negative controls.
+- G2: search, page and scheduled graph traversal use core lane `lookup` (2
+  running, 4 waiting). Scheduled probes stay on `gbrain`. `lane_busy` becomes
+  HTTP 429 `{error:{code,message}}` with Retry-After; quarantine becomes 503.
+  Cache staging is bounded. A new empty/failed result cannot evict last-good
+  useful data; replacement of a good primary entry requires another useful
+  result to have finished. Empty/failed entries are the first eviction targets.
+- G3: actions use the app's shared core runner on `gbrain-action`, concurrency
+  1, no waiting queue, including when the read service is overridden. The
+  existing application lock excludes all concurrent actions. It releases when
+  the core settles on verified exit, timeout or quarantine; the native lane
+  remains closed on quarantine. Action quarantine is a central-contract 503.
+  Shutdown uses the same runner's process-group TERM/KILL path. Fixed argument
+  arrays, action IDs, R0/W1 classes, strict confirmation and definition timeouts
+  are unchanged; constants.js and commandRunner.js have empty diffs.
+- G4: an unreadable ledger throws `gbrain_timeline_unavailable`; absence alone
+  establishes an empty history. A failed capture still refreshes the timeline
+  source error via finally, and that error is a shared unavailable verdict
+  reason. Timeline HTTP errors use the central 503 contract. Health/version
+  tiles use the shared verdict; the static action catalog tile is inactive
+  (readiness not probed). Legacy Operations state calls buildGBrainVerdict
+  rather than implementing another decision rule.
+
+`server/sources/usage/compatibility.js` is not GBrain-owned or test-only:
+`server/routes/costs.js` imports it (line 3), calls parseMonthAnchor (line 16),
+and re-exports its helpers. It was retained; no usage-area files were edited.
+
+`tests/gbrainReviewFix.test.js` contains the finding counter-examples and
+regression controls, including a 150-query flood, useful-cache retention, a
+TERM-ignoring action, kill quarantine, shutdown and app runner binding. Original
+finding triggers were seen failing before their fixes. Process behavior is
+tested through injected children, not real GBrain actions. The separate author
+bypass/regression pass also reproduced and closed JSON-encoded page secrets and
+the failed-capture path. A new child review could not be dispatched: mloop
+preflight returned NOT_INITIALIZED and the session has no participant binding.
+The coordinator's independent review remains the external review channel.

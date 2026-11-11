@@ -27,7 +27,7 @@ function fromCodexbar(raw, { since, until }, now) {
         days, observedAt: new Date(now()).toISOString(), coverage: 'partial', note: 'CodexBar fallback; model breakdown and historical coverage may be incomplete; billing unknown'
     };
 }
-function createCodexProvider({ exec, projectRoot, home, env = {}, now = Date.now, getHermesCoverage = () => [] }) {
+function createCodexProvider({ exec, projectRoot, home, dataDir, env = {}, now = Date.now }) {
     const codexHome = codexHomePath(env, home);
     const timeoutMs = Number(env.MC_CODEXBAR_TIMEOUT_MS) || 120000;
     const status = { state: 'not_run', lastAttemptAt: null, lastSuccessAt: null, errorClass: null, usageSource: null };
@@ -41,12 +41,12 @@ function createCodexProvider({ exec, projectRoot, home, env = {}, now = Date.now
                 || [saved.lastAttemptAt,saved.lastSuccessAt].some(t => t !== null && !Number.isFinite(Date.parse(t)))) return;
             for (const field of Object.keys(status)) status[field] = saved[field];
         },
-        id: 'codex', label: 'Codex App and CLI', identity: codexHome, timeoutMs: timeoutMs + 95000,
+        id: 'codex', label: 'Codex App and CLI', identity: `${codexHome}:ownership-v3`, timeoutMs: timeoutMs + 95000, intervalMs: 300000, staleAfterMs: 900000,
         async read(bounds) {
             try {
-                const local = await readJson(exec, process.execPath, [path.join(projectRoot, 'scripts/openclaw-usage-summary.js'), '--provider', 'codex', '--since', bounds.since, '--until', bounds.until], {
+                const local = await readJson(exec, process.execPath, ['--max-old-space-size=96', path.join(projectRoot, 'scripts/openclaw-usage-summary.js'), '--provider', 'codex', '--since', bounds.since, '--until', bounds.until], {
                     lane: 'usage_codex', timeoutMs: 90000, key: 'usage:codex', maxOutputBytes: 20 * 1024 * 1024, env: {
-                        ...env, HOME: home, MC_CODEX_HOME: codexHome, MC_USAGE_HERMES_DAYS: JSON.stringify([...new Set(getHermesCoverage())])
+                        ...env, MC_USAGE_CACHE_DIR: path.join(dataDir || path.join(projectRoot,'data'),'usage','incremental','codex'), HOME: home, MC_CODEX_HOME: codexHome
                     }
                 });
                 const value = validateObservation(local, bounds);
@@ -58,7 +58,7 @@ function createCodexProvider({ exec, projectRoot, home, env = {}, now = Date.now
                 status.lastAttemptAt = new Date(now()).toISOString();
                 try {
                     const raw = await readJson(exec, 'codexbar', ['cost', '--format', 'json', '--provider', 'codex', '--days', String(days)], {
-                        lane: 'usage_codex', timeoutMs, key: 'usage:codexbar', maxOutputBytes: 20 * 1024 * 1024, env: { ...env, HOME: home, MC_CODEX_HOME: codexHome }
+                        lane: 'usage_codex', timeoutMs, key: 'usage:codexbar', maxOutputBytes: 20 * 1024 * 1024, env: { ...env, MC_USAGE_CACHE_DIR: path.join(dataDir || path.join(projectRoot,'data'),'usage','incremental','codex'), HOME: home, MC_CODEX_HOME: codexHome }
                     });
                     const value = validateObservation(fromCodexbar(raw, bounds, now), bounds);
                     status.state = 'succeeded';

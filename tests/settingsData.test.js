@@ -42,8 +42,10 @@ function makeService() {
 
 function testMonthlyBudgetNormalization() {
   assert.equal(normalizeMonthlyBudget(12.5), 12.5);
-  assert.equal(normalizeMonthlyBudget('0'), 0);
-  assert.equal(normalizeMonthlyBudget(''), 0);
+  assert.equal(normalizeMonthlyBudget(0), 0);
+  assert.equal(normalizeMonthlyBudget(null), null);
+  assert.throws(() => normalizeMonthlyBudget('0'), /finite number/);
+  assert.throws(() => normalizeMonthlyBudget(''), /finite number/);
   assert.throws(() => normalizeMonthlyBudget(-1), /zero or positive/);
   assert.throws(() => normalizeMonthlyBudget('not-a-number'), /zero or positive/);
 }
@@ -54,7 +56,7 @@ function testUpdateBudgetRejectsNegativeValues() {
   assert.throws(() => service.updateBudget(-10), /zero or positive/);
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).budget, { monthly: 5 });
 
-  assert.deepEqual(service.updateBudget('42.25'), { status: 'saved', budget: { monthly: 42.25 } });
+  assert.deepEqual(service.updateBudget(42.25), { status: 'saved', budget: { monthly: 42.25 } });
   assert.deepEqual(JSON.parse(fs.readFileSync(configPath, 'utf8')).budget, { monthly: 42.25 });
 }
 

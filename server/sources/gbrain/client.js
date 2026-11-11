@@ -7,13 +7,15 @@ function readError(code = 'gbrain_read_failed') {
   return new SourceReadError('GBrain reading unavailable', { code });
 }
 function createGBrainClient({ exec = createExec(), bin = 'gbrain', processEnv = process.env } = {}) {
-  async function run(args, { json = true, timeoutMs = 45_000 } = {}) {
+  async function run(args, { json = true, timeoutMs = 45_000, lane = 'gbrain' } = {}) {
     const result = await exec.run(bin, args, {
-      lane: 'gbrain', key: `gbrain:${JSON.stringify(args)}`, timeoutMs: Math.min(timeoutMs, 60_000),
+      lane, key: `gbrain:${JSON.stringify(args)}`, timeoutMs: Math.min(timeoutMs, 60_000),
       queueTimeoutMs: 10_000, maxOutputBytes: 2 * 1024 * 1024,
       env: { ...processEnv, GBRAIN_SKIP_STARTUP_HOOKS: '1',
         PATH: [`${os.homedir()}/.bun/bin`, '/opt/homebrew/bin', '/usr/local/bin', processEnv.PATH || ''].join(':') },
     });
+    if (result.error?.code === 'lane_busy') throw readError('gbrain_lookup_busy');
+    if (['lane_quarantined', 'kill_unverified'].includes(result.error?.code)) throw readError('gbrain_lookup_quarantined');
     if (!result.ok || result.truncated) throw readError(result.timedOut ? 'gbrain_timeout' : 'gbrain_read_failed');
     if (!json) return String(result.stdout || '').trim();
     let payload;

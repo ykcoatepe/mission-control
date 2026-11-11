@@ -17,7 +17,7 @@ const readline = require('node:readline');
 
 const costSanity = require('../server/services/costSanity');
 
-function createUsageReader({ fs = require('node:fs'), now = Date.now, env = process.env, coveredDays = [], platform = 'all' } = {}) {
+function createUsageReader({ fs = require('node:fs'), now = Date.now, env = process.env, platform = 'all' } = {}) {
 let strictRead = false;
 let malformedRecords = 0;
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
@@ -444,9 +444,6 @@ function codexSessionsRoot() {
   return path.join(codexHome, 'sessions');
 }
 
-// Coverage is supplied from a successful Hermes source snapshot. No database
-// or credential probing occurs in a transcript scanner.
-function hermesCoveredDays() { return new Set(coveredDays); }
 function codexBillingModeDefault() { return ''; }
 
 function listSessionFiles(startMs) {
@@ -523,11 +520,6 @@ async function scanUsageRecords(range) {
   const hermesOwned = { files: new Set(), tokens: 0 };
   const hermesRetained = { files: new Set(), tokens: 0 };
   const unrecognizedOriginators = new Map();
-  // hermes-owned rollouts duplicate Hermes state.db tokens — but only on the
-  // DAYS that db actually represents. A record whose day the Hermes bucket does
-  // not cover would be erased from EVERY bucket if dropped here, so exclusion
-  // is decided per record against this set. Queried once per scan, not per file.
-  const hermesCoveredDaySet = hermesCoveredDays(range);
   // Billing is unknown unless the usage record explicitly records it.
   const codexBillingDefault = codexBillingModeDefault();
 
@@ -587,13 +579,7 @@ async function scanUsageRecords(range) {
       record.codexClass = context.codexClass;
       if (file.origin === 'codex') {
         if (context.codexClass === 'hermes_owned') {
-          if (hermesCoveredDaySet.has(record.date)) {
-            // Counted once via the Hermes state.db bucket; excluded here, loudly.
-            hermesOwned.files.add(file.sessionKey);
-            hermesOwned.tokens += record.totalTokens;
-            continue;
-          }
-          // No Hermes coverage for this record's day: retain in Codex CLI, loudly.
+          record.owner = 'hermes';
           hermesRetained.files.add(file.sessionKey);
           hermesRetained.tokens += record.totalTokens;
         }
@@ -924,6 +910,7 @@ async function buildForPeriod(period, monthAnchor = null) {
 }
 
 async function buildProvider({ since, until }) {
+  if (platform === 'codex') return require('../server/sources/usage/codex-log-reader').readCodexLogs({since,until},{fs,home:env.HOME,codexHome:path.dirname(codexSessionsRoot()),now,maxFiles:Number(env.MC_OPENCLAW_USAGE_MAX_FILES)||20000,...(env.MC_USAGE_CACHE_DIR?{cacheDir:env.MC_USAGE_CACHE_DIR}:{})});
   strictRead = true; malformedRecords = 0;
   const root = platform === 'codex' ? codexSessionsRoot() : path.join(env.HOME, '.openclaw', 'agents');
   // A missing/unreadable root is unavailable, never an observed empty corpus.
@@ -943,7 +930,7 @@ async function buildProvider({ since, until }) {
   }
   return {days:[...days.values()],observedAt:new Date(now()).toISOString(),coverage:scan.scanTruncated || malformedRecords>0 || scan.hermesOwnedCodexRetained.tokens>0 ? 'partial':'complete',note:malformedRecords>0 ? 'Malformed log records skipped; totals may be understated' : scan.scanTruncated ? 'Scan truncated by file cap; totals may be understated' : scan.hermesOwnedCodexRetained.tokens>0 ? 'Hermes-owned Codex usage retained without confirmed Hermes coverage; overlap possible' : 'Local usage records; billing unknown unless explicitly recorded'};
 }
-return { buildForPeriod, buildProvider, extractUsageRecord, isValidMonthAnchor, listSessionFiles, prioritizeScanFiles, rangeForPeriod, bucketForRecord, classifyCodexSession };
+return { buildForPeriod, buildProvider, extractUsageRecord, isValidMonthAnchor, listSessionFiles, prioritizeScanFiles, rangeForPeriod, bucketForRecord, classifyCodexSession, applyModelContext, sessionMetaBillingMode, sessionMetaSourceKey, modelName, isSubscriptionIncludedRecord };
 }
 const defaultReader = createUsageReader();
 async function main(args = process.argv.slice(2)) {
@@ -953,12 +940,12 @@ async function main(args = process.argv.slice(2)) {
   if (!['codex','openclaw'].includes(platform)) throw Error('Invalid provider');
   const since = flag('--since'), until=flag('--until');
   if (![since,until].every(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)) || since>until) throw Error('Invalid date bounds');
-  const reader = createUsageReader({platform,coveredDays:JSON.parse(process.env.MC_USAGE_HERMES_DAYS || '[]')});
+  const reader = createUsageReader({platform});
   process.stdout.write(JSON.stringify(await reader.buildProvider({since,until}))); return;
  }
  const period = args.find(arg=>['day','7d','month'].includes(arg)) || 'month';
  const anchor=args.find(arg=>/^\d{4}-(0[1-9]|1[0-2])$/.test(arg)) || null;
  process.stdout.write(JSON.stringify(await defaultReader.buildForPeriod(period,anchor)));
 }
-if (require.main === module) main().catch(()=>{console.error('[usage] Local usage scan failed');process.exitCode=1;});
 module.exports = {...defaultReader,createUsageReader,main};
+if (require.main === module) main().catch(()=>{console.error('[usage] Local usage scan failed');process.exitCode=1;});

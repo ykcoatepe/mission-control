@@ -11,7 +11,7 @@ function createUsageRegistry({ providers = [], now = Date.now, fs, dataDir, time
         const file = dataDir && path.join(dataDir, 'usage', `${provider.id}.json`);
         let persistence = Promise.resolve();
         const source = createSource({
-            id: `usage.${provider.id}`, now, timeoutMs: provider.timeoutMs || timeoutMs, ttlMs: 60000, staleAfterMs: 180000, logger,
+            id: `usage.${provider.id}`, now, timeoutMs: provider.timeoutMs || timeoutMs, ttlMs: provider.intervalMs || 60000, staleAfterMs: provider.staleAfterMs || 180000, logger,
             read: async () => {
                 const bounds = getWindow();
                 let value;
@@ -74,7 +74,7 @@ function createUsageRegistry({ providers = [], now = Date.now, fs, dataDir, time
             return source.snapshot();
         };
         entries.set(provider.id, { provider, source });
-        scheduler?.register(source, { intervalMs: 60000, jitterMs: 1000 });
+        scheduler?.register(source, { intervalMs: provider.intervalMs || 60000, jitterMs: 1000 });
         return source;
     }
     providers.forEach(register);

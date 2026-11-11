@@ -176,33 +176,14 @@ function readTimeline(options = {}) {
   const ledgerPath = options.ledgerPath || timelinePathFor(options.projectRoot || process.cwd());
   const limit = parseLimit(options.limit, options.defaultLimit, options.maxLimit);
   const warnings = [];
-  if (!fs.existsSync(ledgerPath)) {
-    return {
-      enabled: true,
-      entries: [],
-      warnings,
-      malformedLineCount: 0,
-      retainedEntryCount: 0,
-      truncated: false,
-      limit,
-      schemaVersion: SCHEMA_VERSION,
-    };
-  }
-
   let text = '';
   try {
     text = fs.readFileSync(ledgerPath, 'utf8');
   } catch (error) {
-    return {
-      enabled: true,
-      entries: [],
-      warnings: [`Timeline ledger unreadable: ${sanitizeTimelineText(error.message)}`],
-      malformedLineCount: 0,
-      retainedEntryCount: 0,
-      truncated: false,
-      limit,
-      schemaVersion: SCHEMA_VERSION,
-    };
+    if (error.code !== 'ENOENT') throw Object.assign(new Error('Timeline ledger unavailable'), { code: 'gbrain_timeline_unavailable' });
+    // An absent ledger is an observed empty history; an unreadable one is not.
+    return { enabled: true, entries: [], warnings, malformedLineCount: 0,
+      retainedEntryCount: 0, truncated: false, limit, schemaVersion: SCHEMA_VERSION };
   }
 
   const entries = [];

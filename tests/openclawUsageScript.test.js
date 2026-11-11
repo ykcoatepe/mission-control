@@ -47,13 +47,14 @@ test('file cap produces a visible partial reading', async () => {
     assert.equal(data.coverage, 'partial');
     assert.match(data.note, /truncated/);
 });
-test('Hermes-owned Codex is removed only for covered usage-bearing days; otherwise retained partial', async () => {
+test('Hermes-owned Codex is retained with ownership metadata regardless of read-time coverage', async () => {
     const meta = JSON.stringify({ type: 'session_meta', payload: { originator: 'hermes', model: 'gpt-5.6-sol', model_provider: 'openai' } }) + '\n';
     const files = { '/home/.codex/sessions/a.jsonl': meta + usage() };
     const retained = await reader(files, 'codex').buildProvider(bounds);
     assert.equal(retained.coverage, 'partial');
     assert.equal(retained.days.length, 1);
-    assert.deepEqual((await reader(files, 'codex', { coveredDays: ['2026-08-15'] }).buildProvider(bounds)).days, []);
+    const independent=await reader(files, 'codex', { coveredDays: ['2026-08-15'] }).buildProvider(bounds);
+    assert.deepEqual(independent.days,retained.days);assert.equal(independent.ownership[0].owner,'hermes');
     assert.equal((await reader(files, 'codex', { coveredDays: ['2026-08-14'] }).buildProvider(bounds)).days.length, 1);
 });
 test('Codex repeated cumulative token snapshots count once and cache is not counted twice', async () => {

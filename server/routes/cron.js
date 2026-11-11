@@ -61,7 +61,7 @@ function hasCronModelPatch(body = {}) {
 }
 
 function validateCreateJob(job) {
-  const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 32000 && !value.includes('\0');
+  const text = value => typeof value === 'string' && value.trim().length > 0 && value.length <= 32000 && !value.includes('\0') && !value.trimStart().startsWith('-');
   if (!job || !text(job.name) || job.name.length > 256 || !job.schedule) throw httpError(400, 'invalid_job', 'name and schedule required');
   const schedule = job.schedule;
   const valid = schedule.kind === 'cron' ? text(schedule.expr) && [5, 6].includes(schedule.expr.trim().split(/\s+/).length)
@@ -71,8 +71,9 @@ function validateCreateJob(job) {
   if (job.enabled !== undefined && typeof job.enabled !== 'boolean') throw httpError(400, 'invalid_enabled', 'enabled must be a boolean');
   if (job.sessionTarget !== undefined && !['main', 'isolated'].includes(job.sessionTarget)) throw httpError(400, 'invalid_session', 'Invalid session target');
   if (!['agentTurn', 'systemEvent'].includes(job.payload?.kind)) throw httpError(400, 'invalid_payload', 'Invalid payload kind');
-  if (!text(job.payload.message || job.payload.text)) throw httpError(400, 'invalid_payload', 'A message or event text is required');
-  if (job.payload.model !== undefined && (!text(job.payload.model) || job.payload.model.length > 256)) throw httpError(400, 'invalid_model', 'Invalid model');
+  const message = job.payload.kind === 'agentTurn' ? job.payload.message : (job.payload.text || job.payload.message);
+  if (!text(message)) throw httpError(400, 'invalid_payload', 'A message or event text is required and cannot start with a dash');
+  if (job.payload.model !== undefined && (typeof job.payload.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(job.payload.model))) throw httpError(400, 'invalid_model', 'Invalid model');
 }
 
 function buildCronRouter({ cronService, openclawExec, automationSource }) {
@@ -172,6 +173,7 @@ function buildCronRouter({ cronService, openclawExec, automationSource }) {
       }
 
       const normalizedModel = normalizeCronModel(model);
+      if (normalizedModel && !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(normalizedModel)) throw httpError(400, 'invalid_model', 'Invalid model');
 
       if (ref.scheduler === 'hermes') {
         if (thinking) {

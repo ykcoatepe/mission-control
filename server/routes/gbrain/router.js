@@ -48,13 +48,15 @@ function buildGBrainRouter(options = {}) {
         error: 'Explicit confirmation is required for this action.',
       });
     }
-    const result = await runGBrainAction(req.body?.action, { ...options, confirmed: req.body?.confirmed });
-    const statusCode = result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
+    const result = await runGBrainAction(req.body?.action, { ...options, exec: options.exec || overviewService.actionExec, confirmed: req.body?.confirmed });
+    if (result.status === 'unavailable') throw httpError(503, 'gbrain_action_quarantined', result.error);
+    const statusCode = result.status === 'timed-out' ? 504 : result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
     res.status(statusCode).json(result);
   });
 
   router.get('/api/gbrain/timeline', (req, res) => {
     const snap = overviewService.timelineSnapshot(limitInput(req.query.limit, 50, 200));
+    if (snap.meta.error) throw httpError(503, 'gbrain_timeline_unavailable', 'Timeline ledger unavailable');
     res.json({ ...(snap.data || { enabled: overviewService.timelineService?.enabled !== false, entries: null,
       warnings: ['Timeline has not been read'], malformedLineCount: null, retainedEntryCount: null,
       schemaVersion: 1, truncated: false, limit: limitInput(req.query.limit, 50, 200) }), meta: snap.meta });
@@ -68,6 +70,10 @@ function buildGBrainRouter(options = {}) {
     return sendEnvelope(res, overviewService.graph.request(slugInput(req.query.around), req.query.limit));
   });
 
+  router.use((error, _req, res, next) => {
+    if (error.status === 429) res.set('Retry-After', String(error.retryAfter || 2));
+    next(error);
+  });
   return router;
 }
 
