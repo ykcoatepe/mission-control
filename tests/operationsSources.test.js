@@ -163,7 +163,10 @@ test('GET /api/operations/overview answers from memory while every reader hangs'
     assert.equal(response.status, 200);
     assert.equal(body.schemaVersion, '1');
     assert.ok(body.meta);
-    assert.ok(elapsed < 50, `overview took ${elapsed} ms`);
+    // Every reader hangs forever, so any answer proves the route did not wait
+    // on one; the bound only guards against a pathological stall and is wide
+    // enough not to flake under full-suite load.
+    assert.ok(elapsed < 2000, `overview took ${elapsed} ms`);
     assert.deepEqual(Object.values(h.calls), [1, 1, 1, 1, 1, 1]);
   } finally {
     await new Promise((resolve) => server.close(resolve));
