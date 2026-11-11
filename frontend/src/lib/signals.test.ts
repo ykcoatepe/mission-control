@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { annunciators, attentionPill, attentionReading, attentionWords, countOrNull, navBadges, signalsStale } from './signals'
+import { annunciators, attentionFrom, attentionPill, attentionReading, attentionWords, breakdownWords, countOrNull, navBadges, signalsStale } from './signals'
 import type { SignalsData, SignalsEnvelope } from './signals'
 
 const NOW = Date.parse('2026-11-11T09:00:00.000Z')
@@ -95,19 +95,22 @@ describe('annunciators', () => {
   })
 })
 
+const BREAKDOWN = { systems: 3, findings: 23, overdueConfirmations: 3, restricted: 129 }
+
 describe('attentionPill', () => {
   it('is hidden when nothing was read or the count is zero', () => {
     expect(attentionPill(null)).toBeNull()
     expect(attentionPill(base({ attention: null, loops: null }))).toBeNull()
-    expect(attentionPill(base({ attention: { count: 0, worst: null }, loops: { openFindings: 0, overdueConfirmations: 0 } }))).toBeNull()
+    expect(attentionPill(base({ attention: { count: 0, worst: null } }))).toBeNull()
   })
 
   it('does not turn a null count into a pill', () => {
-    expect(attentionPill(base({ attention: { count: null, worst: null }, loops: null }))).toBeNull()
+    expect(attentionPill(base({ attention: { count: null, worst: null } }))).toBeNull()
+    expect(attentionPill(base({ attention: { count: null, worst: null, breakdown: BREAKDOWN } }))).toBeNull()
   })
 
   it('uses the worst severity and pluralises', () => {
-    expect(attentionPill(base({ attention: { count: 1, worst: 'warning' }, loops: null }))).toEqual({
+    expect(attentionPill(base({ attention: { count: 1, worst: 'warning' } }))).toEqual({
       count: 1,
       state: 'warning',
       text: '1 needs attention',
@@ -120,32 +123,29 @@ describe('attentionPill', () => {
     })
   })
 
-  it('is critical when confirmations are overdue, and does not add them twice', () => {
-    const pill = attentionPill(
-      base({ attention: { count: 27, worst: 'warning' }, loops: { openFindings: 1, overdueConfirmations: 24 } }),
-    )
-    expect(pill).toMatchObject({ count: 27, state: 'critical', text: '27 need attention', secondary: '24 overdue' })
-  })
-
-  it('says "overdue" in its own words when only the overdue count was read', () => {
-    expect(attentionPill(base({ attention: null, loops: { openFindings: null, overdueConfirmations: 2 } }))).toEqual({
-      count: 2,
+  it('shows the server count as is, with the breakdown as secondary text', () => {
+    const pill = attentionPill(base({ attention: { count: 158, worst: 'critical', breakdown: BREAKDOWN } }))
+    expect(pill).toMatchObject({
+      count: 158,
       state: 'critical',
-      text: '2 overdue',
-      secondary: null,
+      text: '158 need attention',
+      secondary: '3 systems · 23 findings · 3 overdue · 129 restricted',
     })
-    expect(attentionPill(base({ attention: null, loops: { openFindings: null, overdueConfirmations: 0 } }))).toBeNull()
   })
 
-  it('never replaces the attention count by a larger or smaller overdue count', () => {
-    const pill = attentionPill(base({ attention: { count: 3, worst: 'warning' }, loops: { openFindings: 1, overdueConfirmations: 9 } }))
-    expect(pill).toMatchObject({ count: 3, text: '3 need attention', secondary: '9 overdue' })
+  it('never lets the loops signal change the number or the state', () => {
+    const pill = attentionPill(
+      base({ attention: { count: 3, worst: 'warning' }, loops: { openFindings: 99, overdueConfirmations: 24 } }),
+    )
+    expect(pill).toMatchObject({ count: 3, state: 'warning', secondary: null })
+    expect(attentionPill(base({ attention: null, loops: { openFindings: null, overdueConfirmations: 2 } }))).toBeNull()
   })
 
-  it('keeps a null attention count out of the reading as null, not 0', () => {
-    expect(attentionReading(base({ attention: { count: null, worst: null }, loops: { openFindings: 1, overdueConfirmations: 4 } }))).toMatchObject({
+  it('keeps a null attention count as null, not 0', () => {
+    expect(attentionReading(base({ attention: { count: null, worst: null }, loops: null }))).toBeNull()
+    expect(attentionReading(base({ attention: { count: null, worst: null, breakdown: BREAKDOWN } }))).toMatchObject({
       count: null,
-      overdue: 4,
+      breakdown: BREAKDOWN,
     })
     expect(attentionReading(base({ attention: null, loops: null }))).toBeNull()
     expect(attentionWords(1)).toBe('1 needs attention')
@@ -153,8 +153,79 @@ describe('attentionPill', () => {
   })
 
   it('never shows a healthy-looking pill', () => {
-    expect(attentionPill(base({ attention: { count: 2, worst: 'healthy' }, loops: null }))?.state).toBe('warning')
-    expect(attentionPill(base({ attention: { count: 2, worst: null }, loops: null }))?.state).toBe('warning')
+    expect(attentionPill(base({ attention: { count: 2, worst: 'healthy' } }))?.state).toBe('warning')
+    expect(attentionPill(base({ attention: { count: 2, worst: null } }))?.state).toBe('warning')
+  })
+})
+
+describe('attentionFrom / breakdownWords', () => {
+  it('reads the loops copy of the same object', () => {
+    expect(attentionFrom({ count: 158, worst: 'critical', breakdown: BREAKDOWN })).toMatchObject({ count: 158, state: 'critical' })
+    expect(attentionFrom(null)).toBeNull()
+    expect(attentionFrom(undefined)).toBeNull()
+  })
+
+  it('leaves out zero parts and says "not read" for a null part', () => {
+    expect(breakdownWords({ systems: 0, findings: 1, overdueConfirmations: 0, restricted: 0 })).toBe('1 finding')
+    expect(breakdownWords({ systems: 1, findings: null, overdueConfirmations: 2, restricted: null })).toBe(
+      '1 system · findings not read · 2 overdue · restricted not read',
+    )
+    expect(breakdownWords({ systems: 0, findings: 0, overdueConfirmations: 0, restricted: 0 })).toBeNull()
+    expect(breakdownWords(null)).toBeNull()
+  })
+
+  it('treats a non-number part as not read', () => {
+    const reading = attentionFrom({
+      count: 2,
+      worst: 'warning',
+      breakdown: { systems: 2, findings: '1' as unknown as number, overdueConfirmations: -1, restricted: 0 },
+    })
+    expect(reading?.breakdown).toEqual({ systems: 2, findings: null, overdueConfirmations: null, restricted: 0 })
+  })
+})
+
+describe('annunciator reason and link', () => {
+  it('carries the server reason for an unhealthy system and none for a healthy one', () => {
+    const [gbrain, , openclaw] = annunciators(
+      base({
+        systems: {
+          gbrain: { state: 'healthy', observedAt: RECENT, reason: 'ignored while healthy' },
+          openclaw: { state: 'warning', observedAt: RECENT, reason: 'OpenClaw status evidence is unavailable.' },
+        },
+      }),
+      opts,
+    )
+    expect(gbrain.reason).toBeNull()
+    expect(openclaw.reason).toBe('OpenClaw status evidence is unavailable.')
+  })
+
+  it('links to the server detailHref, else the static fallback', () => {
+    const list = annunciators(
+      base({
+        systems: {
+          gbrain: { state: 'warning', observedAt: RECENT, detailHref: '/gbrain' },
+          hermes: { state: 'warning', observedAt: RECENT, detailHref: null },
+          openclaw: { state: 'warning', observedAt: RECENT, detailHref: 'https://evil.example/x' },
+        },
+      }),
+      opts,
+    )
+    expect(list.map((item) => item.href)).toEqual(['/gbrain', '/services', '/services'])
+  })
+
+  it('does not follow a detailHref the app no longer renders', () => {
+    const live = (path: string) => path === '/gbrain'
+    const list = annunciators(
+      base({
+        systems: {
+          gbrain: { state: 'warning', observedAt: RECENT, detailHref: '/gbrain' },
+          hermes: { state: 'warning', observedAt: RECENT, detailHref: '/work' },
+        },
+      }),
+      { ...opts, isLivePath: live },
+    )
+    expect(list[0].href).toBe('/gbrain')
+    expect(list[1].href).toBe('/services')
   })
 })
 
@@ -186,27 +257,28 @@ describe('navBadges', () => {
     expect(badges['/services']).toEqual({ count: 2, tone: 'critical', word: 'down' })
   })
 
-  it('shows the same number and words as the top-bar pill, with overdue as secondary text', () => {
-    const signals = base({ loops: { openFindings: 9, overdueConfirmations: 24 }, attention: { count: 30, worst: 'critical' } })
+  it('shows the same number and words as the top-bar pill, with the breakdown as secondary text', () => {
+    const signals = base({ loops: { openFindings: 9, overdueConfirmations: 24 }, attention: { count: 158, worst: 'critical', breakdown: BREAKDOWN } })
     const pill = attentionPill(signals)
-    expect(navBadges(signals)['/attention']).toEqual({ count: 30, tone: 'critical', word: 'need attention', secondary: '24 overdue' })
-    expect(pill).toMatchObject({ count: 30, text: '30 need attention' })
+    expect(navBadges(signals)['/attention']).toEqual({
+      count: 158,
+      tone: 'critical',
+      word: 'need attention',
+      secondary: '3 systems · 23 findings · 3 overdue · 129 restricted',
+    })
+    expect(pill).toMatchObject({ count: 158, text: '158 need attention' })
   })
 
-  it('uses a caution badge when nothing is overdue and the worst item is a warning', () => {
-    expect(
-      navBadges(base({ loops: { openFindings: 9, overdueConfirmations: 0 }, attention: { count: 4, worst: 'warning' } }))['/attention'],
-    ).toEqual({ count: 4, tone: 'warning', word: 'need attention', secondary: null })
-    expect(navBadges(base({ loops: null, attention: { count: 4, worst: 'warning' } }))['/attention']).toMatchObject({
+  it('uses a caution badge when the worst item is a warning', () => {
+    expect(navBadges(base({ attention: { count: 4, worst: 'warning' } }))['/attention']).toEqual({
+      count: 4,
       tone: 'warning',
+      word: 'need attention',
+      secondary: null,
     })
   })
 
   it('does not turn an unread attention count into a badge of another number', () => {
-    expect(navBadges(base({ attention: { count: null, worst: null }, loops: { openFindings: 1, overdueConfirmations: 0 } }))['/attention']).toBeUndefined()
-    expect(navBadges(base({ attention: { count: null, worst: null }, loops: { openFindings: 1, overdueConfirmations: 5 } }))['/attention']).toMatchObject({
-      count: 5,
-      word: 'overdue',
-    })
+    expect(navBadges(base({ attention: { count: null, worst: null }, loops: { openFindings: 1, overdueConfirmations: 5 } }))['/attention']).toBeUndefined()
   })
 })

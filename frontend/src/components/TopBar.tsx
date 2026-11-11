@@ -9,7 +9,7 @@ import type { UiState } from '../lib/state'
 import { useNow } from '../lib/useNow'
 import { useRefreshData } from '../lib/useRefreshData'
 import { useTheme } from '../lib/theme'
-import { appRoutes } from '../appRoutes'
+import { appRoutes, isLiveRoutePath } from '../appRoutes'
 import { Kbd } from './ui/Kbd'
 import { IconButton } from './ui/IconButton'
 import { StateDot } from './ui/StateDot'
@@ -35,6 +35,11 @@ function routeLabel(pathname: string): string {
 
 function paletteHint(): string {
   return typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K'
+}
+
+/** "OpenClaw: warning. OpenClaw status evidence is unavailable." The server's reason is the tooltip. */
+function annunciatorText(light: Annunciator): string {
+  return light.reason ? `${light.label}: ${light.word}. ${light.reason}` : `${light.label}: ${light.word}`
 }
 
 /** One light for all three systems: the worst lit state, or "reading" until the first load completes. */
@@ -94,7 +99,14 @@ function SystemsMenu({ lights }: { lights: Annunciator[] }) {
         <ul id={listId} className={styles.systemsList} aria-label="Systems">
           {lights.map((light) => (
             <li key={light.id}>
-              <Link to={light.href} className={styles.systemsItem} data-state={light.state} onClick={() => setOpen(false)}>
+              <Link
+                to={light.href}
+                className={styles.systemsItem}
+                data-state={light.state}
+                title={annunciatorText(light)}
+                aria-label={annunciatorText(light)}
+                onClick={() => setOpen(false)}
+              >
                 <span className={styles.annDot} aria-hidden="true" />
                 <span>{light.label}</span>
                 <span className={styles.systemsWord}>{light.word}</span>
@@ -118,7 +130,7 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
   const title = pageTitle ?? routeLabel(location.pathname)
   const signals = envelope?.data ?? null
   const stale = signalsStale(envelope, error !== null)
-  const lights = annunciators(signals, { loading, now, stale })
+  const lights = annunciators(signals, { loading, now, stale, isLivePath: isLiveRoutePath })
   const pill = attentionPill(signals)
   const observedAt = envelope?.meta?.observedAt ?? null
   const hint = paletteHint()
@@ -150,8 +162,8 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
               to={light.href}
               className={styles.annunciator}
               data-state={light.state}
-              aria-label={`${light.label}: ${light.word}`}
-              title={`${light.label}: ${light.word}`}
+              aria-label={annunciatorText(light)}
+              title={annunciatorText(light)}
             >
               <span className={styles.annDot} aria-hidden="true" />
               <span className={styles.annName}>{light.label}</span>

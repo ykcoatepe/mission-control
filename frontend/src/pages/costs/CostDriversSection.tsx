@@ -163,7 +163,7 @@ export default function CostDriversSection({
       cell: item => (
         <span className={styles.name}>
           <span className={styles.nameText}>{item.name}</span>
-          {item.local && <span className={styles.tag}>Local</span>}
+          {item.isLocal === true && <span className={styles.tag}>Local</span>}
           {item.rawNames.length > 1 && <span className={styles.tag}>{item.rawNames.length} variants</span>}
         </span>
       ),

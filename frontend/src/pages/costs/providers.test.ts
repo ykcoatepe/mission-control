@@ -18,6 +18,11 @@ const provider = (overrides: Partial<UsageProvider>): UsageProvider => ({
   tokens: 100,
   apiEquivalentUsd: 5,
   billedUsd: null,
+  billingKnown: false,
+  hasRecords: true,
+  coverageReason: 'none',
+  skippedLines: null,
+  oversizedLines: null,
   note: 'note',
   ...overrides,
 })
@@ -65,7 +70,7 @@ describe('providerRows', () => {
   })
 
   it('a provider that was read and recorded nothing is its own quiet state, with no billed figure', () => {
-    const [row] = providerRows([provider({ tokens: 0, apiEquivalentUsd: 0, billedUsd: 0 })])
+    const [row] = providerRows([provider({ tokens: 0, apiEquivalentUsd: 0, billedUsd: null, hasRecords: false })])
     expect(row.read).toBe(true)
     expect(row.noRecords).toBe(true)
     expect(row.tokens).toBe(0)
@@ -81,14 +86,27 @@ describe('providerRows', () => {
     expect(row.uiState).toBe('healthy')
   })
 
-  it('shows billed only for known billing: a positive figure or an explicit billingKnown', () => {
+  it('"no records" comes from hasRecords, not from zeros: a recorded zero row is a reading, an absent flag is unknown', () => {
+    const [recordedZero, absent, none] = providerRows([
+      provider({ tokens: 0, apiEquivalentUsd: 0, hasRecords: true }),
+      provider({ tokens: 0, apiEquivalentUsd: 0, hasRecords: undefined }),
+      provider({ tokens: 0, apiEquivalentUsd: 0, hasRecords: false }),
+    ])
+    expect(recordedZero).toMatchObject({ noRecords: false, tokens: 0, apiEquivalentUsd: 0, uiState: 'healthy', stateWord: 'Ready' })
+    expect(absent.noRecords).toBe(false)
+    expect(none).toMatchObject({ noRecords: true, stateWord: 'No usage recorded' })
+  })
+
+  it('shows billed only when the server says billing is known: a bare 0 or even a positive figure without the flag is not shown', () => {
     const rows = providerRows([
       provider({ billedUsd: 0 }),
       provider({ billedUsd: 0, billingKnown: true }),
-      provider({ billedUsd: 3.2 }),
+      provider({ billedUsd: 3.2, billingKnown: true }),
+      provider({ billedUsd: 3.2, billingKnown: false }),
+      provider({ billedUsd: 3.2, billingKnown: undefined }),
       provider({ billedUsd: null, billingKnown: true }),
     ])
-    expect(rows.map(row => row.billedUsd)).toEqual([null, 0, 3.2, null])
+    expect(rows.map(row => row.billedUsd)).toEqual([null, 0, 3.2, null, null, null])
   })
 
   it('maps stale to a warning with a server freshness verdict', () => {
@@ -98,25 +116,51 @@ describe('providerRows', () => {
     expect(row.freshness).toBe('stale')
   })
 
-  it('shows known partial coverage in words, neutral and never green; an unknown coverage stays amber', () => {
-    const [partial, unknown] = providerRows([provider({ coverage: 'partial' }), provider({ coverage: 'something' })])
-    // Claude Code and Codex are normally partial here: a standing condition, not an alarm, and
+  it('treats standing_gaps as neutral and never green; every other reason, or none sent, stays amber', () => {
+    const rows = providerRows([
+      provider({ coverage: 'partial', coverageReason: 'standing_gaps' }),
+      provider({ coverage: 'partial', coverageReason: 'scan_failed' }),
+      provider({ coverage: 'partial', coverageReason: 'unresolved_overlap' }),
+      provider({ coverage: 'complete', coverageReason: undefined }),
+      provider({ coverage: 'complete', coverageReason: 'something-new' }),
+    ])
+    // Claude Code and Codex normally have standing gaps: a condition, not an alarm, and
     // not confirmed-normal either, so it gets the neutral dot rather than the green one.
-    expect(partial.uiState).toBe('inactive')
-    expect(partial.stateWord).toBe('Partial')
-    expect(partial.coverage).toBe('partial')
-    expect(unknown.coverage).toBe('unknown')
-    expect(unknown.uiState).toBe('warning')
+    expect(rows[0]).toMatchObject({ uiState: 'inactive', stateWord: 'Partial', coverage: 'partial', standing: true })
+    expect(rows[1]).toMatchObject({ uiState: 'warning', stateWord: 'Partial', coverage: 'partial', standing: false })
+    expect(rows[2]).toMatchObject({ uiState: 'warning', standing: false })
+    // The legacy `coverage` word alone never decides: without a reason the coverage is unknown.
+    expect(rows[3]).toMatchObject({ uiState: 'warning', coverage: 'unknown', coverageReason: null })
+    expect(rows[4]).toMatchObject({ uiState: 'warning', coverage: 'unknown', coverageReason: null })
+  })
+
+  it('a coverageReason of unread makes the platform not read, whatever else was sent', () => {
+    const [row] = providerRows([provider({ coverageReason: 'unread', tokens: 10 })])
+    expect(row).toMatchObject({ read: false, stateWord: 'Not read', tokens: null })
+  })
+
+  it('words the failed scan and the skipped line counters; no counters means nothing is said', () => {
+    const [failed, skipped, none, zero] = providerRows([
+      provider({ coverageReason: 'scan_failed', coverage: 'partial' }),
+      provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: 99, oversizedLines: 99 }),
+      provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: null, oversizedLines: null }),
+      provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: 0, oversizedLines: 0 }),
+    ])
+    expect(failed.coverageDetail).toBe('The latest scan failed; showing the last good scan.')
+    expect(skipped.coverageDetail).toBe('99 lines skipped (99 oversized).')
+    expect(skipped).toMatchObject({ skippedLines: 99, oversizedLines: 99 })
+    expect(none).toMatchObject({ coverageDetail: null, skippedLines: null })
+    expect(zero.coverageDetail).toBeNull()
   })
 
   it('never gives a partial, stale, unread or no-record platform the healthy state', () => {
     const rows = providerRows([
-      provider({ coverage: 'partial' }),
-      provider({ coverage: 'x' }),
+      provider({ coverage: 'partial', coverageReason: 'standing_gaps' }),
+      provider({ coverageReason: undefined }),
       provider({ state: 'stale' }),
       provider({ state: 'unavailable', tokens: null }),
-      provider({ tokens: 0, apiEquivalentUsd: 0 }),
-      provider({ tokens: 0, apiEquivalentUsd: 0, coverage: 'partial' }),
+      provider({ tokens: 0, apiEquivalentUsd: 0, hasRecords: false }),
+      provider({ tokens: 0, apiEquivalentUsd: 0, hasRecords: false, coverage: 'partial', coverageReason: 'standing_gaps' }),
     ])
     expect(rows.map(row => row.uiState)).toEqual(['inactive', 'warning', 'warning', 'unavailable', 'inactive', 'inactive'])
     expect(rows.every(row => row.uiState !== 'healthy')).toBe(true)
@@ -145,8 +189,8 @@ describe('summarizeProviderCoverage', () => {
   it('names unread, partial and stale platforms separately', () => {
     const summary = summarizeProviderCoverage(providerRows([
       provider({ id: 'a', label: 'A', state: 'unavailable', tokens: null }),
-      provider({ id: 'b', label: 'B', coverage: 'partial' }),
-      provider({ id: 'c', label: 'C', state: 'stale', coverage: 'partial' }),
+      provider({ id: 'b', label: 'B', coverage: 'partial', coverageReason: 'standing_gaps' }),
+      provider({ id: 'c', label: 'C', state: 'stale', coverage: 'partial', coverageReason: 'standing_gaps' }),
       provider({ id: 'd', label: 'D' }),
     ]))
     expect(summary.unread).toEqual(['A'])
@@ -156,10 +200,19 @@ describe('summarizeProviderCoverage', () => {
     expect(summary.standingOnly).toBe(false)
   })
 
+  it('a failed scan or an unresolved overlap is not "standing only"', () => {
+    const summary = summarizeProviderCoverage(providerRows([
+      provider({ id: 'a', label: 'A', coverage: 'partial', coverageReason: 'standing_gaps' }),
+      provider({ id: 'b', label: 'B', coverage: 'partial', coverageReason: 'scan_failed' }),
+    ]), true)
+    expect(summary.partial).toEqual(['A', 'B'])
+    expect(summary.standingOnly).toBe(false)
+  })
+
   it('partial records alone are a standing condition, not a warning', () => {
     const summary = summarizeProviderCoverage(providerRows([
-      provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial' }),
-      provider({ id: 'codex', label: 'Codex', coverage: 'partial' }),
+      provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial', coverageReason: 'standing_gaps' }),
+      provider({ id: 'codex', label: 'Codex', coverage: 'partial', coverageReason: 'standing_gaps' }),
       provider({ id: 'hermes', label: 'Hermes' }),
     ]), true)
     expect(summary.standingOnly).toBe(true)
@@ -186,7 +239,7 @@ describe('summarizeProviderCoverage', () => {
 
   it('a partial window with an unpriced platform is not "standing only"', () => {
     const summary = summarizeProviderCoverage(
-      providerRows([provider({ coverage: 'partial' })]),
+      providerRows([provider({ coverage: 'partial', coverageReason: 'standing_gaps' })]),
       true,
       [{ id: 'codex', label: 'Codex', reason: 'partially_priced_usage' }],
     )

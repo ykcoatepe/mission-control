@@ -170,6 +170,24 @@ describe('buildAttentionRows', () => {
     expect(rows[0]).toMatchObject({ type: 'restricted', severity: null })
   })
 
+  it('puts the bounded summary (not the full detail) on a finding row', () => {
+    const entry: AttentionEntry = {
+      project: 'alpha',
+      kind: 'finding',
+      severity: 'error',
+      code: 'E1',
+      subject: 's',
+      detail: 'first line\nsecond line with a long explanation',
+      summary: 'first line',
+      at: iso(-HOUR),
+    }
+    const [row] = buildAttentionRows(data([project()], [entry]), NOW)
+    expect(row).toMatchObject({ type: 'finding', summary: 'first line' })
+    expect(row).not.toHaveProperty('detail')
+    const noSummary = buildAttentionRows(data([project()], [{ ...entry, summary: undefined }]), NOW)[0]
+    expect(noSummary).toMatchObject({ summary: null })
+  })
+
   it('drops findings that restate a confirmation row, but only when confirmations were read', () => {
     const due: AttentionEntry = {
       project: 'alpha',

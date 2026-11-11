@@ -60,6 +60,12 @@ const stopRowClick = (event: { stopPropagation: () => void }) => event.stopPropa
 
 const STATE_RANK = { critical: 0, healthy: 1, unavailable: 1, inactive: 2, warning: 1 } as const
 
+/** A short hint with the server's own definition of the count as its tooltip. */
+function defined(hint: string | undefined, definition: string | undefined) {
+  if (!definition || !hint) return hint
+  return <span title={definition}>{hint}</span>
+}
+
 export default function JobsView() {
   const { data, loading, error, refetch } = useApi<CronApiResponse>('/api/cron', 30000)
   const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
@@ -297,7 +303,7 @@ export default function JobsView() {
       header: 'Schedule',
       cell: (job) => {
         const overlap = overlapState.markers.get(job.id)
-        const schedule = scheduleDisplay(job.schedule)
+        const schedule = scheduleDisplay(job.schedule, job.scheduleKind)
         return (
           <div className={styles.scheduleCell}>
             {schedule.raw ? <Mono>{schedule.text}</Mono> : <span className={styles.unknown}>{schedule.text}</span>}
@@ -432,13 +438,13 @@ export default function JobsView() {
   return (
     <div className={styles.view}>
       <StatRow aria-label="Automations summary">
-        <Stat label="Active" value={summary.active} hint={activeHint} />
+        <Stat label="Active" value={summary.active} hint={defined(activeHint, data?.summary?.definitions?.active)} />
         <Stat label="Paused" value={summary.paused} />
         <Stat
           label="Failed"
           value={summary.failed}
           state={summary.failed > 0 ? 'critical' : undefined}
-          hint={summary.failed > 0 ? 'Last run failed' : undefined}
+          hint={defined(summary.failed > 0 ? 'Last run failed' : undefined, data?.summary?.definitions?.failed)}
         />
         <Stat
           label="Next run"

@@ -35,19 +35,25 @@ describe('name', () => {
     expect(nameError('x'.repeat(121))).not.toBeNull()
   })
 
-  it('starts with the detected agent name as reported, and is empty when nothing was detected', () => {
+  it('starts with the detected dashboard name as reported, and is empty when nothing was detected', () => {
+    const detected = (dashboardName: string | null | undefined, agentName: string | null = null) =>
+      status({ detectedConfig: { ...status().detectedConfig!, dashboardName, agentName } })
     expect(suggestName(null)).toBe('')
     expect(suggestName(status())).toBe('')
     expect(suggestName(status({ detectedConfig: null }))).toBe('')
-    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: '   ' } }))).toBe('')
-    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: 'Mudur' } }))).toBe('Mudur')
+    expect(suggestName(detected('   '))).toBe('')
+    expect(suggestName(detected(null))).toBe('')
+    expect(suggestName(detected('Mission Control'))).toBe('Mission Control')
+    expect(suggestName(detected(' Ops Deck '))).toBe('Ops Deck')
+  })
+
+  it('does not use the agent name as the dashboard name', () => {
+    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, dashboardName: null, agentName: 'Mudur' } }))).toBe('')
+    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, dashboardName: 'Mission Control', agentName: 'Mudur' } }))).toBe('Mission Control')
   })
 
   it('never makes a name up: no suffix and no default', () => {
-    for (const agent of ['Mudur', null]) {
-      const name = suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: agent } }))
-      expect(name).not.toMatch(/Control/)
-    }
+    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, dashboardName: null } }))).toBe('')
   })
 })
 

@@ -18,24 +18,44 @@
 //     percent-encoded home paths in a URL's query or fragment, are scrubbed.
 //   - A home root is /Users/<name>, /home/<name> or /var/root (any case,
 //     optionally under /private or /System/Volumes/Data), raw or with its
-//     separators percent-encoded once (%2F), or C:\Users\<name>.
+//     separators percent-encoded once (%2F), or a Windows home
+//     (C:\Users\<name>, C:/Users/<name>, \\?\C:\Users\<name>, mixed
+//     separators). Separators are matched escape-aware, so the same paths
+//     inside JSON text (\\, \/, \u005c, nested levels) are scrubbed too.
 //   - Relative paths, non-home absolute paths and prose stay byte-identical.
 
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { redactString } = require('./config');
+const { redactString, truncationMarker } = require('./config');
 
-const URL_TOKEN = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
-const SEP = '(?:/|%2f)';
-const NAME = '[A-Za-z0-9._@-]+';
+// LINEAR TIME is part of the contract (see the rules in config.js above
+// redactString): every quantifier that can be followed by a failure is
+// bounded, and input is bounded before any scanning.
+const SCRUB_MAX_CHARS = 64 * 1024;
+
+const URL_TOKEN = /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>`]+/gi;
+// Separators are escape-aware: diagnostics often carry JSON (possibly nested),
+// where "/" may be written "\/" or "\u002f" and "\" is doubled per level.
+const BS = '\\\\{1,16}'; // a run of backslashes (one separator at any JSON depth)
+const SEP = `(?:\\\\{0,16}/|%2f|${BS}u002f)`;
+const WIN_SEP = `(?:${BS}/?|/|\\\\{0,16}u00(?:5c|2f)|%5c|%2f)`;
+// A user name: anything that is not a separator, path-ending punctuation or
+// a regex/glob metacharacter (so non-ASCII names work, patterns do not), or a \uXXXX escape of such a character.
+const NAME = `(?:[^\\s/\\\\'"\`<>|;,:()\\[\\]{}^$+%?*#&=]|${BS}u(?!00(?:2f|5c))[0-9a-f]{4}){1,255}`;
+const PATH_END = `(?=$|[\\s'"\`),;:<>|\\]}])`;
 const ROOT_PREFIX = `(?:${SEP}private|${SEP}system${SEP}volumes${SEP}data)?`;
 const HOME_ROOT = `${ROOT_PREFIX}(?:${SEP}(?:users|home)${SEP}${NAME}|${SEP}var${SEP}root)`;
 // A path starts at a separator that is not glued to a word, dot, ~ or a
-// preceding path segment; it ends at whitespace, a quote, or punctuation that
-// cannot be part of a path in prose.
-const POSIX_HOME_PATH = new RegExp(`(?<![A-Za-z0-9._~%/\\\\-])${HOME_ROOT}(?=$|${SEP}|[\\s'"\`),;:<>|\\]}])((?:${SEP}[^\\s'"\`<>|;,)\\]}]*)?)`, 'gi');
-const WINDOWS_HOME_PATH = new RegExp(`(?<![A-Za-z0-9])[A-Za-z]:\\\\Users\\\\${NAME}(?=$|\\\\|[\\s'"\`),;:])`, 'gi');
+// preceding path segment (an escaped \n, \r or \t before it counts as
+// whitespace); it ends at whitespace, a quote, or punctuation that cannot be
+// part of a path in prose.
+const ESCAPED_SPACE = `(?<=${BS}[nrt])`; // \n, \r, \t written out, at any JSON depth
+const PATH_START = `(?:(?<![A-Za-z0-9._~%/\\\\-])|${ESCAPED_SPACE})`;
+const POSIX_HOME_PATH = new RegExp(`${PATH_START}${HOME_ROOT}(?:(?=${SEP})|${PATH_END})((?:${SEP}[^\\s'"\`<>|;,)\\]}]*)?)`, 'gi');
+// C:\Users\<name>, C:/Users/<name>, \\?\C:\Users\<name>, mixed separators,
+// at any JSON escape depth.
+const WINDOWS_HOME_PATH = new RegExp(`(?:(?<![A-Za-z0-9])|${ESCAPED_SPACE})(?:\\\\{2,32}\\?${BS})?[A-Za-z]:${WIN_SEP}Users${WIN_SEP}${NAME}(?:(?=${WIN_SEP})|${PATH_END})`, 'gi');
 // A bare secret-key shape redactString leaves for prose safety ("sk-learn");
 // diagnostics are stricter.
 const LOOSE_SK = /\bsk-[A-Za-z0-9_-]{6,}/g;
@@ -53,7 +73,8 @@ function scrubPosixPaths(text) {
 }
 
 function scrubPathText(text) {
-  return scrubPosixPaths(text).replace(WINDOWS_HOME_PATH, '~');
+  // Windows first: "C:/Users/alice" must not be read as a POSIX /Users path.
+  return scrubPosixPaths(text.replace(WINDOWS_HOME_PATH, '~'));
 }
 
 function scrubUrl(url) {
@@ -71,10 +92,15 @@ function scrubUrl(url) {
   return url.slice(0, cut) + scrubPosixPaths(url.slice(cut));
 }
 
-/** Free text: credentials, then home paths; URLs and non-home paths untouched. */
-function scrubText(input) {
+/**
+ * Free text: credentials, then home paths; URLs and non-home paths untouched.
+ * The input is bounded BEFORE any scanning: text past `maxChars` is dropped
+ * and replaced by a marker, never returned unscanned.
+ */
+function scrubText(input, { maxChars = SCRUB_MAX_CHARS } = {}) {
   if (typeof input !== 'string' || input === '') return input;
-  const redacted = redactString(input).replace(LOOSE_SK, '[redacted]');
+  const bounded = input.length > maxChars ? input.slice(0, maxChars) : input;
+  const redacted = redactString(bounded, { maxChars }).replace(LOOSE_SK, '[redacted]');
   let out = '';
   let cursor = 0;
   URL_TOKEN.lastIndex = 0;
@@ -82,7 +108,8 @@ function scrubText(input) {
     out += scrubPathText(redacted.slice(cursor, match.index)) + scrubUrl(match[0]);
     cursor = match.index + match[0].length;
   }
-  return out + scrubPathText(redacted.slice(cursor));
+  out += scrubPathText(redacted.slice(cursor));
+  return bounded === input ? out : out + truncationMarker(input.length - maxChars);
 }
 
 // --- structured path fields -------------------------------------------------
@@ -155,4 +182,4 @@ function homeRelativePath(value, {
   return value;
 }
 
-module.exports = { scrubText, homeRelativePath };
+module.exports = { scrubText, homeRelativePath, SCRUB_MAX_CHARS };

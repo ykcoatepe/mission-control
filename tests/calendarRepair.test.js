@@ -31,13 +31,16 @@ test('calendar schema validates cron output and direct writers before touching t
   try {
     f.service.createCalendarEntry({ title: 'Existing' });
     const before = fs.readFileSync(f.calendarFile, 'utf8');
-    for (const write of [
-      () => f.service.writeCalendarDataSafe({ entries: [{ id: 'bad', title: 'Bad', linkedTaskId: {} }] }),
-      () => f.service.syncCalendarWithCronEvidence({ jobs: [{ id: 'one', scheduler: 'openclaw', name: 'n'.repeat(100000) }], operationsSource: { schedulers: { openclaw: { sourceSucceeded: true } } } }),
-    ]) {
-      assert.throws(write, { status: 400 });
-      assert.equal(fs.readFileSync(f.calendarFile, 'utf8'), before);
-    }
+    assert.throws(() => f.service.writeCalendarDataSafe({ entries: [{ id: 'bad', title: 'Bad', linkedTaskId: {} }] }), { status: 400 });
+    assert.equal(fs.readFileSync(f.calendarFile, 'utf8'), before);
+    const synced = f.service.syncCalendarWithCronEvidence({ jobs: [
+      { id: 'one', scheduler: 'openclaw', name: 'n'.repeat(100000) },
+      { id: 'valid', scheduler: 'openclaw', name: 'Valid' },
+    ], operationsSource: { schedulers: { openclaw: { sourceSucceeded: true } } } });
+    assert.equal(synced.upstream.count, 1);
+    assert.equal(synced.upstream.issues[0].code, 'calendar_upstream_entry_invalid');
+    assert.deepEqual(synced.entries.map(row => row.title).sort(), ['Existing', 'Valid']);
+    assert.equal(f.service.readCalendarDataSafe({ strict: true }).diagnostics.quarantined.count, 0);
   } finally { f.cleanup(); }
 });
 
@@ -56,8 +59,7 @@ test('repair atomically backs up rejected rows, preserves file modes, and is ide
     const backup = path.resolve(f.homeDir, repaired.backupPath.slice(2));
     assert.equal(path.dirname(backup), path.dirname(f.calendarFile));
     const data = JSON.parse(fs.readFileSync(backup, 'utf8'));
-    assert.deepEqual(data.quarantined, [invalid, null]);
-    assert.deepEqual(data.duplicates, [duplicate]);
+    assert.deepEqual(data.entries, [kept, duplicate, invalid, null]);
     assert.equal(fs.statSync(backup).mode & 0o777, 0o600);
     assert.equal(fs.statSync(f.calendarFile).mode & 0o777, 0o600);
     const after = fs.readFileSync(f.calendarFile, 'utf8');

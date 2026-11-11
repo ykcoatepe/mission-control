@@ -53,7 +53,15 @@ export default function ProvidersPanel({ periodName, rows, pending = false }: Pr
     {
       key: 'coverage',
       header: 'Coverage',
-      cell: row => (row.note ? <span className={styles.note}>{row.note}</span> : DASH),
+      cell: row => (row.note || row.coverageDetail
+        ? (
+          <span className={styles.note}>
+            {row.note}
+            {row.note && row.coverageDetail ? ' ' : ''}
+            {row.coverageDetail && <span className={styles.noteDetail}>{row.coverageDetail}</span>}
+          </span>
+        )
+        : DASH),
     },
   ]
 

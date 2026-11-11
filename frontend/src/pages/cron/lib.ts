@@ -129,6 +129,8 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
       continue
     }
 
+    // Only a cron expression has a minute and an hour slot to share; an interval has none.
+    if (job.scheduleKind && job.scheduleKind !== 'cron') continue
     const parts = String(job.schedule || '').trim().split(/\s+/)
     if (parts.length < 2) continue
     const [minute, hour] = parts

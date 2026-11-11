@@ -1,6 +1,6 @@
 import { toUiState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
-import type { Endpoint, ServiceFilter, ServiceKind, ServiceRow, ServicesData } from './types'
+import type { Endpoint, ServiceFilter, ServiceKind, ServiceRow, ServicesData, ServicesSummary } from './types'
 
 // ---- one service ----
 
@@ -45,7 +45,7 @@ export function sortServices(rows: readonly ServiceRow[]): ServiceRow[] {
 
 // ---- filtering ----
 
-const SERVICE_FILTERS: readonly ServiceFilter[] = ['all', 'down', 'keepalive', 'interval', 'one-shot']
+const SERVICE_FILTERS: readonly ServiceFilter[] = ['all', 'down', 'unidentified', 'keepalive', 'interval', 'one-shot']
 
 /** The filter named in the URL; anything else is "all". */
 export function parseServiceFilter(value: string | null | undefined): ServiceFilter {
@@ -55,6 +55,7 @@ export function parseServiceFilter(value: string | null | undefined): ServiceFil
 export function matchesFilter(row: ServiceRow, filter: ServiceFilter): boolean {
   if (filter === 'all') return true
   if (filter === 'down') return isAbnormal(row)
+  if (filter === 'unidentified') return row.identified === false
   return row.kind === filter
 }
 
@@ -70,12 +71,21 @@ export function filterServices(rows: readonly ServiceRow[], filter: ServiceFilte
   return sortServices(rows.filter((row) => matchesFilter(row, filter) && matchesQuery(row, query)))
 }
 
-/** Real counts for the filter chips, from the rows themselves. */
-export function filterCounts(rows: readonly ServiceRow[]): Record<ServiceFilter, number> {
+/**
+ * Counts for the filter chips. "All", "Down" and "Unidentified" are the server's
+ * own tally (`summary`); the three kinds are counted from the rows, since the
+ * server publishes no per-kind number.
+ */
+export function filterCounts(
+  rows: readonly ServiceRow[],
+  summary: ServicesSummary | null | undefined,
+): Record<ServiceFilter, number | null> {
   const count = (filter: ServiceFilter) => rows.filter((row) => matchesFilter(row, filter)).length
+  const given = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null)
   return {
-    all: rows.length,
-    down: count('down'),
+    all: given(summary?.total),
+    down: given(summary?.down),
+    unidentified: given(summary?.unidentified),
     keepalive: count('keepalive'),
     interval: count('interval'),
     'one-shot': count('one-shot'),
@@ -241,9 +251,12 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
   if (!data) return { state: 'unavailable', text: 'Services could not be read', detail: null }
 
   const rows = Array.isArray(data.services) ? data.services : null
-  const down = rows ? rows.filter(isAbnormal).length : 0
+  // The server's tally: the page counts none of this itself.
+  const summary = data.summary ?? null
+  const down = summary?.down ?? 0
+  // A state word the page does not know is "not read" (never healthy, never down).
   const unreadRows = rows ? rows.filter((row) => serviceStatus(row).state === 'unavailable').length : 0
-  const unidentified = rows ? rows.filter((row) => row.kind === null).length : 0
+  const unidentified = summary?.unidentified ?? 0
   const reports = gatewayReports(systems)
 
   const endpoints = ENDPOINTS.map((entry) => ({ name: entry.name, reading: endpointReading(entry.pick(data)) }))
@@ -251,9 +264,7 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
   const endpointsUnread = endpoints.filter((e) => e.reading.state === 'unavailable').map((e) => e.name)
   const endpointsStale = endpoints.filter((e) => e.reading.state === 'warning').map((e) => e.name)
 
-  const running = rows ? rows.filter((row) => row.state === 'running').length : 0
-  const idle = rows ? rows.filter((row) => row.state === 'idle').length : 0
-  const detail = rows ? `${running} running · ${idle} idle` : null
+  const detail = summary ? `${summary.running} running · ${summary.idle} idle` : null
 
   if (down > 0 || endpointsDown.length > 0) {
     const parts: string[] = []
@@ -267,7 +278,10 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
   if (!rows) {
     return { state: 'unavailable', text: 'The service list could not be read', detail: null }
   }
-  if (rows.length === 0) {
+  if (!summary) {
+    return { state: 'unavailable', text: 'The service summary could not be read', detail: null }
+  }
+  if (summary.total === 0) {
     return { state: 'unavailable', text: 'No services were found', detail: null }
   }
 
@@ -304,5 +318,5 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
     }
   }
 
-  return { state: 'healthy', text: `No service is down (${rows.length} read)`, detail }
+  return { state: 'healthy', text: `No service is down (${summary.total} read)`, detail }
 }

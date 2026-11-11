@@ -50,7 +50,7 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
     cell: (row) => {
       const kind = kindLabel(row.kind)
       const note = scheduleNote(row)
-      if (!kind) return <span className={styles.muted}>—</span>
+      if (!kind) return <span className={styles.muted}>{row.identified === false ? 'Unidentified' : '—'}</span>
       return (
         <span className={styles.kind}>
           {kind}
@@ -139,7 +139,7 @@ export default function ServicesView() {
   const data = envelope?.data ?? null
   const rows = useMemo<ServiceRow[]>(() => (Array.isArray(data?.services) ? data.services : []), [data])
   const visible = useMemo(() => filterServices(rows, filter, query), [rows, filter, query])
-  const counts = useMemo(() => filterCounts(rows), [rows])
+  const counts = useMemo(() => filterCounts(rows, data?.summary), [rows, data])
   const verdict = useMemo(() => servicesVerdict(data, gatewaySystems), [data, gatewaySystems])
 
   if (loading && !envelope) {
@@ -169,11 +169,12 @@ export default function ServicesView() {
   const observedAt = envelope?.meta?.observedAt ?? null
   const stale = envelope?.meta?.stale === true
   const options = [
-    { value: 'all', label: 'All', count: counts.all },
-    { value: 'down', label: 'Down', count: counts.down },
-    { value: 'keepalive', label: 'Keepalive', count: counts.keepalive },
-    { value: 'interval', label: 'Interval', count: counts.interval },
-    { value: 'one-shot', label: 'One-shot', count: counts['one-shot'] },
+    { value: 'all', label: 'All', count: counts.all ?? undefined },
+    { value: 'down', label: 'Down', count: counts.down ?? undefined },
+    { value: 'unidentified', label: 'Unidentified', count: counts.unidentified ?? undefined },
+    { value: 'keepalive', label: 'Keepalive', count: counts.keepalive ?? undefined },
+    { value: 'interval', label: 'Interval', count: counts.interval ?? undefined },
+    { value: 'one-shot', label: 'One-shot', count: counts['one-shot'] ?? undefined },
   ]
   const filtered = filter !== 'all' || query.trim() !== ''
 

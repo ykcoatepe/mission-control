@@ -18,6 +18,11 @@ const provider = (overrides: Partial<UsageProvider>): UsageProvider => ({
   tokens: 2_400_000,
   apiEquivalentUsd: 816.9,
   billedUsd: null,
+  billingKnown: false,
+  hasRecords: true,
+  coverageReason: 'none',
+  skippedLines: null,
+  oversizedLines: null,
   note: 'Local usage records',
   ...overrides,
 })
@@ -52,7 +57,7 @@ describe('ProvidersPanel', () => {
   })
 
   it('shows a read provider with state, freshness, tokens, API equivalent, billed and coverage', async () => {
-    const host = await render([provider({ billedUsd: 12.5 })])
+    const host = await render([provider({ billedUsd: 12.5, billingKnown: true })])
     const [row] = cells(host)
     expect(row[1]).toContain('Ready')
     expect(row[1]).toContain('fresh')
@@ -84,7 +89,7 @@ describe('ProvidersPanel', () => {
 
   it('a platform that was read and recorded nothing is "No usage recorded" with dashes, not Ready with zeros', async () => {
     const host = await render([
-      provider({ id: 'openclaw', label: 'OpenClaw', tokens: 0, apiEquivalentUsd: 0, billedUsd: 0, note: 'Local usage records; billing unknown unless explicitly recorded' }),
+      provider({ id: 'openclaw', label: 'OpenClaw', tokens: 0, apiEquivalentUsd: 0, billedUsd: null, hasRecords: false, note: 'Local usage records; billing unknown unless explicitly recorded' }),
     ])
     const [row] = cells(host)
     expect(row[1]).toContain('No usage recorded')
@@ -93,26 +98,27 @@ describe('ProvidersPanel', () => {
     expect(host.querySelector('tbody tr')!.textContent).not.toMatch(/\$0/)
   })
 
-  it('billed shows a figure only when billing is known: money actually billed, or an explicit billingKnown', async () => {
+  it('billed shows a figure only when the server says billing is known', async () => {
     const host = await render([
       provider({ id: 'a', label: 'A', billedUsd: 0 }),
       provider({ id: 'b', label: 'B', billedUsd: 0, billingKnown: true }),
-      provider({ id: 'c', label: 'C', billedUsd: 12.5 }),
+      provider({ id: 'c', label: 'C', billedUsd: 12.5, billingKnown: true }),
       provider({ id: 'd', label: 'D', billedUsd: null, billingKnown: true }),
+      provider({ id: 'e', label: 'E', billedUsd: 12.5, billingKnown: false }),
     ])
     const rows = cells(host)
-    expect(rows.map(row => row[4])).toEqual(['—', '$0.00', '$12.50', '—'])
+    expect(rows.map(row => row[4])).toEqual(['—', '$0.00', '$12.50', '—', '—'])
   })
 
   it('marks stale and partial providers in amber words, not as ready', async () => {
     const host = await render([
-      provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial', note: 'Claude log scan incomplete' }),
+      provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial', coverageReason: 'standing_gaps', skippedLines: 99, oversizedLines: 99, note: 'Claude log scan incomplete' }),
       provider({ id: 'codex', state: 'stale' }),
     ])
     const [partial, stale] = cells(host)
     expect(partial[1]).toContain('Partial')
     expect(partial[1]).not.toContain('Ready')
-    expect(partial[5]).toBe('Claude log scan incomplete')
+    expect(partial[5]).toBe('Claude log scan incomplete 99 lines skipped (99 oversized).')
     expect(stale[1]).toContain('Stale')
     expect(stale[1]).toContain('stale')
   })

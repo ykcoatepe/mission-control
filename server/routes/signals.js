@@ -7,9 +7,11 @@
 //
 // data: {
 //   systems:     { gbrain|hermes|openclaw: { state, observedAt, reason, detailHref } } | null
-//   attention:   { count, worst, breakdown: { systems, findings, overdueConfirmations, restricted } }
+//   attention:   { count, worst, breakdown: { systems, findings, overdueConfirmations, restricted },
+//                  partial, missing } | null
 //                the one needs-the-operator number (sources/mloop/attention.js),
-//                equal to /api/loops totals.needsOperator
+//                equal to /api/loops totals.needsOperator; a part not read is
+//                null and named in `missing`; null when nothing was read
 //   automations: { failed, nextRunAt } | null
 //   loops:       { openFindings, overdueConfirmations } | null
 //   services:    { down } | null                  launchd down/failed + unreachable endpoints

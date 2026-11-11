@@ -10,11 +10,19 @@
 //   mloop --project P --json participants        bound participants
 // Projects are the ledger directories that hold an events.jsonl.
 //
-// Argus rule (hard boundary): a project whose id or title matches /argus/i is
-// "restricted". For it no per-project command ever runs and no file under its
-// directory is read or stat'ed; only counts derived from the all-projects
-// check are kept (open findings, confirmation findings, overdue). Its finding
-// subjects, details and codes never enter memory beyond the counting loop.
+// Argus rule (hard boundary, ./restricted.js): a project is "restricted" when
+// the marker appears anywhere in its COMPLETE RAW material, classified before
+// any scrub, truncation or whitelist: its id, its check rows (every field),
+// its status text (heading, outcome, body), its confirmation rows and its
+// participants. Classification fails closed: when a part it needs cannot be
+// read or parsed the project is restricted too (restrictedBy: 'unverified').
+// A restricted project keeps its id and counts only. When the id or the check
+// rows already carry the marker no per-project command runs and no file under
+// its directory is touched; otherwise reading stops at the first part that
+// carries it. Its text never enters memory beyond the classifying loop.
+//
+// A mention of the marker in another project's text cannot be told apart from
+// restricted content quoted there, so that project is restricted as well.
 //
 // Every field is whitelisted. mloop exits non-zero with a {code,message} body
 // on errors; rc=0 with such a body is treated as an error too.
@@ -24,11 +32,11 @@ const path = require('path');
 const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
 const { scrubText } = require('../../core/scrub');
-const { CONFIRMATION_CODES, OVERDUE_CODES, isOperatorFinding, needsOperator } = require('./attention');
+const { CONFIRMATION_CODES, OVERDUE_CODES, projectNeeds, needsOperator } = require('./attention');
+const { RESTRICTED_MARKERS, containsRestrictedMarker } = require('./restricted');
 
 const MLOOP_SOURCE_ID = 'mloop.loops';
 const MLOOP_REFRESH_INTERVAL_MS = 60_000;
-const RESTRICTED_PATTERN = /argus/i;
 const PROJECT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const SEVERITY_RANK = { error: 3, warning: 2, info: 1 };
 const PARTICIPANT_DEAD_CODES = new Set(['BINDING_DEAD', 'MANAGER_SILENT']);
@@ -38,10 +46,6 @@ const MAX_STATUS_CHARS = 16_000;
 // bounded `summary` is what a list shows.
 const MAX_DETAIL = 4_000;
 const MAX_SUMMARY = 160;
-
-function isRestrictedText(value) {
-  return typeof value === 'string' && RESTRICTED_PATTERN.test(value);
-}
 
 // Credentials and home paths through the one sanitizer (server/core/scrub.js).
 function cleanText(value, max = MAX_TEXT) {
@@ -102,56 +106,67 @@ function findingCount(row) {
   return Number.isInteger(row?.count) && row.count > 0 ? row.count : 1;
 }
 
-function emptyRestrictedCounts() {
-  return { openFindings: 0, pendingConfirmations: 0, overdue: 0, operatorFindings: 0, worst: null, operatorWorst: null };
+function severityOf(value) {
+  return SEVERITY_RANK[value] ? value : 'warning';
 }
 
-// Counts only: a restricted row's subject and detail never reach here.
-function addRestrictedRow(counts, { code, severity, count }) {
-  counts.openFindings += 1;
-  if (CONFIRMATION_CODES.has(code)) counts.pendingConfirmations += findingCount({ count });
-  if (OVERDUE_CODES.has(code)) counts.overdue += findingCount({ count });
-  if (isOperatorFinding({ code, severity })) counts.operatorFindings += 1;
-  if (!counts.worst || SEVERITY_RANK[severity] > SEVERITY_RANK[counts.worst]) counts.worst = severity;
-  if (severity !== 'info' && (!counts.operatorWorst || SEVERITY_RANK[severity] > SEVERITY_RANK[counts.operatorWorst])) {
-    counts.operatorWorst = severity;
+function worseSeverity(a, b) {
+  if (!a) return b;
+  return SEVERITY_RANK[b] > SEVERITY_RANK[a] ? b : a;
+}
+
+// Counts only, from a restricted project's raw check rows. Subjects are used
+// for confirmation identity inside this function and never kept.
+function restrictedCountsFrom(rows) {
+  const counts = { openFindings: 0, pendingConfirmations: 0, overdue: 0, worst: null, operatorWorst: null };
+  const findings = [];
+  for (const row of rows) {
+    const severity = severityOf(row.severity);
+    const code = typeof row.code === 'string' ? row.code : 'UNKNOWN';
+    counts.openFindings += 1;
+    if (CONFIRMATION_CODES.has(code)) counts.pendingConfirmations += findingCount(row);
+    if (OVERDUE_CODES.has(code)) counts.overdue += findingCount(row);
+    counts.worst = worseSeverity(counts.worst, severity);
+    if (severity !== 'info') counts.operatorWorst = worseSeverity(counts.operatorWorst, severity);
+    findings.push({ code, severity, subject: typeof row.subject === 'string' ? row.subject : null, count: row.count });
   }
+  const needs = projectNeeds(findings, undefined);
+  return { ...counts, operatorFindings: needs.findings, operatorConfirmations: needs.confirmations };
 }
 
 function emptyCounts() {
   return { total: 0, bySeverity: { error: 0, warning: 0, info: 0 }, byCode: {} };
 }
 
-// Split the all-projects check into per-project buckets. Restricted projects
-// keep counts only; everything else keeps whitelisted rows.
-function groupFindings(rows) {
+// Split the all-projects check into per-project RAW row lists (classified
+// before anything is cleaned).
+function groupRawRows(rows) {
   if (!Array.isArray(rows)) throw readError('mloop_unparsable', 'mloop check did not return a list');
-  const open = new Map();
-  const restricted = new Map();
+  const byProject = new Map();
   for (const row of rows) {
     const project = typeof row?.project === 'string' ? row.project : null;
     if (!project || !PROJECT_ID_PATTERN.test(project)) continue;
-    const severity = SEVERITY_RANK[row.severity] ? row.severity : 'warning';
-    if (isRestrictedText(project)) {
-      const counts = restricted.get(project) || emptyRestrictedCounts();
-      addRestrictedRow(counts, { code: row.code, severity, count: row.count });
-      restricted.set(project, counts);
-      continue;
-    }
-    const list = open.get(project) || [];
+    const list = byProject.get(project) || [];
+    list.push(row);
+    byProject.set(project, list);
+  }
+  return byProject;
+}
+
+// Presentation of an unrestricted project's rows: whitelisted and scrubbed.
+function cleanFindings(rows) {
+  return rows.map((row) => {
     const detail = cleanText(row.detail, MAX_DETAIL);
-    list.push({
+    return {
       code: typeof row.code === 'string' ? row.code.slice(0, 64) : 'UNKNOWN',
       subject: cleanText(row.subject, 160),
-      severity,
+      severity: severityOf(row.severity),
       detail,
       summary: summaryOf(detail),
       at: isoOrNull(row.ts),
       ...(Number.isInteger(row.count) ? { count: row.count } : {}),
-    });
-    open.set(project, list);
-  }
-  return { open, restricted };
+    };
+  });
 }
 
 function countFindings(findings) {
@@ -225,25 +240,35 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-function restrictedProject(id, counts = {}) {
+// restrictedBy: 'marker' (the marker is in its material) or 'unverified' (a
+// part needed to classify it could not be read; `errors` names which).
+function restrictedProject(id, counts, restrictedBy, errors = null) {
   return {
     id,
     restricted: true,
-    openFindings: counts.openFindings || 0,
-    pendingConfirmations: counts.pendingConfirmations || 0,
-    overdueConfirmations: counts.overdue || 0,
-    operatorFindings: counts.operatorFindings || 0,
-    worstSeverity: counts.operatorWorst || null,
+    restrictedBy,
+    openFindings: counts.openFindings,
+    pendingConfirmations: counts.pendingConfirmations,
+    overdueConfirmations: counts.overdue,
+    operatorFindings: counts.operatorFindings,
+    operatorConfirmations: counts.operatorConfirmations,
+    worstSeverity: counts.operatorWorst,
     countsBasis: 'mloop-check',
+    ...(errors ? { errors } : {}),
   };
 }
 
 // Ranked attention across projects: error > warning > info, then the
 // longest-waiting first. Restricted projects contribute one count-only row.
-function rankAttention(projects, restrictedCounts) {
+function rankAttention(projects, restrictedWorst) {
   const items = [];
   for (const project of projects) {
-    if (project.restricted) continue;
+    if (project.restricted) {
+      if (project.openFindings) {
+        items.push({ project: project.id, kind: 'restricted', restricted: true, severity: restrictedWorst.get(project.id) || 'warning', count: project.openFindings });
+      }
+      continue;
+    }
     for (const finding of project.findings) {
       items.push({
         project: project.id,
@@ -258,14 +283,15 @@ function rankAttention(projects, restrictedCounts) {
       });
     }
   }
-  for (const [id, counts] of restrictedCounts) {
-    if (!counts.openFindings) continue;
-    items.push({ project: id, kind: 'restricted', restricted: true, severity: counts.worst || 'warning', count: counts.openFindings });
-  }
   return items.sort((a, b) => (SEVERITY_RANK[b.severity] - SEVERITY_RANK[a.severity])
     || ((a.at ? Date.parse(a.at) : Infinity) - (b.at ? Date.parse(b.at) : Infinity))
     || a.project.localeCompare(b.project)
     || String(a.code || '').localeCompare(String(b.code || '')));
+}
+
+function errorCode(error) {
+  const code = typeof error?.code === 'string' ? error.code : 'mloop_failed';
+  return containsRestrictedMarker(code) ? 'mloop_failed' : code;
 }
 
 function createMloopReader({
@@ -297,7 +323,7 @@ function createMloopReader({
     const ids = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || !PROJECT_ID_PATTERN.test(entry.name)) continue;
-      if (isRestrictedText(entry.name)) {
+      if (containsRestrictedMarker(entry.name)) {
         // Restricted: listed by name only, nothing inside it is touched.
         ids.push(entry.name);
         continue;
@@ -310,16 +336,36 @@ function createMloopReader({
     return ids;
   }
 
-  async function readProject(id, findings) {
+  // Reads the raw parts one by one and classifies each before the next is
+  // read. Returns { restrictedBy, errors } or { raw: {status, teyit,
+  // participants}, errors }.
+  async function readRaw(id) {
     const errors = [];
-    const attempt = async (part, args, parse) => {
+    const parts = [
+      ['status', ['status'], (body) => typeof body === 'string'],
+      ['teyit', ['teyit', 'list'], Array.isArray],
+      ['participants', ['participants'], Array.isArray],
+    ];
+    const raw = {};
+    for (const [part, args, valid] of parts) {
+      let body;
       try {
-        return parse(parseMloopJson(await run(['--project', id, '--json', ...args], callTimeoutMs), part));
+        body = parseMloopJson(await run(['--project', id, '--json', ...args], callTimeoutMs), part);
+        if (!valid(body)) throw readError('mloop_unparsable', `mloop ${part} has an unexpected shape`);
       } catch (error) {
-        errors.push({ part, code: typeof error?.code === 'string' ? error.code : 'mloop_failed' });
-        return null;
+        errors.push({ part, code: errorCode(error) });
+        return { restrictedBy: 'unverified', errors };
       }
-    };
+      if (containsRestrictedMarker(body)) return { restrictedBy: 'marker', errors: null };
+      raw[part] = body;
+    }
+    return { raw, errors };
+  }
+
+  async function readProject(id, rows) {
+    const read = await readRaw(id);
+    if (read.restrictedBy) return { restrictedBy: read.restrictedBy, errors: read.errors };
+    const { errors } = read;
     let lastActivityAt = null;
     try {
       const stat = await fsImpl.stat(path.join(ledgerDir, id, 'events.jsonl'));
@@ -327,26 +373,19 @@ function createMloopReader({
     } catch {
       errors.push({ part: 'ledger', code: 'mloop_ledger_unreadable' });
     }
-    const status = await attempt('status', ['status'], (body) => {
-      if (typeof body !== 'string') throw readError('mloop_unparsable', 'status is not text');
-      return parseStatusMarkdown(body);
-    });
-    if (status && (isRestrictedText(status.title) || isRestrictedText(status.outcome))) {
-      return { restrictedByTitle: true };
-    }
-    const nowMs = now();
-    const pendingConfirmations = await attempt('teyit', ['teyit', 'list'], (body) => pendingFromTeyit(body, nowMs));
-    const participants = await attempt('participants', ['participants'], (body) => participantsFrom(body, findings));
+    // Presentation transforms only after classification.
+    const findings = cleanFindings(rows);
+    const status = parseStatusMarkdown(read.raw.status);
     return {
       id,
       restricted: false,
-      title: status?.title ?? null,
-      outcome: status?.outcome ?? null,
+      title: status.title,
+      outcome: status.outcome,
       openFindings: countFindings(findings),
-      pendingConfirmations,
-      participants,
+      pendingConfirmations: pendingFromTeyit(read.raw.teyit, now()),
+      participants: participantsFrom(read.raw.participants, findings),
       lastActivityAt,
-      statusMarkdown: status?.markdown ?? null,
+      statusMarkdown: status.markdown,
       findings,
       errors,
     };
@@ -354,31 +393,28 @@ function createMloopReader({
 
   async function read() {
     const checkRows = parseMloopJson(await run(['check', '--all-projects', '--json'], checkTimeoutMs), 'check');
-    const { open, restricted } = groupFindings(checkRows);
+    const rowsByProject = groupRawRows(checkRows);
     const ids = new Set(await listProjectIds());
-    for (const id of open.keys()) ids.add(id);
-    for (const id of restricted.keys()) ids.add(id);
+    for (const id of rowsByProject.keys()) ids.add(id);
     const sorted = [...ids].sort();
+    const restrictedWorst = new Map();
     const projects = await mapLimit(sorted, concurrency, async (id) => {
-      if (isRestrictedText(id)) return restrictedProject(id, restricted.get(id));
-      const project = await readProject(id, open.get(id) || []);
-      if (project.restrictedByTitle) {
-        const counts = emptyRestrictedCounts();
-        for (const finding of open.get(id) || []) addRestrictedRow(counts, finding);
-        open.delete(id);
-        restricted.set(id, counts);
-        return restrictedProject(id, counts);
-      }
+      const rows = rowsByProject.get(id) || [];
+      const restrict = (restrictedBy, errors = null) => {
+        const counts = restrictedCountsFrom(rows);
+        restrictedWorst.set(id, counts.worst);
+        return restrictedProject(id, counts, restrictedBy, errors);
+      };
+      // Id and check rows first: a marked project gets no per-project command.
+      if (containsRestrictedMarker(id) || containsRestrictedMarker(rows)) return restrict('marker');
+      const project = await readProject(id, rows);
+      if (project.restrictedBy) return restrict(project.restrictedBy, project.errors);
       return project;
     });
-    const restrictedCounts = new Map(projects.filter((p) => p.restricted).map((p) => [p.id, {
-      openFindings: p.openFindings,
-      worst: restricted.get(p.id)?.worst || 'warning',
-    }]));
     return {
       observedAt: new Date(now()).toISOString(),
       projects,
-      attention: rankAttention(projects, restrictedCounts),
+      attention: rankAttention(projects, restrictedWorst),
     };
   }
 
@@ -448,7 +484,7 @@ module.exports = {
   MLOOP_SOURCE_ID,
   MLOOP_REFRESH_INTERVAL_MS,
   PROJECT_ID_PATTERN,
-  RESTRICTED_PATTERN,
+  RESTRICTED_MARKERS,
   createMloopReader,
   createMloopSource,
   loopsView,

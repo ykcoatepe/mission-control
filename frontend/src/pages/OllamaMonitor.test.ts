@@ -45,7 +45,7 @@ const costs = {
   source: 'token-usage.csv',
   period: { key: 'month' },
   summary: { periodTokens: 4200 },
-  byService: [{ name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 100 }],
+  byService: [{ name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 100, isLocal: true }],
   meta: { updatedAt: '2026-08-15T10:00:00Z' },
 }
 
@@ -214,8 +214,8 @@ describe('Local models page: unknown values stay unknown', () => {
     costsBody = {
       ...costs,
       byService: [
-        { name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 50 },
-        { name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, percentage: 50 },
+        { name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 50, isLocal: true },
+        { name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, percentage: 50, isLocal: true },
       ],
     }
     await mount()
@@ -226,12 +226,28 @@ describe('Local models page: unknown values stay unknown', () => {
   })
 
   it('does not claim tokens for the listed models when only other endpoints have usage', async () => {
-    costsBody = { ...costs, byService: [{ name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null }] }
+    costsBody = { ...costs, byService: [{ name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, isLocal: true }] }
     await mount()
     const text = host!.textContent ?? ''
     expect(text).toContain('No token usage recorded for these models')
     expect(text).toContain('45.2K more by local endpoints not in this list')
     expect(text).not.toMatch(/45\.2K tokens across these models/)
+  })
+
+  it('does not count a row as local because of its name: only isLocal true, and says how many rows are unclassified', async () => {
+    costsBody = {
+      ...costs,
+      byService: [
+        { name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 50, isLocal: null },
+        { name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, percentage: 50, isLocal: true },
+      ],
+    }
+    await mount()
+    const text = host!.textContent ?? ''
+    expect(text).toContain('No token usage recorded for these models')
+    expect(text).toContain('45.2K more by local endpoints not in this list')
+    expect(text).toContain('1 usage row has no recorded locality and is not counted')
+    expect(text).not.toContain('4.20K tokens across these models')
   })
 
   it('labels the Apple GPU counter as tiler load, and uses one decimal unit for sizes', async () => {
@@ -241,9 +257,12 @@ describe('Local models page: unknown values stay unknown', () => {
       gpu: {
         available: true, platform: 'darwin', limited: false,
         devices: [{
-          index: '0', name: 'Apple M4 Max', vendor: 'Apple', cores: '40', utilGpu: 0, utilMemory: 0,
-          memTotalMiB: 4555, memUsedMiB: 1217, memFreeMiB: 3338, tempC: null, powerDraw: null, powerLimit: null,
-          memUsedEstimate: false, metricSource: 'apple-ioreg', memorySource: 'apple-ioreg-unified-memory',
+          index: '0', name: 'Apple M4 Max', vendor: 'Apple', cores: '40', utilGpu: 0, tilerUtilPercent: 12,
+          memAllocatedMiB: 4555, memUsedMiB: 1217, memHardwareTotalMiB: null, tempC: null, powerDraw: null, powerLimit: null,
+          memUsedEstimate: false, metricSource: 'apple-ioreg',
+          metricSourceNote: 'Alloc system memory is allocated unified memory, not hardware total memory.',
+          // Deprecated aliases: the page must not read them.
+          utilMemory: 99, memTotalMiB: 1, memFreeMiB: 1,
         }],
       },
     }
@@ -253,6 +272,10 @@ describe('Local models page: unknown values stay unknown', () => {
     expect(text).toContain('Tiler load')
     expect(text).toContain('93.8 GB of 137.4 GB')
     expect(text).toContain('1.3 GB of 4.8 GB allocated')
+    expect(text).toMatch(/Tiler load\s*12%/)
+    expect(text).not.toContain('99%')
+    expect(text).not.toContain('Memory free')
+    expect(text).toContain('Alloc system memory is allocated unified memory, not hardware total memory.')
     expect(text).not.toMatch(/\bGiB\b/)
   })
 

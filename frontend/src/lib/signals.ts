@@ -1,4 +1,4 @@
-import { stateLabel, toUiState, worstState } from './state'
+import { stateLabel, toUiState } from './state'
 import type { UiState } from './state'
 import { parseTime } from './time'
 
@@ -37,12 +37,33 @@ export type SystemId = 'gbrain' | 'hermes' | 'openclaw'
 export interface SystemSignal {
   state: string
   observedAt: string | null
+  /** Why the system is not healthy (one scrubbed line); null when healthy or none was given. */
+  reason?: string | null
+  /** Where the detail for this system lives; null when the server named none. */
+  detailHref?: string | null
+}
+
+/**
+ * The parts of the one attention count (server/sources/mloop/attention.js).
+ * count is the sum of the parts that were read; a part that was not read is null.
+ */
+export interface AttentionBreakdown {
+  systems: number | null
+  findings: number | null
+  overdueConfirmations: number | null
+  restricted: number | null
+}
+
+export interface AttentionSignal {
+  count: number | null
+  worst: string | null
+  breakdown?: AttentionBreakdown | null
 }
 
 export interface SignalsData {
   generatedAt?: string
   systems: Partial<Record<SystemId, SystemSignal | null>> | null
-  attention: { count: number | null; worst: string | null } | null
+  attention: AttentionSignal | null
   automations: { failed: number | null; nextRunAt: string | null } | null
   loops: { openFindings: number | null; overdueConfirmations: number | null } | null
   services: { down: number | null } | null
@@ -75,11 +96,19 @@ export const SYSTEM_LABEL: Record<SystemId, string> = {
   openclaw: 'OpenClaw',
 }
 
-/** Where each annunciator links. Gateways are read on the Services page. */
+/**
+ * Where an annunciator links when the server named no usable `detailHref`
+ * (null, not a local path, or a route that has been removed). Gateways are read on the Services page.
+ */
 export const SYSTEM_HREF: Record<SystemId, string> = {
   gbrain: '/',
   hermes: '/services',
   openclaw: '/services',
+}
+
+/** A `detailHref` is followed only when it is an in-app path (never an external URL). */
+function localPath(href: unknown): string | null {
+  return typeof href === 'string' && /^\/(?!\/)[^\s]*$/.test(href) ? href : null
 }
 
 export interface Annunciator {
@@ -92,6 +121,8 @@ export interface Annunciator {
   word: string
   /** Show the word next to the name (everything except a plain healthy system). */
   lit: boolean
+  /** The server's one-line reason this system is not healthy; null when none was given. */
+  reason: string | null
 }
 
 export interface AnnunciatorOptions {
@@ -101,6 +132,8 @@ export interface AnnunciatorOptions {
   now: number
   /** meta.stale, or the latest request failed. */
   stale: boolean
+  /** True for a path that is a live screen (removed screens redirect home); defaults to "any local path". */
+  isLivePath?: (path: string) => boolean
 }
 
 const NOT_READ = { state: 'unavailable', word: 'not read' } as const
@@ -121,7 +154,9 @@ function systemReading(
 
 export function annunciators(signals: SignalsData | null | undefined, options: AnnunciatorOptions): Annunciator[] {
   return SYSTEM_ORDER.map((id) => {
-    const base = { id, label: SYSTEM_LABEL[id], href: SYSTEM_HREF[id] }
+    const detail = localPath(signals?.systems?.[id]?.detailHref)
+    const href = detail && (options.isLivePath ? options.isLivePath(detail) : true) ? detail : SYSTEM_HREF[id]
+    const base = { id, label: SYSTEM_LABEL[id], href, reason: null as string | null }
     if (!signals) {
       // Nothing yet: still loading, or the request failed with nothing to show.
       return options.loading
@@ -129,39 +164,61 @@ export function annunciators(signals: SignalsData | null | undefined, options: A
         : { ...base, state: NOT_READ.state, word: NOT_READ.word, lit: true }
     }
     const reading = systemReading(signals.systems?.[id], options)
-    return { ...base, state: reading.state, word: reading.word, lit: reading.state !== 'healthy' }
+    const reason = signals.systems?.[id]?.reason
+    return {
+      ...base,
+      state: reading.state,
+      word: reading.word,
+      lit: reading.state !== 'healthy',
+      reason: reading.state !== 'healthy' && typeof reason === 'string' && reason.trim() ? reason.trim() : null,
+    }
   })
 }
 
 // ---- attention (one number, three places) ----
 
 /**
- * The one definition of "needs attention": `signals.attention.count`, the items
- * that need the operator (system warnings plus manager-loop findings rated
- * warning or error; info is left out). The top-bar pill, the sidebar badge and
- * the Attention page summary all show exactly this number with these words.
- * Overdue confirmations are a sub-count, shown as secondary text and never added.
+ * The one definition of "needs attention": `signals.attention.count`, computed by
+ * the server (system attention items, manager-loop findings rated warning or
+ * error, overdue confirmations, restricted projects by count). The top-bar pill,
+ * the sidebar badge and the Attention page summary all show exactly this number;
+ * nothing here adds or compares counts. The breakdown is secondary text.
  */
 export interface AttentionReading {
-  /** Items that need the operator; null when the shell signal could not read it. */
+  /** Items that need the operator; null when the server could not read it. */
   count: number | null
-  /** Overdue confirmations (secondary); null when not read. */
-  overdue: number | null
+  /** The parts of the count; a part the server did not read is null. */
+  breakdown: AttentionBreakdown | null
   state: UiState
 }
 
-export function attentionReading(signals: SignalsData | null | undefined): AttentionReading | null {
-  if (!signals) return null
-  const count = countOrNull(signals.attention?.count)
-  const overdue = countOrNull(signals.loops?.overdueConfirmations)
-  if (count === null && overdue === null) return null
-  const states: UiState[] = []
-  if (signals.attention?.worst) states.push(toUiState(signals.attention.worst))
-  if (overdue !== null && overdue > 0) states.push('critical')
+function breakdownOf(raw: AttentionBreakdown | null | undefined): AttentionBreakdown | null {
+  if (!raw || typeof raw !== 'object') return null
+  return {
+    systems: countOrNull(raw.systems),
+    findings: countOrNull(raw.findings),
+    overdueConfirmations: countOrNull(raw.overdueConfirmations),
+    restricted: countOrNull(raw.restricted),
+  }
+}
+
+function readingState(worst: string | null | undefined): UiState {
   // Something needs attention but nothing says how bad: caution, not an alarm.
-  const worst = states.length > 0 ? worstState(states) : 'warning'
-  const state: UiState = worst === 'healthy' || worst === 'inactive' || worst === 'unavailable' ? 'warning' : worst
-  return { count, overdue, state }
+  const state = worst ? toUiState(worst) : 'warning'
+  return state === 'healthy' || state === 'inactive' || state === 'unavailable' ? 'warning' : state
+}
+
+/** Build the reading from the server's attention object (`signals.attention` or `loops.totals.needsOperator`). */
+export function attentionFrom(attention: AttentionSignal | null | undefined): AttentionReading | null {
+  if (!attention || typeof attention !== 'object') return null
+  const count = countOrNull(attention.count)
+  const breakdown = breakdownOf(attention.breakdown)
+  if (count === null && breakdown === null) return null
+  return { count, breakdown, state: readingState(attention.worst) }
+}
+
+export function attentionReading(signals: SignalsData | null | undefined): AttentionReading | null {
+  return signals ? attentionFrom(signals.attention) : null
 }
 
 /** "30 need attention", "1 needs attention". */
@@ -169,9 +226,27 @@ export function attentionWords(count: number): string {
   return count === 1 ? '1 needs attention' : `${count} need attention`
 }
 
-/** "24 overdue" for the secondary text; null when there is none to mention. */
-export function overdueWords(overdue: number | null): string | null {
-  return overdue !== null && overdue > 0 ? `${overdue} overdue` : null
+const PART_WORDS: ReadonlyArray<readonly [keyof AttentionBreakdown, (n: number) => string, string]> = [
+  ['systems', (n) => `${n} ${n === 1 ? 'system' : 'systems'}`, 'systems not read'],
+  ['findings', (n) => `${n} ${n === 1 ? 'finding' : 'findings'}`, 'findings not read'],
+  ['overdueConfirmations', (n) => `${n} overdue`, 'overdue not read'],
+  ['restricted', (n) => `${n} restricted`, 'restricted not read'],
+]
+
+/**
+ * "3 systems · 23 findings · 3 overdue · 129 restricted" for secondary text.
+ * A part that is zero is left out; a part that was not read says so (never "0").
+ * null when there is no breakdown or nothing to mention.
+ */
+export function breakdownWords(breakdown: AttentionBreakdown | null | undefined): string | null {
+  if (!breakdown) return null
+  const parts: string[] = []
+  for (const [key, words, unread] of PART_WORDS) {
+    const value = breakdown[key]
+    if (value === null) parts.push(unread)
+    else if (value > 0) parts.push(words(value))
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 export interface AttentionPill {
@@ -179,29 +254,19 @@ export interface AttentionPill {
   state: UiState
   /** The pill's words: "30 need attention". */
   text: string
-  /** Secondary text: "24 overdue", or null. */
+  /** Secondary text: the breakdown, or null. */
   secondary: string | null
 }
 
-/**
- * The top-bar pill. Hidden when nothing needs attention or nothing was read.
- * Only when the attention count itself was not read but overdue confirmations
- * were, the pill says so in its own words ("24 overdue") instead of borrowing
- * the attention wording for a different number.
- */
+/** The top-bar pill. Hidden when nothing needs attention or the count was not read. */
 export function attentionPill(signals: SignalsData | null | undefined): AttentionPill | null {
   const reading = attentionReading(signals)
-  if (!reading) return null
-  if (reading.count === null) {
-    const overdue = reading.overdue ?? 0
-    return overdue > 0 ? { count: overdue, state: 'critical', text: `${overdue} overdue`, secondary: null } : null
-  }
-  if (reading.count === 0) return null
+  if (!reading || reading.count === null || reading.count === 0) return null
   return {
     count: reading.count,
     state: reading.state,
     text: attentionWords(reading.count),
-    secondary: overdueWords(reading.overdue),
+    secondary: breakdownWords(reading.breakdown),
   }
 }
 
@@ -212,7 +277,7 @@ export interface NavBadge {
   tone: 'warning' | 'critical'
   /** Spoken after the count: "need attention", "failed". */
   word: string
-  /** Secondary text for the tooltip, e.g. "24 overdue". */
+  /** Secondary text for the tooltip: the breakdown of the count. */
   secondary?: string | null
 }
 

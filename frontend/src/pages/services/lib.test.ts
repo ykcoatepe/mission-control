@@ -13,11 +13,12 @@ import {
   servicesVerdict,
   sortServices,
 } from './lib'
-import type { Endpoint, ServiceRow, ServicesData } from './types'
+import type { Endpoint, ServiceRow, ServicesData, ServicesSummary } from './types'
 
 const row = (over: Partial<ServiceRow> = {}): ServiceRow => ({
   label: 'ai.example.job',
   kind: 'keepalive',
+  identified: true,
   pid: 100,
   lastExitCode: 0,
   state: 'running',
@@ -36,13 +37,28 @@ const up = (over: Partial<Endpoint> = {}): Endpoint => ({
   ...over,
 })
 
-const data = (over: Partial<ServicesData> = {}): ServicesData => ({
-  services: [row({ label: 'a' }), row({ label: 'b', kind: 'interval', pid: null, state: 'idle', intervalSeconds: 600 })],
-  counts: { total: 2, running: 1, idle: 1, down: 0, failed: 0 },
-  gateways: { openclaw: up(), hermes: up({ heartbeatAt: '2026-11-11T08:00:05.000Z' }) },
-  ollama: up(),
-  ...over,
+// What the server's `summary` would say for these rows (test fixture only; the page never computes it).
+const summaryFor = (rows: ServiceRow[]): ServicesSummary => ({
+  total: rows.length,
+  running: rows.filter((r) => r.state === 'running').length,
+  idle: rows.filter((r) => r.state === 'idle').length,
+  down: rows.filter((r) => r.state === 'down' || r.state === 'failed').length,
+  unidentified: rows.filter((r) => !r.identified).length,
 })
+
+const data = (over: Partial<ServicesData> = {}): ServicesData => {
+  const services = over.services !== undefined
+    ? over.services
+    : [row({ label: 'a' }), row({ label: 'b', kind: 'interval', pid: null, state: 'idle', intervalSeconds: 600 })]
+  return {
+    services,
+    counts: { total: 2, running: 1, idle: 1, down: 0, failed: 0 },
+    summary: services ? summaryFor(services) : null,
+    gateways: { openclaw: up(), hermes: up({ heartbeatAt: '2026-11-11T08:00:05.000Z' }) },
+    ollama: up(),
+    ...over,
+  }
+}
 
 describe('serviceStatus', () => {
   it('maps the four server words', () => {
@@ -64,7 +80,7 @@ describe('sortServices and filters', () => {
     row({ label: 'z-idle', state: 'idle', pid: null, kind: 'interval' }),
     row({ label: 'b-running' }),
     row({ label: 'a-down', state: 'down', pid: null }),
-    row({ label: 'm-unknown', state: 'weird', kind: null }),
+    row({ label: 'm-unknown', state: 'weird', kind: null, identified: false }),
     row({ label: 'f-failed', state: 'failed', pid: null, kind: 'one-shot', lastExitCode: 1 }),
   ]
 
@@ -90,8 +106,22 @@ describe('sortServices and filters', () => {
     expect(filterServices(rows, 'all', 'nothing-here')).toEqual([])
   })
 
-  it('counts chips from the rows, and a row of unknown kind is in no kind chip', () => {
-    expect(filterCounts(rows)).toEqual({ all: 5, down: 2, keepalive: 2, interval: 1, 'one-shot': 1 })
+  it('filters unidentified rows by the server flag, not by guessing from kind', () => {
+    expect(filterServices(rows, 'unidentified', '').map((r) => r.label)).toEqual(['m-unknown'])
+    const flagged = [row({ label: 'k', kind: 'keepalive', identified: false }), row({ label: 'n', kind: null, identified: true })]
+    expect(filterServices(flagged, 'unidentified', '').map((r) => r.label)).toEqual(['k'])
+  })
+
+  it('takes All, Down and Unidentified from the server summary and counts only the kinds', () => {
+    // Deliberately not what the rows say: the chips must show the server's tally.
+    const summary = { total: 40, running: 30, idle: 6, down: 3, unidentified: 4 }
+    expect(filterCounts(rows, summary)).toEqual({
+      all: 40, down: 3, unidentified: 4, keepalive: 2, interval: 1, 'one-shot': 1,
+    })
+  })
+
+  it('shows no number for a chip the server gave none for', () => {
+    expect(filterCounts(rows, null)).toMatchObject({ all: null, down: null, unidentified: null, keepalive: 2 })
   })
 })
 
@@ -120,7 +150,7 @@ describe('serviceHint', () => {
   })
 
   it('explains a missing definition, and prefers a hint the server wrote', () => {
-    expect(serviceHint(row({ kind: null, plist: 'not-found' }))).toContain('not found')
+    expect(serviceHint(row({ kind: null, identified: false, plist: 'not-found' }))).toContain('not found')
     expect(serviceHint(row({ plist: 'unreadable' }))).toContain('could not be read')
     expect(serviceHint(row({ hint: ' Server says so ', lastExitCode: 3 }))).toBe('Server says so')
   })
@@ -177,17 +207,17 @@ describe('servicesVerdict', () => {
 
   it('does not say everything is as expected while a service is unidentified or a gateway reports a warning', () => {
     const unidentified = servicesVerdict(
-      data({ services: [row({ label: 'a' }), row({ label: 'b', kind: null, plist: 'not-found' }), row({ label: 'c', kind: null, plist: 'unreadable' })] }),
+      data({ services: [row({ label: 'a' }), row({ label: 'b', kind: null, identified: false, plist: 'not-found' }), row({ label: 'c', kind: null, identified: false, plist: 'unreadable' })] }),
     )
     expect(unidentified.state).toBe('warning')
     expect(unidentified.text).toBe('No service is down, but 2 services have no definition file, so their kind is unknown')
-    const one = servicesVerdict(data({ services: [row({ kind: null, plist: 'not-found' })] }))
+    const one = servicesVerdict(data({ services: [row({ kind: null, identified: false, plist: 'not-found' })] }))
     expect(one.text).toBe('No service is down, but 1 service has no definition file, so its kind is unknown')
 
     const gateway = servicesVerdict(data(), { openclaw: { state: 'warning' }, hermes: { state: 'healthy' } })
     expect(gateway).toMatchObject({ state: 'warning', text: 'No service is down, but OpenClaw is reporting a warning' })
     const both = servicesVerdict(
-      data({ services: [row({ kind: null, plist: 'not-found' })] }),
+      data({ services: [row({ kind: null, identified: false, plist: 'not-found' })] }),
       { openclaw: { state: 'warning' }, hermes: { state: 'critical' } },
     )
     expect(both.state).toBe('critical')
@@ -200,6 +230,22 @@ describe('servicesVerdict', () => {
     expect(servicesVerdict(data(), { openclaw: { state: 'healthy' }, hermes: null }).state).toBe('healthy')
     expect(servicesVerdict(data(), { openclaw: { state: 'unavailable' } }).state).toBe('healthy')
     expect(servicesVerdict(data(), null).state).toBe('healthy')
+  })
+
+  it('reads down, unidentified and the detail line from the server summary', () => {
+    // Rows say everything is running; the summary (the server's tally) is what the verdict reports.
+    const v = servicesVerdict(data({ summary: { total: 9, running: 5, idle: 1, down: 3, unidentified: 0 } }))
+    expect(v).toMatchObject({ state: 'critical', text: '3 services are down', detail: '5 running · 1 idle' })
+    const u = servicesVerdict(data({ summary: { total: 9, running: 5, idle: 4, down: 0, unidentified: 2 } }))
+    expect(u.text).toBe('No service is down, but 2 services have no definition file, so their kind is unknown')
+    expect(servicesVerdict(data({ summary: { total: 9, running: 5, idle: 4, down: 0, unidentified: 0 } })).text).toBe(
+      'No service is down (9 read)',
+    )
+  })
+
+  it('is unavailable, not healthy, when the server sent rows but no summary', () => {
+    const v = servicesVerdict(data({ summary: null }))
+    expect(v).toMatchObject({ state: 'unavailable', text: 'The service summary could not be read' })
   })
 
   it('names down services', () => {
@@ -232,7 +278,7 @@ describe('servicesVerdict', () => {
   it('is not healthy for a missing or empty service list', () => {
     expect(servicesVerdict(null)).toMatchObject({ state: 'unavailable' })
     expect(servicesVerdict(undefined).state).toBe('unavailable')
-    expect(servicesVerdict(data({ services: null, counts: null })).state).toBe('unavailable')
+    expect(servicesVerdict(data({ services: null, counts: null, summary: null })).state).toBe('unavailable')
     expect(servicesVerdict(data({ services: [] })).state).toBe('unavailable')
   })
 
@@ -245,6 +291,7 @@ describe('parseServiceFilter', () => {
   it('accepts the known filters and falls back to all', () => {
     expect(parseServiceFilter('down')).toBe('down')
     expect(parseServiceFilter('one-shot')).toBe('one-shot')
+    expect(parseServiceFilter('unidentified')).toBe('unidentified')
     expect(parseServiceFilter('bogus')).toBe('all')
     expect(parseServiceFilter(null)).toBe('all')
   })

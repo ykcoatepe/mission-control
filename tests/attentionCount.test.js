@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const express = require('express');
 
 const { createMloopSource } = require('../server/sources/mloop');
+const { needsOperator } = require('../server/sources/mloop/attention');
 const { buildLoopsRouter } = require('../server/routes/loops');
 const { buildSignalsRouter } = require('../server/routes/signals');
 const { errorHandler } = require('../server/core/http');
@@ -98,7 +99,7 @@ const FIXTURES = [
     // systems 2; findings: alpha BINDING_DEAD + beta ESCALATED_ROUNDS (TEYIT_STALE is
     // the overdue confirmations, info is not operator work); overdue 2; restricted
     // argus: 1 finding + 3 overdue.
-    expected: { count: 10, worst: 'critical', breakdown: { systems: 2, findings: 2, overdueConfirmations: 2, restricted: 4 } },
+    expected: { count: 10, worst: 'critical', breakdown: { systems: 2, findings: 2, overdueConfirmations: 2, restricted: 4 }, partial: false, missing: [] },
   },
   {
     name: 'restricted only',
@@ -107,13 +108,13 @@ const FIXTURES = [
       { project: 'argus-live', code: 'DEPLOYED_UNCONFIRMED', subject: 'P2', severity: 'warning', detail: `${SECRET}`, ts: '2026-11-10T00:00:00Z' },
     ],
     attention: [],
-    expected: { count: 2, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 2 } },
+    expected: { count: 2, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 2 }, partial: false, missing: [] },
   },
   {
     name: 'nothing needs the operator',
     checkRows: [{ project: 'quiet', code: 'TEYIT_DUE', subject: 'T1', severity: 'info', detail: 'due', ts: '2026-11-10T00:00:00Z' }],
     attention: [],
-    expected: { count: 0, worst: null, breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 0 } },
+    expected: { count: 0, worst: null, breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [] },
   },
 ];
 
@@ -132,7 +133,11 @@ for (const fixture of FIXTURES) {
 test('without a loop reading the number is partial: unknown parts are null, never zero', async () => {
   const { signals } = await both({ loopsSource: empty, overview: overviewWith(SYSTEM_ITEMS) });
   assert.deepEqual(signals.data.attention, {
-    count: 2, worst: 'critical', breakdown: { systems: 2, findings: null, overdueConfirmations: null, restricted: null },
+    count: 2,
+    worst: 'critical',
+    breakdown: { systems: 2, findings: null, overdueConfirmations: null, restricted: null },
+    partial: true,
+    missing: ['findings', 'overdueConfirmations', 'restricted'],
   });
 });
 
@@ -161,4 +166,90 @@ test('signals give each non-healthy system a scrubbed reason and its detail link
   assert.equal(signals.data.systems.gbrain.detailHref, '/gbrain');
   assert.equal(signals.data.systems.hermes.reason, null);
   assert.equal(signals.data.systems.hermes.detailHref, '/hermes');
+});
+
+// --- review fix round 1: missing and overlapping evidence -----------------
+
+function openProject(id, { findings = [], pendingConfirmations = [] } = {}) {
+  return { id, restricted: false, findings, pendingConfirmations };
+}
+
+test('reproduced: a failed confirmation reading plus TEYIT_STALE is never a complete 0', async () => {
+  // Through the source: the unreadable confirmations fail closed (counts
+  // only) and the check's TEYIT_STALE is still one known overdue item.
+  const checkRows = [{ project: 'alpha', code: 'TEYIT_STALE', subject: 'T1', severity: 'warning', detail: 'stale', ts: '2026-11-10T00:00:00Z' }];
+  const exec = {
+    async run(file, args) {
+      if (args[0] === 'check') return ok(checkRows);
+      if (args[3] === 'teyit') return { ok: false, code: 2, stdout: '', stderr: '{"code":"LEDGER_LOCKED","message":"busy"}', timedOut: false };
+      if (args[3] === 'status') return ok('# alpha\n');
+      return ok([]);
+    },
+  };
+  const fsImpl = { async readdir() { return [{ name: 'alpha', isDirectory: () => true }]; }, async stat() { return { isFile: () => true, mtimeMs: NOW }; } };
+  const loopsSource = createMloopSource({ exec, fsImpl, ledgerDir: '/fake', bin: '/fake/mloop', now: () => NOW });
+  await loopsSource.refresh();
+  const { loops, signals } = await both({ loopsSource, overview: overviewWith([]) });
+  assert.deepEqual(signals.data.attention, {
+    count: 1, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 1 }, partial: false, missing: [],
+  });
+  assert.deepEqual(loops.data.totals.needsOperator, signals.data.attention);
+
+  // Directly: an unread confirmation list is unknown, never 0.
+  const direct = needsOperator({
+    systemsAttention: [],
+    loops: { projects: [openProject('alpha', { findings: [{ code: 'TEYIT_STALE', subject: 'T1', severity: 'warning' }], pendingConfirmations: null })] },
+  });
+  assert.equal(direct.breakdown.overdueConfirmations, null);
+  assert.equal(direct.partial, true);
+  assert.deepEqual(direct.missing, ['overdueConfirmations']);
+});
+
+test('reproduced: a TEYIT_UNRESOLVED finding and an overdue confirmation with the same id count once', () => {
+  const result = needsOperator({
+    systemsAttention: [],
+    loops: {
+      projects: [openProject('alpha', {
+        findings: [
+          { code: 'TEYIT_UNRESOLVED', subject: 'T1', severity: 'warning' },
+          { code: 'TEYIT_STALE', subject: 'T1', severity: 'warning' },
+          { code: 'TEYIT_KEEP_KILL', subject: 'T1', severity: 'warning' },
+        ],
+        pendingConfirmations: [{ id: 'T1', overdue: true }],
+      })],
+    },
+  });
+  assert.deepEqual(result, {
+    count: 1, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 1, restricted: 0 }, partial: false, missing: [],
+  });
+});
+
+test('an aggregated TEYIT_STALE row overlaps the known confirmation ids instead of adding to them', () => {
+  const result = needsOperator({
+    systemsAttention: null,
+    loops: {
+      projects: [openProject('alpha', {
+        findings: [{ code: 'TEYIT_STALE', subject: 'TEYIT_STALE', severity: 'warning', count: 3 }],
+        pendingConfirmations: [{ id: 'T1', overdue: true }, { id: 'T2', overdue: true }, { id: 'T3', overdue: true }, { id: 'T4', overdue: false }],
+      })],
+    },
+  });
+  assert.equal(result.breakdown.overdueConfirmations, 3);
+  assert.deepEqual(result.missing, ['systems']);
+});
+
+test('unread parts are null and listed; a missing restricted count is null; nothing read is null', () => {
+  assert.equal(needsOperator({ systemsAttention: null, loops: null }), null);
+  assert.equal(needsOperator(), null);
+  const restricted = needsOperator({
+    systemsAttention: [{ severity: 'warning' }],
+    loops: { projects: [{ id: 'argus-x', restricted: true, operatorFindings: 2 }] },
+  });
+  assert.deepEqual(restricted, {
+    count: 1, worst: 'warning', breakdown: { systems: 1, findings: 0, overdueConfirmations: 0, restricted: null }, partial: true, missing: ['restricted'],
+  });
+  const unreadFindings = needsOperator({ systemsAttention: [], loops: { projects: [{ id: 'p', restricted: false, findings: null, pendingConfirmations: [] }] } });
+  assert.equal(unreadFindings.breakdown.findings, null);
+  assert.equal(unreadFindings.breakdown.overdueConfirmations, null, 'confirmation findings are unknown too');
+  assert.equal(unreadFindings.partial, true);
 });

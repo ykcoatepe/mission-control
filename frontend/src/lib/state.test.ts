@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { stateLabel, toUiState, worstState, type UiState } from './state'
 
@@ -84,5 +86,33 @@ describe('worstState', () => {
 
   it('returns the only element of a single-item list', () => {
     expect(worstState(['inactive'])).toBe('inactive')
+  })
+})
+
+/**
+ * The same static table the backend executes (tests/scrubAndStateFinal.test.js):
+ * expected worstState for every ordered pair of states. Both sides run their
+ * real implementation against it, so the two orderings cannot drift apart.
+ */
+describe('worstState agrees with the shared state-order fixture', () => {
+  const fixture = JSON.parse(
+    readFileSync(join(__dirname, '..', '..', '..', 'tests', 'fixtures', 'state-order.json'), 'utf8'),
+  ) as { states: UiState[]; empty: UiState; pairs: [UiState, UiState, UiState][]; lists: [UiState[], UiState][] }
+
+  it('covers every ordered pair of the five states', () => {
+    expect(fixture.states).toHaveLength(5)
+    expect(fixture.pairs).toHaveLength(25)
+  })
+
+  it.each(fixture.pairs)('worstState([%s, %s]) is %s', (a, b, worst) => {
+    expect(worstState([a, b])).toBe(worst)
+  })
+
+  it.each(fixture.lists)('worstState(%j) is %s', (list, worst) => {
+    expect(worstState(list)).toBe(worst)
+  })
+
+  it('an empty list is the fixture default', () => {
+    expect(worstState([])).toBe(fixture.empty)
   })
 })

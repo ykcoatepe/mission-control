@@ -54,8 +54,8 @@ describe('CostDriversSection', () => {
   it('shows API-equivalent and tracked spend as separate columns, with a dash where no price exists', async () => {
     const host = await render({
       models: [
-        { name: 'priced', rawNames: ['priced'], tokens: 10, cost: 0, apiEquivalentCost: 7, apiEquivalentAvailable: true, local: false, share: 0 },
-        { name: 'local-only', rawNames: ['ollama/local-only'], tokens: 10, cost: 0, apiEquivalentCost: 0, apiEquivalentAvailable: false, local: true, share: 0 },
+        { name: 'priced', rawNames: ['priced'], tokens: 10, cost: 0, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'local-only', rawNames: ['ollama/local-only'], tokens: 10, cost: 0, apiEquivalentCost: 0, apiEquivalentAvailable: false, isLocal: true, share: 0 },
       ],
       modelApiEquivalentTotal: 7,
     })
@@ -66,6 +66,22 @@ describe('CostDriversSection', () => {
     expect(rows[1][1]).toBe('—')
     expect(rows[1][2]).toBe('—')
     expect(host.textContent).toContain('Local')
+  })
+
+  it('tags a model Local only when the server said so: unknown (null) and false get no tag', async () => {
+    const host = await render({
+      models: [
+        { name: 'explicit-local', rawNames: ['a'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: true, share: 0 },
+        // The name looks local; the server did not say it is, so no tag.
+        { name: 'ollama/looks-local', rawNames: ['b'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: null, share: 0 },
+        { name: 'not-local', rawNames: ['c'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+      ],
+      modelApiEquivalentTotal: 3,
+    })
+    const rows = Array.from(host.querySelectorAll('tbody tr')).map(tr => tr.querySelector('td')?.textContent ?? '')
+    expect(rows[0]).toContain('Local')
+    expect(rows[1]).not.toContain('Local')
+    expect(rows[2]).not.toContain('Local')
   })
 
   it('marks preserved (stale) platform data and explains each platform\'s scope', async () => {
@@ -129,9 +145,9 @@ describe('CostDriversSection', () => {
   it('shows a dash for unknown tracked spend, a real zero only when billing recorded zero', async () => {
     const host = await render({
       models: [
-        { name: 'unknown-billing', rawNames: ['u'], tokens: 10, cost: null, apiEquivalentCost: 7, apiEquivalentAvailable: true, local: false, share: 0 },
-        { name: 'recorded-zero', rawNames: ['z'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, local: false, share: 0 },
-        { name: 'billed', rawNames: ['b'], tokens: 10, cost: 3.5, apiEquivalentCost: 1, apiEquivalentAvailable: true, local: false, share: 0 },
+        { name: 'unknown-billing', rawNames: ['u'], tokens: 10, cost: null, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'recorded-zero', rawNames: ['z'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'billed', rawNames: ['b'], tokens: 10, cost: 3.5, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
       ],
       modelApiEquivalentTotal: 9,
     })

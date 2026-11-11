@@ -1,3 +1,5 @@
+import type { AttentionSignal } from '../../lib/signals'
+
 // Payload types for GET /api/loops and GET /api/loops/:project.
 // Shapes follow server/sources/mloop/index.js. Anything the server can fail to
 // read is `| null`; the page never turns a null reading into a number.
@@ -80,7 +82,10 @@ export interface LoopFinding {
   code: string
   subject: string | null
   severity: Severity
+  /** The full text (detail views). */
   detail: string | null
+  /** The bounded first line (tables and lists). */
+  summary?: string | null
   at: string | null
   count?: number
 }
@@ -91,7 +96,10 @@ export interface AttentionFinding {
   severity: Severity
   code: string
   subject: string | null
+  /** The full text; tables show `summary`. */
   detail: string | null
+  /** The bounded first line for tables. */
+  summary?: string | null
   at: string | null
   count?: number
 }
@@ -111,6 +119,8 @@ export interface LoopsTotals {
   openFindings: number
   pendingConfirmations: number
   overdueConfirmations: number
+  /** The one attention number, equal to `GET /api/signals` attention; null when nothing was read. */
+  needsOperator?: AttentionSignal | null
 }
 
 export interface LoopsData {
@@ -140,7 +150,8 @@ export type AttentionRow =
       severity: Severity
       code: string
       subject: string | null
-      detail: string | null
+      /** The bounded first line of the finding's text. */
+      summary: string | null
       at: string | null
       count: number | null
     }

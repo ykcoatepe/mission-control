@@ -1,6 +1,6 @@
 import { ErrorState, Freshness, Page, Skeleton } from '../components/ui'
 import { useApi } from '../lib/hooks'
-import { SIGNALS_POLL_MS, SIGNALS_URL, attentionReading } from '../lib/signals'
+import { SIGNALS_POLL_MS, SIGNALS_URL, attentionFrom, attentionReading } from '../lib/signals'
 import type { SignalsEnvelope } from '../lib/signals'
 import AttentionView from './attention/AttentionView'
 import { errorText } from './attention/lib'
@@ -12,8 +12,10 @@ export default function Attention() {
   const { data: envelope, loading, error, refetch } = useApi<Envelope<LoopsData>>('/api/loops', POLL_MS)
   // The attention number is the shell's: the same reading the top bar and the sidebar use (one shared request).
   const { data: signalsEnvelope } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
-  const attention = attentionReading(signalsEnvelope?.data ?? null)
   const data = envelope?.data ?? null
+  // The same number as the pill and the badge. Only when the shell signal is not available does the page use the
+  // loops reading's own copy of it (`totals.needsOperator`, the server's same function).
+  const attention = attentionReading(signalsEnvelope?.data ?? null) ?? attentionFrom(data?.totals?.needsOperator)
   const meta = envelope?.meta ?? null
 
   return (

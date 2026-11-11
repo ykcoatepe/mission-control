@@ -49,6 +49,8 @@ export interface AppRouteDefinition {
   component: RouteComponent
   icon?: LucideIcon
   nav?: boolean
+  /** A compatibility redirect or removed screen: it never renders a page of its own. */
+  redirect?: boolean
   navPlacement?: 'primary' | 'utility'
   /** Sidebar group. Routes without a section (Overview) sit above the groups, unlabelled. */
   section?: 'operate' | 'know' | 'run'
@@ -70,23 +72,23 @@ export const appRoutes: AppRouteDefinition[] = [
   { path: '/gbrain', label: 'Knowledge', module: 'gbrain', component: GBrain, icon: Search, nav: false, section: 'know', description: 'Is the brain healthy and in sync' },
   { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, nav: false, section: 'operate', description: 'Schedule' },
   // Compatibility redirects keep existing bookmarks working.
-  { path: '/cron', label: 'Cron Jobs', module: 'cron', component: RedirectCron, nav: false },
-  { path: '/costs', label: 'Cost Tracker', module: 'costs', component: RedirectCosts, nav: false },
+  { path: '/cron', label: 'Cron Jobs', module: 'cron', component: RedirectCron, nav: false, redirect: true },
+  { path: '/costs', label: 'Cost Tracker', module: 'costs', component: RedirectCosts, nav: false, redirect: true },
   // Removed screens: their paths now land on the home page.
-  { path: '/work', label: 'Work', module: 'workshop', component: RedirectHome, nav: false },
-  { path: '/sessions', label: 'Sessions', module: 'chat', component: RedirectHome, nav: false },
-  { path: '/systems', label: 'Agents', module: 'agents', component: RedirectHome, nav: false },
-  { path: '/workshop', label: 'Workshop', module: 'workshop', component: RedirectHome, nav: false },
-  { path: '/office', label: 'Digital Office', module: 'office', component: RedirectHome, nav: false },
-  { path: '/team', label: 'Team Structure', module: 'team', component: RedirectHome, nav: false },
-  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', component: RedirectHome, nav: false },
-  { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectHome, nav: false },
-  { path: '/conversations', label: 'Conversations', module: 'chat', component: RedirectHome, nav: false },
-  { path: '/agents', label: 'Agent Hub', module: 'agents', component: RedirectHome, nav: false },
-  { path: '/memory', label: 'Memory', module: 'docs', component: RedirectHome, nav: false },
-  { path: '/scout', label: 'Scout', module: 'scout', component: RedirectHome, nav: false },
-  { path: '/aws', label: 'AWS', module: 'aws', component: RedirectHome, nav: false },
-  { path: '/skills', label: 'Skills', module: 'skills', component: RedirectHome, nav: false },
+  { path: '/work', label: 'Work', module: 'workshop', component: RedirectHome, nav: false, redirect: true },
+  { path: '/sessions', label: 'Sessions', module: 'chat', component: RedirectHome, nav: false, redirect: true },
+  { path: '/systems', label: 'Agents', module: 'agents', component: RedirectHome, nav: false, redirect: true },
+  { path: '/workshop', label: 'Workshop', module: 'workshop', component: RedirectHome, nav: false, redirect: true },
+  { path: '/office', label: 'Digital Office', module: 'office', component: RedirectHome, nav: false, redirect: true },
+  { path: '/team', label: 'Team Structure', module: 'team', component: RedirectHome, nav: false, redirect: true },
+  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', component: RedirectHome, nav: false, redirect: true },
+  { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectHome, nav: false, redirect: true },
+  { path: '/conversations', label: 'Conversations', module: 'chat', component: RedirectHome, nav: false, redirect: true },
+  { path: '/agents', label: 'Agent Hub', module: 'agents', component: RedirectHome, nav: false, redirect: true },
+  { path: '/memory', label: 'Memory', module: 'docs', component: RedirectHome, nav: false, redirect: true },
+  { path: '/scout', label: 'Scout', module: 'scout', component: RedirectHome, nav: false, redirect: true },
+  { path: '/aws', label: 'AWS', module: 'aws', component: RedirectHome, nav: false, redirect: true },
+  { path: '/skills', label: 'Skills', module: 'skills', component: RedirectHome, nav: false, redirect: true },
 ]
 
 export const primarySidebarRoutes = appRoutes.filter(
@@ -96,6 +98,12 @@ export const utilitySidebarRoutes = appRoutes.filter(
   (route) => route.navPlacement === 'utility' && route.icon,
 )
 export const sidebarRoutes = [...primarySidebarRoutes, ...utilitySidebarRoutes]
+
+/** True when `pathname` (a query or hash is ignored) is a screen that renders, not a redirect. */
+export function isLiveRoutePath(pathname: string): boolean {
+  const clean = pathname.split(/[?#]/)[0]
+  return appRoutes.some((route) => !route.redirect && route.path === clean)
+}
 
 export function isRouteEnabled(route: AppRouteDefinition, modules: Record<string, boolean>) {
   if (route.anyModule) return route.anyModule.some((moduleName) => modules[moduleName] !== false)

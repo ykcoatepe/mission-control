@@ -49,9 +49,9 @@ function heartbeatEventToPayload(value, {
 
   const lastHeartbeat = heartbeatValueToSeconds(event.ts);
   if (lastHeartbeat == null) return {};
-  const observed = new Date(lastHeartbeat * 1000);
-  const observedMs = observed.getTime();
-  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  const observedMs = lastHeartbeat * 1000;
+  if (!Number.isFinite(observedMs) || Math.abs(observedMs) > 8.64e15 || observedMs > now() + maxFutureSkewMs) return {};
+  const observed = new Date(observedMs);
 
   const payload = {
     lastHeartbeat,
@@ -77,7 +77,7 @@ function boundHeartbeatPayload(heartbeat, {
   const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeat);
   if (lastHeartbeat == null) return normalized;
   const observedMs = lastHeartbeat * 1000;
-  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  if (!Number.isFinite(observedMs) || Math.abs(observedMs) > 8.64e15 || observedMs > now() + maxFutureSkewMs) return {};
   return normalized;
 }
 

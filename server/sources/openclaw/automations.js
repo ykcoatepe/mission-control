@@ -34,7 +34,7 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
         if (!Array.isArray(evidence?.jobs) || !schedulers || !Object.values(schedulers).some(p => p.sourceSucceeded)) {
           throw new Error('No scheduler observed');
         }
-        const jobs = evidence.jobs.map(job => cronService.mapCronJobForApi(job));
+        const jobs = evidence.jobs.map(job => cronService.mapCronJobForApi(job)).filter(Boolean);
         const summary = summarizeJobs(jobs, now());
         return { cron: { jobs, summary, schedulers }, evidence };
       } catch {

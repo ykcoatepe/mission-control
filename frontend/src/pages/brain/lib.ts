@@ -1,5 +1,5 @@
 import { describeApiError, isBusyError, isUnavailableError } from '../../lib/hooks'
-import { toUiState, worstState } from '../../lib/state'
+import { stateLabel, toUiState, worstState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
 import { timelineDeltaLines } from '../gbrain/presentation'
 import type {
@@ -51,6 +51,29 @@ const VOCABULARY: Array<[RegExp, string]> = [
   [/\bsync(?:ing)? (?:is )?disabled\b/gi, 'sync off'],
   [/\bexcluded by policy\b/gi, 'sync off'],
 ]
+
+/** The part of a source the sync wording depends on (synoptic items and `/api/gbrain/sources` records both carry it). */
+export interface SyncSubject {
+  state?: UiState | string | null
+  excludedByPolicy?: boolean | null
+  reason?: string | null
+}
+
+/** True when the server says the source is outside freshness scoring (sync disabled or not sync-tracked). */
+export function isSyncOff(source: SyncSubject | null | undefined): boolean {
+  return source?.excludedByPolicy === true
+}
+
+/**
+ * The one word for a source's sync, used by every list and count on the page:
+ * "sync off" when the server excluded the source by policy, "fresh" when it is
+ * healthy, otherwise its state word. The state alone never decides "sync off".
+ */
+export function syncWord(source: SyncSubject | null | undefined): string {
+  if (isSyncOff(source)) return 'sync off'
+  const state = toUiState(source?.state ?? 'unavailable')
+  return state === 'healthy' ? 'fresh' : stateLabel(state).toLowerCase()
+}
 
 /** Only the shared vocabulary: backend reasons keep their own wording otherwise. */
 export function sameVocabulary(text: string): string {
@@ -143,12 +166,22 @@ function stateOf(evidence: { state: UiState } | null | undefined): UiState {
   return evidence?.state ?? 'unavailable'
 }
 
-/** Short word under a reader name. Configuration is the only thing the backend can read. */
+/**
+ * Short word under a reader name, from the server's `observation`: a configuration read is
+ * "configured" whatever the reader's state says (the state is inactive for it), an observed reader
+ * shows its state, and a reader whose observation was not sent is "not read".
+ */
 function readerSub(reader: SynopticReader): string {
-  const integration = reader.integration
-  if (integration?.configured === false || reader.state === 'inactive') return 'not configured'
-  if (!integration || reader.state === 'unavailable' || integration.state === 'unavailable') return 'not read'
-  return 'configured'
+  switch (reader.observation) {
+    case 'configured':
+      return 'configured'
+    case 'not_configured':
+      return 'not configured'
+    case 'observed':
+      return stateLabel(reader.state).toLowerCase()
+    default:
+      return 'not read'
+  }
 }
 
 function recordFor(sources: SourcesReading | null | undefined, id: string): SourceRecord | undefined {
@@ -224,16 +257,16 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
   for (const group of syn.sources) {
     const id = groupBlockId(group.id)
     const bad = group.items.filter((item) => item.state === 'warning' || item.state === 'critical')
-    const off = group.items.filter((item) => item.state === 'inactive').length
+    const off = group.items.filter(isSyncOff).length
     let sub: string
     if (group.state === 'unavailable') sub = 'not read'
-    else if (group.state === 'inactive') sub = 'sync off'
+    else if (group.state === 'inactive') sub = off === group.items.length ? 'sync off' : 'inactive'
     else if (bad.length > 0) sub = `${bad.length} of ${group.items.length} need attention`
     else sub = off > 0 ? `all fresh · ${off} sync off` : 'all fresh'
     groups.push({ id, kind: 'group', label: group.label, state: group.state, sub, count: group.items.length })
     states[id] = group.state
 
-    const active = group.items.filter((item) => item.state !== 'inactive')
+    const active = group.items.filter((item) => !isSyncOff(item))
     const ages = active.flatMap((item) => {
       const edge = syn.edges.find((e) => e.from === item.id && e.unit === 'seconds')
       const value = edge?.measurement?.value
@@ -242,7 +275,7 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
     const behind = group.items.reduce((sum, item) => sum + (item.behind ?? 0), 0)
     let label: string
     let edgeState: UiState = group.state
-    if (group.state === 'inactive' || active.length === 0) label = 'sync off'
+    if (group.state === 'inactive' || active.length === 0) label = off === group.items.length ? 'sync off' : 'inactive'
     else if (ages.length === 0) {
       label = 'not read'
       edgeState = 'unavailable'
@@ -260,29 +293,27 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
   }
 
   // ---- readers ----
-  // The backend derives a reader's state from its integration reading alone.
+  // `observation` says what the reader's state rests on: a configuration read is neutral and says
+  // "configured"; only an observed reader gets the state colours.
   const readers: BlockModel[] = []
   for (const reader of syn.readers) {
     const id = readerBlockId(reader.id)
     const state = reader.state
     const sub = readerSub(reader)
-    // Configuration is all the backend can read, so a healthy reader is "configured", not "observed healthy".
-    const neutral = state === 'healthy' && sub === 'configured'
+    const neutral = reader.observation === 'configured'
     readers.push({ id, kind: 'reader', label: reader.label, state, sub, count: null, neutral })
     states[id] = state
     const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.label === 'configured')
     const edgeState: UiState = payloadEdge?.state ?? state
-    const label =
-      edgeState === 'unavailable' ? 'not read'
-      : edgeState === 'inactive' ? 'not configured'
-      : (payloadEdge?.label ?? 'configured')
+    // The line says what the block says.
+    const label = sub
     edges.push({
       id: edgeId(id),
       blockId: id,
       state: edgeState,
       label,
       title: `${reader.label} to GBrain core: ${label}`,
-      neutral: edgeState === 'healthy' && label === 'configured',
+      neutral,
     })
   }
 
@@ -360,8 +391,8 @@ export function deriveVerdict(
   if (!syn) return { state: 'unavailable', text: 'GBrain could not be read', conditions: [], caveat: null }
   const payload = readPayloadVerdict(syn)
   if (!payload) return { state: 'unavailable', text: 'GBrain did not report a verdict', conditions: [], caveat: null }
-  // Readers are read from configuration only: a normal verdict must say they were not observed.
-  const configOnly = (syn.readers ?? []).some((reader) => reader.state === 'healthy' && reader.integration?.configured === true)
+  // Readers read from configuration only: a normal verdict must say they were not observed.
+  const configOnly = (syn.readers ?? []).some((reader) => reader.observation === 'configured')
   const caveat = configOnly ? 'reader connections are configured, not observed' : null
   const conditions: Condition[] = payload.reasons
     .map((reason, index) => ({ condition: { id: reason.elementId, state: reason.state, text: sentence(reason.text) }, index }))
@@ -402,7 +433,7 @@ export function deriveSourceSync(groups: SynopticSourceGroup[]): ReadingSet['sou
   const stale = items.filter((item) => item.state === 'warning' || item.state === 'critical').length
   const unread = items.filter((item) => item.state === 'unavailable').length
   // One word for a source that is switched off, whatever the reason the backend gives.
-  const off = items.filter((item) => item.state === 'inactive').length
+  const off = items.filter(isSyncOff).length
   const parts: string[] = []
   if (stale > 0) parts.push(`${stale} stale`)
   if (unread > 0) parts.push(`${unread} not read`)
@@ -469,6 +500,8 @@ export interface DetailItem {
   id: string
   label: string
   state: UiState
+  /** The sync word for the row (`syncWord`): "fresh", "sync off", "warning"… */
+  word: string
   lastSyncAt: string | null
   note: string | null
 }
@@ -603,7 +636,7 @@ export function describeElement(
     if (!group) return null
     observedAt = group.observedAt
     const synced = group.items
-      .filter((item) => item.state !== 'inactive')
+      .filter((item) => !isSyncOff(item))
       .flatMap((item) => (item.lastSyncAt ? [Date.parse(item.lastSyncAt)] : []))
       .filter(Number.isFinite)
     rows.push({ label: 'Sources', value: fmtCount(group.items.length), mono: true, observedAt: group.observedAt, state: group.state })
@@ -616,10 +649,13 @@ export function describeElement(
       const parts: string[] = []
       if ((item.behind ?? 0) > 0) parts.push(`${fmtCount(item.behind)} behind`)
       if (record?.pages != null) parts.push(`${fmtCount(record.pages)} pages`)
+      // A reason other than the switched-off one ("never synced") is the server's own explanation.
+      if (!isSyncOff(item) && item.reason) parts.push(item.reason)
       items.push({
         id: item.id,
         label: item.label,
         state: item.state,
+        word: syncWord(item),
         lastSyncAt: item.lastSyncAt ?? null,
         note: parts.length ? parts.join(' · ') : null,
       })
@@ -634,8 +670,8 @@ export function describeElement(
         label: 'Configuration',
         value: integration?.configured === true ? 'configured' : integration?.configured === false ? 'not configured' : 'not read',
         observedAt: integration?.observedAt ?? null,
-        // Configured is not observed healthy: no state colour on this row unless the backend reports a problem.
-        state: integration?.configured === true && integration.state === 'healthy' ? undefined : (integration?.state ?? 'unavailable'),
+        // A configuration reading carries no state colour: it is not an observed connection.
+        state: reader.observation === 'configured' ? undefined : (integration?.state ?? 'unavailable'),
       },
       { label: 'Read from', value: integration?.evidence || '—' },
     )
@@ -762,14 +798,12 @@ export function fmtClock(at: string | null | undefined, reference?: string | nul
 }
 
 /**
- * The state a ledger entry recorded. The ledger has no "unavailable" status: it records
- * such a reading as critical with the label "GBrain unavailable", so the label is read too.
- * An unknown or missing status is "unavailable", never healthy.
+ * The state a ledger entry recorded: the shared verdict captured with it, else its trust status
+ * (older entries). The server already reports a former "GBrain unavailable" entry as unavailable,
+ * so no label text is read. An unknown or missing state is "unavailable", never healthy.
  */
-export function ledgerState(entry: Pick<TimelineEntry, 'trust'>): UiState {
-  const state = toUiState(entry.trust?.status)
-  if (state === 'critical' && /\bunavailable\b/i.test(entry.trust?.label ?? '')) return 'unavailable'
-  return state
+export function ledgerState(entry: Pick<TimelineEntry, 'trust'> & Partial<Pick<TimelineEntry, 'verdict'>>): UiState {
+  return toUiState(entry.verdict?.state ?? entry.trust?.status)
 }
 
 /**
@@ -780,7 +814,7 @@ function completeEntry(entry: TimelineEntry): TimelineEntry {
   const trust = entry.trust ?? { label: '', status: 'unavailable' as const, score: null }
   return {
     ...entry,
-    trust: { ...trust, status: ledgerState({ trust }) },
+    trust: { ...trust, status: ledgerState({ trust, verdict: entry.verdict }) },
     metrics: entry.metrics ?? {},
     sourceFreshness: entry.sourceFreshness ?? { status: 'inactive' },
     warnings: entry.warnings ?? [],
@@ -813,6 +847,7 @@ function stableSignature(entry: TimelineEntry): string {
   const detail = entry.metrics.embeddingsDetail
   return JSON.stringify([
     ledgerState(entry),
+    (entry.verdict?.reasons ?? []).map((reason) => `${reason.elementId}:${reason.state}`),
     entry.trust?.score ?? null,
     entry.sourceFreshness.status,
     typeof detail === 'string' ? detail.replace(/\s*\(oldest [^)]*\)/gi, '').trim() : null,

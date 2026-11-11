@@ -220,7 +220,7 @@ test('signals compose loops, services, automations and usage from memory', async
   const loops = {
     observedAt: generatedAt,
     projects: [
-      { id: 'argus-x', restricted: true, openFindings: 2, pendingConfirmations: 1, overdueConfirmations: 1, operatorFindings: 1, worstSeverity: 'warning', countsBasis: 'mloop-check' },
+      { id: 'argus-x', restricted: true, openFindings: 2, pendingConfirmations: 1, overdueConfirmations: 1, operatorFindings: 1, operatorConfirmations: 1, worstSeverity: 'warning', countsBasis: 'mloop-check' },
       {
         id: 'p', restricted: false, title: 'p', outcome: null, openFindings: { total: 1, bySeverity: { error: 1, warning: 0, info: 0 }, byCode: { X: 1 } },
         pendingConfirmations: [{ unit: 'u', verification: 'v', deadline: '2026-07-09T00:00:00Z', overdue: true }], participants: [], lastActivityAt: null, errors: [],
@@ -250,7 +250,7 @@ test('signals compose loops, services, automations and usage from memory', async
   // Systems are healthy: p's error finding + p's overdue confirmation +
   // argus-x by counts only (1 operator finding + 1 overdue).
   assert.deepEqual(body.data.attention, {
-    count: 4, worst: 'critical', breakdown: { systems: 0, findings: 1, overdueConfirmations: 1, restricted: 2 },
+    count: 4, worst: 'critical', breakdown: { systems: 0, findings: 1, overdueConfirmations: 1, restricted: 2 }, partial: false, missing: [],
   });
   assert.doesNotMatch(JSON.stringify(body), /argus-x/, 'signals carry no restricted project identity');
 });

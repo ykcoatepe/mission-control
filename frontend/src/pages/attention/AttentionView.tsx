@@ -16,7 +16,7 @@ import {
   TimeAgo,
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
-import { overdueWords } from '../../lib/signals'
+import { breakdownWords } from '../../lib/signals'
 import type { AttentionReading } from '../../lib/signals'
 import { useNow } from '../../lib/useNow'
 import {
@@ -261,7 +261,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
 
   const filtered = filter !== 'all' || activeProject !== 'all'
   const attentionCount = attention?.count ?? null
-  const overdue = attention ? overdueWords(attention.overdue) : null
+  const attentionHint = attention ? breakdownWords(attention.breakdown) : null
 
   return (
     <div className={styles.view}>
@@ -289,7 +289,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
           label="Need attention"
           value={attentionCount}
           state={attentionCount !== null && attentionCount > 0 ? attention?.state : undefined}
-          hint={overdue ?? (attention === null ? 'not read' : undefined)}
+          hint={attentionHint ?? (attention === null || attention.count === null ? 'not read' : undefined)}
         />
         <Stat
           label="Projects with open items"
@@ -398,13 +398,13 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
 
 function WhatCell({ row }: { row: AttentionRow }) {
   if (row.type === 'finding') {
-    const primary = shortenHomePaths(row.detail) || row.subject || findingLabel(row.code)
+    const primary = shortenHomePaths(row.summary) || row.subject || findingLabel(row.code)
     return (
       <div className={styles.what}>
         <span className={styles.clamp} title={primary}>
           {primary}
         </span>
-        {row.detail && row.subject && (
+        {row.summary && row.subject && (
           <span className={styles.sub}>
             <Mono muted>{row.subject}</Mono>
             {row.count !== null && row.count > 1 && <Mono muted> ×{row.count}</Mono>}

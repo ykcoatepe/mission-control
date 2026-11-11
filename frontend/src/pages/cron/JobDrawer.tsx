@@ -52,7 +52,7 @@ export default function JobDrawer({
   const canDelete = job.actions?.delete !== false
   const canChangeModel = job.payload === 'agentTurn' && job.actions?.model !== false
   const successRate = calcSuccessRate(job.history)
-  const schedule = scheduleDisplay(job.schedule)
+  const schedule = scheduleDisplay(job.schedule, job.scheduleKind)
   const runKind = describeRunKind(job.payload, job.target)
   const internalKey = isInternalKey(job.description)
 

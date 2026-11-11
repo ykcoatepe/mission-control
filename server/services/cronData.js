@@ -2,19 +2,45 @@ const fs = require('fs');
 const path = require('path');
 const { httpError } = require('../core/http');
 const { randomUUID } = require('node:crypto');
-const { CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
+const { homeRelativePath } = require('../core/scrub');
+const { redactString } = require('../core/config');
+const { CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
 
-function writeJsonFileAtomic(filePath, value, { fsImpl = fs, mode } = {}) {
+function writeFileAtomic(filePath, content, { fsImpl = fs, mode } = {}) {
   const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
   const existingMode = mode ?? (fsImpl.existsSync(filePath) ? fsImpl.statSync(filePath).mode & 0o777 : 0o600);
   try {
-    fsImpl.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fsImpl.writeFileSync(tmpPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
     fsImpl.chmodSync(tmpPath, existingMode);
     fsImpl.renameSync(tmpPath, filePath);
   } catch (error) {
     try { fsImpl.rmSync(tmpPath, { force: true }); } catch {}
     throw error;
   }
+}
+
+function writeJsonFileAtomic(filePath, value, options) {
+  writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`, options);
+}
+
+// Date's finite domain is smaller than Number's. Never coerce arrays, booleans
+// or objects into upstream timestamps, and check numeric bounds before Date.
+function dateMsOrNull(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Math.abs(value) > 8.64e15) return null;
+  } else if (typeof value !== 'string' || !value.trim()) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function dateIsoOrNull(value) {
+  const ms = dateMsOrNull(value);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+function normalizeOpenclawCronJob(job) {
+  if (!job || typeof job !== 'object' || Array.isArray(job)) return { scheduler: 'openclaw', id: null, sourceId: null };
+  return { ...job, scheduler: 'openclaw', sourceId: job.id };
 }
 
 function parseJsonCandidates(raw = '') {
@@ -177,14 +203,14 @@ function parseCronTableOutput(output) {
         const amount = Number.parseInt(future[1], 10);
         const unit = future[2];
         const offset = unit === 'm' ? amount * 60000 : unit === 'h' ? amount * 3600000 : amount * 86400000;
-        return new Date(now + offset).toISOString();
+        return dateIsoOrNull(now + offset);
       }
       const past = value.match(/^(\d+)([mhd])\s+ago$/);
       if (past) {
         const amount = Number.parseInt(past[1], 10);
         const unit = past[2];
         const offset = unit === 'm' ? amount * 60000 : unit === 'h' ? amount * 3600000 : amount * 86400000;
-        return new Date(now - offset).toISOString();
+        return dateIsoOrNull(now - offset);
       }
       return null;
     };
@@ -208,24 +234,36 @@ function parseCronTableOutput(output) {
   return jobs;
 }
 
-// OpenClaw's JSON interval is { kind: 'every', everyMs, anchorMs }.
-// Keep its measured cadence; the kind name alone is not a schedule.
+// Live structure inventory (2026-11-11): Hermes cron(expr/display),
+// interval(minutes/display), once(run_at/display); OpenClaw cron(expr with
+// optional tz/staggerMs), every(everyMs/anchorMs). Other supported units are
+// explicit conversions; unrecognised kinds never become a made-up cron kind.
 function describeCronSchedule(job = {}) {
   const raw = job.schedule;
   const kind = typeof raw?.kind === 'string' ? raw.kind.toLowerCase() : null;
+  const display = [raw?.display, job.schedule_display].find(value => typeof value === 'string' && value.trim() && !['?', 'every'].includes(value.trim().toLowerCase())) || null;
+  const unknown = { schedule: display, scheduleKind: 'unknown', everyMs: null, atIso: null };
   if (kind === 'every' || kind === 'interval' || raw === 'every') {
-    const everyMs = raw?.everyMs;
-    if (!Number.isSafeInteger(everyMs) || everyMs <= 0) return { schedule: null, scheduleKind: 'interval_unknown', everyMs: null };
+    const candidates = [[raw?.everyMs, 1], [raw?.seconds, 1000], [raw?.minutes, 60000], [raw?.hours, 3600000]];
+    const fromDisplay = display?.match(/^every\s+(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i);
+    if (fromDisplay) candidates.push([Number(fromDisplay[1]), { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[fromDisplay[2].toLowerCase()]]);
+    const everyMs = candidates.map(([value, scale]) => typeof value === 'number' ? value * scale : null)
+      .find(value => Number.isSafeInteger(value) && value > 0);
+    if (!everyMs) return unknown;
     const units = [[86400000, 'd'], [3600000, 'h'], [60000, 'm'], [1000, 's'], [1, 'ms']];
     const [size, suffix] = units.find(([size]) => everyMs % size === 0);
-    return { schedule: `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs };
+    return { schedule: `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs, atIso: null };
   }
-  const expression = raw?.expr || raw?.display || job.schedule_display || (typeof raw === 'string' ? raw : null);
-  if (typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
-    return { schedule: expression, scheduleKind: kind === 'at' ? 'at' : 'cron', everyMs: null };
+  if (kind === 'once' || kind === 'at') {
+    const at = raw?.run_at ?? raw?.at;
+    const atIso = dateIsoOrNull(at);
+    return { schedule: display || (atIso && typeof at === 'string' ? at : atIso), scheduleKind: 'at', everyMs: null, atIso };
   }
-  if (kind === 'at' && typeof raw.at === 'string' && Number.isFinite(Date.parse(raw.at))) return { schedule: raw.at, scheduleKind: 'at', everyMs: null };
-  return { schedule: null, scheduleKind: 'unknown', everyMs: null };
+  const expression = raw?.expr || (typeof raw === 'string' ? raw : null);
+  if ((kind === 'cron' || !kind) && typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
+    return { schedule: expression, scheduleKind: 'cron', everyMs: null, atIso: null };
+  }
+  return unknown;
 }
 
 function createCronService({
@@ -255,7 +293,7 @@ function createCronService({
     const raw = String(job.state?.lastStatus || job.state?.lastRunStatus || '').trim().toLowerCase();
     if (['ok', 'active', 'running', 'success'].includes(raw)) return 'active';
     if (['failed', 'error', 'errored'].includes(raw)) return 'failed';
-    if (job.state?.nextRunAtMs) return 'scheduled';
+    if (typeof job.state?.nextRunAtMs === 'number' && dateMsOrNull(job.state.nextRunAtMs) !== null) return 'scheduled';
     return 'idle';
   }
 
@@ -310,6 +348,7 @@ function createCronService({
   }
 
   function mapCronJobForApi(job = {}) {
+    if (!job || typeof job.id !== 'string' || !job.id.trim()) return null;
     const scheduler = isHermesJob(job) ? 'hermes' : 'openclaw';
     const sourceId = getCronJobSourceId(job);
     return {
@@ -320,14 +359,14 @@ function createCronService({
       schedulerLabel: scheduler === 'hermes' ? 'Hermes' : 'OpenClaw',
       ...describeCronSchedule(job),
       status: normalizeCronRunStatus(job),
-      lastRun: job.state?.lastRunAtMs ? new Date(job.state.lastRunAtMs).toISOString() : null,
-      nextRun: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
+      lastRun: typeof job.state?.lastRunAtMs === 'number' ? dateIsoOrNull(job.state.lastRunAtMs) : null,
+      nextRun: typeof job.state?.nextRunAtMs === 'number' ? dateIsoOrNull(job.state.nextRunAtMs) : null,
       duration: job.state?.lastDurationMs ? `${job.state.lastDurationMs}ms` : null,
       target: job.sessionTarget || 'main',
       payload: job.payload?.kind || '?',
       model: job.payload?.model || job.model || (scheduler === 'openclaw' ? getOpenclawDefaultModelKey() : '') || '',
       thinking: job.payload?.thinking || '',
-      description: job.payload?.text?.substring(0, 120) || job.payload?.message?.substring(0, 120) || job.prompt?.substring(0, 120) || '',
+      description: [job.payload?.text, job.payload?.message, job.prompt].find(value => typeof value === 'string')?.substring(0, 120) || '',
       history: readRunHistory(sourceId, scheduler),
       enabled: job.enabled !== false,
       actions: getCronJobActions(job),
@@ -335,24 +374,17 @@ function createCronService({
   }
 
   function toMsOrNull(value) {
-    if (!value) return null;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+    return dateMsOrNull(value);
   }
 
   function normalizeHermesCronJob(job = {}) {
+    if (!job || typeof job !== 'object' || Array.isArray(job)) return { scheduler: 'hermes', id: null, sourceId: null };
     const lastStatus = job.last_status || job.lastStatus || job.state;
     return {
       ...job,
       scheduler: 'hermes',
       sourceId: job.id,
-      schedule: {
-        ...job.schedule,
-        kind: job.schedule?.kind || 'cron',
-        expr: job.schedule?.expr || job.schedule_display || job.schedule?.display || '?',
-        display: job.schedule_display || job.schedule?.display || job.schedule?.expr || '?',
-      },
+      schedule: job.schedule,
       sessionTarget: job.deliver || job.sessionTarget || 'origin',
       payload: {
         kind: job.prompt ? 'agentTurn' : (job.payload?.kind || 'cron'),
@@ -469,7 +501,7 @@ function createCronService({
           const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
           if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron JSON');
           return {
-            jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+            jobs: jobs.map(normalizeOpenclawCronJob),
             sourceSucceeded: true,
             provenance: 'openclaw-cron-cli-json',
             observedAt: new Date().toISOString(),
@@ -484,7 +516,7 @@ function createCronService({
       if (!jobs.length && !/^\s*No cron jobs\b/im.test(stdout || '')) throw new Error('Unrecognized cron table');
       if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron table');
       return {
-        jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+        jobs: jobs.map(normalizeOpenclawCronJob),
         sourceSucceeded: true,
         provenance: 'openclaw-cron-cli-table',
         observedAt: new Date().toISOString(),
@@ -512,7 +544,7 @@ function createCronService({
       if (details?.jobs || Array.isArray(details)) {
         const jobs = Array.isArray(details) ? details : details.jobs;
         return {
-          jobs: (jobs || []).map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+          jobs: (jobs || []).map(normalizeOpenclawCronJob),
           sourceSucceeded: true,
           provenance: 'openclaw-cron-gateway',
           observedAt: new Date().toISOString(),
@@ -522,7 +554,7 @@ function createCronService({
       const result = extractJsonPayload(textResult);
       const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
       return {
-        jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+        jobs: jobs.map(normalizeOpenclawCronJob),
         sourceSucceeded: true,
         provenance: 'openclaw-cron-gateway',
         observedAt: new Date().toISOString(),
@@ -641,9 +673,7 @@ function createCronService({
   }
 
   function toIsoOrNull(value) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    return dateIsoOrNull(value);
   }
 
   function normalizeCalendarEntry(entry = {}, nowIso = new Date().toISOString()) {
@@ -652,8 +682,9 @@ function createCronService({
       id: String(entry.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       title: String(entry.title || 'Untitled').trim() || 'Untitled',
       schedule: entry.schedule === null ? null : (entry.schedule || ''),
-      scheduleKind: entry.scheduleKind || (entry.source === 'cron' ? 'unknown' : 'manual'),
+      scheduleKind: ['cron', 'interval', 'at', 'unknown'].includes(entry.scheduleKind) ? entry.scheduleKind : 'unknown',
       everyMs: entry.everyMs ?? null,
+      atIso: entry.atIso ?? null,
       startsAt: toIsoOrNull(entry.startsAt),
       status: String(entry.status || 'scheduled'),
       assignee: String(entry.assignee || 'Mudur'),
@@ -681,17 +712,20 @@ function createCronService({
     });
   }
 
-  function readCalendarDocument() {
-    let text;
-    try { text = fs.readFileSync(calendarFile, 'utf8'); } catch (error) {
-      if (error.code === 'ENOENT') return { entries: [], updatedAt: null, lastCronSyncAt: null };
+  function readCalendarDocument({ withRaw = false } = {}) {
+    let raw;
+    try { raw = fs.readFileSync(calendarFile); } catch (error) {
+      if (error.code === 'ENOENT') {
+        const document = { entries: [], updatedAt: null, lastCronSyncAt: null };
+        return withRaw ? { document, raw: null } : document;
+      }
       throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
     }
     try {
-      const parsed = JSON.parse(text);
+      const parsed = JSON.parse(raw.toString('utf8'));
       const payload = Array.isArray(parsed) ? { entries: parsed } : parsed;
       if (!payload || !Array.isArray(payload.entries)) throw new Error('Invalid calendar document');
-      return payload;
+      return withRaw ? { document: payload, raw } : payload;
     } catch {
       throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
     }
@@ -717,13 +751,14 @@ function createCronService({
     }
   }
 
-  function writeCalendarDataSafe(payload = {}) {
+  function writeCalendarDataSafe(payload = {}, { originalDocument } = {}) {
     if (!Array.isArray(payload.entries)) throw httpError(400, 'calendar_entry_invalid', 'Calendar entries must be an array');
     payload.entries.forEach(entry => assertCalendarEntry(entry));
     const partition = partitionCalendarEntries(payload.entries);
     if (partition.duplicates.length) throw httpError(400, 'calendar_entry_invalid', 'Calendar entry IDs must be unique');
     const dir = path.dirname(calendarFile);
     const next = {
+      ...originalDocument,
       entries: sortCalendarEntries(payload.entries.map(entry => normalizeCalendarEntry(entry))),
       updatedAt: toIsoOrNull(payload.updatedAt) || new Date().toISOString(),
       lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
@@ -735,19 +770,39 @@ function createCronService({
   }
 
   function repairCalendarData() {
-    const document = readCalendarDocument();
+    try {
+      if (fs.lstatSync(calendarFile).isSymbolicLink()) throw httpError(409, 'calendar_symlink_unsupported', 'Repair requires a regular calendar file; no changes were made');
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        if (error.status) throw error;
+        throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+      }
+    }
+    const { document, raw } = readCalendarDocument({ withRaw: true });
     const { valid, quarantined, duplicates } = partitionCalendarEntries(document.entries);
     const counts = { kept: valid.length, quarantined: quarantined.length, duplicates: duplicates.length };
     if (!quarantined.length && !duplicates.length) return { ok: true, repaired: false, counts, backupPath: null };
     const repairedAt = new Date(now()).toISOString();
     const backup = `${calendarFile}.repair-${repairedAt.replace(/[:.]/g, '-')}-${randomUUID()}.json`;
-    const relative = file => `~/${path.relative(homeDir, file).split(path.sep).join('/')}`;
+    const relative = file => {
+      const publicPath = homeRelativePath(file, { homeDir, fsImpl: fs });
+      return publicPath.startsWith('~') ? publicPath : path.join(path.basename(path.dirname(publicPath)), path.basename(publicPath));
+    };
     try {
-      const mode = fs.statSync(calendarFile).mode & 0o777;
-      // Commit the complete recovery evidence before replacing the source.
+      // Commit the exact original bytes, including unknown root keys, before
+      // replacing the source. Recovery files are always private (0600).
       // If the source rename fails, retain this backup and the original file.
-      writeJsonFileAtomic(backup, { repairedAt, source: relative(calendarFile), quarantined, duplicates }, { fsImpl: fs, mode });
-      writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt });
+      writeFileAtomic(backup, raw, { fsImpl: fs, mode: 0o600 });
+      writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt }, { originalDocument: document });
+      const prefix = `${path.basename(calendarFile)}.repair-`;
+      const backups = fs.readdirSync(path.dirname(calendarFile))
+        .filter(name => name.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f-]{36}\.json$/.test(name.slice(prefix.length)))
+        .map(name => path.join(path.dirname(calendarFile), name))
+        .filter(file => fs.lstatSync(file).isFile())
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs || b.localeCompare(a));
+      // Keep the just-committed recovery point even on coarse timestamp FSs.
+      const retainedOrder = [backup, ...backups.filter(file => file !== backup)];
+      for (const old of retainedOrder.slice(10)) fs.unlinkSync(old);
       return { ok: true, repaired: true, counts, backupPath: relative(backup) };
     } catch {
       throw httpError(503, 'calendar_repair_failed', 'Calendar repair could not be committed safely');
@@ -765,8 +820,33 @@ function createCronService({
         .map((entry) => [String(entry.linkedJobId), entry])
     );
 
-    const syncedCronEntries = cronJobs.map((job) => {
+    const issues = [];
+    const seen = new Set();
+    const syncedCronEntries = cronJobs.flatMap((job) => {
       const previous = existingCronEntries.get(String(job.id)) || {};
+      const reject = (field, code = 'calendar_upstream_entry_invalid') => {
+        issues.push({ id: typeof job.id === 'string' ? redactString(job.id).slice(0, 256) : null, code, field });
+        // Keep a schema-valid last-good row when its upstream replacement is
+        // unusable. Other jobs still refresh, and diagnostics stay in memory.
+        return previous.id ? [previous] : [];
+      };
+      const sourceId = Object.hasOwn(job, 'sourceId') ? job.sourceId : job.id;
+      if (typeof sourceId !== 'string' || !sourceId.trim() || typeof job.id !== 'string' || !job.id.trim() || job.id.length > 256) return reject('id');
+      if (seen.has(job.id)) {
+        issues.push({ id: redactString(job.id).slice(0, 256), code: 'calendar_upstream_duplicate_id', field: 'id' });
+        return [];
+      }
+      seen.add(job.id);
+      if (job.name !== undefined && entryIssue({ id: 'check', title: job.name })) return reject('title');
+      for (const field of ['text', 'message']) {
+        if (job.payload && Object.hasOwn(job.payload, field) && typeof job.payload[field] !== 'string') return reject(`payload.${field}`);
+      }
+      for (const field of ['lastRunAtMs', 'nextRunAtMs']) {
+        if (job.state?.[field] != null && (typeof job.state[field] !== 'number' || dateMsOrNull(job.state[field]) === null)) return reject(field, 'calendar_upstream_timestamp_invalid');
+      }
+      for (const field of ['last_run_at', 'next_run_at', 'lastRunAt', 'nextRunAt']) {
+        if (job[field] != null && dateMsOrNull(job[field]) === null) return reject(field, 'calendar_upstream_timestamp_invalid');
+      }
       const schedule = describeCronSchedule(job);
       const cronDerived = {
         title: job.name || String(job.id || 'Cron job'),
@@ -783,8 +863,9 @@ function createCronService({
         ...cronDerived,
         scheduleKind: schedule.scheduleKind,
         everyMs: schedule.everyMs,
+        atIso: schedule.atIso,
         id: previous.id || `cron-${job.id}`,
-        startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
+        startsAt: dateIsoOrNull(job.state?.nextRunAtMs),
         status: normalizeCronRunStatus(job),
         source: 'cron',
         linkedJobId: job.id,
@@ -795,13 +876,18 @@ function createCronService({
         cronDerived,
       };
       for (const field of derived.userOverrides) derived[field] = previous[field];
-      return normalizeCalendarEntry(derived, syncedAtIso);
+      // Validate the upstream baseline as well as the overlaid row: a user
+      // override must not conceal an invalid scheduler value in cronDerived.
+      const issue = entryIssue(derived);
+      if (issue) return reject(issue);
+      return [normalizeCalendarEntry(derived, syncedAtIso)];
     });
 
     return {
       entries: [...manualEntries, ...syncedCronEntries],
       updatedAt: syncedAtIso,
       lastCronSyncAt: syncedAtIso,
+      upstream: { count: issues.length, ids: issues.map(issue => issue.id), issues },
     };
   }
 
@@ -819,8 +905,8 @@ function createCronService({
         ? `openclaw:${entry.linkedJobId}` : entry.linkedJobId,
     })) };
     // Namespaced IDs prevent two schedulers with the same local ID colliding.
-    const cronJobs = evidence.jobs.filter(job => observed.includes(job.scheduler || 'openclaw'))
-      .map(job => ({ ...job, id: getCronJobApiId(job) }));
+    const cronJobs = evidence.jobs.filter(job => observed.includes(job?.scheduler || 'openclaw'))
+      .map(job => ({ ...job, sourceId: job?.sourceId ?? job?.id ?? null, id: getCronJobApiId(job || {}) }));
     const preserved = current.entries.filter(entry => {
       if (entry.source !== 'cron' || !entry.linkedJobId) return false;
       const scheduler = String(entry.linkedJobId).startsWith('hermes:') ? 'hermes' : 'openclaw';
@@ -828,7 +914,7 @@ function createCronService({
     });
     const merged = mergeCalendarEntriesWithCronJobs(current, cronJobs, new Date(now()).toISOString());
     merged.entries.push(...preserved);
-    return writeCalendarDataSafe(merged);
+    return { ...writeCalendarDataSafe(merged), upstream: merged.upstream };
   }
 
   async function syncCalendarWithLiveCron() {

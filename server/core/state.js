@@ -2,15 +2,18 @@
 
 // The one state vocabulary and its one ordering, for every area (GBrain
 // verdict and synoptic, Operations, signals, the timeline ledger) and equal
-// to the frontend's worstState (frontend/src/lib/state.ts; a test compares
-// the two). Worst first:
+// to the frontend's worstState (frontend/src/lib/state.ts). Worst first:
 //
 //   critical > warning > unavailable > healthy > inactive
 //
 // An observed condition outranks missing evidence; missing evidence still
 // outranks healthy (absence of evidence is not green); inactive never
-// degrades an aggregate. tests/scrubAndStateFinal.test.js fails when another
-// rank table or state-order array appears under server/.
+// degrades an aggregate.
+//
+// Guarded by behaviour, not by source text: tests/fixtures/state-order.json
+// lists the expected result for every pair of states, and both
+// tests/scrubAndStateFinal.test.js (every backend consumer's aggregation) and
+// frontend/src/lib/state.test.ts (the frontend worstState) execute against it.
 
 const STATE_ORDER = Object.freeze(['critical', 'warning', 'unavailable', 'healthy', 'inactive']);
 const STATE_RANK = Object.freeze(Object.fromEntries(STATE_ORDER.map((state, index) => [state, STATE_ORDER.length - 1 - index])));

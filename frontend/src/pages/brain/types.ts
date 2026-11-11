@@ -33,7 +33,10 @@ export interface SynopticSource extends Evidence {
   label: string
   lastSyncAt?: string | null
   behind?: number | null
+  /** The source is outside freshness scoring (sync disabled or not sync-tracked): the server's own policy result. */
   excludedByPolicy?: boolean | null
+  /** Why the source is in its state ("sync disabled", "never synced"…), in the server's words; null when there is none. */
+  reason?: string | null
 }
 
 export interface SynopticSourceGroup extends Evidence {
@@ -42,9 +45,16 @@ export interface SynopticSourceGroup extends Evidence {
   items: SynopticSource[]
 }
 
+export type ReaderObservation = 'configured' | 'observed' | 'not_configured' | 'unreadable'
+
 export interface SynopticReader extends Evidence {
   id: string
   label: string
+  /**
+   * What kind of reading the state rests on. A configuration read cannot prove a connection, so
+   * `configured` is neutral; `observed` is reserved for real connection telemetry and carries the state colours.
+   */
+  observation?: ReaderObservation
   /** Configuration evidence. Connection telemetry is not observable locally, so there is no connection object. */
   integration?: Evidence & { configured: boolean | null; evidence: string }
 }
@@ -159,6 +169,8 @@ export interface SourceRecord {
   }
   behind?: number | null
   excludedByPolicy?: boolean | null
+  /** Same wording as the synoptic source's `reason`. */
+  reason?: string | null
 }
 
 /** GET /api/gbrain/sources */
@@ -189,10 +201,12 @@ export interface TimelineEntry {
   capturedAt: string
   trust: {
     label: string
-    /** The ledger folds "unavailable" into critical and says so in `label`. */
+    /** The entry's own state when it has no `verdict` (older entries). */
     status: 'healthy' | 'warning' | 'critical' | 'inactive' | 'unavailable'
     score: number | null
   }
+  /** The shared verdict captured with the reading; its state is the entry's state. Older entries have none. */
+  verdict?: { state: string; reasons: Array<{ elementId: string; state: string; text: string }> }
   metrics: Record<string, string | number | null>
   sourceFreshness: { status: 'healthy' | 'warning' | 'critical' | 'inactive' }
   warnings: string[]
@@ -260,6 +274,8 @@ export interface OperationSystem {
   observedAt: string | null
   freshness: FreshnessState
   caveats: string[]
+  /** The shared verdict captured with the reading; its state is the entry's state. Older entries have none. */
+  verdict?: { state: string; reasons: Array<{ elementId: string; state: string; text: string }> }
   metrics: Record<string, string | number | null>
   evidence: EvidenceItem[]
   detailHref: string

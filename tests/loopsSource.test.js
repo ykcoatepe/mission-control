@@ -143,8 +143,8 @@ test('Argus counter-example: restricted projects expose counts only and are neve
   const view = loopsView(data);
   const argus = view.projects.find((p) => p.id === 'argus-live');
   assert.deepEqual(argus, {
-    id: 'argus-live', restricted: true, openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3,
-    operatorFindings: 2, worstSeverity: 'error', countsBasis: 'mloop-check',
+    id: 'argus-live', restricted: true, restrictedBy: 'marker', openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3,
+    operatorFindings: 2, operatorConfirmations: 3, worstSeverity: 'error', countsBasis: 'mloop-check',
   });
   const disguised = view.projects.find((p) => p.id === 'disguised');
   assert.equal(disguised.restricted, true);
@@ -215,7 +215,7 @@ test('a failed refresh keeps the last good ledger view and marks it stale', asyn
   assert.equal(snap.meta.error.code, 'mloop_timeout');
 });
 
-test('a failed per-project part is reported as an error and null, not an empty list', async () => {
+test('a failed per-project part fails closed: counts only, the error named, no partial text', async () => {
   const base = fakeExec();
   const exec = {
     calls: [],
@@ -227,8 +227,11 @@ test('a failed per-project part is reported as an error and null, not an empty l
   const { source } = makeSource({ exec });
   await source.refresh();
   const gbrain = loopDetailView(source.snapshot().data, 'gbrain-maint');
-  assert.equal(gbrain.participants, null);
+  assert.equal(gbrain.restricted, true);
+  assert.equal(gbrain.restrictedBy, 'unverified');
   assert.deepEqual(gbrain.errors, [{ part: 'participants', code: 'mloop_ledger_locked' }]);
+  assert.equal(gbrain.openFindings, 2);
+  assert.equal('participants' in gbrain || 'title' in gbrain || 'statusMarkdown' in gbrain, false);
 });
 
 test('GET /api/loops never runs mloop', async () => {

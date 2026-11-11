@@ -7,7 +7,6 @@ import {
   formatTokens,
   formatTokenPhrase,
   canonicalModelName,
-  isLocalModel,
 } from './lib'
 import type { ChartDataRow, ChartSeriesItem, AWSSCostData } from './types'
 import styles from './DailySpendSection.module.css'
@@ -46,16 +45,13 @@ function ChartTooltip({
           const dataKey = String(entry.dataKey || '')
           const model = String(entry.name || dataKey)
           const tokens = Number(data[`${dataKey}__tokens`] || 0)
-          const local = isLocalModel(model)
           return (
             <li key={dataKey} className={styles.tooltipRow}>
               <span className={styles.tooltipName}>
                 <span className={styles.dot} style={{ background: entry.color }} />
                 <span className={styles.nameText}>{canonicalModelName(model)}</span>
               </span>
-              <Mono>
-                {local ? `${formatTokens(tokens)} tok` : `${formatCurrency(Number(entry.value || 0))} · ${formatTokens(tokens)} tok`}
-              </Mono>
+              <Mono>{`${formatCurrency(Number(entry.value || 0))} · ${formatTokens(tokens)} tok`}</Mono>
             </li>
           )
         })}
@@ -138,7 +134,6 @@ function buildDaySegments(day: ChartDataRow, chartSeries: ChartSeriesItem[]) {
       value: Number(day[series.key] || 0),
       tokens: Number(day[`${series.key}__tokens`] || 0),
       color: series.color,
-      local: isLocalModel(series.model),
     }))
     .filter(segment => segment.value > 0 || segment.tokens > 0)
 }
@@ -207,7 +202,7 @@ export default function DailySpendSection({
             <li key={segment.key} className={styles.segment}>
               <span className={styles.dot} style={{ background: segment.color }} />
               <span className={styles.nameText}>{canonicalModelName(segment.label)}</span>
-              <Mono muted>{segment.local ? `${formatTokens(segment.tokens)} tok` : formatCurrency(segment.value)}</Mono>
+              <Mono muted>{segment.value > 0 ? formatCurrency(segment.value) : `${formatTokens(segment.tokens)} tok`}</Mono>
             </li>
           ))}
         </ul>

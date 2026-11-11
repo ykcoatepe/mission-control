@@ -5,7 +5,7 @@ const { redactString } = require('../core/config');
 
 const CALENDAR_EDITABLE_FIELDS = Object.freeze(['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes']);
 const CRON_OVERRIDABLE_FIELDS = Object.freeze(['title', 'schedule', 'assignee', 'notes']);
-const CRON_OWNED_FIELDS = Object.freeze(['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs', 'scheduleKind', 'everyMs']);
+const CRON_OWNED_FIELDS = Object.freeze(['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs', 'scheduleKind', 'everyMs', 'atIso']);
 const STATUS_VALUES = Object.freeze(['scheduled', 'active', 'running', 'done', 'failed', 'disabled', 'cancelled', 'idle']);
 const SOURCE_VALUES = Object.freeze(['cron', 'manual', 'assistant']);
 
@@ -18,6 +18,7 @@ const ENTRY_SCHEMA = Object.freeze({
   schedule: { type: 'string', nullable: true, max: 1024 },
   scheduleKind: { type: 'enum', values: ['interval', 'interval_unknown', 'cron', 'at', 'unknown', 'manual'] },
   everyMs: { type: 'number', nullable: true, integer: true, minExclusive: 0 },
+  atIso: { type: 'date', nullable: true, max: 64 },
   startsAt: { type: 'date', nullable: true, max: 64 },
   status: { type: 'enum', values: STATUS_VALUES },
   assignee: { type: 'string', max: 256 },

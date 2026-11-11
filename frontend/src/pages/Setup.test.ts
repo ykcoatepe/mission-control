@@ -18,7 +18,7 @@ const STATUS = {
   gatewayRunning: null,
   gatewayPort: 18789,
   gatewayVersion: null,
-  detectedConfig: { model: 'amazon-bedrock/claude', channels: null, agentName: 'Mudur', workspacePath: '/work', gatewayTokenConfigured: true },
+  detectedConfig: { dashboardName: 'Mission Control', model: 'amazon-bedrock/claude', channels: null, agentName: 'Mudur', workspacePath: '/work', gatewayTokenConfigured: true },
 }
 
 interface Sent {
@@ -137,7 +137,7 @@ describe('Setup', () => {
     expect(host.textContent).not.toContain('Setup saved')
     expect(sent[0].url).toBe('/api/setup')
     expect(sent[0].headers.get('x-mc-request')).toBe('1')
-    expect(JSON.parse(sent[0].body)).toEqual({ dashboardName: 'Mudur' })
+    expect(JSON.parse(sent[0].body)).toEqual({ dashboardName: 'Mission Control' })
     await act(async () => finish(json({ success: true })))
     await flush()
     expect(host.textContent).toContain('Setup saved')
@@ -166,7 +166,7 @@ describe('Setup', () => {
       input.dispatchEvent(new Event('input', { bubbles: true }))
     })
     await click(host, 'Save and finish')
-    expect(JSON.parse(sent[0].body)).toEqual({ dashboardName: 'Mudur', gateway: { token: 'typed-token' } })
+    expect(JSON.parse(sent[0].body)).toEqual({ dashboardName: 'Mission Control', gateway: { token: 'typed-token' } })
     await act(async () => root.unmount())
   })
 

@@ -27,6 +27,7 @@ function buildCalendarRouter({ calendarService, calendarSource }) {
         entries: synced.entries,
         updatedAt: synced.updatedAt,
         lastCronSyncAt: synced.lastCronSyncAt,
+        upstream: synced.upstream,
       });
     } catch (error) {
       return next(error);

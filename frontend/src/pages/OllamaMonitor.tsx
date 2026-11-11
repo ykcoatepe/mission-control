@@ -33,9 +33,12 @@ import {
   formatMiB,
   formatSize,
   formatTokens,
-  gpuLoadLabel,
+  aggregateLocalTokenUsage,
+  canonicalLocalModelName,
+  countUnknownLocality,
   splitLocalTokens,
 } from './ollamaFormat'
+import type { TokenServiceUsage } from './ollamaFormat'
 import styles from './OllamaMonitor.module.css'
 
 type OllamaModel = {
@@ -58,16 +61,20 @@ type OllamaGpuDevice = {
   vendor?: string | null
   cores?: string | null
   utilGpu?: number | null
-  utilMemory?: number | null
-  memTotalMiB?: number | null
+  /** Apple tiler utilization (not memory utilization). */
+  tilerUtilPercent?: number | null
+  /** Unified memory allocated to the GPU; not the hardware total. */
+  memAllocatedMiB?: number | null
+  /** Hardware capacity; null where the probe cannot measure it. */
+  memHardwareTotalMiB?: number | null
   memUsedMiB?: number | null
-  memFreeMiB?: number | null
   tempC?: number | null
   powerDraw?: number | null
   powerLimit?: number | null
   memUsedEstimate?: boolean
   metricSource?: string | null
-  memorySource?: string | null
+  /** The server's plain-words note on what the counters measure. */
+  metricSourceNote?: string | null
 }
 
 type OllamaGpu = {
@@ -131,18 +138,6 @@ type OllamaModelTelemetryResponse = {
   models: OllamaModelTelemetryItem[]
 }
 
-type TokenServiceUsage = {
-  name: string
-  cost?: number
-  tokens?: number
-  sessions?: number
-  percentage?: number
-  agent?: string
-  costSource?: string
-  costStatus?: string
-  billingModes?: string
-}
-
 type TokenUsageResponse = {
   source?: string
   period?: { key?: string; start?: string | null; end?: string | null }
@@ -160,15 +155,6 @@ type TokenUsageResponse = {
     preservedPreviousOpenClaw?: boolean
     preservedPreviousUsage?: boolean
   }
-}
-
-type ModelTokenUsage = {
-  tokens: number
-  sessions: number
-  cost: number
-  percentage: number
-  sources: string[]
-  costSources: string[]
 }
 
 type OllamaTelemetry = {
@@ -254,7 +240,7 @@ function hasAnyGpuMetricValue(
     const memUsed = Number.isFinite(device.memUsedMiB as number) && (!device.memUsedEstimate || includeEstimated)
       ? device.memUsedMiB
       : null
-    return [device.utilGpu, device.utilMemory, device.tempC, device.powerDraw, device.powerLimit, memUsed].some((value) => Number.isFinite(value as number))
+    return [device.utilGpu, device.tilerUtilPercent, device.tempC, device.powerDraw, device.powerLimit, memUsed].some((value) => Number.isFinite(value as number))
   })
 }
 
@@ -287,37 +273,6 @@ function formatMetric(value?: number | null, digits = 2) {
 function formatErrorRate(rate?: number | null) {
   if (!Number.isFinite(rate as number)) return '—'
   return (Number(rate) * 100).toFixed(1) + '%'
-}
-
-function canonicalLocalModelName(value?: string | null) {
-  return String(value || '')
-    .trim()
-    .replace(/^(OpenClaw|Hermes)\s*\/\s*/i, '')
-    .replace(/^(ollama|custom|lmstudio|local)\//i, '')
-    .replace(/:latest$/i, '')
-    .toLowerCase()
-}
-
-function aggregateLocalTokenUsage(services: TokenServiceUsage[] = []) {
-  const usage = new Map<string, ModelTokenUsage>()
-  for (const service of services) {
-    const rawName = String(service.name || '')
-    const localLike = /(^|\/\s*)(ollama|custom|lmstudio|local)\//i.test(rawName)
-    if (!localLike) continue
-    const key = canonicalLocalModelName(rawName)
-    if (!key) continue
-    const existing = usage.get(key) || { tokens: 0, sessions: 0, cost: 0, percentage: 0, sources: [], costSources: [] }
-    existing.tokens += Number(service.tokens || 0)
-    existing.sessions += Number(service.sessions || 0)
-    existing.cost += Number(service.cost || 0)
-    existing.percentage += Number(service.percentage || 0)
-    const source = String(service.agent || '').trim() || rawName.split('/')[0]?.trim()
-    if (source && !existing.sources.includes(source)) existing.sources.push(source)
-    const costSource = String(service.costSource || service.costStatus || service.billingModes || '').trim()
-    if (costSource && !existing.costSources.includes(costSource)) existing.costSources.push(costSource)
-    usage.set(key, existing)
-  }
-  return usage
 }
 
 /** Health-score trend: absolute 0-100 scale, so a flat line near the top reads as flat. */
@@ -399,6 +354,7 @@ export default function OllamaMonitor() {
   const requestFiguresUnmeasured = !!modelTelemetryData && !modelTelemetryIsEstimated && !requestFiguresMeasured
   const modelMetricMap = useMemo(() => new Map(modelMetrics.map((metric) => [metric.name, metric])), [modelMetrics])
   const modelTokenUsageMap = useMemo(() => aggregateLocalTokenUsage(tokenUsageData?.byService || []), [tokenUsageData?.byService])
+  const unknownLocality = useMemo(() => countUnknownLocality(tokenUsageData?.byService || []), [tokenUsageData?.byService])
   const tokenSplit = useMemo(
     () =>
       splitLocalTokens(
@@ -591,7 +547,7 @@ export default function OllamaMonitor() {
   ) : null
 
   const panelDescription = tokenUsageData
-    ? describeTokenUsage(tokenSplit, periodLabel)
+    ? describeTokenUsage(tokenSplit, periodLabel, unknownLocality)
     : tokenUsageQuery.isFetching && !tokenUsageError
       ? 'Reading token usage…'
       : undefined
@@ -600,9 +556,9 @@ export default function OllamaMonitor() {
     gpu?.limited || gpu?.platform === 'darwin' ? presentText(gpu?.limitation) : null,
     firstGpuDevice?.memUsedEstimate
       ? 'Memory is estimated from the size of the loaded models; this system does not expose per-process GPU memory.'
-      : firstGpuDevice?.memorySource === 'apple-ioreg-unified-memory'
-        ? 'Memory is read from Apple unified-memory counters, not discrete VRAM.'
-        : null,
+      : null,
+    // What the counters measure, in the server's own words.
+    presentText(firstGpuDevice?.metricSourceNote),
   ].filter(Boolean) as string[]
 
   return (
@@ -739,10 +695,10 @@ export default function OllamaMonitor() {
         <Panel title="GPU" description={hasLiveGpuMetrics ? undefined : 'Live GPU counters are not exposed on this system.'}>
           <div className={styles.gpuList}>
             {gpuDevices.map((device) => {
-              const utilMemory = finiteNumber(device.utilMemory)
+              const tilerUtil = finiteNumber(device.tilerUtilPercent)
               const memUsed = finiteNumber(device.memUsedMiB)
-              const memTotal = finiteNumber(device.memTotalMiB)
-              const memFree = finiteNumber(device.memFreeMiB)
+              const memAllocated = finiteNumber(device.memAllocatedMiB)
+              const memHardware = finiteNumber(device.memHardwareTotalMiB)
               const tempC = finiteNumber(device.tempC)
               const powerDraw = finiteNumber(device.powerDraw)
               const powerLimit = finiteNumber(device.powerLimit)
@@ -758,17 +714,15 @@ export default function OllamaMonitor() {
                       <DetailRow label={device.memUsedEstimate ? 'Memory (estimated)' : 'Memory used'}>
                         <Mono>
                           {formatMiB(memUsed)}
-                          {memTotal !== null
-                            ? ` of ${formatMiB(memTotal)}${device.memorySource === 'apple-ioreg-unified-memory' ? ' allocated' : ''}`
-                            : ''}
+                          {memAllocated !== null ? ` of ${formatMiB(memAllocated)} allocated` : ''}
+                          {memHardware !== null ? ` · ${formatMiB(memHardware)} installed` : ''}
                         </Mono>
-                        {memTotal !== null ? (
-                          <Meter value={memUsed} max={memTotal} label="GPU memory used" />
+                        {memAllocated !== null ? (
+                          <Meter value={memUsed} max={memAllocated} label="GPU memory used of allocated" />
                         ) : null}
                       </DetailRow>
                     ) : null}
-                    {memFree !== null ? <DetailRow label="Memory free"><Mono>{formatMiB(memFree)}</Mono></DetailRow> : null}
-                    {utilMemory !== null ? <DetailRow label={gpuLoadLabel(device.metricSource)}><Mono>{Math.round(utilMemory)}%</Mono></DetailRow> : null}
+                    {tilerUtil !== null ? <DetailRow label="Tiler load"><Mono>{Math.round(tilerUtil)}%</Mono></DetailRow> : null}
                     {tempC !== null ? <DetailRow label="Temperature"><Mono>{Math.round(tempC)} °C</Mono></DetailRow> : null}
                     {powerDraw !== null || powerLimit !== null ? (
                       <DetailRow label="Power">

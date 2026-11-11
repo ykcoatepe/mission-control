@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw } from 'lucide-react'
 import {
   Button,
+  Dialog,
   Drawer,
   ErrorState,
   FilterChips,
@@ -18,7 +19,7 @@ import {
   cx,
   useToast,
 } from '../../components/ui'
-import { postJson, sendJson, useApi, writeFailureMessage } from '../../lib/hooks'
+import { describeApiError, postJson, sendJson, useApi, writeFailureMessage } from '../../lib/hooks'
 import { useNow } from '../../lib/useNow'
 import { Link } from 'react-router-dom'
 import { scheduleDisplay } from './cronSchedule'
@@ -26,11 +27,14 @@ import { planWeek } from './weekPlan'
 import { oneOf, useQueryParam } from './urlState'
 import EntryDialog from './EntryDialog'
 import type { EntryChange } from './EntryDialog'
-import type { CalendarEntry, CalendarPayload } from './scheduleLib'
+import type { CalendarEntry, CalendarPayload, RepairResult } from './scheduleLib'
 import {
   ASSIGNEE_OPTIONS,
   SOURCE_OPTIONS,
   calendarNotices,
+  repairDescription,
+  repairOffer,
+  repairResultMessage,
   entryState,
   entryStatusLabel,
   formatDayHeader,
@@ -67,6 +71,9 @@ export default function ScheduleView() {
   const toast = useToast()
   const now = useNow()
   const [syncing, setSyncing] = useState(false)
+  const [repairOpen, setRepairOpen] = useState(false)
+  const [repairing, setRepairing] = useState(false)
+  const [repairError, setRepairError] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ entry: CalendarEntry | null } | null>(null)
   // Range, week, filters and search live in the URL, so a reload or a shared link keeps them.
   const [rangeParam, setRangeParam] = useQueryParam('range')
@@ -163,6 +170,28 @@ export default function ScheduleView() {
     }
   }
 
+  const closeRepair = () => {
+    if (repairing) return
+    setRepairOpen(false)
+    setRepairError(null)
+  }
+
+  /** One POST, after the person confirmed. A refusal (409: the file cannot be parsed) keeps the dialog open with the server's words. */
+  const handleRepair = async () => {
+    setRepairing(true)
+    setRepairError(null)
+    try {
+      const result = await postJson<RepairResult>('/api/calendar/repair')
+      setRepairOpen(false)
+      toast.show('success', repairResultMessage(result), { duration: 12000 })
+      await refetch()
+    } catch (err) {
+      setRepairError(describeApiError(err))
+    } finally {
+      setRepairing(false)
+    }
+  }
+
   /** Throws when the server refuses, so the dialog can show its message and stay open. */
   const saveEntry = async (change: EntryChange) => {
     if (change.kind === 'create') {
@@ -219,6 +248,9 @@ export default function ScheduleView() {
 
   const detailState = detailEntry ? entryState(detailEntry.status) : null
   const notices = calendarNotices(data)
+  const offer = repairOffer(data)
+  // One button, on the first notice about the rows a repair would move.
+  const repairNoticeId = offer ? notices.find((notice) => notice.id === 'quarantined' || notice.id === 'duplicates')?.id : undefined
   const blocked = writesBlocked(data)
   const detailJobHref = detailEntry && isLinkedEntry(detailEntry) ? jobHref(detailEntry) : null
 
@@ -295,10 +327,45 @@ export default function ScheduleView() {
       </div>
 
       {notices.map((notice) => (
-        <Notice key={notice.id} tone={notice.tone} title={notice.title}>
+        <Notice
+          key={notice.id}
+          tone={notice.tone}
+          title={notice.title}
+          action={
+            notice.id === repairNoticeId ? (
+              <Button size="sm" onClick={() => setRepairOpen(true)}>
+                Repair calendar
+              </Button>
+            ) : undefined
+          }
+        >
           {notice.body}
         </Notice>
       ))}
+
+      <Dialog
+        open={repairOpen && offer !== null}
+        onClose={closeRepair}
+        role="alertdialog"
+        title="Repair the calendar?"
+        description={offer ? repairDescription(offer) : undefined}
+        actions={
+          <>
+            <Button data-autofocus onClick={closeRepair} disabled={repairing}>
+              Cancel
+            </Button>
+            <Button variant="primary" loading={repairing} onClick={handleRepair}>
+              Repair calendar
+            </Button>
+          </>
+        }
+      >
+        {repairError && (
+          <Notice tone="critical" title="The calendar was not repaired">
+            {repairError}
+          </Notice>
+        )}
+      </Dialog>
 
       <div className={cx(styles.grid, mode === 'today' && styles.gridToday)}>
         {visibleDays.map((day) => {
@@ -374,7 +441,7 @@ export default function ScheduleView() {
           </p>
           <ul className={styles.unplacedList}>
             {plan.unplaced.map(({ entry, reason }) => {
-              const schedule = scheduleDisplay(entry.schedule)
+              const schedule = scheduleDisplay(entry.schedule, entry.scheduleKind)
               return (
                 <li key={entry.id}>
                   <button type="button" className={styles.unplacedItem} onClick={() => setDetailId(entry.id)}>
@@ -431,10 +498,10 @@ export default function ScheduleView() {
                 <dt>Schedule</dt>
                 <dd>
                   {detailEntry.schedule ? (
-                    scheduleDisplay(detailEntry.schedule).raw ? (
+                    scheduleDisplay(detailEntry.schedule, detailEntry.scheduleKind).raw ? (
                       <Mono>{detailEntry.schedule}</Mono>
                     ) : (
-                      scheduleDisplay(detailEntry.schedule).text
+                      scheduleDisplay(detailEntry.schedule, detailEntry.scheduleKind).text
                     )
                   ) : (
                     formatTimeLabel(detailEntry.startsAt)

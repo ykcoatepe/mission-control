@@ -234,17 +234,21 @@ Pages talk to the backend through one module.
 - **Sidebar.** Brand (mark + name from `/api/config`), then single-line items
   (icon + label) in groups: Brain (no label), Operate, Know, Run; Settings
   and Audit at the bottom. A count appears on an item only when something there
-  is abnormal (from `/api/signals`): Automations = enabled jobs whose last run failed (red). Collapses
+  is abnormal (from `/api/signals`): Automations = enabled jobs whose last run failed (red),
+  Attention = `attention.count` (the same number as the top-bar pill and the Attention page's first
+  stat; its breakdown is secondary text, a part that was not read says "not read"). Collapses
   to a 56px icon rail with tooltips (choice persists in `localStorage`
   `mc-sidebar-collapsed`). Under 900px it is an off-canvas drawer opened from the
   top bar's menu button (scrim, Esc, closes on navigation).
 - **Top bar.** The page title is the single `h1`, taken from the `Page` title
   (fallback: the route label). Right side: system annunciators (GBrain, Hermes,
   OpenClaw: dim when healthy, lit in the state colour with the state word when
-  not, each links to its `detailHref`; neutral "reading…" until the first load
+  not, each links to its `detailHref` when that is a live screen, and shows the server's `reason`
+  as its tooltip; neutral "reading…" until the first load
   completes; a "healthy" system whose reading is stale or unread is lit as
-  stale or not read), the attention pill ("2 need attention", links to `/attention`,
-  hidden at zero), the command palette trigger, data age of the signals reading with a
+  stale or not read), the attention pill ("2 need attention" is `attention.count`, never a sum or a maximum made in
+  the browser; its breakdown "3 systems · 23 findings · 3 overdue" is secondary text; links to
+  `/attention`, hidden at zero), the command palette trigger, data age of the signals reading with a
   refresh button (refetches all on-screen API reads) and theme toggle (dark/light,
   `data-theme` on `<html>`, persisted as `mc-theme`, default dark). There is no
   assistant chat.
@@ -300,10 +304,10 @@ restyling them.
 | Page | Question | First viewport |
 | --- | --- | --- |
 | Brain | Is the brain healthy and does anything need me? | One verdict line with a Run check button; views Health and Knowledge (`?view=`). Health: the system synoptic, maintenance actions (Check and Change groups, Change asks first) and readings. Knowledge: knowledge search and the page reader. |
-| Attention | What is waiting for you? | Summary strip (projects with open items, open findings, pending confirmations, overdue confirmations); filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
-| Automations | Did my jobs run, what runs next? | Summary strip (active, paused, failed, next run); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid. |
+| Attention | What is waiting for you? | Summary strip (need attention: the same number as the pill and the badge, projects with open items, open findings, pending confirmations); tables show a finding's bounded `summary`, the drawer its full `detail`; filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
+| Automations | Did my jobs run, what runs next? | Summary strip (active, paused, failed, next run); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid; when the calendar read reports malformed or duplicate rows and `meta.repairAvailable`, its notice offers "Repair calendar" (a confirmation, then one guarded `POST /api/calendar/repair`). |
 | Usage | What did I spend, am I on track? | One figure for the period with budget meter and projection; daily chart; drivers table (model/agent/source tabs). Estimate vs billed is explained once, in a note. |
-| Services | Is everything that should be running, running? | Reachability strip (OpenClaw gateway, Hermes gateway, Ollama); filter chips and search; launchd services table. |
+| Services | Is everything that should be running, running? | Reachability strip (OpenClaw gateway, Hermes gateway, Ollama); the verdict and the All, Down and Unidentified chips read the server's `summary`; filter chips and search; launchd services table. |
 | Local models | Is Ollama OK? | Verdict line; `StatRow` (health, memory, GPU, loaded); models table with expandable detail. |
 | Audit | What was decided? | Archive notice (one line); decisions table with search and filters; decision drawer. |
 | Settings | — | Sections as panels: Models, Heartbeat, Budget, Appearance (theme), Connection, Backup. Real values only; a failed read shows `ErrorState`. |

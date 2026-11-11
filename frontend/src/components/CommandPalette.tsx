@@ -82,7 +82,7 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
       (cron?.jobs ?? []).map((job) => ({
         id: `job:${job.id}`,
         label: job.name || job.id,
-        subtitle: job.schedule,
+        subtitle: job.schedule ?? (job.scheduleKind === 'interval_unknown' ? 'Interval not reported' : undefined),
         run: () => navigate(`/automations?job=${encodeURIComponent(job.id)}`),
       })),
     [cron, navigate],

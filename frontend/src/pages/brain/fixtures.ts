@@ -41,7 +41,7 @@ export function minimalSynoptic(): GBrainSynoptic {
     core: { state: 'unavailable', observedAt: null },
     sources: [],
     queue: { state: 'unavailable', observedAt: null },
-    readers: [{ id: 'hermes', label: 'Hermes', state: 'unavailable', observedAt: null }],
+    readers: [{ id: 'hermes', label: 'Hermes', state: 'unavailable', observation: 'unreadable', observedAt: null }],
     edges: [],
   }
 }
@@ -54,13 +54,16 @@ export function synoptic(overrides: Partial<GBrainSynoptic> = {}): GBrainSynopti
     observedAt: AT,
     lastSyncAt: AT,
     behind: null,
-    excludedByPolicy: null,
+    excludedByPolicy: false,
+    reason: null,
     ...extra,
   })
+  // As the server sends it: a configuration read is inactive state with observation 'configured'.
   const reader = (id: string, label: string) => ({
     id,
     label,
-    state: 'healthy' as const,
+    state: 'inactive' as const,
+    observation: 'configured' as const,
     observedAt: AT,
     integration: { configured: true, state: 'healthy' as const, observedAt: AT, evidence: 'local MCP configuration' },
   })
@@ -78,21 +81,21 @@ export function synoptic(overrides: Partial<GBrainSynoptic> = {}): GBrainSynopti
       observedAt: AT,
     },
     sources: [
-      { id: 'projects', label: 'projects', state: 'healthy', observedAt: AT, items: [item('mission-control'), item('off', { state: 'inactive' })] },
+      { id: 'projects', label: 'projects', state: 'healthy', observedAt: AT, items: [item('mission-control'), item('off', { state: 'inactive', excludedByPolicy: true, reason: 'sync disabled' })] },
       { id: 'reference', label: 'reference', state: 'healthy', observedAt: AT, items: [item('a320-manuals')] },
     ],
     sourcesState: 'healthy',
     queue: { state: 'healthy', observedAt: AT, waiting: m(0, 'jobs'), active: m(0, 'jobs'), stalled: m(0, 'jobs') },
     readers: [reader('hermes', 'Hermes'), reader('codex', 'Codex')],
-    readersState: 'healthy',
+    readersState: 'inactive',
     readersNote: 'connection telemetry is not observable locally',
     edges: [
       { from: 'mission-control', to: 'gbrain', state: 'healthy', label: 'time since source sync', unit: 'seconds', observedAt: AT, measurement: m(240, 'seconds') },
       { from: 'off', to: 'gbrain', state: 'inactive', label: 'time since source sync', unit: 'seconds', observedAt: AT, measurement: m(54000, 'seconds') },
       { from: 'a320-manuals', to: 'gbrain', state: 'healthy', label: 'time since source sync', unit: 'seconds', observedAt: AT, measurement: m(270, 'seconds') },
       { from: 'queue', to: 'gbrain', state: 'healthy', label: 'embedding jobs waiting', unit: 'jobs', observedAt: AT, measurement: m(0, 'jobs') },
-      { from: 'hermes', to: 'gbrain', state: 'healthy', label: 'configured', observedAt: AT },
-      { from: 'codex', to: 'gbrain', state: 'healthy', label: 'configured', observedAt: AT },
+      { from: 'hermes', to: 'gbrain', state: 'inactive', label: 'configured', observedAt: AT },
+      { from: 'codex', to: 'gbrain', state: 'inactive', label: 'configured', observedAt: AT },
     ],
     ...overrides,
   }

@@ -18,7 +18,6 @@ import type {
 import {
   formatSessionName,
   canonicalModelName,
-  isLocalModel,
   toChartKey,
   calculateTrend,
   summarizeCostReliability,
@@ -31,6 +30,7 @@ import {
   previousCodexbarRows,
   buildCodexbarChartData,
   comparisonLabels,
+  previousWindowDays,
   daysInMonthKey,
   previousMonthKey,
   isPastMonthAnchor,
@@ -542,6 +542,7 @@ export default function Costs() {
       cost: number | null | undefined,
       apiEquivalentCost: number | null | undefined,
       apiEquivalentAvailable: boolean,
+      isLocal: boolean | null,
     ) => {
       const billed = typeof cost === 'number' && Number.isFinite(cost) ? cost : null
       if (tokens <= 0 && (billed === null || billed <= 0)) return
@@ -555,7 +556,8 @@ export default function Costs() {
         costUnknown: false,
         apiEquivalentCost: 0,
         apiEquivalentAvailable: false,
-        local: false,
+        // Explicit locality only: true while every variant is local, false while every one is not, otherwise unknown.
+        isLocal,
       }
 
       current.tokens += Number.isFinite(tokens) ? tokens : 0
@@ -566,7 +568,7 @@ export default function Costs() {
         current.apiEquivalentCost += apiEquivalentCost
         current.apiEquivalentAvailable = true
       }
-      current.local = current.local || isLocalModel(rawName)
+      if (current.isLocal !== isLocal) current.isLocal = null
       if (rawName) current.rawNamesSet.add(rawName)
       buckets.set(name, current)
     }
@@ -579,6 +581,7 @@ export default function Costs() {
           item.cost,
           item.apiEquivalentUsd,
           item.apiEquivalentStatus !== 'unavailable' && item.apiEquivalentStatus !== 'not_applicable',
+          typeof item.isLocal === 'boolean' ? item.isLocal : null,
         )
       })
     } else if (viewingPastMonth) {
@@ -592,7 +595,9 @@ export default function Costs() {
             model.totalTokens || 0,
             model.cost || 0,
             model.cost || 0,
-            !isLocalModel(model.model || ''),
+            true,
+            // The codexbar rows carry no locality metadata.
+            null,
           )
         })
       })
@@ -606,6 +611,8 @@ export default function Costs() {
           null,
           null,
           false,
+          // Sessions carry no locality metadata.
+          null,
         )
       })
     }
@@ -617,7 +624,7 @@ export default function Costs() {
       cost: item.costUnknown ? null : item.cost,
       apiEquivalentCost: item.apiEquivalentCost,
       apiEquivalentAvailable: item.apiEquivalentAvailable,
-      local: item.local,
+      isLocal: item.isLocal,
       share: 0,
     }))
 
@@ -728,15 +735,17 @@ export default function Costs() {
     // The anchored baseline is the FULL previous calendar month; codexbar rows
     // may be absent (codexbar inactive) while the ledger still supplies the
     // baseline total — an empty row set must not collapse the divisor to 1 day.
-    previousDayCount: viewingPastMonth && activeMonthAnchor
-      ? daysInMonthKey(previousMonthKey(activeMonthAnchor))
-      : codexbarPreviousPeriodDays.length,
+    // The ledger's comparison covers exactly the days the server says it did.
+    previousDayCount: (ledgerActive ? previousWindowDays(tokenData?.period) : null)
+      ?? (viewingPastMonth && activeMonthAnchor
+        ? daysInMonthKey(previousMonthKey(activeMonthAnchor))
+        : codexbarPreviousPeriodDays.length),
     reliability: apiEquivalentReliability,
     previousReliability: previousApiEquivalentReliability,
     completePeriod: viewingPastMonth,
   })
 
-  const compareLabel = comparisonLabels(period, activeMonthAnchor, calendarNow, tokenData?.period)
+  const compareLabel = comparisonLabels(period, ledgerActive ? tokenData?.period ?? null : null)
 
   // AWS only: a finished month never uses AWS (see hasAwsData), so this is always a live projection.
   const projectedMonthly = dailyAvg === null ? null : dailyAvg * 30

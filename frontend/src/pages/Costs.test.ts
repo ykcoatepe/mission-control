@@ -536,7 +536,7 @@ describe('Usage page: unknown is never zero', () => {
     routes['/api/costs?period=month'] = ledger({
       providers: [
         { id: 'codex', label: 'Codex', state: 'ready', observedAt: '2026-08-15T10:00:00Z', coverage: 'complete', tokens: 50, apiEquivalentUsd: 4, billedUsd: null, note: null },
-        { id: 'openclaw', label: 'OpenClaw', state: 'ready', observedAt: '2026-08-15T10:00:00Z', coverage: 'complete', tokens: 0, apiEquivalentUsd: 0, billedUsd: 0, note: 'billing unknown unless explicitly recorded' },
+        { id: 'openclaw', label: 'OpenClaw', state: 'ready', observedAt: '2026-08-15T10:00:00Z', coverage: 'complete', tokens: 0, apiEquivalentUsd: 0, billedUsd: null, hasRecords: false, billingKnown: false, coverageReason: 'none', note: 'billing unknown unless explicitly recorded' },
       ],
     })
     await mount()
@@ -610,7 +610,7 @@ describe('Usage page: the period is in the address', () => {
 describe('Usage page: the comparison says which days it compares', () => {
   it('labels the live-month comparison with the elapsed days of the month before, not "previous month"', async () => {
     routes['/api/costs?period=month'] = ledger({
-      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-11' },
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-11', previousStart: '2026-07-01', previousEnd: '2026-07-11', previousIsPartial: true },
       summary: {
         periodUsd: null, periodTokens: 10, thisMonthTokens: 10, totalTokens: 10,
         periodApiEquivalentUsd: 20, previousPeriodApiEquivalentUsd: 100, previousPeriodApiEquivalentReliability: 'estimated',
@@ -619,6 +619,33 @@ describe('Usage page: the comparison says which days it compares', () => {
     await mount()
     expect(summaryText()).toContain('vs the first 11 days of July ($100.00)')
     expect(summaryText()).not.toContain('previous month')
+  })
+
+  it('names the dates the server compared, not the dates the page works out from the current window', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      // The current window says 11 days; the server says it compared only 5 (the 7th to the 11th).
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-11', previousStart: '2026-07-07', previousEnd: '2026-07-11', previousIsPartial: true },
+      summary: {
+        periodUsd: null, periodTokens: 10, thisMonthTokens: 10, totalTokens: 10,
+        periodApiEquivalentUsd: 20, previousPeriodApiEquivalentUsd: 100, previousPeriodApiEquivalentReliability: 'estimated',
+      },
+    })
+    await mount()
+    expect(summaryText()).toContain('vs 7–11 July ($100.00)')
+    expect(summaryText()).not.toContain('first 11 days')
+  })
+
+  it('says "previous month" when the server sent no comparison dates, and does not invent a span', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-11' },
+      summary: {
+        periodUsd: null, periodTokens: 10, thisMonthTokens: 10, totalTokens: 10,
+        periodApiEquivalentUsd: 20, previousPeriodApiEquivalentUsd: 100, previousPeriodApiEquivalentReliability: 'estimated',
+      },
+    })
+    await mount()
+    expect(summaryText()).toContain('vs the previous month ($100.00)')
+    expect(summaryText()).not.toContain('first 11 days')
   })
 })
 

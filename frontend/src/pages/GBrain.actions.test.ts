@@ -118,7 +118,11 @@ describe('Brain home: verdict and readings', () => {
     expect(host.textContent).toContain('last probe')
     expect(host.textContent).toContain('Link extraction')
     expect(host.textContent).not.toMatch(/proof|evidence|caveat|allowlisted|R0|W1|Living Brain Map/i)
-    expect(host.querySelector('[data-syn-id="reader:hermes"]')?.getAttribute('data-state')).toBe('healthy')
+    // A configured reader is the server's inactive state with observation 'configured': neutral, never green.
+    const reader = host.querySelector('[data-syn-id="reader:hermes"]')
+    expect(reader?.getAttribute('data-state')).toBe('inactive')
+    expect(reader?.textContent).toContain('configured')
+    expect(reader?.textContent).not.toContain('not configured')
     expect(host.textContent).toContain('Connection telemetry is not observable locally.')
     expect(host.textContent).not.toContain('Reader connections are not observed')
     await act(async () => root.unmount())

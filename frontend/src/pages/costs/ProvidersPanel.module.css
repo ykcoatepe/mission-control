@@ -17,6 +17,11 @@
   overflow-wrap: anywhere;
 }
 
+.noteDetail {
+  display: block;
+  color: var(--text-3);
+}
+
 .pad {
   padding: var(--sp-4);
 }

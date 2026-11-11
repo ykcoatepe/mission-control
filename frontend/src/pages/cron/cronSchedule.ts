@@ -208,6 +208,50 @@ export function parseSchedule(raw: string | null | undefined): ParsedSchedule {
   return parseCron(text)
 }
 
+/** The server's own account of a schedule (`scheduleKind`, `everyMs`), as `GET /api/cron` and `GET /api/calendar` send it. */
+export interface ScheduleFields {
+  schedule?: string | null
+  scheduleKind?: string | null
+  everyMs?: number | null
+}
+
+/**
+ * The schedule of a job or calendar entry. When the server names the kind, that
+ * decides how it is read: an `interval` is `everyMs` (not the "every 30m" text), a `cron` is
+ * its expression, `interval_unknown` is an interval nobody reported (so it is not
+ * placed anywhere), and `manual`/`unknown` have no schedule. Without a `scheduleKind`
+ * (an older payload) the display string is parsed as before. Never throws.
+ */
+export function parseEntrySchedule(fields: ScheduleFields): ParsedSchedule {
+  const kind = typeof fields.scheduleKind === 'string' ? fields.scheduleKind : null
+  const text = String(fields.schedule ?? '').trim()
+  switch (kind) {
+    case 'interval': {
+      const everyMs = fields.everyMs
+      if (typeof everyMs !== 'number' || !Number.isFinite(everyMs) || everyMs <= 0) {
+        return { ok: false, reason: 'The interval is not valid' }
+      }
+      const everyMinutes = everyMs / 60_000
+      if (everyMinutes > MINUTES_PER_DAY) {
+        return { ok: false, reason: 'An interval longer than a day has no reported start, so its days are unknown' }
+      }
+      return { ok: true, schedule: { kind: 'interval', everyMinutes, text: text || `every ${everyMinutes} min` } }
+    }
+    case 'interval_unknown':
+      return { ok: false, reason: 'The scheduler runs it on an interval but did not report how often' }
+    case 'cron':
+      return text ? parseCron(text) : { ok: false, reason: 'No schedule was reported' }
+    case 'manual':
+      return { ok: false, reason: 'It has no schedule; it runs when started by hand' }
+    case 'unknown':
+      return { ok: false, reason: 'No schedule was reported' }
+    case 'at':
+    default:
+      // A one-time schedule has no structured field in the payload yet: its text is all there is.
+      return parseSchedule(text)
+  }
+}
+
 /** Does a cron expression run on this calendar day (any time of day)? */
 function cronRunsOnDay(cron: CronExpression, day: Date): boolean {
   if (!cron.months.has(day.getMonth() + 1)) return false
@@ -288,8 +332,13 @@ export function describeDayRuns(schedule: Schedule, runs: DayRuns): string {
 }
 
 /** A job or entry schedule as it should be shown: raw text in monospace, a missing value in words. */
-export function scheduleDisplay(raw: string | null | undefined): { text: string; raw: boolean } {
+export function scheduleDisplay(
+  raw: string | null | undefined,
+  scheduleKind?: string | null,
+): { text: string; raw: boolean } {
   const text = String(raw ?? '').trim()
+  if (scheduleKind === 'interval_unknown') return { text: 'Interval not reported', raw: false }
+  if (scheduleKind === 'manual' && text === '') return { text: 'Runs when started by hand', raw: false }
   if (text === '' || text === '?') return { text: 'Schedule not reported', raw: false }
   if (/^every$/i.test(text)) return { text: 'Interval not reported', raw: false }
   return { text, raw: true }

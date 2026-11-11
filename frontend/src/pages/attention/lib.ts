@@ -202,7 +202,7 @@ export function buildAttentionRows(data: LoopsData, now: number): AttentionRow[]
         severity: isSeverity(entry.severity) ? entry.severity : 'warning',
         code: entry.code,
         subject: entry.subject,
-        detail: entry.detail,
+        summary: typeof entry.summary === 'string' ? entry.summary : null,
         at: entry.at,
         count: finiteNumber(entry.count),
       })

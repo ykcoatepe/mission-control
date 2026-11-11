@@ -37,11 +37,11 @@ test('QA1 missing or invalid interval is unknown, never the bare every word', ()
       const raw = { id: 'interval', scheduler: 'openclaw', schedule: { kind: 'every', everyMs } };
       const job = f.service.mapCronJobForApi(raw);
       assert.equal(job.schedule, null);
-      assert.equal(job.scheduleKind, 'interval_unknown');
+      assert.equal(job.scheduleKind, 'unknown');
       assert.equal(job.everyMs, null);
       const calendar = f.service.syncCalendarWithCronEvidence({ jobs: [raw], operationsSource: { schedulers: { openclaw: { sourceSucceeded: true } } } }).entries[0];
       assert.equal(calendar.schedule, null);
-      assert.equal(calendar.scheduleKind, 'interval_unknown');
+      assert.equal(calendar.scheduleKind, 'unknown');
       assert.equal(calendar.everyMs, null);
       f.service.updateCalendarEntry(calendar.id, { schedule: 'My display' });
       assert.equal(f.service.updateCalendarEntry(calendar.id, { schedule: null }).entry.schedule, null);
@@ -50,7 +50,7 @@ test('QA1 missing or invalid interval is unknown, never the bare every word', ()
   } finally { f.cleanup(); }
 });
 
-test('QA1 interval units stay exact and Hermes normalization does not drop everyMs', async () => {
+test('QA1 interval units stay exact and Hermes normalization preserves its real minutes/display shape', async () => {
   const f = fixture([]);
   try {
     for (const [everyMs, text] of [[120000, 'every 2m'], [86400000, 'every 1d'], [259200000, 'every 3d'], [1500, 'every 1500ms']]) {
@@ -58,11 +58,11 @@ test('QA1 interval units stay exact and Hermes normalization does not drop every
     }
     const dir = path.join(f.homeDir, '.hermes/profiles/hmudur/cron');
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, 'jobs.json'), JSON.stringify({ jobs: [{ id: 'hermes', schedule: { kind: 'every', everyMs: 120000 } }] }));
+    fs.writeFileSync(path.join(dir, 'jobs.json'), JSON.stringify({ jobs: [{ id: 'hermes', schedule: { kind: 'interval', minutes: 30, display: 'every 30m' } }] }));
     const result = await f.service.fetchCronJobsForOperations();
     const job = f.service.mapCronJobForApi(result.jobs.find(row => row.scheduler === 'hermes'));
-    assert.equal(job.everyMs, 120000);
-    assert.equal(job.schedule, 'every 2m');
+    assert.equal(job.everyMs, 1800000);
+    assert.equal(job.schedule, 'every 30m');
     assert.equal(f.service.mapCronJobForApi({ id: 'cron', schedule: { kind: 'cron', expr: '0 * * * *' } }).schedule, '0 * * * *');
   } finally { f.cleanup(); }
 });

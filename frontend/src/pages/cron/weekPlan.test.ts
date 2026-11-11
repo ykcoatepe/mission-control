@@ -131,3 +131,27 @@ describe('planWeek with the schedule strings the API returns', () => {
     expect(everyDay.sort()).toEqual(['0 */6 * * *', '2-59/5 * * * *', 'every 30m'].sort())
   })
 })
+
+describe('planWeek with scheduleKind and everyMs', () => {
+  it('places an interval from everyMs on every day, without reading the text', () => {
+    const job = entry({ id: 'iv', schedule: 'something else entirely', scheduleKind: 'interval', everyMs: 1_800_000 })
+    const p = plan([job], { today: SUNDAY })
+    expect(daysOf(p, 'iv')).toHaveLength(7)
+    const placed = p.byDay['2026-11-09'][0]
+    expect(placed.runs).toBe(48)
+    expect(placed.label).toContain('48 runs')
+  })
+
+  it('lists an interval_unknown job as not placed, with the reason, even when it has a next run', () => {
+    const job = entry({ id: 'iu', schedule: null, scheduleKind: 'interval_unknown', everyMs: null, startsAt: '2026-11-11T13:15:00.000Z' })
+    const p = plan([job], { today: SUNDAY })
+    expect(daysOf(p, 'iu')).toEqual([])
+    expect(p.unplaced).toEqual([{ entry: job, reason: expect.stringContaining('did not report how often') }])
+  })
+
+  it('does not read an interval text as a cron slot when the kind is cron, nor a cron text as an interval', () => {
+    const p = plan([entry({ id: 'bad', schedule: 'every 5m', scheduleKind: 'cron' })], { today: SUNDAY })
+    expect(daysOf(p, 'bad')).toEqual([])
+    expect(p.unplaced).toHaveLength(1)
+  })
+})

@@ -42,9 +42,9 @@ import {
   monthPickerYearBounds,
   nextSelectableIndex,
   previousMonthKey,
+  previousWindowDays,
   shouldClearMonthAnchor,
   shiftMonthKey,
-  estimateCost,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -706,37 +706,51 @@ describe('anchored CodexBar month rows', () => {
       .toEqual(previousCodexbarRows(rows, 'day', now))
   })
 
-  it('names the previous month in anchored comparison labels', () => {
-    expect(comparisonLabels('month', '2026-07', now)).toEqual({
+  it('builds the comparison label from the dates the server compared', () => {
+    const win = (previousStart: string, previousEnd: string, previousIsPartial = false, anchor: string | null = null) => ({
+      anchor,
+      previousStart,
+      previousEnd,
+      previousIsPartial,
+    })
+    // A past month (anchored) carries its year; the live month does not.
+    expect(comparisonLabels('month', win('2026-06-01', '2026-06-30', false, '2026-07'))).toEqual({
       period: 'vs June 2026',
       daily: 'vs June 2026 avg',
     })
-    expect(comparisonLabels('month', '2026-01', now)).toEqual({
-      period: 'vs December 2025',
-      daily: 'vs December 2025 avg',
-    })
+    expect(comparisonLabels('month', win('2025-12-01', '2025-12-31', false, '2026-01')).period).toBe('vs December 2025')
     // The live month is compared with the same elapsed days of the month before, and says so.
-    expect(comparisonLabels('month', null, now)).toEqual({
-      period: 'vs the same days last month',
-      daily: 'vs last month avg',
-    })
-    expect(comparisonLabels('month', '2026-08', now)).toEqual({
-      period: 'vs the same days last month',
-      daily: 'vs last month avg',
-    })
-    expect(comparisonLabels('month', null, now, { start: '2026-11-01', end: '2026-11-11' })).toEqual({
+    expect(comparisonLabels('month', win('2026-10-01', '2026-10-11', true))).toEqual({
       period: 'vs the first 11 days of October',
       daily: 'vs the first 11 days of October avg',
     })
-    expect(comparisonLabels('month', null, now, { start: '2026-11-01', end: '2026-11-01' }).period).toBe('vs 1 October')
-    // Once the elapsed days cover the whole previous month, it is simply that month.
-    expect(comparisonLabels('month', null, now, { start: '2026-12-01', end: '2026-12-31' }).period).toBe('vs November')
-    expect(comparisonLabels('month', null, now, { start: '2026-03-01', end: '2026-03-30' }).period).toBe('vs February')
-    expect(comparisonLabels('month', null, now, { start: '2026-01-01', end: '2026-01-15' }).period).toBe('vs the first 15 days of December')
-    expect(comparisonLabels('7d', '2026-07', now)).toEqual({
+    expect(comparisonLabels('month', win('2026-10-01', '2026-10-01', true)).period).toBe('vs 1 October')
+    expect(comparisonLabels('month', win('2026-10-07', '2026-10-11', true)).period).toBe('vs 7–11 October')
+    // A complete previous month is simply that month; incomplete evidence behind it is said.
+    expect(comparisonLabels('month', win('2026-11-01', '2026-11-30', false)).period).toBe('vs November')
+    expect(comparisonLabels('month', win('2026-11-01', '2026-11-30', true)).period).toBe('vs November (incomplete data)')
+    expect(comparisonLabels('7d', win('2026-11-01', '2026-11-07'))).toEqual({
       period: 'vs previous 7 days',
       daily: 'vs previous 7d avg',
     })
+    expect(comparisonLabels('7d', win('2026-11-01', '2026-11-07', true)).period).toBe('vs previous 7 days (incomplete data)')
+    expect(comparisonLabels('day', win('2026-11-10', '2026-11-10')).period).toBe('vs previous day')
+  })
+
+  it('does not work out a span without the server dates', () => {
+    for (const window of [null, {}, { previousStart: '2026-10-01' }, { previousStart: 'x', previousEnd: 'y' }, { previousStart: '2026-10-09', previousEnd: '2026-10-01' }]) {
+      expect(comparisonLabels('month', window)).toEqual({ period: 'vs the previous month', daily: 'vs previous month avg' })
+    }
+    // A window across two months is not a month span either.
+    expect(comparisonLabels('month', { previousStart: '2026-09-25', previousEnd: '2026-10-05' }).period).toBe('vs the previous month')
+  })
+
+  it('counts the days of the comparison window as the server dated it', () => {
+    expect(previousWindowDays({ previousStart: '2026-10-01', previousEnd: '2026-10-11' })).toBe(11)
+    expect(previousWindowDays({ previousStart: '2026-10-07', previousEnd: '2026-10-07' })).toBe(1)
+    expect(previousWindowDays({ previousStart: '2026-02-26', previousEnd: '2026-03-02' })).toBe(5)
+    expect(previousWindowDays({})).toBeNull()
+    expect(previousWindowDays(null)).toBeNull()
   })
 
   it('reports a finished month as a total instead of a projection', () => {
@@ -999,13 +1013,5 @@ describe('server month anchor clearing', () => {
     expect(shouldClearMonthAnchor('2026-08', '2026-08')).toBe(true)
     expect(shouldClearMonthAnchor('2026-07', '2026-08')).toBe(false)
     expect(shouldClearMonthAnchor(null, '2026-08')).toBe(false)
-  })
-})
-
-describe('newer model pricing', () => {
-  it('prices gpt-6-astra, glm-5.3-flash, and glm-5.3 instead of returning 0', () => {
-    expect(estimateCost(1_000_000, 'openai/gpt-6-astra')).toBeCloseTo(50)
-    expect(estimateCost(1_000_000, 'Hermes / glm-5.3-flash')).toBeCloseTo(0.5)
-    expect(estimateCost(1_000_000, 'zai-coding-plan/glm-5.3')).toBeCloseTo(4.4)
   })
 })

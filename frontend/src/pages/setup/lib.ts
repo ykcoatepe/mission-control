@@ -10,6 +10,8 @@ export interface SetupStatus {
   gatewayPort: number | null
   gatewayVersion: string | null
   detectedConfig: {
+    /** The dashboard name already configured, as the server reads it; null/absent when none. */
+    dashboardName?: string | null
     model: string | null
     channels: string[] | null
     agentName: string | null
@@ -31,13 +33,14 @@ export interface SetupPayload {
 export const NAME_MAX = 120
 
 /**
- * What the form starts with: the agent name the server detected, exactly as it
- * reported it, or nothing. The app never makes a dashboard name up (no suffix, no
- * default), so with no detected value the field stays empty and shows a placeholder.
+ * What the form starts with: the dashboard name the server detected, exactly as it
+ * reported it, or nothing. The agent's name is a different thing and is not a stand-in.
+ * The app never makes a dashboard name up (no suffix, no default), so with no detected
+ * value the field stays empty and shows a placeholder.
  */
 export function suggestName(status: SetupStatus | null | undefined): string {
-  const agent = status?.detectedConfig?.agentName
-  return typeof agent === 'string' ? agent.trim().slice(0, NAME_MAX) : ''
+  const name = status?.detectedConfig?.dashboardName
+  return typeof name === 'string' ? name.trim().slice(0, NAME_MAX) : ''
 }
 
 export function nameError(name: string): string | null {

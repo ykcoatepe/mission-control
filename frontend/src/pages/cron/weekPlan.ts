@@ -1,4 +1,4 @@
-import { describeDayRuns, formatMinuteOfDay, LISTED_TIMES, parseSchedule, runsOnDay } from './cronSchedule'
+import { describeDayRuns, formatMinuteOfDay, LISTED_TIMES, parseEntrySchedule, runsOnDay } from './cronSchedule'
 import type { Schedule } from './cronSchedule'
 import { isDisabledEntry, toDayKey } from './scheduleLib'
 import type { CalendarEntry } from './scheduleLib'
@@ -76,8 +76,10 @@ export function planWeek(entries: CalendarEntry[], days: Date[], options: PlanOp
     }
 
     const scheduleText = String(entry.schedule ?? '').trim()
-    if (scheduleText) {
-      const parsed = parseSchedule(scheduleText)
+    // The server says what kind of schedule it is: an interval with no reported length is never a dated entry.
+    const recurringUnknown = entry.scheduleKind === 'interval_unknown'
+    if (scheduleText || recurringUnknown) {
+      const parsed = parseEntrySchedule(entry)
       if (!parsed.ok) {
         unplaced.push({ entry, reason: parsed.reason })
         continue

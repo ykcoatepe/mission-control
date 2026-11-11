@@ -224,6 +224,15 @@ describe('buildCronOverlapMarkers', () => {
     expect(state.windows).toBe(1)
   })
 
+  it('does not bucket an interval job by the words of its display text', () => {
+    const a = makeJob({ id: 'a', schedule: 'every 30m', scheduleKind: 'interval', everyMs: 1_800_000 })
+    const b = makeJob({ id: 'b', schedule: 'every 30m', scheduleKind: 'interval', everyMs: 1_800_000 })
+    const c = makeJob({ id: 'c', schedule: null, scheduleKind: 'interval_unknown' })
+    expect(buildCronOverlapMarkers([a, b, c]).markers.size).toBe(0)
+    // Without a kind (older payload) the old reading of the text remains.
+    expect(buildCronOverlapMarkers([makeJob({ id: 'x', schedule: '30 9 * * *' }), makeJob({ id: 'y', schedule: '30 9 * * 1' })]).markers.size).toBe(2)
+  })
+
   it('falls back to cron hour|minute buckets when nextRun is missing', () => {
     const a = makeJob({ id: 'a', schedule: '30 9 * * *' })
     const b = makeJob({ id: 'b', schedule: '30 9 * * 1' })

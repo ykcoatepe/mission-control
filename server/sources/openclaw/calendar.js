@@ -22,8 +22,10 @@ function createCalendarSource({ cronService, automationSource, now = Date.now, l
         }
         const synced = cronService.syncCalendarWithCronEvidence(evidence);
         const partial = cron.meta.stale || Object.values(evidence.operationsSource.schedulers).some(proof => !proof.sourceSucceeded || proof.stale);
-        const error = partial ? { code: 'calendar_scheduler_stale', message: 'Unavailable scheduler rows were retained from last-good calendar data' } : null;
-        return { ...synced, diagnostics: current.diagnostics, sync: { ok: !partial, error } };
+        const error = synced.upstream?.count
+          ? { code: 'calendar_upstream_invalid', message: 'Invalid scheduler jobs were skipped; valid calendar rows refreshed' }
+          : partial ? { code: 'calendar_scheduler_stale', message: 'Unavailable scheduler rows were retained from last-good calendar data' } : null;
+        return { ...synced, diagnostics: current.diagnostics, sync: { ok: !error, error } };
       } catch {
         throw new SourceReadError('Calendar data could not be refreshed safely', { code: 'calendar_unavailable' });
       }
@@ -34,7 +36,7 @@ function createCalendarSource({ cronService, automationSource, now = Date.now, l
     const stored = snapshot();
     const diagnostics = stored.data?.diagnostics;
     const repairAvailable = !stored.meta.error && Boolean(diagnostics?.quarantined.count || diagnostics?.duplicates.count);
-    const snap = { ...stored, meta: { ...stored.meta, repairAvailable } };
+    const snap = { ...stored, meta: { ...stored.meta, repairAvailable, upstream: stored.data?.upstream ?? null } };
     // Preserve a failed read's error even if its last-good payload was partial.
     if (snap.meta.error || !snap.data) return snap;
     const error = diagnostics?.quarantined.count

@@ -18,7 +18,11 @@ export interface CronJob {
   schedulerLabel?: string
   actions?: CronJobActions
   name: string
-  schedule: string
+  /** null when the scheduler did not report one (`scheduleKind: 'interval_unknown'`). */
+  schedule: string | null
+  /** How the schedule is read: `interval` uses `everyMs`, `cron` the expression. Absent in older payloads. */
+  scheduleKind?: 'interval' | 'interval_unknown' | 'cron' | 'at' | 'unknown' | 'manual' | string
+  everyMs?: number | null
   status: string
   enabled: boolean
   lastRun: string | null
@@ -38,6 +42,8 @@ export interface CronSummary {
   paused?: number
   failed?: number
   nextRunAt?: string | null
+  /** The server's plain-words definitions of its counts (`active` includes failed jobs). */
+  definitions?: { active?: string; failed?: string }
 }
 
 export interface CronApiResponse {

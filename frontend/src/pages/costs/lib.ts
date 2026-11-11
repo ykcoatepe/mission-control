@@ -321,112 +321,8 @@ export function canonicalModelName(model: string) {
   return model || 'Unknown'
 }
 
-export function isLocalModel(model: string) {
-  const lower = model.toLowerCase()
-  // 'custom/' routes to the local Ollama endpoint (cronData provider map).
-  return lower.includes('ollama/') || lower.includes('custom/') || lower.includes('lmstudio') || lower.includes('localhost') || lower.includes('local/')
-}
-
 export function toChartKey(index: number) {
   return `model_${index}`
-}
-
-// ---------------------------------------------------------------------------
-// Pricing / cost estimation
-// ---------------------------------------------------------------------------
-
-// Pricing per 1M output tokens
-// Source: OpenRouter public API (https://openrouter.ai/api/v1/models, 2026-04)
-// These are the actual OpenRouter provider prices, not retail.
-const MODEL_PRICING: Record<string, number> = {
-  // OpenAI Codex (direct, not OpenRouter)
-  'gpt-5.4': 15,
-  'gpt-5.4-mini': 4.5,
-  'gpt-5.3-codex-spark': 14,
-  'gpt-5.3': 14,
-  // OpenAI GPT-6 Astra (public list, 2026-09)
-  'gpt-6-astra': 50,
-  // Z.ai GLM (public list, 2026-09)
-  'glm-5.3-flash': 0.5,
-  'glm-5.3': 4.4,
-  // Anthropic (OpenRouter)
-  'claude-opus-4-6': 25,
-  'claude-opus': 25,
-  'claude-sonnet-4-6': 15,
-  'claude-sonnet': 15,
-  'claude-haiku': 5,
-  // NVIDIA OpenRouter
-  'nemotron-super-49b-v1.5': 0.4,
-  'nemotron-3-super-120b-a12b': 0.5,
-  'nemotron-free': 0,
-  // MiniMax OpenRouter (provider=minimax)
-  'minimax-m2.7': 1.2,
-  'minimax-m2.5': 1.25,
-  'minimax-m2.1': 0.95,
-  'minimax-m2': 1.0,
-  'minimax-m2-her': 1.2,
-  // Xiaomi OpenRouter
-  'mimo-v2-omni': 2.0,
-  'mimo-v2-pro': 3.0,
-  'mimo-v2-flash': 0.29,
-  // OpenRouter Mancer
-  'weaver': 10,
-  // Qwen free
-  'qwen3-free': 0,
-  'qwen3.6-free': 0,
-  // __default for unknown cloud models
-  '__default': 5,
-}
-
-export function estimateCost(tokens: number, model?: string): number {
-  if (model && isLocalModel(model)) return 0
-  if (!model) return 0
-
-  const modelLower = model.toLowerCase()
-
-  // Local Ollama detection
-  if (modelLower.includes('ollama/') || modelLower.includes('localhost')) return 0
-
-  // MiniMax via OpenRouter
-  if (modelLower.includes('minimax-m2.7')) return (tokens / 1_000_000) * MODEL_PRICING['minimax-m2.7']
-  if (modelLower.includes('minimax-m2.5')) return (tokens / 1_000_000) * MODEL_PRICING['minimax-m2.5']
-  if (modelLower.includes('minimax-m2.1')) return (tokens / 1_000_000) * MODEL_PRICING['minimax-m2.1']
-  if (modelLower.includes('minimax-m2-her')) return (tokens / 1_000_000) * MODEL_PRICING['minimax-m2-her']
-  if (modelLower.includes('minimax-m2')) return (tokens / 1_000_000) * MODEL_PRICING['minimax-m2']
-
-  // NVIDIA OpenRouter
-  if (modelLower.includes('nemotron-super-49b') || modelLower.includes('llama-3.3-nemotron')) return (tokens / 1_000_000) * MODEL_PRICING['nemotron-super-49b-v1.5']
-  if (modelLower.includes('nemotron')) return (tokens / 1_000_000) * MODEL_PRICING['nemotron-3-super-120b-a12b']
-
-  // OpenAI Codex (direct)
-  if (modelLower.includes('gpt-5.4-mini') || modelLower.includes('gpt-5.4-nano')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.4-mini']
-  if (modelLower.includes('gpt-5.4')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.4']
-  if (modelLower.includes('gpt-5.3-codex') || modelLower.includes('gpt-5.3')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-5.3-codex-spark']
-
-  // OpenAI GPT-6 Astra
-  if (modelLower.includes('gpt-6-astra')) return (tokens / 1_000_000) * MODEL_PRICING['gpt-6-astra']
-
-  // Z.ai GLM
-  if (modelLower.includes('glm-5.3-flash')) return (tokens / 1_000_000) * MODEL_PRICING['glm-5.3-flash']
-  if (modelLower.includes('glm-5.3')) return (tokens / 1_000_000) * MODEL_PRICING['glm-5.3']
-
-  // Anthropic
-  if (modelLower.includes('opus-4.6') || (modelLower.includes('opus') && modelLower.includes('4'))) return (tokens / 1_000_000) * MODEL_PRICING['claude-opus-4-6']
-  if (modelLower.includes('sonnet-4.6') || (modelLower.includes('sonnet') && modelLower.includes('4'))) return (tokens / 1_000_000) * MODEL_PRICING['claude-sonnet-4-6']
-  if (modelLower.includes('haiku')) return (tokens / 1_000_000) * MODEL_PRICING['claude-haiku']
-
-  // Xiaomi OpenRouter
-  if (modelLower.includes('mimo-v2-omni')) return (tokens / 1_000_000) * MODEL_PRICING['mimo-v2-omni']
-  if (modelLower.includes('mimo-v2-pro')) return (tokens / 1_000_000) * MODEL_PRICING['mimo-v2-pro']
-  if (modelLower.includes('mimo')) return (tokens / 1_000_000) * MODEL_PRICING['mimo-v2-flash']
-
-  // OpenRouter Mancer
-  if (modelLower.includes('weaver') || modelLower.includes('mancer')) return (tokens / 1_000_000) * MODEL_PRICING['weaver']
-
-  // OpenRouter/other cloud models → fallback
-  if (modelLower.includes('openrouter')) return (tokens / 1_000_000) * MODEL_PRICING['__default']
-
-  return 0
 }
 
 // ---------------------------------------------------------------------------
@@ -1053,39 +949,59 @@ export function buildCodexbarChartData(
   })
 }
 
-/** The day count and month a live-month window covers: "2026-11-01" to "2026-11-11" is 11 days of 2026-11. */
-function elapsedDaysOfWindow(window: { start?: string; end?: string } | null | undefined) {
-  const start = window?.start
-  const end = window?.end
-  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return null
-  if (start.slice(0, 7) !== end.slice(0, 7) || start > end) return null
-  return { month: start.slice(0, 7), days: Number(end.slice(8)) - Number(start.slice(8)) + 1 }
+const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/
+
+/** The comparison window as the server reports it (`period.previousStart/previousEnd/previousIsPartial`). */
+export type ComparisonWindow = Pick<
+  NonNullable<TokenData['period']>,
+  'anchor' | 'previousStart' | 'previousEnd' | 'previousIsPartial'
+>
+
+function parsedWindow(window: ComparisonWindow | null | undefined) {
+  const start = window?.previousStart
+  const end = window?.previousEnd
+  if (!start || !end || !DATE_KEY.test(start) || !DATE_KEY.test(end) || start > end) return null
+  return { start, end }
+}
+
+/** Inclusive number of days in the server's comparison window; null when the payload sent none. */
+export function previousWindowDays(window: ComparisonWindow | null | undefined): number | null {
+  const parsed = parsedWindow(window)
+  if (!parsed) return null
+  const day = (value: string) => Date.UTC(Number(value.slice(0, 4)), Number(value.slice(5, 7)) - 1, Number(value.slice(8, 10)))
+  return Math.round((day(parsed.end) - day(parsed.start)) / 86_400_000) + 1
 }
 
 /**
- * Labels for the previous-period comparison. The live month is compared with the
- * SAME number of elapsed days of the month before (the server's previous window),
- * not with that whole month, so the label says so. `window` is the payload's
- * `period` ({ start, end }); without it the label still says "same days".
+ * Labels for the previous-period comparison, built from the dates the server
+ * actually compared (`period.previousStart` and `previousEnd`), never from the
+ * current window. A month window that is cut short names its days ("the first
+ * 11 days of October"); a complete one names the month. `previousIsPartial` on a
+ * complete window means the evidence behind it is incomplete, and the label
+ * says so. Without the server's dates the label is generic.
  */
-export function comparisonLabels(
-  period: 'day' | '7d' | 'month',
-  monthAnchor: string | null = null,
-  now = new Date(),
-  window: { start?: string; end?: string } | null = null,
-) {
-  if (period === 'day') return { period: 'vs previous day', daily: 'vs previous day' }
-  if (period === '7d') return { period: 'vs previous 7 days', daily: 'vs previous 7d avg' }
-  if (isPastMonthAnchor(monthAnchor, now)) {
-    const baseline = monthKeyLabel(previousMonthKey(monthAnchor as string))
-    return { period: `vs ${baseline}`, daily: `vs ${baseline} avg` }
+export function comparisonLabels(period: 'day' | '7d' | 'month', window: ComparisonWindow | null = null) {
+  const incomplete = window?.previousIsPartial === true
+  const note = (label: string) => (incomplete ? `${label} (incomplete data)` : label)
+  if (period === 'day') return { period: note('vs previous day'), daily: 'vs previous day' }
+  if (period === '7d') return { period: note('vs previous 7 days'), daily: 'vs previous 7d avg' }
+  const parsed = parsedWindow(window)
+  if (!parsed || parsed.start.slice(0, 7) !== parsed.end.slice(0, 7)) {
+    return { period: note('vs the previous month'), daily: 'vs previous month avg' }
   }
-  const elapsed = elapsedDaysOfWindow(window)
-  if (!elapsed) return { period: 'vs the same days last month', daily: 'vs last month avg' }
-  const previousKey = previousMonthKey(elapsed.month)
-  const monthName = monthKeyLabel(previousKey).split(' ')[0]
-  if (elapsed.days >= daysInMonthKey(previousKey)) return { period: `vs ${monthName}`, daily: `vs ${monthName} avg` }
-  const span = elapsed.days === 1 ? `1 ${monthName}` : `the first ${elapsed.days} days of ${monthName}`
+  const key = parsed.start.slice(0, 7)
+  const startDay = Number(parsed.start.slice(8))
+  const endDay = Number(parsed.end.slice(8))
+  // A past month (anchored view) carries its year; the live month does not.
+  const monthName = window?.anchor ? monthKeyLabel(key) : monthKeyLabel(key).split(' ')[0]
+  if (startDay === 1 && endDay >= daysInMonthKey(key)) {
+    return { period: note(`vs ${monthName}`), daily: `vs ${monthName} avg` }
+  }
+  const days = endDay - startDay + 1
+  const span = startDay !== 1
+    ? `${startDay}–${endDay} ${monthName}`
+    : days === 1 ? `1 ${monthName}` : `the first ${days} days of ${monthName}`
+  // A cut-short month already says it is partial in words; the flag adds nothing to it.
   return { period: `vs ${span}`, daily: `vs ${span} avg` }
 }
 
@@ -1118,6 +1034,10 @@ export function hasUsableAgentSplitData(data?: Pick<TokenData, 'agents' | 'perio
 // Platforms (usage providers)
 // ---------------------------------------------------------------------------
 
+export type CoverageReason = 'standing_gaps' | 'scan_failed' | 'unresolved_overlap' | 'unread' | 'none'
+
+const COVERAGE_REASONS: readonly CoverageReason[] = ['standing_gaps', 'scan_failed', 'unresolved_overlap', 'unread', 'none']
+
 export interface ProviderRow {
   id: string
   label: string
@@ -1129,8 +1049,18 @@ export interface ProviderRow {
   /** Server verdict for `Freshness`; undefined lets the age decide. Null for unread rows (no age to show). */
   freshness: 'stale' | null | undefined
   observedAt: string | null
+  /** From the server's `coverageReason`: complete (none), partial (any gap) or unknown (not sent or not understood). */
   coverage: 'complete' | 'partial' | 'unknown'
-  /** Read, and the platform recorded nothing in this period: its own quiet state, not "ready". */
+  /** The server's own classification; null when it was not sent or is a word the page does not know. */
+  coverageReason: CoverageReason | null
+  /** Partial because of a standing gap (`standing_gaps`): a condition, not a fault. Failed scans and overlaps are not standing. */
+  standing: boolean
+  /** Server counters of lines the producer could not read; null when it did not supply them. */
+  skippedLines: number | null
+  oversizedLines: number | null
+  /** Why the coverage is what it is, in words (reason and line counters); null when there is nothing to add. */
+  coverageDetail: string | null
+  /** The platform has no usage rows in the period (the server's `hasRecords` is false). Unknown (flag absent) is not "no records". */
   noRecords: boolean
   tokens: number | null
   apiEquivalentUsd: number | null
@@ -1142,11 +1072,33 @@ function finiteOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function countOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+}
+
+const REASON_WORDS: Partial<Record<CoverageReason, string>> = {
+  scan_failed: 'The latest scan failed; showing the last good scan.',
+  unresolved_overlap: 'Ownership overlap with another platform is unresolved.',
+}
+
+function coverageDetailOf(reason: CoverageReason | null, skipped: number | null, oversized: number | null): string | null {
+  const parts: string[] = []
+  const words = reason ? REASON_WORDS[reason] : undefined
+  if (words) parts.push(words)
+  if (skipped !== null && skipped > 0) {
+    parts.push(`${skipped.toLocaleString('en-US')} ${skipped === 1 ? 'line' : 'lines'} skipped${oversized !== null && oversized > 0 ? ` (${oversized.toLocaleString('en-US')} oversized)` : ''}.`)
+  }
+  return parts.length > 0 ? parts.join(' ') : null
+}
+
 /**
  * One row per platform the payload lists, in payload order, and nothing else.
- * A platform is unread when the server says so (`unavailable`, or any state it
- * does not know) or when it gave no token reading: unread rows carry null
- * figures even if the payload sent numbers, so no caller can render them as 0.
+ * A platform is unread when the server says so (`unavailable`, `coverageReason:
+ * unread`, or any state it does not know) or when it gave no token reading:
+ * unread rows carry null figures even if the payload sent numbers, so no caller
+ * can render them as 0. Every other treatment comes from the server's own
+ * fields: `hasRecords` (no rows in the window), `billingKnown` (a recorded bill),
+ * `coverageReason` (why the records are incomplete).
  */
 export function providerRows(providers: UsageProvider[] | null | undefined): ProviderRow[] {
   if (!Array.isArray(providers)) return []
@@ -1154,23 +1106,29 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
     const state = String(provider.state ?? '').toLowerCase()
     const tokens = finiteOrNull(provider.tokens)
     const apiEquivalentUsd = finiteOrNull(provider.apiEquivalentUsd)
-    const read = (state === 'ready' || state === 'stale') && tokens !== null
-    const coverage = provider.coverage === 'complete' || provider.coverage === 'partial' ? provider.coverage : 'unknown'
+    const coverageReason = COVERAGE_REASONS.find(reason => reason === provider.coverageReason) ?? null
+    const read = (state === 'ready' || state === 'stale') && tokens !== null && coverageReason !== 'unread'
     const stale = read && state === 'stale'
-    // A platform that was read but recorded nothing has no usage to show: all of its
+    // Complete only when the server says `none`; a reason it did not send is unknown, never green.
+    const coverage = coverageReason === 'none'
+      ? 'complete'
+      : coverageReason === 'standing_gaps' || coverageReason === 'scan_failed' || coverageReason === 'unresolved_overlap'
+        ? 'partial'
+        : 'unknown'
+    const standing = coverage === 'partial' && coverageReason === 'standing_gaps'
+    // A platform that was read but has no usage rows has nothing to show: all of its
     // figures are dashes and its state is the quiet "No usage recorded", not "Ready".
-    const noRecords = read && tokens === 0 && (apiEquivalentUsd === null || apiEquivalentUsd === 0)
-    // A read platform whose records are known to be incomplete (partial coverage) is a
-    // standing condition, not a fault: neutral (never green), its word says so and its
-    // note carries the detail. A coverage the page does not recognise, a stale reading
-    // and an unread platform are warnings.
+    const noRecords = read && provider.hasRecords === false
+    // A standing gap is neutral (never green), its word says so and its note carries the detail.
+    // A failed scan, an unresolved overlap, an unknown coverage and a stale reading are warnings.
     const partial = read && coverage !== 'complete'
-    const standingPartial = partial && coverage === 'partial'
+    const standingPartial = partial && standing
+    // Billing is known only when the server says so (`billingKnown`); a bare 0 is not that.
     const billed = finiteOrNull(provider.billedUsd)
-    // Billing is known only when the payload says so (`billingKnown`) or the platform
-    // reports money actually billed. A bare 0 is "billing unknown unless recorded".
-    const billedKnown = billed !== null && (billed > 0 || provider.billingKnown === true)
+    const billedKnown = provider.billingKnown === true
     const note = typeof provider.note === 'string' && provider.note.trim() ? provider.note.trim() : null
+    const skippedLines = countOrNull(provider.skippedLines)
+    const oversizedLines = countOrNull(provider.oversizedLines)
     return {
       id: String(provider.id),
       label: provider.label || String(provider.id),
@@ -1186,6 +1144,11 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
       freshness: !read ? null : stale ? 'stale' : undefined,
       observedAt: provider.observedAt ?? null,
       coverage,
+      coverageReason,
+      standing,
+      skippedLines,
+      oversizedLines,
+      coverageDetail: read ? coverageDetailOf(coverageReason, skippedLines, oversizedLines) : null,
       noRecords,
       tokens: read ? tokens : null,
       apiEquivalentUsd: read ? apiEquivalentUsd : null,
@@ -1251,7 +1214,10 @@ export function summarizeProviderCoverage(
   const explained = unread.length + stale.length + partial.length + gaps.length > 0
   const unexplained = payloadPartial && !explained
   const hasIssues = explained || unexplained
-  const standingOnly = partial.length > 0 && unread.length + stale.length + gaps.length === 0 && !unexplained
+  // Standing only when every incomplete platform is a standing gap (not a failed scan or an overlap).
+  const partialRows = rows.filter(row => row.read && row.coverage !== 'complete' && row.stateWord !== 'Stale')
+  const standingOnly = partial.length > 0 && partialRows.every(row => row.standing)
+    && unread.length + stale.length + gaps.length === 0 && !unexplained
   return { unread, partial, stale, gaps, unexplained, hasIssues, standingOnly }
 }
 

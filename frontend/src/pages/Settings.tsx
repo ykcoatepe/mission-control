@@ -38,10 +38,16 @@ interface OpenClawConfig {
   }
 }
 
+/** Whether a routing field is set, left unset in the configuration, or could not be read (`*Source`). */
+type RoutingSource = 'set' | 'unset' | 'unreadable'
+
 interface ModelRoutingData {
-  main?: string
-  subagent?: string
-  heartbeat?: string
+  main?: string | null
+  subagent?: string | null
+  heartbeat?: string | null
+  mainSource?: RoutingSource
+  subagentSource?: RoutingSource
+  heartbeatSource?: RoutingSource
 }
 
 interface ModelInfo {
@@ -123,29 +129,47 @@ export default function Settings() {
 }
 
 /**
- * The heartbeat model as the person chose "Inherit from main model" on this page. The server reports
- * `null` for a heartbeat model it could not read, so `''` means "not read" and is never shown as an
- * inherit setting; only this explicit choice is sent as `''` (unset).
+ * "Inherits the main model": the field is unset in the configuration (`*Source` is `unset`) or
+ * the person chose to unset it. Only the heartbeat model can be unset through the API, so only
+ * it is offered as a choice; a sub-agent that inherits shows it as its current state.
+ * `''` is a value that is not a model: "Not set" (main) or "Not read" (the source could not be read).
  */
-const HEARTBEAT_INHERIT = '__inherit__'
+const INHERIT = '__inherit__'
 
-function modelOptions(models: ModelInfo[], current: string, heartbeat: boolean): SelectOption[] {
+/** The select value for a routing field, from what the server reported. */
+function baselineFor(field: RoutingField, value: string | null | undefined, source: RoutingSource | undefined): string {
+  if (source === 'set' && typeof value === 'string' && value) return value
+  if (source === 'unset' && field !== 'main') return INHERIT
+  return ''
+}
+
+function emptyLabel(source: RoutingSource | undefined): string {
+  return source === 'unset' ? 'Not set' : 'Not read'
+}
+
+function modelOptions(models: ModelInfo[], current: string, field: RoutingField, source: RoutingSource | undefined): SelectOption[] {
   const options: SelectOption[] = models.map((m) => ({ value: m.id, label: m.name || m.id }))
-  if (current && current !== HEARTBEAT_INHERIT && !models.some((m) => m.id === current)) {
+  if (current && current !== INHERIT && !models.some((m) => m.id === current)) {
     options.unshift({ value: current, label: current })
   }
-  if (heartbeat) {
-    options.unshift({ value: HEARTBEAT_INHERIT, label: 'Inherit from main model' })
-    if (!current) options.unshift({ value: '', label: 'Not read' })
-  } else if (!current) {
-    options.unshift({ value: '', label: 'Not set' })
+  // The heartbeat model can be unset through the API; a sub-agent only shows that it inherits.
+  if (field === 'heartbeat' || current === INHERIT) {
+    options.unshift({ value: INHERIT, label: 'Inherits the main model' })
   }
+  if (!current) options.unshift({ value: '', label: emptyLabel(source) })
   return options
 }
 
 /** The routing as the server takes it: the explicit inherit choice becomes the empty string. */
 function routingForServer(changed: Partial<Routing>): Partial<Routing> {
-  return changed.heartbeat === HEARTBEAT_INHERIT ? { ...changed, heartbeat: '' } : changed
+  return changed.heartbeat === INHERIT ? { ...changed, heartbeat: '' } : changed
+}
+
+/** The hint under a field that holds no model: the server's `*Source` says why. */
+function unreadHint(name: string, source: RoutingSource | undefined): string {
+  return source === 'unset'
+    ? `No ${name} model is set. Choose one to set it.`
+    : `The current ${name} model could not be read. Choose one to change it.`
 }
 
 function ModelsPanel({ saver }: { saver: Saver }) {
@@ -177,10 +201,12 @@ function ModelsPanel({ saver }: { saver: Saver }) {
     )
   } else {
     const server = routingApi.data
+    // Each field comes as the server reported it. A sub-agent model that is unset inherits the main
+    // model; the page does not copy the main model into it.
     const baseline: Routing = saved ?? {
-      main: server.main || '',
-      subagent: server.subagent || server.main || '',
-      heartbeat: server.heartbeat || '',
+      main: baselineFor('main', server.main, server.mainSource),
+      subagent: baselineFor('subagent', server.subagent, server.subagentSource),
+      heartbeat: baselineFor('heartbeat', server.heartbeat, server.heartbeatSource),
     }
     const routing: Routing = { ...baseline, ...draft }
     const dirty = (Object.keys(routing) as (keyof Routing)[]).some((k) => routing[k] !== baseline[k])
@@ -216,22 +242,22 @@ function ModelsPanel({ saver }: { saver: Saver }) {
     body = (
       <div className={styles.form}>
         <div className={styles.fields}>
-          <Field label="Main model" hint="Used for the main assistant." error={fieldErrors.main}>
-            {(c) => <Select {...c} value={routing.main} onChange={set('main')} options={modelOptions(list, routing.main, false)} />}
+          <Field label="Main model" hint={routing.main === '' ? unreadHint('main', server.mainSource) : 'Used for the main assistant.'} error={fieldErrors.main}>
+            {(c) => <Select {...c} value={routing.main} onChange={set('main')} options={modelOptions(list, routing.main, 'main', server.mainSource)} />}
           </Field>
-          <Field label="Sub-agent model" hint="Used by sub-agents the assistant starts." error={fieldErrors.subagent}>
-            {(c) => <Select {...c} value={routing.subagent} onChange={set('subagent')} options={modelOptions(list, routing.subagent, false)} />}
+          <Field
+            label="Sub-agent model"
+            hint={routing.subagent === '' ? unreadHint('sub-agent', server.subagentSource) : 'Used by sub-agents the assistant starts.'}
+            error={fieldErrors.subagent}
+          >
+            {(c) => <Select {...c} value={routing.subagent} onChange={set('subagent')} options={modelOptions(list, routing.subagent, 'subagent', server.subagentSource)} />}
           </Field>
           <Field
             label="Heartbeat model"
-            hint={
-              routing.heartbeat === ''
-                ? 'The current heartbeat model could not be read. Choose one to change it.'
-                : 'Used for scheduled heartbeat checks.'
-            }
+            hint={routing.heartbeat === '' ? unreadHint('heartbeat', server.heartbeatSource) : 'Used for scheduled heartbeat checks.'}
             error={fieldErrors.heartbeat}
           >
-            {(c) => <Select {...c} value={routing.heartbeat} onChange={set('heartbeat')} options={modelOptions(list, routing.heartbeat, true)} />}
+            {(c) => <Select {...c} value={routing.heartbeat} onChange={set('heartbeat')} options={modelOptions(list, routing.heartbeat, 'heartbeat', server.heartbeatSource)} />}
           </Field>
         </div>
         {models.error && (

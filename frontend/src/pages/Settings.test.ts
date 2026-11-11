@@ -33,7 +33,7 @@ function stubServer(onWrite: (sent: Sent) => Response) {
         return onWrite(record)
       }
       if (url === '/api/models') return json([{ id: 'a/b', name: 'A B' }, { id: 'c/d', name: 'C D' }])
-      if (url === '/api/settings/model-routing') return json({ main: 'a/b', subagent: null, heartbeat: null })
+      if (url === '/api/settings/model-routing') return json({ main: 'a/b', subagent: null, heartbeat: null, mainSource: 'set', subagentSource: 'unset', heartbeatSource: 'unset' })
       if (url === '/api/settings') return json({ gateway_port: 18789, system: { node_version: 'v24' } })
       return json({ error: { code: 'not_found', message: 'No API route' } }, 404)
     }),

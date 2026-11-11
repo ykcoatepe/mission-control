@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeTokenUsage, formatMiB, formatSize, formatTokens, gpuLoadLabel, splitLocalTokens } from './ollamaFormat'
+import { describeTokenUsage, formatMiB, formatSize, formatTokens, splitLocalTokens, aggregateLocalTokenUsage, countUnknownLocality, canonicalLocalModelName } from './ollamaFormat'
 
 describe('sizes use one decimal base', () => {
   it('formats bytes in decimal units, matching the model sizes Ollama reports', () => {
@@ -61,10 +61,35 @@ describe('token usage above the models table', () => {
   })
 })
 
-describe('gpuLoadLabel', () => {
-  it('names the Apple counter for what it is, not as memory pressure', () => {
-    expect(gpuLoadLabel('apple-ioreg')).toBe('Tiler load')
-    expect(gpuLoadLabel('nvidia-smi')).toBe('Memory controller load')
-    expect(gpuLoadLabel(null)).toBe('Memory controller load')
+describe('local token usage comes from isLocal, not from names', () => {
+  const rows = [
+    { name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45_220, isLocal: true as const },
+    // Looks local by its name, but the server did not say so.
+    { name: 'Hermes / ollama/llama3:8b', tokens: 4_200, isLocal: null },
+    { name: 'Hermes / local/other', tokens: 7, isLocal: false as const },
+    { name: 'Claude Code / claude-opus-5-5', tokens: 9_000_000 },
+  ]
+
+  it('counts only rows the server marked local', () => {
+    const usage = aggregateLocalTokenUsage(rows)
+    expect([...usage.keys()]).toEqual(['qwen3.8-flash'])
+    expect(usage.get('qwen3.8-flash')?.tokens).toBe(45_220)
+  })
+
+  it('counts the rows whose locality is unknown instead of guessing', () => {
+    expect(countUnknownLocality(rows)).toBe(2)
+    expect(countUnknownLocality([])).toBe(0)
+  })
+
+  it('says how many rows were left out for unknown locality', () => {
+    expect(describeTokenUsage({ listed: 0, other: 45_220 }, 'This month', 2)).toBe(
+      'No token usage recorded for these models · 45.2K more by local endpoints not in this list · 2 usage rows have no recorded locality and are not counted · this month',
+    )
+    expect(describeTokenUsage({ listed: 1_000, other: 0 }, 'Today', 1)).toContain('1 usage row has no recorded locality and is not counted')
+    expect(describeTokenUsage({ listed: 1_000, other: 0 }, 'Today')).not.toContain('locality')
+  })
+
+  it('matches a usage name to an Ollama model name', () => {
+    expect(canonicalLocalModelName('Hermes / ollama/Llama3:8b:latest')).toBe('llama3:8b')
   })
 })

@@ -7,8 +7,8 @@
 //      once, Windows form) but never URL paths, relative paths or prose;
 //      structured path fields are canonicalised against the real home and its
 //      aliases, and a home path that cannot be rewritten loses its directory;
-//   3. one state ordering, declared once in server/core/state.js and equal to
-//      the frontend's.
+//   3. one state ordering: every backend consumer and the frontend execute
+//      against one fixture of pairwise results (tests/fixtures/state-order.json).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -127,6 +127,93 @@ test('2: free text — home paths scrubbed in every form; URLs, relative paths a
   for (const input of untouched) assert.equal(scrubText(input), input, input);
 });
 
+// Review round 2 (P2): diagnostics often carry JSON, where "\" is doubled per
+// nesting level and "/" may be written "\/" or "\u002f".
+const R = String.raw;
+const ESCAPED_PATHS = [
+  // the reviewer's reproductions
+  [R`{"path":"C:\\Users\\alice\\x"}`, R`{"path":"~\\x"}`],
+  [R`{"path":"C:\\Users/alice\\x"}`, R`{"path":"~\\x"}`],
+  [R`{"path":"C:\/Users\/alice\/x"}`, R`{"path":"~\/x"}`],
+  // every Windows form, raw
+  [R`C:\Users\alice\x`, R`~\x`],
+  [R`C:/Users/alice/x`, '~/x'],
+  [R`\\?\C:\Users\alice\x`, R`~\x`],
+  [R`C:\Users/alice\AppData/Local`, R`~\AppData/Local`],
+  [R`C:/Users\alice/x`, '~/x'],
+  [R`d:\users\ALICE`, '~'],
+  [R`open C:\Users\alice\notes.txt: denied`, R`open ~\notes.txt: denied`],
+  [R`C:\Users\müdür\x`, R`~\x`],
+  // JSON-escaped once
+  [R`{"p":"\\\\?\\C:\\Users\\alice\\x"}`, R`{"p":"~\\x"}`],
+  [R`{"p":"C:\\Users\\alice"}`, R`{"p":"~"}`],
+  [R`{"p":"\/Users\/alice\/.ssh\/id_rsa"}`, R`{"p":"~\/.ssh\/id_rsa"}`],
+  [R`{"p":"\u002fUsers\u002falice\u002fx"}`, R`{"p":"~\u002fx"}`],
+  [R`{"p":"C:\u005cUsers\u005calice\u005cx"}`, R`{"p":"~\u005cx"}`],
+  [R`{"p":"\/home\/bob"}`, R`{"p":"~"}`],
+  [R`{"msg":"failed:\n/Users/alice/x\n"}`, R`{"msg":"failed:\n~/x\n"}`],
+  [R`{"msg":"at\tC:\\Users\\alice\\x"}`, R`{"msg":"at\t~\\x"}`],
+  // nested JSON strings (two and three levels)
+  [JSON.stringify(JSON.stringify({ path: R`C:\Users\alice\x` })), JSON.stringify(JSON.stringify({ path: R`~\x` }))],
+  [JSON.stringify(JSON.stringify(JSON.stringify({ path: R`C:\Users\alice\x`, home: '/Users/alice/y' }))),
+    JSON.stringify(JSON.stringify(JSON.stringify({ path: R`~\x`, home: '~/y' })))],
+  [JSON.stringify(JSON.stringify({ path: R`\\?\C:\Users\alice\x` })), JSON.stringify(JSON.stringify({ path: R`~\x` }))],
+  [JSON.stringify({ stderr: JSON.stringify({ file: 'C:/Users/alice/x', other: R`C:\Users/alice\y` }) }),
+    JSON.stringify({ stderr: JSON.stringify({ file: '~/x', other: R`~\y` }) })],
+];
+const ESCAPED_NEGATIVES = [
+  R`C:\Program Files\App`,
+  R`C:\Program Files\Users Guide\readme.txt`,
+  R`{"p":"C:\\Program Files\\App"}`,
+  R`C:\Windows\System32\drivers\etc\hosts`,
+  R`D:\data\users.csv`,
+  R`C:\Users`,
+  R`C:\Users\ `,
+  R`the C: drive and the Users folder`,
+  R`ratio 3:/Users are welcome`.replace('3:/Users are', '3:1 users are'),
+  'https://example.com/C:/Users/alice/x',
+  'https://example.com/users/alice?next=%2Fhome',
+  R`https:\/\/example.com\/users\/alice`,
+  R`{"url":"https:\/\/example.com\/home\/help"}`,
+  R`^[A-Z]:\\Users\\\w+$`,
+  R`/\/users\/(\w+)/`,
+  R`/^\/home\/[^/]+$/`,
+  R`\d+:\s*\w+`,
+  R`s/\\/\//g`,
+  R`src\users\list.ts`,
+  R`docs\/home\/readme.md`,
+  R`line one\nline two\ttabbed`,
+  R`{"a":"b\\c","d":"e\/f","g":"\u00fc"}`,
+  R`\\server\share\Users\alice`,
+];
+
+test('2 (P2): Windows and JSON-escaped home paths are scrubbed at every escape depth; lookalikes are untouched', () => {
+  const { scrubText } = require('../server/core/scrub');
+  for (const [input, expected] of ESCAPED_PATHS) {
+    const output = scrubText(input);
+    assert.equal(output, expected, input);
+    assert.doesNotMatch(output, /alice|ALICE|müdür|bob/, input);
+    assert.equal(scrubText(output), output, `idempotent: ${input}`);
+  }
+  for (const input of ESCAPED_NEGATIVES) assert.equal(scrubText(input), input, input);
+  // Valid JSON in, valid JSON out.
+  for (const [input] of ESCAPED_PATHS.filter(([text]) => text.startsWith('{') || text.startsWith('"'))) {
+    assert.doesNotThrow(() => JSON.parse(scrubText(input)), input);
+  }
+});
+
+test('2 (P2): an action summary built from JSON stderr carries no escaped home path (reviewer reproduction)', async () => {
+  const stderr = [R`{"path":"C:\\Users\\alice\\x"}`, R`{"path":"C:\\Users/alice\\y","alt":"\/Users\/alice\/z"}`,
+    JSON.stringify(JSON.stringify({ path: R`C:\Users\alice\w` }))].join('\n');
+  await serve(actionApp({ ok: false, timedOut: false, code: 1, stdout: '', stderr }), async (base) => {
+    const response = await post(base, '/api/gbrain/actions', { action: 'doctor-fast' });
+    assert.equal(response.status, 502);
+    assert.ok(response.json.summary.length > 0);
+    assert.doesNotMatch(response.text, /alice/i);
+    assert.match(response.json.summary, /~/);
+  });
+});
+
 test('2: the error handler uses the same policy for authored messages', async () => {
   await serve((app) => {
     app.get('/api/a', () => { throw httpError(400, 'bad_thing', 'Bad file /users/alice/x and see https://example.com/home/help'); });
@@ -200,37 +287,78 @@ test('3: the operations aggregate uses the one ordering (healthy outranks inacti
   assert.equal(worstState([]), 'unavailable');
 });
 
-test('3: no other rank table or state-order array exists under server/', () => {
-  const STATES = ['critical', 'warning', 'unavailable', 'healthy', 'inactive'];
-  const root = path.join(__dirname, '..', 'server');
-  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (
-    entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith('.js') ? [path.join(dir, entry.name)] : []));
-  const offenders = [];
-  for (const file of walk(root)) {
-    if (file === path.join(root, 'core', 'state.js')) continue;
-    const text = fs.readFileSync(file, 'utf8');
-    // An object literal giving two or more state words a number.
-    for (const match of text.matchAll(/\{[^{}]*\}/g)) {
-      const ranked = STATES.filter((state) => new RegExp(`\\b${state}\\s*:\\s*-?\\d`).test(match[0]));
-      if (ranked.length >= 2) offenders.push(`${path.relative(root, file)}: rank table ${match[0].slice(0, 60)}`);
-    }
-    // An array literal listing all five states (an ordering).
-    for (const match of text.matchAll(/\[[^[\]]*\]/g)) {
-      if (STATES.every((state) => new RegExp(`['"]${state}['"]`).test(match[0]))) {
-        offenders.push(`${path.relative(root, file)}: state-order array ${match[0].slice(0, 60)}`);
-      }
+// Review round 2 (P3): the ordering guard is BEHAVIOUR, not source text. A
+// static table of expected pairwise results (tests/fixtures/state-order.json)
+// is executed against every backend consumer's real aggregation here, and
+// against the frontend's real worstState in frontend/src/lib/state.test.ts.
+const ORDER = require('./fixtures/state-order.json');
+const expectedWorst = new Map(ORDER.pairs.map(([a, b, worst]) => [`${a}|${b}`, worst]));
+const worstOf = (a, b) => expectedWorst.get(`${a}|${b}`);
+const strictlyWorse = (a, b) => a !== b && worstOf(a, b) === a; // a is worse than b
+
+test('3: the fixture is complete and self-consistent', () => {
+  assert.equal(ORDER.states.length, 5);
+  assert.equal(ORDER.pairs.length, 25);
+  for (const a of ORDER.states) {
+    assert.equal(worstOf(a, a), a);
+    for (const b of ORDER.states) {
+      assert.ok([a, b].includes(worstOf(a, b)), `${a}|${b}`);
+      assert.equal(worstOf(a, b), worstOf(b, a), `symmetric ${a}|${b}`);
     }
   }
-  assert.deepEqual(offenders, []);
 });
 
-test('3: the frontend declares the same order as server/core/state.js', () => {
-  const { STATE_ORDER } = require('../server/core/state');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'frontend', 'src', 'lib', 'state.ts'), 'utf8');
-  const block = /const SEVERITY: Record<UiState, number> = \{([^}]*)\}/.exec(source);
-  assert.ok(block, 'frontend SEVERITY table found');
-  const ranks = [...block[1].matchAll(/(\w+):\s*(-?\d+)/g)].map(([, state, rank]) => [state, Number(rank)]);
-  const frontendOrder = ranks.sort((a, b) => b[1] - a[1]).map(([state]) => state);
-  assert.deepEqual(frontendOrder, STATE_ORDER);
-  assert.match(source, new RegExp(STATE_ORDER.join(' > ')));
+test('3: core worstState / stateRank / bySeverity give the fixture result for every pair and list', () => {
+  const { worstState, stateRank, bySeverity } = require('../server/core/state');
+  for (const [a, b, worst] of ORDER.pairs) {
+    assert.equal(worstState([a, b]), worst, `worstState([${a}, ${b}])`);
+    assert.equal(Math.sign(stateRank(a) - stateRank(b)), strictlyWorse(a, b) ? 1 : strictlyWorse(b, a) ? -1 : 0, `stateRank ${a} vs ${b}`);
+    assert.equal([a, b].sort(bySeverity)[0], worst, `bySeverity puts the worst first: ${a}, ${b}`);
+  }
+  for (const [list, worst] of ORDER.lists) assert.equal(worstState(list), worst, JSON.stringify(list));
+  assert.equal(worstState([]), ORDER.empty);
+});
+
+test('3: the Operations aggregate gives the fixture result for every pair of system states', () => {
+  const { deriveOverallStatus } = require('../server/services/operationsOverview');
+  for (const [a, b, worst] of ORDER.pairs) {
+    assert.equal(deriveOverallStatus({ one: { state: a }, two: { state: b } }), worst, `${a} + ${b}`);
+  }
+});
+
+test('3: the GBrain state helper and verdict give the fixture result for every pair', () => {
+  const gbrainState = require('../server/sources/gbrain/state');
+  const { buildGBrainVerdict } = require('../server/sources/gbrain/verdict');
+  for (const [a, b, worst] of ORDER.pairs) {
+    assert.equal(gbrainState.worstState([a, b]), worst, `gbrain worstState([${a}, ${b}])`);
+    // Two readers in states a and b. The verdict starts from healthy and
+    // never lets an inactive reason degrade it.
+    const verdict = buildGBrainVerdict({
+      core: { state: 'healthy', quality: { value: 100 } },
+      sources: [], sourcesState: 'healthy', queue: { state: 'inactive' },
+      readers: [{ id: 'r1', label: 'One', state: a }, { id: 'r2', label: 'Two', state: b }],
+      readersState: 'healthy', live: {},
+    });
+    const counted = [a, b].map((state) => (state === 'inactive' ? 'healthy' : state));
+    assert.equal(verdict.state, worstOf(worstOf('healthy', counted[0]), counted[1]), `verdict for readers ${a} + ${b}`);
+  }
+});
+
+test('3: the signals attention aggregate gives the fixture result for every pair', () => {
+  const { needsOperator } = require('../server/sources/mloop/attention');
+  for (const [a, b, worst] of ORDER.pairs) {
+    const signal = needsOperator({ systemsAttention: [{ severity: a }, { severity: b }] });
+    assert.equal(signal.worst, worst, `attention ${a} + ${b}`);
+  }
+});
+
+test('3: the timeline reports a trust change exactly when the fixture says the new state is worse', () => {
+  const { buildIncidentBanner } = require('../server/services/gbrainTimeline');
+  for (const previous of ORDER.states) {
+    for (const current of ORDER.states) {
+      const banner = buildIncidentBanner({ trust: { status: current }, metrics: {} }, { trust: { status: previous }, metrics: {} });
+      const reported = /Trust changed from/.test(banner?.detail || '');
+      assert.equal(reported, strictlyWorse(current, previous), `${previous} -> ${current}`);
+    }
+  }
 });

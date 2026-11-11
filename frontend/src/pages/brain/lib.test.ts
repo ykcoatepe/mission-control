@@ -22,6 +22,8 @@ import {
   ledgerState,
   recentReadings,
   startSentence,
+  isSyncOff,
+  syncWord,
 } from './lib'
 import { ApiError } from '../../lib/hooks'
 import { META, health, minimalSynoptic, synoptic, verdictOf, withVerdict } from './fixtures'
@@ -85,9 +87,10 @@ describe('verdict', () => {
     const verdict = deriveVerdict(syn, META)
     expect(verdict.state).toBe('healthy')
     expect(verdict.text).toBe('GBrain is normal')
-    expect(model.states[readerBlockId('hermes')]).toBe('healthy')
+    // As the server sends a configuration read: inactive state, observation 'configured'.
+    expect(model.states[readerBlockId('hermes')]).toBe('inactive')
     expect(model.readers[0].sub).toBe('configured')
-    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'healthy', label: 'configured' })
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'inactive', label: 'configured', neutral: true })
     expect(verdict.conditions).toEqual([])
   })
 
@@ -331,7 +334,7 @@ describe('element detail', () => {
     expect(reader?.rows.find((r) => r.label === 'Connection')).toBeUndefined()
     expect(reader?.notes).toEqual([])
     const line = describeElement('edge:reader:hermes', syn, model)
-    expect(line?.rows[0]).toMatchObject({ label: 'Line', value: 'configured', state: 'healthy' })
+    expect(line?.rows[0]).toMatchObject({ label: 'Line', value: 'configured', state: 'inactive' })
   })
 
   it('describes a line with its own reading and the actions of its block', () => {
@@ -528,15 +531,33 @@ describe('history rows are history, never a second current state', () => {
     warnings: [],
   })
 
-  it('reads the ledger "unavailable" label as unavailable, not critical, and an unknown status as unavailable', () => {
-    expect(ledgerState({ trust: { label: 'GBrain unavailable', status: 'critical', score: 99 } })).toBe('unavailable')
-    expect(ledgerState({ trust: { label: 'GBrain critical', status: 'critical', score: 1 } })).toBe('critical')
-    expect(ledgerState({ trust: { label: '', status: 'bogus' as never, score: null } })).toBe('unavailable')
+  it('takes an entry\'s state from its captured verdict, else its trust status, and never from the label text', () => {
+    const trust = (status: string, label = '') => ({ label, status: status as never, score: 99 })
+    // The verdict wins over the trust status.
+    expect(ledgerState({ trust: trust('critical'), verdict: { state: 'unavailable', reasons: [] } })).toBe('unavailable')
+    expect(ledgerState({ trust: trust('healthy'), verdict: { state: 'warning', reasons: [] } })).toBe('warning')
+    // An older entry has no verdict: its status is the state.
+    expect(ledgerState({ trust: trust('critical', 'GBrain critical') })).toBe('critical')
+    expect(ledgerState({ trust: trust('unavailable', 'GBrain unavailable') })).toBe('unavailable')
+    // A label that says "unavailable" no longer turns a critical status into anything else.
+    expect(ledgerState({ trust: trust('critical', 'GBrain unavailable') })).toBe('critical')
+    expect(ledgerState({ trust: trust('bogus') })).toBe('unavailable')
     expect(ledgerState({} as TimelineEntry)).toBe('unavailable')
-    expect(recentReadings([ledger('a', 1, 'critical', {}, 'GBrain unavailable'), ledger('b', 5, 'healthy')])[0]).toMatchObject({
-      state: 'unavailable',
-      stateWord: 'unavailable',
-    })
+  })
+
+  it('shows a row\'s recorded state from the verdict', () => {
+    const withVerdictState = (entry: TimelineEntry, state: string): TimelineEntry => ({ ...entry, verdict: { state, reasons: [] } })
+    const rows = recentReadings([withVerdictState(ledger('a', 1, 'critical'), 'unavailable'), ledger('b', 5, 'healthy')])
+    expect(rows[0]).toMatchObject({ state: 'unavailable', stateWord: 'unavailable' })
+  })
+
+  it('does not collapse two readings whose verdict reasons differ', () => {
+    const reasons = (elementId: string): TimelineEntry['verdict'] => ({ state: 'warning', reasons: [{ elementId, state: 'warning', text: 'x' }] })
+    const rows = recentReadings([
+      { ...ledger('b', 1, 'warning'), verdict: reasons('queue') },
+      { ...ledger('a', 4, 'warning'), verdict: reasons('core') },
+    ])
+    expect(rows).toHaveLength(2)
   })
 
   it('collapses consecutive readings whose only change is the oldest-age tick into one row with a count', () => {
@@ -566,7 +587,7 @@ describe('history rows are history, never a second current state', () => {
   })
 
   it('marks the newest row only when it disagrees with the current reading, and says how', () => {
-    const entries = [ledger('b', 3, 'critical', {}, 'GBrain unavailable'), ledger('a', 6, 'healthy')]
+    const entries = [ledger('b', 3, 'unavailable'), ledger('a', 6, 'healthy')]
     const now = at(0)
     expect(recentReadings(entries, 6, { state: 'unavailable', observedAt: now })[0].note).toBeNull()
     expect(recentReadings(entries, 6, { state: 'healthy', observedAt: now })[0].note).toBe('Older than the current reading')
@@ -578,7 +599,7 @@ describe('history rows are history, never a second current state', () => {
 })
 
 describe('configured is not observed healthy', () => {
-  it('shows a healthy reader as configured with a neutral dot, and a reader that was not read as not read', () => {
+  it('shows a configured reader as configured with a neutral dot, and an unreadable one as not read', () => {
     const syn = synoptic()
     const model = buildBrainModel(syn)
     expect(model.readers.every((reader) => reader.neutral === true && reader.sub === 'configured')).toBe(true)
@@ -597,10 +618,29 @@ describe('configured is not observed healthy', () => {
     expect(detail?.rows[0]).toMatchObject({ label: 'Configuration', value: 'configured', state: undefined })
   })
 
-  it('keeps a failing reader visible: a warning reader is not neutral', () => {
+  it('treats the reader by its observation: observed readers carry their state colours, the others do not', () => {
     const syn = synoptic()
-    syn.readers[0] = { ...syn.readers[0], state: 'warning' }
-    expect(buildBrainModel(syn).readers[0].neutral).toBe(false)
+    syn.readers[0] = { ...syn.readers[0], observation: 'observed', state: 'warning' }
+    syn.readers[1] = { ...syn.readers[1], observation: 'not_configured', state: 'inactive' }
+    const model = buildBrainModel(syn)
+    expect(model.readers[0]).toMatchObject({ neutral: false, sub: 'warning', state: 'warning' })
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ neutral: false, label: 'warning' })
+    expect(model.readers[1]).toMatchObject({ neutral: false, sub: 'not configured' })
+  })
+
+  it('does not call an inactive reader "not configured" when the server says it is configured', () => {
+    const syn = synoptic()
+    expect(syn.readers[0].state).toBe('inactive')
+    expect(buildBrainModel(syn).readers[0].sub).toBe('configured')
+  })
+
+  it('says "not read" for an unreadable reader or one without an observation, and never colours it', () => {
+    const syn = synoptic()
+    syn.readers[0] = { ...syn.readers[0], observation: 'unreadable', state: 'unavailable' }
+    syn.readers[1] = { ...syn.readers[1], observation: undefined }
+    const model = buildBrainModel(syn)
+    expect(model.readers.map((reader) => reader.sub)).toEqual(['not read', 'not read'])
+    expect(model.readers.every((reader) => reader.neutral === false)).toBe(true)
   })
 
   it('does not let a normal verdict claim more than was observed', () => {
@@ -615,7 +655,7 @@ describe('configured is not observed healthy', () => {
 describe('one vocabulary for a source that is switched off', () => {
   it('uses "sync off" in the group, the line, the readings strip and the notes, and never re-cases an id', () => {
     const syn = withVerdict(synoptic(), { elementId: 'tk-omc-ain', state: 'inactive', text: 'tk-omc-ain: sync disabled.' })
-    syn.sources[0].items[1] = { ...syn.sources[0].items[1], state: 'inactive', excludedByPolicy: true }
+    syn.sources[0].items[1] = { ...syn.sources[0].items[1], state: 'inactive', excludedByPolicy: true, reason: 'sync disabled' }
     const model = buildBrainModel(syn)
     expect(model.groups[0].sub).toBe('all fresh · 1 sync off')
     expect(deriveSourceSync(syn.sources).hint).toBe('1 sync off')
@@ -626,6 +666,45 @@ describe('one vocabulary for a source that is switched off', () => {
     expect(startSentence('connection telemetry is not observable')).toBe('Connection telemetry is not observable')
     const detail = describeElement(groupBlockId('projects'), syn, model)
     expect(detail?.items.find((item) => item.id === 'off')?.note).toBeNull()
+  })
+})
+
+describe('the sync word comes from one helper and the server policy flag', () => {
+  it('is "sync off" only when excludedByPolicy is true, whatever the reason', () => {
+    expect(syncWord({ state: 'inactive', excludedByPolicy: true, reason: 'sync disabled' })).toBe('sync off')
+    expect(syncWord({ state: 'inactive', excludedByPolicy: true, reason: 'not sync-tracked' })).toBe('sync off')
+    expect(syncWord({ state: 'healthy', excludedByPolicy: false })).toBe('fresh')
+    expect(syncWord({ state: 'warning', excludedByPolicy: false, reason: 'never synced' })).toBe('warning')
+    // An inactive state without the policy flag is not guessed to be "sync off".
+    expect(syncWord({ state: 'inactive', excludedByPolicy: null })).toBe('inactive')
+    expect(syncWord({ state: 'inactive' })).toBe('inactive')
+    expect(syncWord(null)).toBe('unavailable')
+    expect(isSyncOff({ excludedByPolicy: true })).toBe(true)
+    expect(isSyncOff({ excludedByPolicy: false })).toBe(false)
+    expect(isSyncOff(undefined)).toBe(false)
+  })
+
+  it('is the same for a record of /api/gbrain/sources and an item of the synoptic', () => {
+    const record = { id: 'tk-omc-ain', excludedByPolicy: true, reason: 'sync disabled', state: 'inactive' }
+    const item = { state: 'inactive', excludedByPolicy: true, reason: 'sync disabled' }
+    expect(syncWord(record)).toBe(syncWord(item))
+  })
+
+  it('counts a source as off by the flag, not by its state', () => {
+    const syn = synoptic()
+    // Inactive state but not excluded by policy: not counted as "sync off".
+    syn.sources[0].items[1] = { ...syn.sources[0].items[1], state: 'inactive', excludedByPolicy: false, reason: null }
+    expect(deriveSourceSync(syn.sources).hint).toBe('all fresh')
+    expect(buildBrainModel(syn).groups[0].sub).toBe('all fresh')
+  })
+
+  it('shows the server reason for a source that is not simply switched off, and the word in the detail', () => {
+    const syn = synoptic()
+    syn.sources[0].items[0] = { ...syn.sources[0].items[0], state: 'warning', reason: 'never synced', lastSyncAt: null }
+    const detail = describeElement(groupBlockId('projects'), syn, buildBrainModel(syn))
+    const item = detail?.items.find((entry) => entry.id === 'mission-control')
+    expect(item).toMatchObject({ word: 'warning', note: 'never synced' })
+    expect(detail?.items.find((entry) => entry.id === 'off')).toMatchObject({ word: 'sync off', note: null })
   })
 })
 

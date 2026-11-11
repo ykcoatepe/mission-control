@@ -15,8 +15,12 @@ const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200
 
 const SIGNALS = {
   data: {
-    systems: { gbrain: { state: 'warning', observedAt: new Date().toISOString() }, hermes: null, openclaw: null },
-    attention: { count: 30, worst: 'critical' },
+    systems: {
+      gbrain: { state: 'warning', observedAt: new Date().toISOString(), reason: 'Embed-job probe unavailable.', detailHref: '/gbrain' },
+      hermes: { state: 'warning', observedAt: new Date().toISOString(), reason: 'Hermes has a caveat.', detailHref: '/work' },
+      openclaw: null,
+    },
+    attention: { count: 30, worst: 'critical', breakdown: { systems: 3, findings: 2, overdueConfirmations: 4, restricted: 21 } },
     automations: { failed: 0, nextRunAt: null },
     loops: { openFindings: 146, overdueConfirmations: 24 },
     services: { down: 0 },
@@ -98,19 +102,33 @@ describe('mobile navigation drawer', () => {
 })
 
 describe('one attention number', () => {
-  it('shows the same count and words in the top-bar pill and the sidebar badge, with overdue as secondary text', async () => {
+  it('shows the same count and words in the top-bar pill and the sidebar badge, with the breakdown as secondary text', async () => {
     stubShell(false)
     const { host, root } = await mount(
       createElement('div', null, createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }), createElement(Sidebar, { collapsed: false, onToggleCollapsed: () => undefined, open: false, onClose: () => undefined })),
     )
     const pill = host.querySelector('a[href="/attention"][aria-label]') as HTMLAnchorElement
-    expect(pill.getAttribute('aria-label')).toBe('30 need attention, 24 overdue')
+    expect(pill.getAttribute('aria-label')).toBe('30 need attention, 3 systems · 2 findings · 4 overdue · 21 restricted')
     const badge = [...host.querySelectorAll('nav a[href="/attention"]')].map((a) => a.textContent ?? '').join(' ')
     expect(badge).toContain('30')
     expect(badge).toContain('need attention')
-    expect(badge).toContain('24 overdue')
-    // The old sidebar number (overdue confirmations alone) must not stand in for the attention count.
-    expect(badge).not.toMatch(/^Attention24\b/)
+    expect(badge).toContain('3 systems · 2 findings · 4 overdue · 21 restricted')
+    // The loops signal's overdue count (24) is a different number and must not stand in for the attention count.
+    expect(badge).not.toContain('24')
+    await act(async () => root.unmount())
+  })
+
+  it('annunciators show the server reason and follow detailHref only to a screen that exists', async () => {
+    stubShell(false)
+    const { host, root } = await mount(
+      createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }),
+    )
+    const gbrain = host.querySelector('ul[aria-label="Systems"] a[href="/gbrain"]') as HTMLAnchorElement
+    expect(gbrain.getAttribute('title')).toBe('GBrain: warning. Embed-job probe unavailable.')
+    // "/work" is a removed screen: the link falls back to the Services page instead of redirecting home.
+    const hermes = [...host.querySelectorAll('ul[aria-label="Systems"] a')].find((a) => a.textContent?.includes('Hermes')) as HTMLAnchorElement
+    expect(hermes.getAttribute('href')).toBe('/services')
+    expect(hermes.getAttribute('title')).toBe('Hermes: warning. Hermes has a caveat.')
     await act(async () => root.unmount())
   })
 

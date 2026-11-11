@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeDayRuns, formatMinuteOfDay, parseSchedule, runsOnDay, scheduleDisplay } from './cronSchedule'
+import { describeDayRuns, formatMinuteOfDay, parseEntrySchedule, parseSchedule, runsOnDay, scheduleDisplay } from './cronSchedule'
 import type { DayRuns, Schedule } from './cronSchedule'
 
 /** Local-calendar Date at midnight; month is 1-based. 2026-11-11 is a Wednesday. */
@@ -302,5 +302,56 @@ describe('scheduleDisplay', () => {
     expect(scheduleDisplay(null)).toEqual({ text: 'Schedule not reported', raw: false })
     expect(scheduleDisplay('every 10m')).toEqual({ text: 'every 10m', raw: true })
     expect(scheduleDisplay(' 0 9 * * 1 ')).toEqual({ text: '0 9 * * 1', raw: true })
+  })
+})
+
+describe('parseEntrySchedule reads the server\'s scheduleKind and everyMs', () => {
+  it('reads an interval from everyMs, not from the display text', () => {
+    const parsed = parseEntrySchedule({ schedule: 'every 30m', scheduleKind: 'interval', everyMs: 1_800_000 })
+    expect(parsed.ok && parsed.schedule.kind === 'interval' && parsed.schedule.everyMinutes).toBe(30)
+    // The text is a label only: a disagreeing text does not change the interval.
+    const odd = parseEntrySchedule({ schedule: 'every 5m', scheduleKind: 'interval', everyMs: 600_000 })
+    expect(odd.ok && odd.schedule.kind === 'interval' && odd.schedule.everyMinutes).toBe(10)
+    // The text can be missing altogether.
+    expect(parseEntrySchedule({ schedule: null, scheduleKind: 'interval', everyMs: 120_000 }).ok).toBe(true)
+    const run = parseEntrySchedule({ scheduleKind: 'interval', everyMs: 600_000 })
+    expect(run.ok && runsOnDay(run.schedule, day(2026, 11, 11)).count).toBe(144)
+  })
+
+  it('refuses an interval without a usable everyMs, or longer than a day', () => {
+    for (const everyMs of [null, undefined, 0, -5, Number.NaN]) {
+      expect(parseEntrySchedule({ schedule: 'every 30m', scheduleKind: 'interval', everyMs })).toMatchObject({ ok: false })
+    }
+    const long = parseEntrySchedule({ schedule: 'every 3d', scheduleKind: 'interval', everyMs: 259_200_000 })
+    expect(long).toMatchObject({ ok: false })
+    expect(!long.ok && long.reason).toContain('longer than a day')
+  })
+
+  it('reads a cron kind from its expression and nothing else', () => {
+    const parsed = parseEntrySchedule({ schedule: '0 9 * * 1', scheduleKind: 'cron', everyMs: null })
+    expect(parsed.ok && parsed.schedule.kind).toBe('cron')
+    // A cron kind never reads an "every" text as an interval.
+    expect(parseEntrySchedule({ schedule: 'every 5m', scheduleKind: 'cron' })).toMatchObject({ ok: false })
+    expect(parseEntrySchedule({ schedule: null, scheduleKind: 'cron' })).toMatchObject({ ok: false })
+  })
+
+  it('does not place an interval of unknown length, a manual job or an unknown kind', () => {
+    const unknownInterval = parseEntrySchedule({ schedule: null, scheduleKind: 'interval_unknown', everyMs: null })
+    expect(unknownInterval.ok).toBe(false)
+    expect(!unknownInterval.ok && unknownInterval.reason).toContain('did not report how often')
+    expect(parseEntrySchedule({ schedule: null, scheduleKind: 'manual' })).toMatchObject({ ok: false })
+    expect(parseEntrySchedule({ schedule: '0 9 * * 1', scheduleKind: 'unknown' })).toMatchObject({ ok: false })
+  })
+
+  it('falls back to the text only when no kind was sent (older payload) or for a one-time schedule', () => {
+    expect(parseEntrySchedule({ schedule: 'every 10m' }).ok).toBe(true)
+    expect(parseEntrySchedule({ schedule: '0 9 * * 1', scheduleKind: undefined }).ok).toBe(true)
+    const once = parseEntrySchedule({ schedule: 'once at 2026-11-11 10:00', scheduleKind: 'at' })
+    expect(once.ok && once.schedule.kind).toBe('once')
+  })
+
+  it('says "Interval not reported" for an interval_unknown row', () => {
+    expect(scheduleDisplay(null, 'interval_unknown')).toEqual({ text: 'Interval not reported', raw: false })
+    expect(scheduleDisplay('every 30m', 'interval')).toEqual({ text: 'every 30m', raw: true })
   })
 })

@@ -11,7 +11,12 @@ export type EditableField = (typeof MANUAL_EDITABLE_FIELDS)[number]
 export interface CalendarEntry {
   id: string
   title: string
-  schedule: string
+  /** null when the scheduler reported none (an interval of unknown length). */
+  schedule: string | null
+  /** How the scheduler's own schedule is read: `interval` uses `everyMs`, `cron` the expression. Absent in older payloads. */
+  scheduleKind?: 'interval' | 'interval_unknown' | 'cron' | 'at' | 'unknown' | 'manual' | string
+  everyMs?: number | null
+  atIso?: string | null
   startsAt: string | null
   status: string
   assignee: 'Yordam' | 'Mudur' | string
@@ -36,6 +41,8 @@ export interface CalendarMeta {
   ok?: boolean
   stale?: boolean
   error?: { code?: string; message?: string } | null
+  /** The calendar file parses and has rows that a repair can move aside (`POST /api/calendar/repair`). */
+  repairAvailable?: boolean
 }
 
 export interface CalendarPayload {
@@ -167,6 +174,59 @@ export function writesBlocked(payload: Pick<CalendarPayload, 'diagnostics'> | nu
   return Boolean(d && (d.quarantined.count > 0 || d.duplicates.count > 0))
 }
 
+// ---- repair ----
+
+/** The result of `POST /api/calendar/repair`. `backupPath` is relative to the home directory (`~/…`); null when nothing was repaired. */
+export interface RepairResult {
+  ok?: boolean
+  repaired: boolean
+  counts: { kept: number; quarantined: number; duplicates: number }
+  backupPath: string | null
+}
+
+export interface RepairOffer {
+  malformed: number
+  duplicates: number
+}
+
+/**
+ * What a repair would act on, or null when no repair is offered: only a read whose own meta says
+ * `repairAvailable` offers one (the file parses and has rows set aside). The counts are the read's diagnostics.
+ */
+export function repairOffer(payload: Pick<CalendarPayload, 'diagnostics' | 'meta'> | null | undefined): RepairOffer | null {
+  if (payload?.meta?.repairAvailable !== true) return null
+  return {
+    malformed: payload.diagnostics?.quarantined.count ?? 0,
+    duplicates: payload.diagnostics?.duplicates.count ?? 0,
+  }
+}
+
+const rowsOf = (count: number, adjective: string) => `${count} ${adjective} ${count === 1 ? 'row' : 'rows'}`
+
+/** Exactly what the repair will do, said before it is confirmed. */
+export function repairDescription(offer: RepairOffer): string {
+  const parts = [
+    ...(offer.malformed > 0 ? [rowsOf(offer.malformed, 'malformed')] : []),
+    ...(offer.duplicates > 0 ? [rowsOf(offer.duplicates, 'duplicate')] : []),
+  ]
+  const what = parts.length > 0 ? parts.join(' and ') : 'The rows the calendar read set aside'
+  const verb = parts.length === 1 && (offer.malformed === 1 || offer.duplicates === 1) ? 'is' : 'are'
+  return `${what} ${parts.length > 0 ? verb : 'are'} moved to a backup file next to the calendar. Valid entries are kept.`
+}
+
+/** The outcome, with the counts and the home-relative backup path. */
+export function repairResultMessage(result: RepairResult | null | undefined): string {
+  if (!result || typeof result !== 'object' || !result.counts) return 'The calendar was repaired.'
+  const { kept, quarantined, duplicates } = result.counts
+  if (!result.repaired) return `Nothing needed repair; all ${kept} ${kept === 1 ? 'entry is' : 'entries are'} valid.`
+  const moved = [
+    ...(quarantined > 0 ? [rowsOf(quarantined, 'malformed')] : []),
+    ...(duplicates > 0 ? [rowsOf(duplicates, 'duplicate')] : []),
+  ].join(' and ')
+  const where = result.backupPath ? ` in ${result.backupPath}` : ''
+  return `Calendar repaired: ${moved || 'no rows'} moved to a backup${where}. ${kept} valid ${kept === 1 ? 'entry' : 'entries'} kept.`
+}
+
 const SCHEDULER_CODES = new Set(['calendar_scheduler_stale', 'calendar_scheduler_unavailable'])
 
 /**
@@ -179,7 +239,9 @@ export function calendarNotices(payload: CalendarPayload | null | undefined): Ca
   const notices: CalendarNotice[] = []
   const quarantined = payload.diagnostics?.quarantined
   const duplicates = payload.diagnostics?.duplicates
-  const blocked = 'The file is left as it is, and changes to the schedule are paused until it is corrected.'
+  const blocked = payload.meta?.repairAvailable === true
+    ? 'Changes to the schedule are paused until the calendar is repaired.'
+    : 'The file is left as it is, and changes to the schedule are paused until it is corrected.'
   if (quarantined && quarantined.count > 0) {
     notices.push({
       id: 'quarantined',

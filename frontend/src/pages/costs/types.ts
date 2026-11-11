@@ -32,6 +32,8 @@ export interface TokenServiceData {
   costStatus?: string
   billingModes?: string
   costNote?: string
+  /** Explicit locality from record metadata: true local, false not local, null unknown (names never decide it). */
+  isLocal?: boolean | null
   apiEquivalentUsd?: number | null
   apiEquivalentStatus?: 'estimated' | 'not_applicable' | 'unavailable' | string
   apiEquivalentSource?: string
@@ -79,11 +81,15 @@ export interface UsageProvider {
   tokens: number | null
   apiEquivalentUsd: number | null
   billedUsd: number | null
-  /**
-   * True when `billedUsd` is a recorded billing figure (so 0 means "billed nothing").
-   * The backend does not send it yet: without it a bare 0 is read as "billing unknown".
-   */
+  /** True when every selected record has explicit numeric billing and at least one exists: then 0 means "billed nothing". */
   billingKnown?: boolean
+  /** Usage rows exist for the period (a recorded zero-token row counts). False alone does not prove the platform was read. */
+  hasRecords?: boolean
+  /** Why the records are incomplete: a diagnostic classification, not a state ranking. */
+  coverageReason?: 'standing_gaps' | 'scan_failed' | 'unresolved_overlap' | 'unread' | 'none' | string
+  /** Producer line counters over its retained history scan; null when the producer supplies none. */
+  skippedLines?: number | null
+  oversizedLines?: number | null
   note?: string | null
 }
 
@@ -102,7 +108,17 @@ export interface UsageMissingProvider {
 export interface TokenData {
   source?: string
   /** `anchor` is the `YYYY-MM` month this payload was anchored to, or null for the live period. */
-  period?: { key?: 'day' | '7d' | 'month'; anchor?: string | null; start?: string; end?: string }
+  period?: {
+    key?: 'day' | '7d' | 'month'
+    anchor?: string | null
+    start?: string
+    end?: string
+    /** The inclusive local dates the comparison totals actually cover. */
+    previousStart?: string
+    previousEnd?: string
+    /** The comparison evidence is incomplete, or a month comparison ends before that month's last day. */
+    previousIsPartial?: boolean
+  }
   daily: TokenDailyEntry[]
   /** Every platform the backend has a provider for. The page lists exactly these. */
   providers?: UsageProvider[]
@@ -222,7 +238,8 @@ export interface AggregatedBreakdownItem {
   apiEquivalentCost: number
   apiEquivalentAvailable: boolean
   share: number
-  local: boolean
+  /** true: every variant is explicitly local; false: explicitly not; null: unknown or mixed. */
+  isLocal: boolean | null
 }
 
 export interface ChartTooltipPayloadItem {

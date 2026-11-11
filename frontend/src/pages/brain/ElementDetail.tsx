@@ -1,13 +1,8 @@
 import { Drawer, Mono, StatePill, TimeAgo } from '../../components/ui'
-import { stateLabel, type UiState } from '../../lib/state'
 import { ActionList } from './ActionList'
 import type { ElementDetail as Detail } from './lib'
 import styles from './ElementDetail.module.css'
 import type { OperationCapability } from './types'
-
-/** One word for a source's state; a source whose sync is switched off is "sync off" everywhere. */
-const itemWord = (state: UiState) =>
-  state === 'healthy' ? 'fresh' : state === 'inactive' ? 'sync off' : stateLabel(state).toLowerCase()
 
 export function ElementDrawer({
   detail,
@@ -86,7 +81,7 @@ export function ElementDrawer({
                       <Mono truncate>{item.label}</Mono>
                     </span>
                     <span className={styles.itemState}>
-                      <StatePill state={item.state} label={itemWord(item.state)} />
+                      <StatePill state={item.state} label={item.word} />
                     </span>
                     <span className={styles.itemMeta}>
                       synced <TimeAgo value={item.lastSyncAt} fallback="never read" />

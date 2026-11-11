@@ -67,35 +67,60 @@ function isSecretKey(keyName) {
 }
 
 const REDACTED = '[redacted]';
+
+// --- redactString: second line of defence for free text ----------------------
+// (log lines, CLI error text, page bodies, the settings export). The public
+// config view does NOT rely on it: that view is an allowlist (see below).
+//
+// LINEAR TIME is part of the contract. This runs on error text and page
+// bodies, so one odd string must not stall the event loop. Rules for every
+// pattern in this section (tests/scrubLinearTime.test.js runs an adversarial
+// corpus against it in a child process with a hard timeout):
+//   - no unbounded quantifier may be followed by something that can fail: a
+//     run is either bounded ({0,N}) or it is the last thing matched, so a
+//     failed attempt costs at most N steps and a successful one consumes
+//     what it scanned;
+//   - where a value has to be scanned to its end to be judged, the scan is
+//     done by hand and its end is remembered (see blobEnd), so text is never
+//     rescanned from a later start;
+//   - input is bounded before any scanning (REDACT_MAX_CHARS); what lies past
+//     the bound is dropped and replaced by a marker, never returned unscanned.
+const REDACT_MAX_CHARS = 256 * 1024;
+
+function truncationMarker(dropped) {
+  return `…[truncated ${dropped} chars]`;
+}
+
 const KEY_FORMATS = [
-  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
-  /\bsk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{12,}/g, // OpenAI / Anthropic style
+  /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
+  /\bsk-(?=[A-Za-z0-9_-]{0,64}\d)[A-Za-z0-9_-]{12,}/g, // OpenAI / Anthropic style (a digit in the first 64)
   /\bxox[baprs]-[A-Za-z0-9-]{8,}/g, // Slack
   /\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub
   /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
   /\bglpat-[A-Za-z0-9_-]{16,}/g, // GitLab
   /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, // AWS access key id
   /\bAIza[0-9A-Za-z_-]{30,}/g, // Google API key
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT
-  /\b\d{6,}:[A-Za-z0-9_-]{30,}/g, // Telegram bot token
+  // JWT: the header is short; a bounded header keeps a failed attempt cheap.
+  /\beyJ[A-Za-z0-9_-]{8,256}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g,
+  /\b\d{6,20}:[A-Za-z0-9_-]{30,}/g, // Telegram bot token
 ];
-// --- redactString: second line of defence for free text ----------------------
-// (log lines, CLI error text, page bodies, the settings export). The public
-// config view does NOT rely on it: that view is an allowlist (see below).
 
 // URL-looking substrings: the userinfo runs through the FINAL "@" of the
 // authority, as the WHATWG URL parser reads it, so "user@tenant:PASS@host" and
 // passwords containing "@" or ":" are covered. A candidate the parser rejects
-// gets the widest reading (through its last "@").
-const URL_CANDIDATE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+// gets the widest reading (through its last "@"). The scheme is bounded.
+const URL_CANDIDATE = /\b[a-z][a-z0-9+.-]{0,31}:\/\/[^\s"'<>`]+/gi;
 const OPAQUE_USER = /^[A-Za-z0-9+/_=.~%-]{20,}$/;
+const URL_PARSE_MAX = 4096;
 
 function redactUrlUserinfo(candidate) {
   const schemeEnd = candidate.indexOf('://') + 3;
   let parsed = null;
-  try {
-    parsed = new URL(candidate);
-  } catch {}
+  if (candidate.length <= URL_PARSE_MAX) {
+    try {
+      parsed = new URL(candidate);
+    } catch {}
+  }
   let authorityEnd = candidate.length;
   if (parsed) {
     const terminator = candidate.slice(schemeEnd).search(/[/?#]/);
@@ -128,14 +153,28 @@ const WEAK_WORDS = new Set(['token', 'tokens', 'key', 'keys', 'auth', 'oauth', '
   'clientkey', 'secretkey', 'accesskey', 'privatekey', 'sessionkey', 'authkey', 'signingkey', 'masterkey',
   'encryptionkey', 'appkey', 'licensekey', 'sessionid']);
 const WEAK_SUFFIXES = ['token', 'apikey', 'credential', 'credentials'];
-const ASSIGN_NAME = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(["']?\s*[:=]\s*)/g;
-const ASSIGN_VALUE = /"[^"]*"|'[^']*'|[^\s"',;&}\]]+/y;
-const OPAQUE_BLOB = /^["']?[A-Za-z0-9+/_=.~%-]{16,}["']?$/;
+// A name is a whole run of name characters (the lookbehind allows one start
+// per run) of at most 128 characters, then an optional quote and : or =.
+const ASSIGN_NAME = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{1,128})(["']?\s{0,8}[:=]\s{0,8})/g;
+const OPAQUE_BLOB_MIN = 16;
+
+// Character tests by code, for the hand-written value scanner.
+function isValueEnd(code) {
+  // whitespace " ' , ; & } ]
+  return code <= 32 || code === 34 || code === 39 || code === 44 || code === 59 || code === 38 || code === 125 || code === 93
+    || (code > 127 && /\s/.test(String.fromCharCode(code)));
+}
+
+function isBlobChar(code) {
+  // A-Z a-z 0-9 + / _ = . ~ % -
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122)
+    || code === 43 || code === 47 || code === 95 || code === 61 || code === 46 || code === 126 || code === 37 || code === 45;
+}
 
 function nameWords(name) {
   return name
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1 $2')
     .split(/[^A-Za-z0-9]+/)
     .filter(Boolean)
     .map((word) => word.toLowerCase());
@@ -152,34 +191,78 @@ function classifyAssignmentName(name) {
 function redactAssignments(text) {
   let out = '';
   let cursor = 0;
+  // Memo for scans that did not end in a redaction: every start inside
+  // [from, end) of a remembered scan ends at the same place, so no stretch of
+  // text is scanned twice.
+  const blob = { from: 0, end: -1 };
+  const blobEnd = (start) => {
+    if (start >= blob.from && start < blob.end) return blob.end;
+    let index = start;
+    while (index < text.length && isBlobChar(text.charCodeAt(index))) index += 1;
+    blob.from = start;
+    blob.end = index;
+    return index;
+  };
+  const quote = { '"': { from: 0, end: -2 }, "'": { from: 0, end: -2 } };
+  const closingQuote = (start, mark) => {
+    const memo = quote[mark];
+    if (start >= memo.from && (memo.end === -1 || start <= memo.end)) return memo.end;
+    memo.from = start;
+    memo.end = text.indexOf(mark, start);
+    return memo.end;
+  };
+
   ASSIGN_NAME.lastIndex = 0;
   for (let match = ASSIGN_NAME.exec(text); match; match = ASSIGN_NAME.exec(text)) {
     const valueStart = match.index + match[0].length;
     const strength = classifyAssignmentName(match[1]);
-    if (!strength) continue; // the value is scanned again: it may hold its own name=value
-    ASSIGN_VALUE.lastIndex = valueStart;
-    const value = ASSIGN_VALUE.exec(text)?.[0];
-    if (!value || text.startsWith(REDACTED, /^["']/.test(value) ? valueStart + 1 : valueStart)) continue;
-    if (strength === 'weak' && !OPAQUE_BLOB.test(value)) continue;
+    if (!strength || valueStart >= text.length) continue; // the value is scanned again: it may hold its own name=value
+    const first = text[valueStart];
+    const quoted = first === '"' || first === "'";
+    const bodyStart = quoted ? valueStart + 1 : valueStart;
+    if (text.startsWith(REDACTED, bodyStart)) continue;
+    let valueEnd; // exclusive
+    if (quoted) {
+      const close = closingQuote(bodyStart, first);
+      if (close === -1) continue; // an unterminated quote is not a value
+      if (strength === 'weak') {
+        const bodyEnd = blobEnd(bodyStart);
+        if (bodyEnd !== close || close - bodyStart < OPAQUE_BLOB_MIN) continue;
+      }
+      valueEnd = close + 1;
+    } else if (strength === 'weak') {
+      // Weak names hide only a long opaque blob that fills the whole value.
+      const end = blobEnd(valueStart);
+      if (end - valueStart < OPAQUE_BLOB_MIN) continue;
+      if (end < text.length && !isValueEnd(text.charCodeAt(end))) continue;
+      valueEnd = end;
+    } else {
+      valueEnd = valueStart;
+      while (valueEnd < text.length && !isValueEnd(text.charCodeAt(valueEnd))) valueEnd += 1;
+      if (valueEnd === valueStart) continue;
+    }
     out += text.slice(cursor, valueStart) + REDACTED;
-    cursor = valueStart + value.length;
+    cursor = valueEnd;
     ASSIGN_NAME.lastIndex = cursor;
   }
   return out + text.slice(cursor);
 }
 
-// Redact credentials inside one string. Idempotent; never throws.
-function redactString(input) {
+// Redact credentials inside one string. Idempotent; never throws; linear in
+// the input length. Text beyond `maxChars` is dropped behind a marker.
+function redactString(input, { maxChars = REDACT_MAX_CHARS } = {}) {
   if (typeof input !== 'string' || input.length < 6) return input;
-  let text = input.replace(URL_CANDIDATE, redactUrlUserinfo);
+  const bounded = input.length > maxChars ? input.slice(0, maxChars) : input;
+  let text = bounded.replace(URL_CANDIDATE, redactUrlUserinfo);
   // Authorization values and Bearer tokens. "Bearer" spelled as the HTTP
   // scheme always hides what follows; other casings need a token-like word.
-  text = text.replace(/(authorization["']?\s*[:=]\s*["']?(?:basic|bearer|token|digest)\s+)(?!\[redacted\])[^\s"',;]+/gi, `$1${REDACTED}`);
-  text = text.replace(/\bBearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]+/g, `Bearer ${REDACTED}`);
-  text = text.replace(/\b(bearer\s+)(?!\[redacted\])([A-Za-z0-9._~+/=-]{8,})/gi,
+  text = text.replace(/(authorization["']?\s{0,8}[:=]\s{0,8}["']?(?:basic|bearer|token|digest)\s{1,8})(?!\[redacted\])[^\s"',;]+/gi, `$1${REDACTED}`);
+  text = text.replace(/\bBearer\s{1,8}(?!\[redacted\])[A-Za-z0-9._~+/=-]+/g, `Bearer ${REDACTED}`);
+  text = text.replace(/\b(bearer\s{1,8})(?!\[redacted\])([A-Za-z0-9._~+/=-]{8,})/gi,
     (match, lead, token) => (/\d/.test(token) || token.length >= 20 ? `${lead}${REDACTED}` : match));
   for (const pattern of KEY_FORMATS) text = text.replace(pattern, REDACTED);
-  return redactAssignments(text);
+  text = redactAssignments(text);
+  return bounded === input ? text : text + truncationMarker(input.length - maxChars);
 }
 
 // --- public view: an allowlist ---------------------------------------------
@@ -528,7 +611,9 @@ function redact(value, keyName = '') {
     && !(typeof value === 'number' && TOKEN_COUNT_KEY.test(squashKey(keyName)))) {
     return redactSecretValue(value);
   }
-  if (typeof value === 'string') return redactString(value);
+  // An oversize string is replaced whole: the export stays importable (the
+  // import keeps the stored value for a placeholder) and nothing is unscanned.
+  if (typeof value === 'string') return value.length > REDACT_MAX_CHARS ? REDACTED : redactString(value);
   if (Array.isArray(value)) return value.map((item) => redact(item));
   if (isPlainObject(value)) {
     const out = {};
@@ -615,6 +700,8 @@ module.exports = {
   redact,
   isSecretKey,
   redactString,
+  REDACT_MAX_CHARS,
+  truncationMarker,
   publicMcView,
   projectPublic,
   PUBLIC_MC_SCHEMA,
