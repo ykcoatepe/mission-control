@@ -140,13 +140,26 @@ function createHermesKanbanService({
   async function mapLimited(items, limit, fn) {
     const results = new Array(items.length);
     let next = 0;
+    let failed = false;
+    let firstError;
     const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-      while (next < items.length) {
+      while (!failed && next < items.length) {
         const index = next++;
-        results[index] = await fn(items[index]);
+        try {
+          results[index] = await fn(items[index]);
+        } catch (error) {
+          if (!failed) {
+            failed = true;
+            firstError = error;
+          }
+          throw error;
+        }
       }
     });
-    await Promise.all(workers);
+    // Keep the shared refresh in flight until every started CLI call finishes.
+    // A failed worker stops the queue, but cannot detach its still-running peers.
+    await Promise.allSettled(workers);
+    if (failed) throw firstError;
     return results;
   }
 

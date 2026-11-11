@@ -134,6 +134,15 @@ function schedulerObservedAt(cron, scheduler, generatedAt) {
   return observedAt(getSchedulerProof(cron, scheduler)?.observedAt, generatedAt);
 }
 
+function schedulerStaleCaveat(cron, scheduler, label) {
+  const proof = getSchedulerProof(cron, scheduler);
+  if (proof?.stale !== true) return '';
+  const age = isCount(proof.staleAgeMs)
+    ? ` (${formatAge(Math.round(proof.staleAgeMs / 1000))} old)`
+    : '';
+  return `${label} scheduling evidence is stale${age}.`;
+}
+
 function hasHermesProof(board, generatedAt) {
   const summary = board?.summary;
   return isRecord(board)
@@ -248,6 +257,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const statusUnavailable = !hasStatusProof(status, generatedAt);
   const sessionsUnavailable = !hasSessionsProof(sessions, generatedAt);
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'openclaw');
+  const cronCaveat = cronUnavailable ? '' : schedulerStaleCaveat(cron, 'openclaw', 'OpenClaw');
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -288,6 +298,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
     ...(cronUnavailable ? ['OpenClaw scheduling evidence is unavailable.'] : []),
+    ...(cronCaveat ? [cronCaveat] : []),
     ...(sessionConflict ? [sessionConflictDetail] : []),
     ...(heartbeatStale ? ['Heartbeat proof is stale or unavailable.'] : []),
   ];
@@ -343,6 +354,12 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
       '/automations',
+    ));
+  } else {
+    openclawEvidence.push(evidence(
+      'openclaw:cron', 'openclaw', 'scheduling', cronCaveat ? 'warning' : 'healthy', cronAt,
+      `${cron.jobs.filter((job) => job?.scheduler !== 'hermes').length} OpenClaw scheduled jobs${cronCaveat ? ' (stale)' : ''}`,
+      '/api/cron', '/automations',
     ));
   }
   const attention = [];
@@ -413,7 +430,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       label: 'OpenClaw',
       state: caveats.length ? 'warning' : 'healthy',
       observedAt: at,
-      freshness: statusUnavailable ? 'unavailable' : heartbeatStale ? 'stale' : 'fresh',
+      freshness: statusUnavailable ? 'unavailable' : heartbeatStale || cronCaveat ? 'stale' : 'fresh',
       caveats,
       metrics: {
         activeSessions,
@@ -599,17 +616,17 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     caveats.push('Hermes scheduling evidence is unavailable.');
   } else {
     hermesEvidence.push(evidence(
-      'hermes:cron', 'hermes', 'scheduling', 'healthy', cronAt,
+      'hermes:cron', 'hermes', 'scheduling', cronStale ? 'warning' : 'healthy', cronAt,
       `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
       '/api/cron', '/automations',
     ));
-    if (cronStale) caveats.push('Hermes scheduling evidence is stale.');
+    if (cronStale) caveats.push(schedulerStaleCaveat(cron, 'hermes', 'Hermes'));
   }
 
   // blocked tasks warn through attention only (state stays as before)
   const state = states.includes('critical')
     ? 'critical'
-    : (!gatewayProven || !kanbanProven || cronUnavailable || gateway?.status === 'stale')
+    : (!gatewayProven || !kanbanProven || cronUnavailable || cronStale || gateway?.status === 'stale')
       ? 'warning'
       : 'healthy';
   const freshness = kanbanStale || cronStale || !kanbanProven ? 'stale' : 'fresh';
