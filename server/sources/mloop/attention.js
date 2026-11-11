@@ -5,11 +5,15 @@
 // bar, the sidebar and the Attention page show the same count.
 //
 //   count = systems               SYSTEMS (gbrain, hermes, openclaw, any other
-//                                 id) whose state is warning or critical by the
-//                                 shared ordering: at most one per system, however
-//                                 many reasons it carries. While a system's source
-//                                 is being re-read (stale, no error) and a settled
-//                                 reading exists, its last settled state is used.
+//                                 id) that need the operator, at most one each
+//                                 however many reasons they carry: state warning
+//                                 or critical by the shared ordering, or a source
+//                                 that FAILED (meta.error). A source that is only
+//                                 being re-read (stale, no error) never adds:
+//                                 for it the last settled state is held, and the
+//                                 system's state is the worse of that and what
+//                                 its fresh sources say. A critical item is never
+//                                 held. The hold never lowers a state.
 //         + findings              manager-loop findings rated warning/error
 //                                 that are not about a confirmation
 //         + overdueConfirmations  confirmations that need the operator: an
@@ -44,8 +48,19 @@ const PARTS = Object.freeze(['systems', 'findings', 'overdueConfirmations', 'res
 // Which Operations sources a system's reading comes from (overview meta.sources).
 const SYSTEM_SOURCES = Object.freeze({
   gbrain: Object.freeze(['gbrain']),
-  hermes: Object.freeze(['hermes', 'hermesGateway']),
-  openclaw: Object.freeze(['status', 'sessions']),
+  hermes: Object.freeze(['hermes', 'hermesGateway', 'cron']),
+  openclaw: Object.freeze(['status', 'sessions', 'cron']),
+});
+// Which source an overview evidence id comes from (operationsOverview.js
+// evidence()). An unknown id stands for all of its system's sources.
+const EVIDENCE_SOURCES = Object.freeze({
+  'hermes:gateway': ['hermesGateway'],
+  'hermes:kanban': ['hermes'],
+  'hermes:cron': ['cron'],
+  'openclaw:status-sessions': ['status'],
+  'openclaw:heartbeat': ['status'],
+  'openclaw:sessions': ['sessions'],
+  'openclaw:cron': ['cron'],
 });
 // A settled state is held through a refresh for at most this long.
 const HOLD_MAX_MS = 10 * 60_000;
@@ -58,10 +73,20 @@ function systemNeedsOperator(state) {
   return stateRank(state, 'inactive') >= OPERATOR_RANK;
 }
 
-// The overview's systems as [{ id, state, held }] for the count, or null when
-// the overview was not read. A system whose sources are all fresh records its
-// state as settled; while any of them is stale without an error (a refresh in
-// progress, e.g. GBrain's post-action re-read) the settled state is used.
+function evidenceSources(ref, systemId) {
+  return EVIDENCE_SOURCES[ref] || SYSTEM_SOURCES[systemId] || [];
+}
+
+// The overview's systems as [{ id, state, held, failed }] for the count, or
+// null when the overview was not read. Per system:
+//   failed      a source has meta.error: the system counts once.
+//   refreshing  sources that are stale without an error (being re-read).
+// With nothing refreshing the overview state is used and recorded as settled.
+// While a source is refreshing (and a settled state is at most HOLD_MAX_MS
+// old) the state is the worst of: the settled state, every attention item and
+// evidence item that names a source NOT being re-read, and every critical
+// item. So only the re-read source's contribution is held, and a state is
+// never lowered below what fresh evidence says.
 function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
   const systems = overview?.systems;
   if (!systems || typeof systems !== 'object') return null;
@@ -72,14 +97,33 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
   }
   const nowMs = now();
   const sources = overview?.meta?.sources || {};
+  const attention = Array.isArray(overview?.attention) ? overview.attention : [];
+  const evidence = Array.isArray(overview?.evidence) ? overview.evidence : [];
   return Object.entries(systems).filter(([, system]) => system && typeof system === 'object').map(([id, system]) => {
-    const metas = (SYSTEM_SOURCES[id] || []).map((name) => sources[name]).filter((meta) => meta && typeof meta === 'object');
-    const failed = metas.some((meta) => meta.error);
-    const refreshing = !failed && metas.some((meta) => meta.stale === true);
-    if (metas.length && !failed && !refreshing) settled.set(id, { state: system.state, atMs: nowMs });
+    const names = SYSTEM_SOURCES[id] || [];
+    const metas = names.map((name) => [name, sources[name]]).filter(([, meta]) => meta && typeof meta === 'object');
+    const failed = metas.some(([, meta]) => meta.error);
+    const refreshing = new Set(metas.filter(([, meta]) => meta.stale === true && !meta.error).map(([name]) => name));
+    const items = attention.filter((item) => item?.system === id);
+    // Never held: criticals, and a failed read (at least 'unavailable').
+    const criticals = [
+      ...items.filter((item) => item.severity === 'critical').map(() => 'critical'),
+      ...(failed ? ['unavailable'] : []),
+    ];
+    if (metas.length && !failed && !refreshing.size) settled.set(id, { state: system.state, atMs: nowMs });
     const last = settled.get(id);
-    if (refreshing && last && nowMs - last.atMs <= HOLD_MAX_MS) return { id, state: last.state, held: true };
-    return { id, state: system.state, held: false };
+    if (!refreshing.size || !last || nowMs - last.atMs > HOLD_MAX_MS) {
+      return { id, state: worstState([system.state, ...criticals], { empty: system.state }), held: false, failed };
+    }
+    const reRead = (refs) => {
+      const named = (Array.isArray(refs) && refs.length ? refs : [null]).flatMap((ref) => evidenceSources(ref, id));
+      return named.length > 0 && named.every((name) => refreshing.has(name));
+    };
+    const fresh = [
+      ...items.filter((item) => !reRead(item.evidenceRefs)).map((item) => item.severity),
+      ...evidence.filter((item) => item?.system === id && !reRead([item.id])).map((item) => item.status),
+    ];
+    return { id, state: worstState([last.state, ...fresh, ...criticals], { empty: last.state }), held: true, failed };
   });
 }
 
@@ -138,7 +182,7 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null }
       // worst follows the shared ordering over every system read; only
       // warning/critical systems are counted.
       states.push(system?.state);
-      if (systemNeedsOperator(system?.state)) breakdown.systems += 1;
+      if (systemNeedsOperator(system?.state) || system?.failed === true) breakdown.systems += 1;
     }
   }
   if (Array.isArray(systemsAttention)) breakdown.systemReasons = systemsAttention.length;

@@ -325,3 +325,107 @@ test('a GBrain refresh in progress does not move the number; a finished reading 
   const failed = (await both({ loopsSource, overview })).signals.data.attention;
   assert.equal(failed.count, before.count + 1);
 });
+
+// --- review fix: the hold never lowers a state ------------------------------
+
+// Overview readings with per-source metas and the items/evidence that name
+// their sources (evidenceRefs), as buildOperationsOverview emits them.
+function overviewReadings() {
+  let current = null;
+  const fresh = { ok: true, stale: false, observedAt: '2026-11-11T09:59:00.000Z', ageMs: 1000, error: null, latencyMs: 5 };
+  const refreshing = { ...fresh, stale: true };
+  const failed = { ...fresh, ok: false, stale: true, error: { code: 'x_read_failed', message: 'x could not be read' } };
+  const metaOf = { fresh, refreshing, failed };
+  return {
+    set(reading) { current = reading; },
+    async getOverview() {
+      const states = { gbrain: 'healthy', hermes: 'healthy', openclaw: 'healthy', ...current.states };
+      const system = (id) => ({ id, state: states[id], observedAt: '2026-11-11T09:59:00.000Z', caveats: [], detailHref: id === 'gbrain' ? '/' : '/services' });
+      const sources = Object.fromEntries(['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain']
+        .map((name) => [name, metaOf[current.sources?.[name] || 'fresh']]));
+      return {
+        systems: { gbrain: system('gbrain'), hermes: system('hermes'), openclaw: system('openclaw') },
+        attention: current.attention || [],
+        evidence: current.evidence || [],
+        meta: { ok: true, stale: false, observedAt: '2026-11-11T09:59:00.000Z', ageMs: 0, error: null, latencyMs: null, source: 'operations.overview', sources },
+      };
+    },
+  };
+}
+
+async function settledThen(reading) {
+  const loopsSource = loopsSourceFor(FIXTURES[2]);
+  await loopsSource.refresh();
+  const overview = overviewReadings();
+  overview.set({});
+  const before = await both({ loopsSource, overview });
+  overview.set(reading);
+  const after = await both({ loopsSource, overview });
+  assert.deepEqual(after.loops.data.totals.needsOperator, after.signals.data.attention, 'signals and loops differ');
+  return { before: before.signals.data.attention, after: after.signals.data.attention };
+}
+
+test('reproduced: a fresh Hermes critical counts while another Hermes source is only being re-read', async () => {
+  const { before, after } = await settledThen({
+    states: { hermes: 'critical' },
+    sources: { hermes: 'refreshing' },
+    attention: [{ id: 'hermes:gateway-down', system: 'hermes', severity: 'critical', reasonCode: 'hermes_gateway_down', title: 'Hermes gateway is down', evidenceRefs: ['hermes:gateway'] }],
+    evidence: [{ id: 'hermes:gateway', system: 'hermes', status: 'critical' }, { id: 'hermes:kanban', system: 'hermes', status: 'healthy' }],
+  });
+  assert.equal(before.count, 0);
+  assert.equal(after.count, 1);
+  assert.equal(after.breakdown.systems, 1);
+  assert.equal(after.worst, 'critical');
+});
+
+test('reproduced: a fresh OpenClaw warning counts while its session source is being re-read', async () => {
+  const { after } = await settledThen({
+    states: { openclaw: 'warning' },
+    sources: { sessions: 'refreshing' },
+    attention: [{ id: 'openclaw:heartbeat-stale', system: 'openclaw', severity: 'warning', reasonCode: 'openclaw_heartbeat_stale', title: 'OpenClaw heartbeat needs fresh proof', evidenceRefs: ['openclaw:heartbeat'] }],
+    evidence: [{ id: 'openclaw:heartbeat', system: 'openclaw', status: 'warning' }],
+  });
+  assert.equal(after.count, 1);
+  assert.equal(after.worst, 'warning');
+});
+
+test('only the re-read source is held: its stale-only warnings do not add while a fresh source stays healthy', async () => {
+  const { before, after } = await settledThen({
+    states: { hermes: 'warning' },
+    sources: { hermesGateway: 'refreshing' },
+    attention: [{ id: 'hermes:gateway-unverified', system: 'hermes', severity: 'warning', reasonCode: 'x', title: 'Hermes gateway heartbeat is stale', evidenceRefs: ['hermes:gateway'] }],
+    evidence: [{ id: 'hermes:gateway', system: 'hermes', status: 'warning' }, { id: 'hermes:kanban', system: 'hermes', status: 'healthy' }],
+  });
+  assert.equal(after.count, before.count);
+  assert.equal(after.breakdown.systemReasons, 1);
+});
+
+test('reproduced: a system whose source FAILED counts once; only refreshing does not', async () => {
+  const { after } = await settledThen({
+    states: { gbrain: 'unavailable' },
+    sources: { gbrain: 'failed' },
+    attention: [{ id: 'gbrain:unavailable', system: 'gbrain', severity: 'unavailable', reasonCode: 'gbrain_unavailable', title: 'GBrain evidence unavailable', evidenceRefs: ['gbrain:unavailable'] }],
+  });
+  assert.equal(after.count, 1);
+  assert.equal(after.breakdown.systems, 1);
+  assert.equal(after.breakdown.systemReasons, 1);
+  assert.equal(after.worst, 'unavailable');
+  const refreshingOnly = await settledThen({ states: { gbrain: 'unavailable' }, sources: { gbrain: 'refreshing' } });
+  assert.equal(refreshingOnly.after.count, 0);
+});
+
+test('a critical system item is never hidden: count and worst follow it even from a source being re-read', async () => {
+  const { after } = await settledThen({
+    states: { gbrain: 'critical' },
+    sources: { gbrain: 'refreshing' },
+    attention: [{ id: 'gbrain:caveat:0', system: 'gbrain', severity: 'critical', reasonCode: 'gbrain_active_caveat', title: 'GBrain requires attention', evidenceRefs: ['gbrain:trust'] }],
+  });
+  assert.equal(after.worst, 'critical');
+  assert.equal(after.count, 1);
+});
+
+test('a failed source over a healthy last reading counts once and is not shown healthy', async () => {
+  const { after } = await settledThen({ sources: { hermesGateway: 'failed' } });
+  assert.equal(after.count, 1);
+  assert.equal(after.worst, 'unavailable');
+});
