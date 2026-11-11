@@ -1,0 +1,98 @@
+# server/core
+
+Shared plumbing for every area. Binding design:
+[`docs/explanation-backend-redesign.md`](../../docs/explanation-backend-redesign.md).
+
+| Module | What it owns |
+| --- | --- |
+| `config.js` | `loadConfig()` reads and validates once, never writes; frozen result; `publicView()` redacts secrets; `createConfigStore()` is the only writer of `mc-config.json` (atomic tmp+rename). Gateway token drift is `config.gatewayTokenCheck`, not a crash. |
+| `exec.js` | The one process runner: `execFile` + argv, per-call timeout and output cap, lanes (`openclaw` 1, `gbrain` 2, `hermes` 2, `default` 4), single flight by `key`, `killAll()` on shutdown. Resolves `{ ok, code, signal, stdout, stderr, timedOut, truncated, latencyMs, queuedMs, error }`; never throws for a failed command. |
+| `source.js` | `createSource({ id, read, ttlMs, timeoutMs, staleAfterMs })`: last-good store, single-flight refresh, envelope `{ data, meta: { ok, stale, observedAt, ageMs, error, latencyMs, source } }`. |
+| `scheduler.js` | Owns every background refresh: `register(source, { intervalMs, jitterMs })`, no overlap, unref'd timers, `status()` for `/api/health`. |
+| `http.js` | `asyncHandler`, `httpError`, request id + one log line per `/api` request, JSON 404, the final error handler (`{ error: { code, message } }`), `sendEnvelope`, `listRoutes`. |
+| `guard.js` | Host allowlist, exact Origin match, `X-MC-Request: 1` write guard (report-only by default), fail closed; `createAuditLog` / `auditWrites`. |
+| `health.js` | Event-loop lag monitor and the `/api/health` payload. |
+
+## Contract for an area author
+
+1. **A request never spawns a process.** Put the upstream read in a source
+   under `server/sources/<system>/`. The read runs CLIs only through
+   `exec.run(bin, argv, { lane, timeoutMs, key })` (or an area client built on
+   it, like `services/openclawClient.js`). No `execSync`/`spawnSync`, no shell
+   strings, no `child_process` import in area code.
+2. **The read returns real data or throws.** Throw (with an `error.code`) when
+   the upstream was not actually observed. Never return a default, an empty
+   list standing in for "unknown", or a fabricated number. The source keeps the
+   last good value and marks it stale; with none, `data` is `null`.
+3. **Register the source with the scheduler** in `server/app.js`
+   (`scheduler.register(source, { intervalMs, jitterMs })`). Nothing else sets
+   intervals.
+4. **The route is thin.** It reads `source.snapshot()` and answers in
+   milliseconds. New endpoints send the envelope with `sendEnvelope(res, snap)`
+   (200 with data, 503 with `data: null`). Existing endpoints keep their
+   payload shape for the current frontend and add `meta` alongside.
+5. **GET is pure.** A GET handler never writes a file. Persisted snapshots are
+   written by the scheduled refresh; mutations are explicit `POST`/`PATCH`/
+   `DELETE` routes.
+6. **Errors** are thrown (`httpError(status, code, message)` for client errors)
+   and reach the one error handler. Do not `res.status(500).json(...)` by hand
+   and never put `error.message` from a child process into a response.
+7. **Writes** go through the guard automatically and are audited. Config
+   changes go through `configStore.persist()`.
+8. **Tests**: a counter-example test per invariant you touch (failed read keeps
+   last-good, no request-time spawn, GET writes nothing). Add the route to the
+   pure-GET sweep in `tests/appBootSmoke.test.js` when it becomes pure, and
+   update `EXPECTED_ROUTES` when the route table changes.
+
+## Worked example: OpenClaw status
+
+The status/heartbeat read is the first path converted. Files:
+
+- `server/services/statusData.js` — the existing reader. `openclaw status` and
+  `openclaw system heartbeat last --json` now run through `openclawCli` (the
+  `openclaw` lane, serialized with every other OpenClaw call). With
+  `refreshOnRead: false`, reads never start a refresh and never write.
+  `readObservedStatus()` refreshes once and throws unless the status CLI was
+  observed.
+- `server/sources/openclaw/status.js` — the source:
+
+```js
+const { createSource } = require('../../core/source');
+
+function createOpenclawStatusSource({ statusService, now = Date.now }) {
+  return createSource({
+    id: 'openclaw.status',
+    read: () => statusService.readObservedStatus(), // throws when not observed
+    ttlMs: 60_000,
+    timeoutMs: 60_000,
+    staleAfterMs: 3 * 60_000,
+    now,
+  });
+}
+```
+
+- `server/app.js` — wiring:
+
+```js
+const statusSource = createOpenclawStatusSource({ statusService, now, logger });
+scheduler.register(statusSource, { intervalMs: STATUS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
+app.use(buildStatusRouter({ statusService, statusSource }));
+```
+
+- `server/routes/status.js` — the thin route. It keeps the legacy payload for
+  the current frontend and adds the envelope's `meta`:
+
+```js
+router.get('/api/status', async (req, res) => {
+  const snapshot = statusSource.snapshot();
+  const payload = snapshot.data || await statusService.getStatusResponse();
+  return res.json({ ...payload, meta: snapshot.meta });
+});
+```
+
+A new endpoint would instead be
+`router.get('/api/x', (req, res) => sendEnvelope(res, xSource.snapshot()))`.
+
+- Tests: `tests/sessionsAndStatusSources.test.js` (serialized lane, GET purity,
+  last-good on CLI failure), `tests/appBootSmoke.test.js` (route table, pure
+  GETs, scheduler-driven refresh).
