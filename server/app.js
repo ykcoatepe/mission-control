@@ -241,17 +241,20 @@ function createApp(deps = {}) {
 
   // --- runtime area: scheduled sources and additive router wiring --------
   const { createAutomationSource, AUTOMATIONS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/automations');
+  const { createCalendarSource, CALENDAR_REFRESH_INTERVAL_MS } = require('./sources/openclaw/calendar');
   const { createOpenclawModelsSource, MODELS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/models');
   const { createOllamaSource } = require('./sources/ollama/telemetry');
   const automationSource = deps.sources?.automations || createAutomationSource({ cronService, now, logger });
+  const calendarSource = deps.sources?.calendar || createCalendarSource({ cronService, automationSource, now, logger });
   const modelsSource = deps.sources?.models || createOpenclawModelsSource({ openclawCli, parseFirstJson, prettyModelName, settingsService, now, logger });
   const ollamaSource = deps.sources?.ollama || createOllamaSource({ runner: exec, mcConfig, fetchImpl, now, logger });
   scheduler.register(automationSource, { intervalMs: AUTOMATIONS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
+  scheduler.register(calendarSource, { intervalMs: CALENDAR_REFRESH_INTERVAL_MS, jitterMs: 1000 });
   scheduler.register(modelsSource, { intervalMs: MODELS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
   scheduler.register(ollamaSource, { intervalMs: 5000, jitterMs: 250 });
   // Local adapters leave other authors' mount lines untouched.
   function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource }); }
-  function buildCalendarRouter(options) { return require('./routes/calendar').buildCalendarRouter({ ...options, automationSource }); }
+  function buildCalendarRouter(options) { return require('./routes/calendar').buildCalendarRouter({ ...options, calendarSource }); }
   function buildModelsRouter(options) { return require('./routes/models').buildModelsRouter({ ...options, modelsSource }); }
   function buildOllamaRouter(options) { return require('./routes/ollama').buildOllamaRouter({ ...options, ollamaSource }); }
   // --- end runtime area --------------------------------------------------

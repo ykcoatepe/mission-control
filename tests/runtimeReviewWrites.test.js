@@ -65,16 +65,18 @@ test('R3 edit-then-sync preserves explicit user fields and refreshes remaining c
   try {
     const initial = f.service.syncCalendarWithCronEvidence(evidence({ name: 'original', schedule: { expr: '0 * * * *' }, payload: { message: 'original note' } }));
     const id = initial.entries[0].id;
-    const edits = { title: 'My title', schedule: 'custom schedule', status: 'review', notes: '', assignee: 'Operator' };
+    const edits = { title: 'My title', schedule: 'custom schedule', notes: '', assignee: 'Operator' };
     f.service.updateCalendarEntry(id, edits);
     const next = f.service.syncCalendarWithCronEvidence(evidence({ name: 'upstream title', schedule: { expr: '* * * * *' }, payload: { message: 'upstream note' }, state: { nextRunAtMs: Date.parse('2026-12-01T00:00:00Z'), lastStatus: 'failed' } }));
     for (const [key, value] of Object.entries(edits)) assert.equal(next.entries[0][key], value, key);
     assert.equal(next.entries[0].startsAt, '2026-12-01T00:00:00.000Z');
+    assert.equal(next.entries[0].status, 'failed');
     assert.deepEqual(new Set(next.entries[0].userOverrides), new Set(Object.keys(edits)));
     assert.equal(next.entries[0].id, id);
-    f.service.updateCalendarEntry(id, { startsAt: '2026-12-02T00:00:00Z', userOverrides: [], source: 'manual', linkedJobId: 'forged' });
+    assert.throws(() => f.service.updateCalendarEntry(id, { startsAt: '2026-12-02T00:00:00Z' }), { status: 400, code: 'calendar_scheduler_owned' });
+    f.service.updateCalendarEntry(id, { userOverrides: [], source: 'manual', linkedJobId: 'forged' });
     const last = f.service.syncCalendarWithCronEvidence(evidence({ name: 'another', state: { nextRunAtMs: Date.parse('2026-12-03T00:00:00Z') } }));
-    assert.equal(last.entries[0].startsAt, '2026-12-02T00:00:00.000Z');
+    assert.equal(last.entries[0].startsAt, '2026-12-03T00:00:00.000Z');
     assert.equal(last.entries[0].source, 'cron');
     assert.equal(last.entries[0].linkedJobId, 'openclaw:one');
     assert.equal(last.entries[0].title, 'My title');
@@ -106,7 +108,9 @@ test('R3 unchanged form fields stay cron-owned when only notes were edited', () 
   const evidence = name => ({ jobs: [{ id: 'one', scheduler: 'openclaw', name }], operationsSource: { schedulers: { openclaw: { sourceSucceeded: true } } } });
   try {
     const entry = f.service.syncCalendarWithCronEvidence(evidence('original')).entries[0];
-    f.service.updateCalendarEntry(entry.id, { ...entry, notes: 'edited' });
+    // Scheduler-owned fields in an old full-form payload now require a 400.
+    assert.throws(() => f.service.updateCalendarEntry(entry.id, { ...entry, notes: 'edited' }), { status: 400, code: 'calendar_scheduler_owned' });
+    f.service.updateCalendarEntry(entry.id, { title: entry.title, schedule: entry.schedule, assignee: entry.assignee, notes: 'edited' });
     const next = f.service.syncCalendarWithCronEvidence(evidence('new upstream title')).entries[0];
     assert.equal(next.title, 'new upstream title');
     assert.equal(next.notes, 'edited');

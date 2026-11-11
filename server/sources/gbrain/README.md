@@ -190,3 +190,22 @@ bypass/regression pass also reproduced and closed JSON-encoded page secrets and
 the failed-capture path. A new child review could not be dispatched: mloop
 preflight returned NOT_INITIALIZED and the session has no participant binding.
 The coordinator's independent review remains the external review channel.
+
+## Final review round (N4)
+
+Page/search assignment redaction uses complete credential names, rather than
+matching a credential word inside a longer name. A single-token value of at
+least four characters is redacted, including short token/pass values. API key
+separator/case variants and previously supported secret_key/access_token/
+auth_token names are explicit aliases; arbitrary word fragments are not joined.
+Multiword prose is preserved, including quoted examples. Core redactString still
+handles recognizable provider tokens, URL userinfo, private keys and HTTP auth;
+known Basic/Bearer header values and adjacent database connection fields retain
+the prior credential protections. Encoded JSON examples use the same rule.
+
+The memory-role tile is a static architecture description and is inactive (not
+live-probed), with its Shared brain value unchanged. The final-review test table
+covers the reported short secrets and prose, complete-name boundaries, multiline
+JSON, page/search outputs and more than 15 negative controls. These counters were
+observed failing before repair. No core/frontend file or action definition was
+changed in this round.

@@ -2,10 +2,10 @@
 const path = require('node:path');
 const fsDefault = require('node:fs');
 const { scanIncremental, hash } = require('./incremental-jsonl');
-async function readClaudeLogs({ since, until }, { fs = fsDefault, home = process.env.HOME, now = Date.now, maxFiles = 20000, cacheDir = fs === fsDefault ? (process.env.MC_USAGE_CACHE_DIR || path.resolve('data/usage/incremental/claude_code')) : null } = {}) {
+async function readClaudeLogs({ since, until }, { fs = fsDefault, home = process.env.HOME, now = Date.now, maxFiles = 20000, maxCacheBytes, staleCacheMs, isProcessAlive, cacheDir = fs === fsDefault ? (process.env.MC_USAGE_CACHE_DIR || path.resolve('data/usage/incremental/claude_code')) : null } = {}) {
     const days = new Map();
     const scan = await scanIncremental({
-        root: path.join(home, '.claude', 'projects'), cacheDir, fs, since, until, maxFiles,
+        root: path.join(home, '.claude', 'projects'), cacheDir, fs, since, until, maxFiles, now, maxCacheBytes, staleCacheMs, isProcessAlive,
         normalize(row, state, { file, offset }) {
             if (row.type !== 'assistant' || !row.message?.usage)
                 return null;

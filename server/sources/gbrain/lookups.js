@@ -20,6 +20,48 @@ function queryInput(value) {
 }
 const privateRecord = (r) => [r.type, r.slug, r.chunk_source, r.source_kind].some((v) =>
   typeof v === 'string' && /transcript|conversation|(?:^|[/:_-])sessions?(?:[/:_-]|$)/i.test(v));
+const PAGE_CREDENTIAL_KEYS = new Set([
+  'token', 'pass', 'password', 'passwd', 'pwd', 'secret', 'apikey', 'authorization', 'credential',
+  // Previously supported complete credential names; never match a substring.
+  'secretkey', 'accesstoken', 'authtoken',
+]);
+function redactPageText(text) {
+  // Segment assignments before core redaction: applying core's strong-name rule
+  // to an entire prose RHS would erase its first word. Other core protections
+  // (provider tokens, Authorization, URL userinfo, private keys) stay in use.
+  const pairs = /(^|[\r\n{,;])([ \t]*(?:[-*+][ \t]+)?["'`]?)([A-Za-z][A-Za-z0-9_. -]*?)(["'`]?[ \t]*(?::(?!\/\/)|=)\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`|[^\r\n,;{}\[\]]*)/g;
+  let output = ''; let cursor = 0;
+  for (const match of text.matchAll(pairs)) {
+    const [, boundary, lead, name, separator, raw] = match;
+    const value = raw.trimEnd(); const trailing = raw.slice(value.length);
+    const quote = /^["'`]/.test(value) && value.at(-1) === value[0] ? value[0] : '';
+    let decoded = quote ? value.slice(1, -1) : value;
+    if (quote === '"') { try { decoded = JSON.parse(value); } catch {} }
+    const key = name.trim().toLowerCase()
+      .replace(/^api(?:[ \t]+|[_.-])key$/, 'apikey')
+      .replace(/^secret[_-]key$/, 'secretkey')
+      .replace(/^(access|auth)[_-]token$/, '$1token');
+    const following = text.slice(match.index + match[0].length);
+    const quotedProse = quote && /^[ \t]+[^ \t\r\n,;{}\[\]#]/.test(following);
+    let replacement;
+    const databasePair = decoded.match(/^(\S{4,})([ \t]+)((?:postgres(?:ql)?|mysql|redis):\/\/\S+)$/i);
+    if (quotedProse) replacement = redactPageText(decoded);
+    else if (PAGE_CREDENTIAL_KEYS.has(key) && databasePair) {
+      // Adjacent database connection fields are structured credentials, not prose.
+      replacement = '[redacted]' + databasePair[2] + redactString(databasePair[3]);
+    } else if (PAGE_CREDENTIAL_KEYS.has(key) && /^\S{4,}$/u.test(decoded)) replacement = '[redacted]';
+    else if (key === 'authorization' && /^(?:basic|bearer|token|digest)\s+\S{4,}$/i.test(decoded)) {
+      replacement = redactString(`Authorization: ${decoded}`).slice('Authorization: '.length);
+    } else replacement = redactPageText(decoded);
+    let rendered = value;
+    if (replacement !== decoded) rendered = quote === '"' ? JSON.stringify(replacement)
+      : quote ? `${quote}${replacement}${quote}` : replacement;
+    const left = boundary + lead + name + separator;
+    output += redactString(text.slice(cursor, match.index)) + redactString(left) + rendered + trailing;
+    cursor = match.index + match[0].length;
+  }
+  return output + redactString(text.slice(cursor));
+}
 function redactQuotedExamples(text) {
   // Serialized JSON examples can encode credential field names/quotes more than
   // once. Decode only valid quoted string literals, inspect their shorter value,
@@ -28,7 +70,7 @@ function redactQuotedExamples(text) {
     if (!quoted.includes('\\')) return quoted;
     try {
       const decoded = JSON.parse(quoted);
-      const redacted = redactString(redactQuotedExamples(decoded));
+      const redacted = redactPageText(redactQuotedExamples(decoded));
       return redacted === decoded ? quoted : JSON.stringify(redacted);
     } catch { return quoted; }
   });
@@ -38,10 +80,9 @@ function safeText(value, max = 1000) {
   // Core handles JSON/TOML assignments, private keys, provider token formats,
   // Authorization schemes and URL passwords. Page-specific short API secrets
   // and database connection strings are also withheld, before truncation.
-  return redactString(redactQuotedExamples(value))
+  return redactPageText(redactQuotedExamples(value))
     .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]')
     .replace(/(?:postgres(?:ql)?|mysql|redis):\/\/[^\s)"']+/gi, '[redacted connection]')
-    .replace(/(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token)["']?\s*[:=]\s*)("[^"\n]*"|'[^'\n]*'|[^\s"',;}\]]+)/gi, '$1[redacted]')
     .slice(0, max);
 }
 function createLookups({ client, now = Date.now, ttlMs = 15_000, capacity = 100 } = {}) {

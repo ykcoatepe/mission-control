@@ -1,10 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 const { httpError } = require('../core/http');
+const { randomUUID } = require('node:crypto');
+const { redactString } = require('../core/config');
 
 // Identity/linkage belongs to the scheduler. These presentation fields may
 // be explicitly owned by a user; all other cron fields refresh from evidence.
 const CALENDAR_EDITABLE_FIELDS = ['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes'];
+const CRON_OVERRIDABLE_FIELDS = ['title', 'schedule', 'assignee', 'notes'];
+const CRON_OWNED_FIELDS = ['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs'];
 
 function writeJsonFileAtomic(filePath, value) {
   const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
@@ -638,7 +642,10 @@ function createCronService({
       updatedAt: toIsoOrNull(entry.updatedAt) || nowIso,
       lastSyncedAt: toIsoOrNull(entry.lastSyncedAt) || toIsoOrNull(entry.updatedAt) || nowIso,
       userOverrides: Array.isArray(entry.userOverrides)
-        ? [...new Set(entry.userOverrides.filter(field => CALENDAR_EDITABLE_FIELDS.includes(field)))] : [],
+        ? [...new Set(entry.userOverrides.filter(field => (entry.source === 'cron' ? CRON_OVERRIDABLE_FIELDS : CALENDAR_EDITABLE_FIELDS).includes(field)))] : [],
+      cronDerived: entry.source === 'cron' && entry.cronDerived && typeof entry.cronDerived === 'object'
+        ? Object.fromEntries(CRON_OVERRIDABLE_FIELDS.filter(field => typeof entry.cronDerived[field] === 'string')
+          .map(field => [field, entry.cronDerived[field]])) : null,
     };
   }
 
@@ -651,22 +658,54 @@ function createCronService({
     });
   }
 
-  function readCalendarDataSafe({ strict = false } = {}) {
+  function readCalendarDataSafe({ strict = false, tolerateEntries = false } = {}) {
     try {
+      const diagnostics = { quarantined: { count: 0, ids: [] }, duplicates: { count: 0, ids: [] } };
       if (!fs.existsSync(calendarFile)) {
-        return { entries: [], updatedAt: null, lastCronSyncAt: null };
+        return { entries: [], updatedAt: null, lastCronSyncAt: null, diagnostics };
       }
       const parsed = JSON.parse(fs.readFileSync(calendarFile, 'utf8'));
       const payload = Array.isArray(parsed) ? { entries: parsed } : (parsed || {});
       if (!Array.isArray(payload.entries)) throw new Error('Calendar entries missing');
-      if (strict && payload.entries.some(entry => !entry || typeof entry !== 'object' || Array.isArray(entry)
-        || typeof entry.id !== 'string' || !entry.id
-        || (entry.userOverrides !== undefined && (!Array.isArray(entry.userOverrides)
-          || entry.userOverrides.some(field => !CALENDAR_EDITABLE_FIELDS.includes(field)))))) throw new Error('Invalid calendar entries');
+      const entries = [];
+      const seen = new Set();
+      const safeId = entry => typeof entry?.id === 'number' && Number.isFinite(entry.id) ? entry.id
+        : typeof entry?.id === 'string' ? redactString(entry.id).slice(0, 256) : null;
+      for (const entry of payload.entries) {
+        const valid = entry && typeof entry === 'object' && !Array.isArray(entry)
+          && typeof entry.id === 'string' && entry.id.trim() && entry.id.length <= 256
+          && ['title', 'schedule', 'status', 'assignee', 'source', 'linkedTaskId', 'linkedJobId', 'notes']
+            .every(field => entry[field] == null || typeof entry[field] === 'string')
+          && ['startsAt', 'createdAt', 'updatedAt', 'lastSyncedAt']
+            .every(field => entry[field] == null || (typeof entry[field] === 'string' && Number.isFinite(Date.parse(entry[field]))))
+          && (entry.cronDerived == null || (typeof entry.cronDerived === 'object' && !Array.isArray(entry.cronDerived)
+            && CRON_OVERRIDABLE_FIELDS.every(field => entry.cronDerived[field] === undefined || typeof entry.cronDerived[field] === 'string')))
+          && (entry.userOverrides === undefined || (Array.isArray(entry.userOverrides)
+            && entry.userOverrides.every(field => CALENDAR_EDITABLE_FIELDS.includes(field)
+              || (entry.source === 'cron' && CRON_OWNED_FIELDS.includes(field)))));
+        if (!valid) {
+          diagnostics.quarantined.count++;
+          diagnostics.quarantined.ids.push(safeId(entry));
+          continue;
+        }
+        if (seen.has(entry.id)) {
+          diagnostics.duplicates.count++;
+          if (!diagnostics.duplicates.ids.includes(safeId(entry))) diagnostics.duplicates.ids.push(safeId(entry));
+          continue;
+        }
+        // Choose the first physical row before sorting by time or title.
+        seen.add(entry.id);
+        try { entries.push(normalizeCalendarEntry(entry)); } catch {
+          diagnostics.quarantined.count++;
+          diagnostics.quarantined.ids.push(safeId(entry));
+        }
+      }
+      if (strict && !tolerateEntries && (diagnostics.quarantined.count || diagnostics.duplicates.count)) throw new Error('Calendar entries require correction');
       return {
-        entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
+        entries: sortCalendarEntries(entries),
         updatedAt: toIsoOrNull(payload.updatedAt),
         lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
+        diagnostics,
       };
     } catch (error) {
       if (strict) {
@@ -702,22 +741,31 @@ function createCronService({
 
     const syncedCronEntries = cronJobs.map((job) => {
       const previous = existingCronEntries.get(String(job.id)) || {};
+      const cronDerived = {
+        title: job.name || String(job.id || 'Cron job'),
+        schedule: job.schedule?.expr || job.schedule?.display || job.schedule?.kind || '',
+        notes: job.payload?.text ?? job.payload?.message ?? '',
+        assignee: 'Mudur',
+      };
+      const userOverrides = [...(previous.userOverrides || [])].filter(field => CRON_OVERRIDABLE_FIELDS.includes(field));
+      // Preserve legacy manually assigned fields when first adding baselines.
+      if (!previous.cronDerived && previous.assignee && previous.assignee !== 'Mudur') userOverrides.push('assignee');
+      if (!previous.cronDerived && previous.notes && !job.payload) userOverrides.push('notes');
       const derived = {
         ...previous,
+        ...cronDerived,
         id: previous.id || `cron-${job.id}`,
-        title: job.name || previous.title || String(job.id || 'Cron job'),
-        schedule: job.schedule?.expr || job.schedule?.kind || previous.schedule || '',
         startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
         status: normalizeCronRunStatus(job),
-        assignee: previous.assignee || 'Mudur',
         source: 'cron',
         linkedJobId: job.id,
-        notes: job.payload?.text ?? job.payload?.message ?? previous.notes ?? '',
         createdAt: previous.createdAt || syncedAtIso,
         updatedAt: syncedAtIso,
         lastSyncedAt: syncedAtIso,
+        userOverrides: [...new Set(userOverrides)],
+        cronDerived,
       };
-      for (const field of previous.userOverrides || []) derived[field] = previous[field];
+      for (const field of derived.userOverrides) derived[field] = previous[field];
       return normalizeCalendarEntry(derived, syncedAtIso);
     });
 
@@ -771,11 +819,12 @@ function createCronService({
     const current = readCalendarDataSafe({ strict: true });
     const entry = normalizeCalendarEntry({
       ...payload,
-      id: payload.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `entry-${randomUUID()}`,
       createdAt: nowIso,
       updatedAt: nowIso,
       lastSyncedAt: nowIso,
       userOverrides: [],
+      cronDerived: null,
     }, nowIso);
 
     const next = writeCalendarDataSafe({
@@ -798,16 +847,27 @@ function createCronService({
     }
 
     const existing = current.entries[idx];
+    const linked = existing.source === 'cron' && existing.linkedJobId;
+    if (linked && CRON_OWNED_FIELDS.some(field => Object.hasOwn(payload, field))) {
+      throw httpError(400, 'calendar_scheduler_owned', 'Status and next-run fields are owned by the scheduler');
+    }
     const nowIso = new Date().toISOString();
     const editedFields = CALENDAR_EDITABLE_FIELDS.filter(field => Object.hasOwn(payload, field));
     const patch = Object.fromEntries(editedFields.map(field => [field, payload[field]]));
+    const cleared = linked ? editedFields.filter(field => patch[field] === null) : [];
+    for (const field of cleared) {
+      if (!Object.hasOwn(existing.cronDerived || {}, field) && existing.userOverrides.includes(field)) {
+        throw httpError(409, 'calendar_override_unavailable', 'Sync cron before clearing a legacy override');
+      }
+      patch[field] = existing.cronDerived?.[field] ?? existing[field];
+    }
     const candidate = normalizeCalendarEntry({ ...existing, ...patch }, nowIso);
     const changedFields = editedFields.filter(field => candidate[field] !== existing[field]);
     const updated = normalizeCalendarEntry({
       ...existing,
       ...patch,
       userOverrides: existing.source === 'cron'
-        ? [...new Set([...(existing.userOverrides || []), ...changedFields])] : existing.userOverrides,
+        ? [...new Set([...(existing.userOverrides || []), ...changedFields])].filter(field => !cleared.includes(field)) : existing.userOverrides,
       id: existing.id,
       createdAt: existing.createdAt,
       updatedAt: nowIso,

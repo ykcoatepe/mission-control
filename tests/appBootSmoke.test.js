@@ -301,7 +301,7 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
     assert.equal(health.service, 'mission-control');
     assert.ok('meanMs' in health.eventLoop);
     // --- runtime area: source registration and extended pure-GET sweep ----
-    const runtimeSourceIds = ['openclaw.status', 'openclaw.automations', 'openclaw.models', 'ollama.telemetry'];
+    const runtimeSourceIds = ['openclaw.status', 'openclaw.automations', 'openclaw.calendar', 'openclaw.models', 'ollama.telemetry'];
     assert.deepEqual(health.scheduler.jobs.map((job) => job.id).filter(id => runtimeSourceIds.includes(id)), runtimeSourceIds);
     const runtimeGetBefore = { root: treeState(ROOT), home: treeState(HOME), exec: execCalls.length, network: networkCalls.length };
     for (const urlPath of ['/api/cron', '/api/calendar', '/api/models', '/api/settings/export', '/api/ollama/telemetry', '/api/ollama/telemetry/history', '/api/ollama/telemetry/models']) {

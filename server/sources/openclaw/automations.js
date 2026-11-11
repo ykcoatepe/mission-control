@@ -32,8 +32,7 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
         }
         const jobs = evidence.jobs.map(job => cronService.mapCronJobForApi(job));
         const summary = summarizeJobs(jobs, now());
-        const calendar = cronService.syncCalendarWithCronEvidence(evidence);
-        return { cron: { jobs, summary, schedulers }, calendar };
+        return { cron: { jobs, summary, schedulers }, evidence };
       } catch {
         throw new SourceReadError('Automation sources could not be refreshed', { code: 'automations_unavailable' });
       }

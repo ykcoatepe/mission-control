@@ -356,7 +356,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
         label: 'Memory role',
         value: 'Shared brain',
         detail: 'Hermes/OpenClaw keep local memory; GBrain stores curated cross-system knowledge',
-        status: 'healthy',
+        status: 'inactive',
         proofNodeId: 'gbrain-core',
       },
       integration: {

@@ -4,12 +4,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const {
-  claudeCodeScanDays,
-  costsCacheKey,
-  parseMonthAnchor,
-  rangeForPeriod: routeRangeForPeriod,
-} = require('../server/routes/costs');
+const { parseMonthAnchor } = require('../server/routes/costs');
+const {rangeForPeriod:routeRangeForPeriod}=require('../server/sources/usage/periods');
 const {
   buildClaudeCodeUsageSummary,
   isAnchoredPastMonth,
@@ -24,92 +20,36 @@ const NOW = new Date(2026, 7, 1, 14, 30, 0); // 2026-08-01, local time
 // Anchored window semantics
 // ---------------------------------------------------------------------------
 
-test('anchored month window is the full calendar month with a full previous month', () => {
-  const range = routeRangeForPeriod('month', '2026-07', NOW);
 
-  assert.equal(range.anchor, '2026-07');
-  assert.equal(range.startKey, '2026-07-01');
-  assert.equal(range.endKey, '2026-07-31');
-  assert.equal(range.keys.length, 31);
-  assert.equal(range.keys[0], '2026-07-01');
-  assert.equal(range.keys.at(-1), '2026-07-31');
 
-  // Both months are complete, so the previous window is NOT clipped to the
-  // current day-of-month the way the live current-month view is.
-  assert.equal(range.previousKeys.length, 30);
-  assert.equal(range.previousKeys[0], '2026-06-01');
-  assert.equal(range.previousKeys.at(-1), '2026-06-30');
 
-  assert.equal(new Date(range.startSec * 1000).getDate(), 1);
-  assert.equal(new Date(range.endSec * 1000).getDate(), 31);
-  assert.ok(range.previousEndSec < range.startSec, 'previous window must end before the anchored month starts');
-});
 
-test('January anchor rolls the previous window back into December of the prior year', () => {
-  const range = routeRangeForPeriod('month', '2026-01', NOW);
-
-  assert.equal(range.startKey, '2026-01-01');
-  assert.equal(range.endKey, '2026-01-31');
-  assert.equal(range.previousKeys[0], '2025-12-01');
-  assert.equal(range.previousKeys.at(-1), '2025-12-31');
-  assert.equal(range.previousKeys.length, 31);
-});
-
-test('February anchor respects leap-year length', () => {
-  const leap = routeRangeForPeriod('month', '2024-02', NOW);
-  assert.equal(leap.keys.length, 29);
-  assert.equal(leap.endKey, '2024-02-29');
-
-  const nonLeap = routeRangeForPeriod('month', '2026-02', NOW);
-  assert.equal(nonLeap.keys.length, 28);
-  assert.equal(nonLeap.endKey, '2026-02-28');
-});
-
-test('current-month anchor is byte-identical to no anchor', () => {
-  const anchored = routeRangeForPeriod('month', '2026-08', NOW);
-  const unanchored = routeRangeForPeriod('month', null, NOW);
-  assert.deepEqual(anchored, unanchored);
-  assert.equal(anchored.anchor, null);
-});
-
-test('day and 7d windows ignore a month anchor entirely', () => {
-  assert.deepEqual(routeRangeForPeriod('day', '2026-07', NOW), routeRangeForPeriod('day', null, NOW));
-  assert.deepEqual(routeRangeForPeriod('7d', '2026-07', NOW), routeRangeForPeriod('7d', null, NOW));
-});
 
 // ---------------------------------------------------------------------------
-// Seam: all three producers must agree on the anchored window
+// Seam: the two remaining producers must agree on the anchored window
 // ---------------------------------------------------------------------------
 
-test('seam: costs route, openclaw script and claudeCodeUsage derive the same anchored window', () => {
+test('seam: openclaw script and claudeCodeUsage derive the same anchored window', () => {
   for (const anchor of ['2026-07', '2026-01', '2024-02']) {
-    const route = routeRangeForPeriod('month', anchor, NOW);
     const openclaw = openclawRangeForPeriod('month', anchor, NOW);
     const claudeCode = claudeCodeRangeForPeriod('month', NOW, anchor);
 
-    assert.deepEqual(openclaw.keys, route.keys, `openclaw keys must match route keys for ${anchor}`);
-    assert.deepEqual(claudeCode.keys, route.keys, `claudeCode keys must match route keys for ${anchor}`);
-    assert.deepEqual(openclaw.previous.keys, route.previousKeys, `openclaw previous keys must match for ${anchor}`);
-    assert.deepEqual(claudeCode.previousKeys, route.previousKeys, `claudeCode previous keys must match for ${anchor}`);
+    assert.deepEqual(openclaw.keys, claudeCode.keys, `producer keys must match for ${anchor}`);
+    assert.deepEqual(openclaw.previous.keys, claudeCode.previousKeys, `producer previous keys must match for ${anchor}`);
 
-    assert.equal(openclaw.startKey, route.startKey);
-    assert.equal(openclaw.endKey, route.endKey);
-    assert.equal(claudeCode.keys[0], route.startKey);
-    assert.equal(claudeCode.keys.at(-1), route.endKey);
+    assert.equal(openclaw.startKey, claudeCode.keys[0]);
+    assert.equal(openclaw.endKey, claudeCode.keys.at(-1));
     assert.equal(openclaw.anchor, anchor);
     assert.equal(claudeCode.anchor, anchor);
   }
 });
 
 test('seam: unanchored month window still agrees across producers', () => {
-  const route = routeRangeForPeriod('month', null, NOW);
   const openclaw = openclawRangeForPeriod('month', null, NOW);
   const claudeCode = claudeCodeRangeForPeriod('month', NOW, null);
 
-  assert.deepEqual(openclaw.keys, route.keys);
-  assert.deepEqual(claudeCode.keys, route.keys);
-  assert.deepEqual(openclaw.previous.keys, route.previousKeys);
-  assert.deepEqual(claudeCode.previousKeys, route.previousKeys);
+  assert.deepEqual(openclaw.keys, claudeCode.keys);
+  assert.deepEqual(openclaw.previous.keys, claudeCode.previousKeys);
 });
 
 // ---------------------------------------------------------------------------
@@ -131,40 +71,12 @@ test('parseMonthAnchor rejects bad formats and future months', () => {
   assert.equal(parseMonthAnchor('2999-01', NOW).ok, false, 'far future must be rejected');
 });
 
-test('cache keys keep anchored months separated from the live month', () => {
-  assert.equal(costsCacheKey('month', null), 'costs:month');
-  assert.equal(costsCacheKey('day', null), 'costs:day');
-  assert.equal(costsCacheKey('month', '2026-07'), 'costs:month:2026-07');
-  assert.notEqual(costsCacheKey('month', '2026-07'), costsCacheKey('month', '2026-06'));
-  assert.notEqual(costsCacheKey('month', '2026-07'), costsCacheKey('month', null));
-});
 
 // ---------------------------------------------------------------------------
 // CodexBar scan window
 // ---------------------------------------------------------------------------
 
-test('claudeCodeScanDays widens the codexbar window to reach the anchored month', () => {
-  assert.equal(claudeCodeScanDays(null, NOW), 70, 'unanchored behaviour is unchanged');
-  assert.equal(claudeCodeScanDays('2026-08', NOW), 70, 'current month needs no widening');
 
-  // The scan must reach the start of the month BEFORE the anchor: the
-  // previous month is the comparison baseline and buildClaudeCodeUsageSummary
-  // needs every one of its days for previousPeriodApiEquivalentUsd.
-  const january = claudeCodeScanDays('2026-01', NOW);
-  const daysSincePreviousMonthStart = Math.ceil((NOW.getTime() - new Date(2025, 11, 1).getTime()) / 86400000);
-  assert.equal(january, daysSincePreviousMonthStart + 2);
-  assert.ok(january > 70, 'an older anchor must widen past the default 70 days');
-});
-
-test('claudeCodeScanDays covers the full previous-month comparison window', () => {
-  // Viewing June 2026 on 2026-08-01: the baseline is May, so the scan must
-  // reach 2026-05-01 (92 days back) — the old anchor-start math stopped at
-  // June 1 and the 70-day default silently dropped May 1-23.
-  const june = claudeCodeScanDays('2026-06', NOW);
-  const daysSinceMayStart = Math.ceil((NOW.getTime() - new Date(2026, 4, 1).getTime()) / 86400000);
-  assert.equal(june, daysSinceMayStart + 2);
-  assert.ok(june >= 92, `scan must reach 2026-05-01, got ${june} days`);
-});
 
 test('parseMonthAnchor rejects months older than the 24-month history window', () => {
   // The UI navigator floors at 24 months (monthAnchorFloor); the API enforces
@@ -382,47 +294,7 @@ test('a post-window birthtime is not evidence against a file', () => {
 // Navigating months must not fan out unbounded detailed refreshes
 // ---------------------------------------------------------------------------
 
-test('detailed refreshes are bounded while months queue up', async () => {
-  const { createRefreshLimiter } = require('../server/routes/costs');
-  const limiter = createRefreshLimiter(2);
 
-  let active = 0;
-  let peak = 0;
-  const releases = [];
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
-
-  // Ten months clicked through before any scan finishes.
-  const jobs = Array.from({ length: 10 }, () => limiter.run(() => {
-    active += 1;
-    peak = Math.max(peak, active);
-    return new Promise((resolve) => {
-      releases.push(() => { active -= 1; resolve(); });
-    });
-  }));
-
-  await settle();
-  assert.equal(peak, 2, 'at most two scans may run at once');
-  assert.equal(limiter.stats().queued, 8, 'the rest wait their turn instead of spawning');
-
-  // Drain: every queued month must still run — work is delayed, never dropped.
-  while (releases.length > 0) {
-    releases.shift()();
-    await settle();
-  }
-  await Promise.all(jobs);
-  assert.equal(peak, 2, 'the ceiling holds for the whole drain');
-  assert.equal(limiter.stats().queued, 0);
-  assert.equal(limiter.stats().active, 0);
-});
-
-test('a failing refresh releases its slot', async () => {
-  const { createRefreshLimiter } = require('../server/routes/costs');
-  const limiter = createRefreshLimiter(1);
-
-  await assert.rejects(limiter.run(() => Promise.reject(new Error('scan blew up'))), /scan blew up/);
-  assert.equal(limiter.stats().active, 0, 'a rejected job must not leak its slot');
-  assert.equal(await limiter.run(() => Promise.resolve('next month')), 'next month');
-});
 
 test('a restored transcript is never ranked irrelevant on birthtime alone', () => {
   const { prioritizeScanFiles } = require('../scripts/openclaw-usage-summary');
@@ -459,48 +331,67 @@ test('birthtime still promotes a genuinely late-appended anchored session', () =
   );
 });
 
-test('the newest queued month is served first so it outlives its poller', async () => {
-  const { createRefreshLimiter } = require('../server/routes/costs');
-  const limiter = createRefreshLimiter(1);
-  const settle = () => new Promise((resolve) => setImmediate(resolve));
 
-  const order = [];
-  let releaseFirst;
-  // Occupies the only slot.
-  const running = limiter.run(() => new Promise((resolve) => { order.push('running'); releaseFirst = resolve; }));
-  await settle();
-
-  // Three months clicked through while the first scan is still busy.
-  const queued = ['superseded-a', 'superseded-b', 'currently-viewed'].map((name) =>
-    limiter.run(async () => { order.push(name); }));
-
-  releaseFirst();
-  await Promise.all([running, ...queued]);
-
-  assert.equal(order[0], 'running');
-  assert.equal(order[1], 'currently-viewed', `the month the user is looking at must not wait behind superseded ones (order: ${order.join(' -> ')})`);
-  assert.equal(order.length, 4, 'superseded months still run — work is deprioritized, never dropped');
-});
-
-test('a preserved anchored.pending entry keeps the short fallback TTL', () => {
-  const { preservedEntryIsDetailed } = require('../server/routes/costs');
-
-  // All producers failed for a cold historical month: the preserved value is
-  // the empty pending payload. Marking it detailed would grant it the long TTL
-  // while needsCurrentPeriodRefresh never fires for an anchored month, so the
-  // page could poll for a full minute unable to trigger a retry.
-  assert.equal(
-    preservedEntryIsDetailed({ source: 'anchored.pending', period: { anchor: '2026-03' } }),
-    false,
-    'an empty pending payload is not detailed data',
-  );
-
-  // Real preserved data keeps its detailed status and long TTL.
-  assert.equal(preservedEntryIsDetailed({ source: 'combined.agent_usage' }), true);
-  assert.equal(preservedEntryIsDetailed({ source: 'openclaw.usage' }), true);
-  assert.equal(preservedEntryIsDetailed(undefined), true, 'absent source must not silently downgrade');
-});
 
 // ---------------------------------------------------------------------------
 // Every producer needs a preservation path, not just OpenClaw and Claude Code
 // ---------------------------------------------------------------------------
+
+test('anchored month window is the full calendar month with a full previous month', () => {
+  const range = routeRangeForPeriod('month', '2026-07', NOW);
+
+  assert.equal(range.anchor, '2026-07');
+  assert.equal(range.startKey, '2026-07-01');
+  assert.equal(range.endKey, '2026-07-31');
+  assert.equal(range.keys.length, 31);
+  assert.equal(range.keys[0], '2026-07-01');
+  assert.equal(range.keys.at(-1), '2026-07-31');
+
+  // Both months are complete, so the previous window is NOT clipped to the
+  // current day-of-month the way the live current-month view is.
+  assert.equal(range.previousKeys.length, 30);
+  assert.equal(range.previousKeys[0], '2026-06-01');
+  assert.equal(range.previousKeys.at(-1), '2026-06-30');
+
+  assert.equal(new Date(range.startSec * 1000).getDate(), 1);
+  assert.equal(new Date(range.endSec * 1000).getDate(), 31);
+  assert.ok(range.previousEndSec < range.startSec, 'previous window must end before the anchored month starts');
+});
+
+test('January anchor rolls the previous window back into December of the prior year', () => {
+  const range = routeRangeForPeriod('month', '2026-01', NOW);
+
+  assert.equal(range.startKey, '2026-01-01');
+  assert.equal(range.endKey, '2026-01-31');
+  assert.equal(range.previousKeys[0], '2025-12-01');
+  assert.equal(range.previousKeys.at(-1), '2025-12-31');
+  assert.equal(range.previousKeys.length, 31);
+});
+
+test('February anchor respects leap-year length', () => {
+  const leap = routeRangeForPeriod('month', '2024-02', NOW);
+  assert.equal(leap.keys.length, 29);
+  assert.equal(leap.endKey, '2024-02-29');
+
+  const nonLeap = routeRangeForPeriod('month', '2026-02', NOW);
+  assert.equal(nonLeap.keys.length, 28);
+  assert.equal(nonLeap.endKey, '2026-02-28');
+});
+
+test('current-month anchor is byte-identical to no anchor', () => {
+  const anchored = routeRangeForPeriod('month', '2026-08', NOW);
+  const unanchored = routeRangeForPeriod('month', null, NOW);
+  assert.deepEqual(anchored, unanchored);
+  assert.equal(anchored.anchor, null);
+});
+
+test('day and 7d windows ignore a month anchor entirely', () => {
+  assert.deepEqual(routeRangeForPeriod('day', '2026-07', NOW), routeRangeForPeriod('day', null, NOW));
+  assert.deepEqual(routeRangeForPeriod('7d', '2026-07', NOW), routeRangeForPeriod('7d', null, NOW));
+});
+
+// ---------------------------------------------------------------------------
+// Seam: all three producers must agree on the anchored window
+// ---------------------------------------------------------------------------
+
+test('active usage periods agree with both producer calendars',()=>{for(const anchor of ['2026-01','2026-07',null]){const range=routeRangeForPeriod('month',anchor,NOW),claude=claudeCodeRangeForPeriod('month',NOW,anchor),openclaw=openclawRangeForPeriod('month',anchor,NOW);assert.deepEqual(range.keys,claude.keys);assert.deepEqual(range.previousKeys,openclaw.previous.keys);}});

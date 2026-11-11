@@ -3,6 +3,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const fsDefault = require('node:fs');
 const { once } = require('node:events');
+const { createCacheBudget } = require('./cache-budget');
 const { COUNTS, validDay } = require('./providers/contract');
 const BATCH = 1024, FAN_IN = 24, MAX_LINE = 1024 * 1024;
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
@@ -103,7 +104,7 @@ async function* mergeStreams(fs, files) {
             await e.iterator.return?.();
     }
 }
-async function writeRecords(fs, file, iterable) {
+async function writeRecords(fs, file, iterable, budget) {
     const output = fs.createWriteStream(file, { mode: 0o600 });
     let writeError;
     output.on('error', e => { writeError = e; });
@@ -114,6 +115,7 @@ async function writeRecords(fs, file, iterable) {
             if (writeError)
                 throw writeError;
             const line = JSON.stringify(row) + '\n';
+            budget?.reserve(file,Buffer.byteLength(line));
             digest.update(line);
             count++;
             if (!output.write(line))
@@ -143,13 +145,17 @@ async function validateCache(fs, file, entry) { try {
 catch {
     return false;
 } }
-async function atomicJson(fs, file, value) { const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(5).toString('hex')}`; try {
-    await fs.promises.writeFile(tmp, JSON.stringify(value), { mode: 0o600 });
-    await fs.promises.rename(tmp, file);
+async function atomicJson(fs, file, value, budget) {
+    const tmp = `${file}.tmp-${process.pid}-${crypto.randomBytes(5).toString('hex')}`;
+    try {
+        const body = JSON.stringify(value);
+        budget?.reserve(tmp,Buffer.byteLength(body));
+        await fs.promises.writeFile(tmp,body,{mode:0o600});
+        if(budget)await budget.rename(tmp,file);else await fs.promises.rename(tmp,file);
+    } finally {
+        if(budget)await budget.remove(tmp);else await fs.promises.unlink(tmp).catch(()=>{});
+    }
 }
-finally {
-    await fs.promises.unlink(tmp).catch(() => { });
-} }
 async function walkFiles(fs, root, since, maxFiles) {
     const candidates = [];
     let capped = false;
@@ -214,14 +220,14 @@ async function anchor(fs, file, offset) { if (!fs.promises?.open)
 finally {
     await handle.close();
 } }
-async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, normalize, context = (file, saved) => ({ partial: !!saved?.partial }), maxFiles = 20000, format = 'usage-counts-v1', consume }) {
+async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, normalize, context = (file, saved) => ({ partial: !!saved?.partial }), maxFiles = 20000, format = 'usage-counts-v1', consume, now=Date.now, maxCacheBytes, staleCacheMs, isProcessAlive }) {
     if (!Number.isSafeInteger(maxFiles) || maxFiles < 1)
         throw Error('Invalid file scan budget');
-    const listing = await walkFiles(fs, root, since, maxFiles), persistent = !!cacheDir;
+    const persistent = !!cacheDir;let listing;
     const scratch = [];
     const temp = () => { const p = path.join(cacheDir, `run-${process.pid}-${crypto.randomBytes(8).toString('hex')}.jsonl`); scratch.push(p); return p; };
-    let old = { version: 1, format, files: {} }, index = { version: 1, format, files: {} }, partial = listing.capped;
-    const memory = new Map(), cacheFiles = [];
+    let old = { version: 1, format, files: {} }, index = { version: 1, format, files: {} }, partial = false;
+    const memory = new Map(), cacheFiles = [], createdCanonical=new Set();let budget,committed=false;
     if (persistent) {
         await fs.promises.mkdir(cacheDir, { recursive: true });
         try {
@@ -231,15 +237,18 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
         }
         catch { }
     }
+    if(persistent)budget=await createCacheBudget({fs,cacheDir,index:old,maxCacheBytes,now,staleCacheMs,isProcessAlive});
+    const oldReferences=new Set(Object.values(old.files).map(entry=>entry?.cache));
     async function collapse(input) { let work = input; while (work.length > FAN_IN) {
         const next = [];
         for (let i = 0; i < work.length; i += FAN_IN) {
             const target = temp();
-            await writeRecords(fs, target, mergeStreams(fs, work.slice(i, i + FAN_IN)));
+            await writeRecords(fs, target, mergeStreams(fs, work.slice(i, i + FAN_IN)), budget);
             next.push(target);
         }
         work = next;
     } return work; }
+    listing=await walkFiles(fs,root,since,maxFiles);partial=listing.capped;
     try {
         for (const { file, stat } of listing.files) {
             const key = hash(file), saved = old.files[key];
@@ -262,7 +271,7 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             let state = context(file, append ? previous.context : null), offset = append ? previous.offset : 0, filePartial = append ? previous.permanentPartial : false, tailPartial = false;
             const runs = append ? [path.join(cacheDir, previous.cache)] : [], batch = [];
             async function flush() { if (!batch.length)
-                return; batch.sort((a, b) => a.id.localeCompare(b.id)); const target = temp(); await writeRecords(fs, target, batch); runs.push(target); batch.length = 0; }
+                return; batch.sort((a, b) => a.id.localeCompare(b.id)); const target = temp(); await writeRecords(fs, target, batch, budget); runs.push(target); batch.length = 0; }
             let checkpoint = state;
             for await (const line of lines(fs, file, { start: offset, end: Number.isFinite(stat.size) ? stat.size - 1 : undefined })) {
                 if (line.text === null) {
@@ -318,9 +327,10 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             if (persistent) {
                 await flush();
                 const inputs = await collapse(runs), target = temp();
-                const summary = await writeRecords(fs, target, mergeStreams(fs, inputs));
+                const summary = await writeRecords(fs, target, mergeStreams(fs, inputs), budget);
                 const cache = hash(JSON.stringify([key, stat.size, stat.mtimeMs, stat.ino, summary.digest])) + '.jsonl';
-                await fs.promises.rename(target, path.join(cacheDir, cache));
+                await budget.rename(target,path.join(cacheDir,cache));
+                if(!oldReferences.has(cache))createdCanonical.add(path.join(cacheDir,cache));
                 const entry = {
                     size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino, offset, anchor: await anchor(fs, file, offset), head: await anchor(fs, file, Math.min(stat.size, 256)), context: checkpoint, cache, ...summary, partial: filePartial || tailPartial, permanentPartial: filePartial
                 };
@@ -333,11 +343,11 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             for await (const row of mergeStreams(fs, inputs))
                 if (row.date >= since && row.date <= until)
                     consume(row);
-            await atomicJson(fs, path.join(cacheDir, 'index.json'), index);
+            await atomicJson(fs, path.join(cacheDir, 'index.json'), index, budget);committed=true;
             const retained = new Set(Object.values(index.files).map(e => e.cache));
             for (const entry of Object.values(old.files))
-                if (/^[a-f0-9]{64}\.jsonl$/.test(entry.cache || '') && !retained.has(entry.cache))
-                    await fs.promises.unlink(path.join(cacheDir, entry.cache)).catch(() => { });
+                if (/^[a-f0-9]{64}\.jsonl$/.test(entry?.cache || '') && !retained.has(entry.cache))
+                    await budget.remove(path.join(cacheDir,entry.cache));
         }
         else
             for (const row of memory.values())
@@ -346,9 +356,10 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
         return { partial, files: listing.files.length };
     }
     finally {
-        if (persistent)
-            for (const p of scratch)
-                await fs.promises.unlink(p).catch(() => { });
+        if (persistent) {
+            for(const file of scratch)await budget.remove(file);
+            if(!committed)for(const file of createdCanonical)await budget.remove(file);
+        }
     }
 }
 module.exports = { scanIncremental, hash };

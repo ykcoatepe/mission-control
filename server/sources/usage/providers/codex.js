@@ -41,7 +41,7 @@ function createCodexProvider({ exec, projectRoot, home, dataDir, env = {}, now =
                 || [saved.lastAttemptAt,saved.lastSuccessAt].some(t => t !== null && !Number.isFinite(Date.parse(t)))) return;
             for (const field of Object.keys(status)) status[field] = saved[field];
         },
-        id: 'codex', label: 'Codex App and CLI', identity: `${codexHome}:ownership-v3`, timeoutMs: timeoutMs + 95000, intervalMs: 300000, staleAfterMs: 900000,
+        id: 'codex', label: 'Codex App and CLI', identity: `${codexHome}:ownership-v4`, timeoutMs: timeoutMs + 95000, intervalMs: 300000, staleAfterMs: 900000,
         async read(bounds) {
             try {
                 const local = await readJson(exec, process.execPath, ['--max-old-space-size=96', path.join(projectRoot, 'scripts/openclaw-usage-summary.js'), '--provider', 'codex', '--since', bounds.since, '--until', bounds.until], {

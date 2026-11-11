@@ -30,9 +30,13 @@ function validateObservation(value, { since, until }) {
     const days = validateRows(value.days);
     const ownership = (value.ownership || []).map(row => {
         if (typeof row.owner !== 'string' || !/^[a-z][a-z0-9_-]*$/.test(row.owner)) throw unavailable('invalid_ownership');
+        if(row.sessionId !== undefined && !/^[a-f0-9]{64}$/.test(row.sessionId))throw unavailable('invalid_ownership');
         if(row.latestUsageAt !== undefined && !Number.isFinite(Date.parse(row.latestUsageAt)))throw unavailable('invalid_ownership');
-        return {owner:row.owner,...validateRows([row])[0],...(row.latestUsageAt?{latestUsageAt:row.latestUsageAt}:{})};
+        return {owner:row.owner,...validateRows([row])[0],...(row.latestUsageAt?{latestUsageAt:row.latestUsageAt}:{}),...(row.sessionId?{sessionId:row.sessionId}:{})};
     });
+    const sessions=(value.sessions||[]).map(row=>{if(typeof row.sessionId!=='string'||!/^[a-f0-9]{64}$/.test(row.sessionId))throw unavailable('invalid_session');return {sessionId:row.sessionId,...validateRows([row])[0]};});
+    const sessionPool=new Map();for(const row of days){const key=JSON.stringify([row.date,row.model]),counts=sessionPool.get(key)||Object.fromEntries(COUNTS.map(k=>[k,0]));for(const k of COUNTS)counts[k]+=row[k];sessionPool.set(key,counts);}
+    for(const row of sessions){const counts=sessionPool.get(JSON.stringify([row.date,row.model]));if(!counts||COUNTS.some(k=>counts[k]<row[k]))throw unavailable('invalid_session');for(const k of COUNTS)counts[k]-=row[k];}
     const pool = new Map();
     for (const row of days) {
         const key = JSON.stringify([row.date,row.model]);
@@ -50,7 +54,7 @@ function validateObservation(value, { since, until }) {
     if (ownership.length && !coverageReasons.includes('ownership_pending')) coverageReasons.push('ownership_pending');
 
     return {
-        days, ownership, coverageReasons, observedAt: value.observedAt, coverage: coverageReasons.length ? 'partial' : value.coverage, note: value.note.slice(0, 500)
+        days, ownership, sessions, coverageReasons, observedAt: value.observedAt, coverage: coverageReasons.length ? 'partial' : value.coverage, note: value.note.slice(0, 500)
     };
 }
 module.exports = { COUNTS, validDay, unavailable, validateObservation };

@@ -10,42 +10,7 @@ const {
   needsCurrentPeriodRefresh,
   sumUsageSummaries,
 } = require('../server/services/claudeCodeUsage');
-const { cachedUsageAgent, sumPreviousApiEquivalentUsd } = require('../server/routes/costs');
 
-test('stale source reconstruction preserves API-equivalent token classes', () => {
-  const previous = {
-    modelKeys: ['OpenClaw / openai/gpt-5.6-sol'],
-    dailyByModel: [{
-      date: '2026-07-13',
-      'OpenClaw / openai/gpt-5.6-sol': 0,
-      'OpenClaw / openai/gpt-5.6-sol_tokens': 1_100_000,
-      'OpenClaw / openai/gpt-5.6-sol_input': 1_000_000,
-      'OpenClaw / openai/gpt-5.6-sol_output': 100_000,
-      'OpenClaw / openai/gpt-5.6-sol_reasoning': 25_000,
-      'OpenClaw / openai/gpt-5.6-sol_cacheRead': 800_000,
-      'OpenClaw / openai/gpt-5.6-sol_cacheWrite': 50_000,
-      'OpenClaw / openai/gpt-5.6-sol_apiEquivalentUsd': 4.7125,
-      'OpenClaw / openai/gpt-5.6-sol_apiEquivalentStatus': 'estimated',
-      'OpenClaw / openai/gpt-5.6-sol_costSource': 'included',
-    }],
-    byService: [{ name: 'OpenClaw / openai/gpt-5.6-sol', agent: 'OpenClaw', apiEquivalentUsd: 4.7125 }],
-  };
-
-  const cached = cachedUsageAgent(previous, {
-    key: 'openclaw',
-    label: 'OpenClaw',
-    source: 'openclaw.sessions',
-    summary: { periodUsd: 0 },
-  });
-  const row = cached.dailyByModel[0];
-
-  assert.equal(row['openai/gpt-5.6-sol_input'], 1_000_000);
-  assert.equal(row['openai/gpt-5.6-sol_cacheRead'], 800_000);
-  assert.equal(row['openai/gpt-5.6-sol_reasoning'], 25_000);
-  assert.equal(row['openai/gpt-5.6-sol_apiEquivalentUsd'], 4.7125);
-  assert.equal(row['openai/gpt-5.6-sol_apiEquivalentStatus'], 'estimated');
-  assert.equal(cached.daily[0].apiEquivalentCost, 4.7125);
-});
 
 test('builds a period-scoped Claude Code agent summary from CodexBar data', () => {
   const raw = [{
@@ -351,28 +316,6 @@ test('keeps a combined previous API-equivalent baseline unavailable when any sou
   assert.equal(summary.previousPeriodApiEquivalentUsd, null);
 });
 
-test('combines previous API-equivalent baselines without letting idle ready sources erase them', () => {
-  assert.equal(sumPreviousApiEquivalentUsd([
-    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
-    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'no_usage' } },
-    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'not_applicable' } },
-  ]), 4);
-
-  assert.equal(sumPreviousApiEquivalentUsd([
-    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
-    { summary: { previousPeriodApiEquivalentUsd: null, previousPeriodApiEquivalentReliability: 'unavailable' } },
-  ]), null);
-
-  assert.equal(sumPreviousApiEquivalentUsd([
-    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
-    { summary: { previousPeriodApiEquivalentUsd: 99, previousPeriodApiEquivalentReliability: 'unavailable' } },
-  ]), null);
-
-  assert.equal(sumPreviousApiEquivalentUsd([
-    { summary: { previousPeriodApiEquivalentUsd: 4, previousPeriodApiEquivalentReliability: 'estimated' } },
-    { summary: { previousPeriodApiEquivalentUsd: 2 } },
-  ]), null);
-});
 
 test('refreshes legacy disk caches that predate the Claude Code source', () => {
   assert.equal(needsClaudeCodeCacheRefresh({ meta: { openclawStatus: 'ready' } }), true);

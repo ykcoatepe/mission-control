@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
 const { createAutomationSource } = require('../server/sources/openclaw/automations');
+const { createCalendarSource } = require('../server/sources/openclaw/calendar');
 const { buildCronRouter } = require('../server/routes/cron');
 const { buildCalendarRouter } = require('../server/routes/calendar');
 const { buildSignalsRouter } = require('../server/routes/signals');
@@ -24,6 +25,7 @@ function fixture() {
     },
     mapCronJobForApi: () => ({ id: 'openclaw:x', enabled: true, status: 'failed', nextRun: '2026-11-12T00:00:00Z' }),
     syncCalendarWithCronEvidence() { writes++; return { entries: [{ id: 'cron-x' }], updatedAt: null, lastCronSyncAt: null }; },
+    readCalendarDataSafe() { return { entries: [{ id: 'cron-x' }], updatedAt: null, lastCronSyncAt: null }; },
   };
   return { service, fail: () => { fail = true; }, counts: () => ({ reads, writes }) };
 }
@@ -89,10 +91,11 @@ test('summary failures match enabled last-run status rules, never paused or unkn
 test('cron/calendar GETs never read upstream or write, including cold and stale snapshots', async () => {
   const f = fixture();
   const source = createAutomationSource({ cronService: f.service });
+  const calendarSource = createCalendarSource({ cronService: f.service, automationSource: source });
   const app = express();
   app.use(express.json());
   app.use(buildCronRouter({ cronService: f.service, automationSource: source, openclawExec: () => { throw new Error('GET spawned'); } }));
-  app.use(buildCalendarRouter({ calendarService: f.service, automationSource: source }));
+  app.use(buildCalendarRouter({ calendarService: f.service, calendarSource }));
   const unavailableSource = { snapshot: () => ({ data: null, meta: { ok: false, stale: true } }) };
   app.use(buildSignalsRouter({
     operationsOverviewService: { getOverview: async () => null },
@@ -111,8 +114,10 @@ test('cron/calendar GETs never read upstream or write, including cold and stale 
     }
     assert.deepEqual(f.counts(), { reads: 0, writes: 0 });
     await source.refresh();
+    await calendarSource.refresh();
     f.fail();
     await source.refresh();
+    await calendarSource.refresh();
     const before = f.counts();
     for (const path of ['/api/cron', '/api/calendar']) {
       const response = await fetch(base + path);

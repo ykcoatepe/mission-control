@@ -1,13 +1,13 @@
 const express = require('express');
 const { httpError } = require('../core/http');
 
-function buildCalendarRouter({ calendarService, automationSource }) {
+function buildCalendarRouter({ calendarService, calendarSource }) {
   const router = express.Router();
 
   router.get('/api/calendar', (req, res, next) => {
-    const snap = automationSource.snapshot();
+    const snap = calendarSource.snapshot();
     if (!snap.data) throw httpError(503, 'calendar_unavailable', 'Calendar data has not been observed');
-    return res.json({ ...snap.data.calendar, meta: snap.meta });
+    return res.json({ ...snap.data, meta: snap.meta });
   });
 
   router.post('/api/calendar/sync-cron', async (req, res, next) => {

@@ -2,7 +2,8 @@
 const { composeUsageSnapshots } = require('./ownership');
 const { createUsageRegistry, localDate } = require('./registry');
 const { estimateApiEquivalentCost, lastReviewed } = require('../../services/costSanity');
-const { rangeForPeriod } = require('../../services/claudeCodeUsage');
+const { rangeForPeriod: calendarRange } = require('./periods');
+const rangeForPeriod = (period, now, anchor) => calendarRange(period, anchor, now);
 const { createExec } = require('../../core/exec');
 const path = require('node:path');
 const fsDefault = require('node:fs').promises;
@@ -43,9 +44,9 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         providers, now, fs, dataDir, logger, scheduler
     });
     function snapshots() { return composeUsageSnapshots(registry.snapshots()); }
-    function meta(snaps) {
+    function meta(snaps, keys) {
         const stale = snaps.length === 0 || snaps.some(s => !s.meta.ok || s.meta.stale || s.data?.until < localDate(new Date(now())));
-        const unresolvedOverlaps = snaps.flatMap(s=>s.data?.unresolvedOverlaps || []);
+        const unresolvedOverlaps = snaps.flatMap(s=>s.data?.unresolvedOverlaps || []).filter(overlap=>!keys||keys.includes(overlap.date));
         const partial = stale || unresolvedOverlaps.length>0 || snaps.some(s => s.data?.coverage !== 'complete');
         const times = snaps.map(s => s.meta.observedAt).filter(Boolean).sort();
         const latencies = snaps.map(s => s.meta.latencyMs).filter(Number.isFinite);
@@ -84,13 +85,13 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const snaps = snapshots();
         const clock = new Date(now());
         const range = rangeForPeriod(period, clock, anchor);
-        const m = meta(snaps);
+        const m = meta(snaps, range.keys);
         const providers = snaps.map(s => {
             const window = providerWindow(s, range.keys);
             const { tokens, apiEquivalentUsd, billedUsd } = window;
             const t = { tokens, apiEquivalentUsd, billedUsd };
             return {
-                id: s.id, label: s.label, state: !window.observed ? 'unavailable' : s.meta.stale || !s.meta.ok || !hasCoverage(s, range.keys) ? 'stale' : 'ready', observedAt: s.data?.observedAt || null, coverage: hasCoverage(s, range.keys) ? s.data.coverage : 'partial', ...t, note: s.data?.note || 'Usage has not been observed'
+                id: s.id, label: s.label, state: !window.observed ? 'unavailable' : s.meta.stale || !s.meta.ok || !hasCoverage(s, range.keys) ? 'stale' : 'ready', observedAt: s.data?.observedAt || null, coverage: hasCoverage(s, range.keys) && !s.data.unresolvedOverlaps?.some(o=>range.keys.includes(o.date)) ? s.data.coverage : 'partial', ...t, note: window.observed && s.data?.unresolvedOverlaps?.length && !s.data.unresolvedOverlaps.some(o=>range.keys.includes(o.date)) && s.data.coverage==='complete' ? 'Ownership reconciled for this window' : s.data?.note || 'Usage has not been observed'
             };
         });
         const available = snaps.filter(s => providerWindow(s, range.keys).observed);
@@ -167,7 +168,7 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const months = Array.from({ length: 25 }, (_, i) => {
             const month = localDate(new Date(clock.getFullYear(), clock.getMonth() - i, 1)).slice(0, 7);
             const sources = snaps.filter(s => s.data?.days.some(d => d.date.startsWith(month) && (rowTokens(d) > 0 || d.billedUsd > 0))).map(s => s.id);
-            const complete = !m.partial && snaps.every(s => s.data.since <= `${month}-01` && s.data.until >= localDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0)));
+            const complete = !meta(snaps, rangeForPeriod('month',clock,month).keys).partial && snaps.every(s => s.data.since <= `${month}-01` && s.data.until >= localDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0)));
             return {
                 month, hasData: sources.length > 0, sources, ...(!sources.length && (month === current || !complete) ? { unknown: true } : {})
             };
@@ -178,10 +179,11 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
     }
     function summary() {
         const currentBudget = typeof budget === 'function' ? budget() : budget;
-        const snaps = snapshots(), m = meta(snaps), clock = new Date(now());
+        const snaps = snapshots(), clock = new Date(now());
         const available = snaps.filter(s => s.data);
         const windows = Object.fromEntries(['day', '7d', 'month'].map(period => [period, rangeForPeriod(period, clock).keys]));
         const monthKeys = windows.month;
+        const m = meta(snaps, monthKeys);
         const metric = period => aggregateWindow(snaps, windows[period]);
         const month = metric('month');
         const pricingPartial = available.some(s => selectedRows(s, monthKeys).some(r => price(r, s.id).status === 'partial' || price(r, s.id).usd === null));
@@ -193,12 +195,13 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
     }
     function codexbar(anchor = null) {
         const snaps = snapshots().filter(s => ['codex', 'claude_code'].includes(s.id));
-        const m = meta(snaps), has = snaps.some(s => s.data), clock = new Date(now());
+        const has = snaps.some(s => s.data), clock = new Date(now());
         const floor = new Date(clock);
         floor.setDate(floor.getDate() - 69);
         const monthFloor = new Date(clock);
         monthFloor.setDate(monthFloor.getDate() - 29);
         const rows = snaps.flatMap(s => s.data?.days || []).filter(d => anchor ? d.date.startsWith(anchor) : d.date >= localDate(floor) && d.date <= localDate(clock));
+        const m = meta(snaps, anchor ? rangeForPeriod('month',clock,anchor).keys : [...new Set(rows.map(r=>r.date))]);
         const grouped = [...new Set(rows.map(r => r.date))].sort().map(date => {
             const r = rows.filter(d => d.date === date), t = totals(r);
             return {
