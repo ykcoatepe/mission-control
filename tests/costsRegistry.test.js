@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createUsageRegistry } = require('../server/sources/usage/registry');
 const { createUsageService } = require('../server/sources/usage');
+const { withLiveLoop } = require('./helpers/liveLoop');
 const NOW = Date.parse('2026-08-15T12:00:00Z');
 const day = (model = 'gpt-5.6-sol', tokens = 100, billedUsd = null, date = '2026-08-15') => ({
     date, model, inputTokens: tokens, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, billedUsd
@@ -64,12 +65,13 @@ test('unknown billing stays null while observed zero is preserved', async () => 
 });
 test('source timeout isolates a hung producer; fast provider finishes independently', async () => {
     const registry = createUsageRegistry({ providers: [provider('slow', () => new Promise(() => { })), provider('fast')], timeoutMs: 15, now: () => NOW });
-    const hold = setTimeout(() => { }, 50);
-    const pending = registry.sources()[0].refresh();
-    await registry.sources()[1].refresh();
-    assert.equal(registry.snapshots()[1].data.days[0].inputTokens, 100);
-    await pending;
-    clearTimeout(hold);
+    // The hung producer has no handle; only the source's unref'd timeout settles it.
+    await withLiveLoop(async () => {
+        const pending = registry.sources()[0].refresh();
+        await registry.sources()[1].refresh();
+        assert.equal(registry.snapshots()[1].data.days[0].inputTokens, 100);
+        await pending;
+    });
     assert.equal(registry.snapshots()[0].meta.error.code, 'timeout');
 });
 test('malformed observations cannot poison last-good or invent empty usage', async () => {
@@ -178,12 +180,11 @@ test('late producer result after timeout cannot persist or replace memory', asyn
     const registry = createUsageRegistry({
         providers: [provider('slow', () => new Promise(r => { finish = r; }))], fs, dataDir: '/data', timeoutMs: 5, now: () => NOW
     });
-    const hold = setTimeout(() => { }, 50);
-    const running = registry.sources()[0].refresh();
-    await running;
-    finish(result());
-    await new Promise(setImmediate);
-    clearTimeout(hold);
+    await withLiveLoop(async () => {
+        await registry.sources()[0].refresh();
+        finish(result());
+        await new Promise(setImmediate);
+    });
     assert.equal(registry.snapshots()[0].data, null);
     assert.equal(fs.writes.length, 0);
 });

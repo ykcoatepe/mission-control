@@ -102,7 +102,7 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
   }
 })();
 
-(async function testOperationsCronEvidenceTracksSchedulersIndependently() {
+test('testOperationsCronEvidenceTracksSchedulersIndependently', async () => {
   const { service } = makeCronServiceWithJobs([{ id: 'hermes-job', enabled: true }]);
   const result = await service.fetchCronJobsForOperations();
 
@@ -113,12 +113,9 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
   assert.ok(Number.isFinite(Date.parse(result.operationsSource.schedulers.openclaw.observedAt)));
   assert.ok(Number.isFinite(Date.parse(result.operationsSource.schedulers.hermes.observedAt)));
   assert.equal(result.jobs.filter((job) => job.scheduler === 'hermes').length, 1);
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });
 
-(async function testFallbackEmptyCronResultsHaveNoSyntheticObservation() {
+test('testFallbackEmptyCronResultsHaveNoSyntheticObservation', async () => {
   const originalFetch = global.fetch;
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cron-unavailable-'));
   global.fetch = async () => ({ ok: false, json: async () => ({}) });
@@ -144,9 +141,6 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
   } finally {
     global.fetch = originalFetch;
   }
-})().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
 });
 
 console.log('cronData tests passed');
@@ -156,7 +150,7 @@ function fakeClock() {
   return { now: () => t, advance: (ms) => { t += ms; } };
 }
 
-(async function testHermesCronFailureWithRecentCacheStaysFresh() {
+test('testHermesCronFailureWithRecentCacheStaysFresh', async () => {
   const clock = fakeClock();
   const { service, jobsFile } = makeCronServiceWithJobs([{ id: 'h1', enabled: true }], { now: clock.now });
   const first = await service.fetchCronJobsForOperations();
@@ -182,14 +176,14 @@ function fakeClock() {
   assert.equal(fourth.operationsSource.schedulers.hermes.sourceSucceeded, false);
   assert.equal(fourth.operationsSource.schedulers.hermes.observedAt, null);
   assert.equal(fourth.jobs.filter((job) => job.scheduler === 'hermes').length, 0);
-})().catch((error) => { console.error(error); process.exitCode = 1; });
+});
 
-(async function testHermesCronFailureWithoutCacheIsUnavailable() {
+test('testHermesCronFailureWithoutCacheIsUnavailable', async () => {
   const { service, jobsFile } = makeCronServiceWithJobs([{ id: 'h1' }]);
   fs.writeFileSync(jobsFile, 'not json', 'utf8');
   const result = await service.fetchCronJobsForOperations();
   assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, false);
-})().catch((error) => { console.error(error); process.exitCode = 1; });
+});
 
 async function testSlowOpenclawProbeNeverStarvesHermesCronEvidence() {
   let release;

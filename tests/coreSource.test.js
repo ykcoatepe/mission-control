@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createSource } = require('../server/core/source');
+const { withLiveLoop } = require('./helpers/liveLoop');
 
 function clock(start = Date.parse('2026-11-11T10:00:00Z')) {
   let t = start;
@@ -109,17 +110,20 @@ test('a timed-out read is a failure, keeps its slot until it settles, and its la
     },
   });
   await source.refresh();
-  const snap = await source.refresh();
-  assert.equal(snap.meta.error.code, 'timeout');
-  assert.deepEqual(snap.data, { v: 'good' });
-  // While the hung read is still running, no new read starts.
-  await source.refresh();
-  assert.equal(reads, 2);
-  release({ v: 'late' });
-  await new Promise((r) => setImmediate(r));
-  assert.deepEqual(source.snapshot().data, { v: 'good' }, 'late result must not be applied');
-  await source.refresh();
-  assert.equal(reads, 3);
+  // The hung reads have no handle; only the source's unref'd timeout settles them.
+  await withLiveLoop(async () => {
+    const snap = await source.refresh();
+    assert.equal(snap.meta.error.code, 'timeout');
+    assert.deepEqual(snap.data, { v: 'good' });
+    // While the hung read is still running, no new read starts.
+    await source.refresh();
+    assert.equal(reads, 2);
+    release({ v: 'late' });
+    await new Promise((r) => setImmediate(r));
+    assert.deepEqual(source.snapshot().data, { v: 'good' }, 'late result must not be applied');
+    await source.refresh();
+    assert.equal(reads, 3);
+  });
 });
 
 test('data ages into stale after staleAfterMs', async () => {

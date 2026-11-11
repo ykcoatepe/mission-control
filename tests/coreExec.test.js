@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createExec } = require('../server/core/exec');
+const { withLiveLoop } = require('./helpers/liveLoop');
 
 // A controllable execFile stand-in: every call is recorded and finishes only
 // when the test says so.
@@ -178,7 +179,8 @@ test('a call waiting too long for its lane fails with queue_timeout', async () =
   const fake = fakeExecFile();
   const exec = createExec({ execFileImpl: fake.execFileImpl });
   const first = exec.run('openclaw', ['status'], { lane: 'openclaw' });
-  const second = await exec.run('openclaw', ['sessions'], { lane: 'openclaw', queueTimeoutMs: 30 });
+  // The fake child has no handle; only the lane's unref'd queue timer settles this.
+  const second = await withLiveLoop(() => exec.run('openclaw', ['sessions'], { lane: 'openclaw', queueTimeoutMs: 30 }));
   assert.equal(second.ok, false);
   assert.equal(second.error.code, 'queue_timeout');
   assert.equal(fake.calls.length, 1, 'the queued call never started');
@@ -295,7 +297,8 @@ test('counter-example: a child that cannot be verified dead after SIGKILL quaran
     killGraceMs: 30,
     execFileImpl: () => ({ pid: 9, kill: (signal) => kills.push(signal) }),
   });
-  const result = await exec.run('stuck', [], { lane: 'openclaw', timeoutMs: 20 });
+  // The fake child has no handle; only the unref'd call timeout starts the kill.
+  const result = await withLiveLoop(() => exec.run('stuck', [], { lane: 'openclaw', timeoutMs: 20 }));
   assert.deepEqual(kills, ['SIGTERM', 'SIGKILL']);
   assert.equal(result.ok, false);
   assert.equal(result.timedOut, true);
@@ -596,4 +599,25 @@ test('lanes can be added or resized by the caller; unbounded lanes keep queueing
   }
   await Promise.all([first, ...queued]);
   assert.throws(() => createExec({ lanes: { bad: { concurrency: 1, maxQueue: -1 } } }), TypeError);
+});
+
+test('counter-example: drain() answers its caller even when nothing else keeps the process alive', () => {
+  // Shutdown awaits drain() after the server has closed. If drain's poll were
+  // unref'd, the last child exiting would empty the event loop and the
+  // process would exit before drain() resolved: the caller never hears the
+  // verdict. Run it in a process with nothing else alive.
+  const { spawnSync } = require('node:child_process');
+  const execPath = require('node:path').resolve(__dirname, '../server/core/exec');
+  const script = `
+    const { createExec } = require(${JSON.stringify(execPath)});
+    const exec = createExec({ killGraceMs: 100 });
+    exec.run(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { lane: 'default', timeoutMs: 60000 });
+    setTimeout(() => {
+      exec.killAll();
+      exec.drain(5000).then((clean) => process.stdout.write('drain:' + clean));
+    }, 200);
+  `;
+  const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', timeout: 20_000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'drain:true');
 });

@@ -548,15 +548,17 @@ function createExec({
   }
 
   // Resolves true when every process group is verified gone, false after
-  // timeoutMs (always false while a lane is quarantined).
+  // timeoutMs (always false while a lane is quarantined). The poll keeps the
+  // event loop alive (it is bounded by timeoutMs): shutdown awaits this after
+  // the server closed, and an unref'd poll let the process exit as the last
+  // child went, before the caller heard the verdict.
   function drain(timeoutMs = 3 * killGraceMs) {
     const deadline = now() + timeoutMs;
     return new Promise((resolve) => {
       const check = () => {
         if (children.size === 0) return resolve(true);
         if (now() >= deadline) return resolve(false);
-        const t = setTimeoutImpl(check, 25);
-        t?.unref?.();
+        later(check, 25);
         return undefined;
       };
       check();
