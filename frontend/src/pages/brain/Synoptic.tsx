@@ -7,6 +7,7 @@ import {
   MIN_WIDTH,
   arrowData,
   computeSynopticLayout,
+  compactBox,
   moveFocus,
   pathData,
   truncateLabel,
@@ -55,7 +56,9 @@ const stateAttr = (item: { state: UiState; neutral?: boolean }): UiState | undef
 
 /** Said once, under the Readers heading, wherever a reader is shown as set up. */
 export const READERS_CAPTION = "Set up to use GBrain. Live connections can't be read from this machine."
-const showsCaption = (model: BrainModel) => model.readers.some((reader) => reader.neutral)
+const showsCaption = (model: BrainModel) => model.readers.some((reader) => reader.presence === 'set_up')
+/** A reader that is only set up shows its name and nothing else: the caption says the rest, once. */
+const isCompact = (block: BlockModel) => block.presence === 'set_up'
 
 const accessibleName = (block: BlockModel) =>
   block.neutral ? `${block.label}: ${block.sub}` : `${block.label}: ${stateLabel(block.state).toLowerCase()}, ${block.sub}`
@@ -112,7 +115,7 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
 
   type Placed = { block: BlockModel; box: Box }
   const placed: Placed[] = [
-    ...model.readers.map((block, i) => ({ block, box: layout.readers[i].box })),
+    ...model.readers.map((block, i) => ({ block, box: isCompact(block) ? compactBox(layout.readers[i].box) : layout.readers[i].box })),
     { block: model.core, box: layout.core },
     ...model.groups.map((block, i) => ({ block, box: layout.groups[i].box })),
     { block: model.queue, box: layout.queue },
@@ -237,6 +240,7 @@ function BlockButton({
       className={cx(styles.block, core && styles.coreBlock)}
       data-state={stateAttr(block)}
       data-presence={block.presence}
+      data-compact={isCompact(block) || undefined}
       data-kind={block.kind}
       data-syn-id={block.id}
       data-selected={selected || undefined}
@@ -255,9 +259,11 @@ function BlockButton({
         </span>
         {block.count !== null && <Mono className={styles.count}>{block.count}</Mono>}
       </span>
-      <span className={styles.blockSub} title={block.sub}>
-        {block.sub}
-      </span>
+      {!isCompact(block) && (
+        <span className={styles.blockSub} title={block.sub}>
+          {block.sub}
+        </span>
+      )}
       {core && (
         <dl className={styles.coreRows}>
           {core.map((row) => (
@@ -337,7 +343,7 @@ function SynopticList({ model, selectedId, onSelect }: Omit<SynopticProps, 'widt
                   {!block.neutral && <StateDot state={block.state} />}
                   <span className={styles.listName}>{block.label}</span>
                   {block.count !== null && <Mono muted>{block.count}</Mono>}
-                  <span className={styles.listSub}>{block.sub}</span>
+                  {!isCompact(block) && <span className={styles.listSub}>{block.sub}</span>}
                   {/* The line label is shown only when it adds something the row does not already say. */}
                   {line && line.label !== '' && block.kind !== 'core' && !block.sub.includes(line.label) && (
                     <Mono muted className={styles.listLine}>

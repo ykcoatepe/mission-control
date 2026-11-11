@@ -7,7 +7,7 @@ import { Synoptic } from './Synoptic'
 import { NotesPanel } from './NotesPanel'
 import { buildBrainModel, currentNotes, deriveVerdict } from './lib'
 import { synoptic, withVerdict } from './fixtures'
-import type { VerdictReason } from './types'
+import type { IncidentBanner, VerdictReason } from './types'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
@@ -112,6 +112,8 @@ describe('the Notes card', () => {
   })
 })
 
+const codexHeight = (host: HTMLElement) => (host.querySelector('[data-syn-id="reader:codex"]') as HTMLElement).style.height
+
 describe('reader blocks', () => {
   const readerBlock = (host: HTMLElement, id: string) => host.querySelector(`[data-syn-id="reader:${id}"]`) as HTMLElement
 
@@ -126,15 +128,19 @@ describe('reader blocks', () => {
     return syn
   }
 
-  it('shows a set-up reader as a normal present block: no dot, name, "Set up", no line label', async () => {
+  it('shows a set-up reader as a compact block with its name only: no dot, no subline, no line label', async () => {
     const syn = readerSyn()
     const host = await mount(createElement(Synoptic, { model: buildBrainModel(syn), selectedId: null, onSelect: () => undefined }))
     const hermes = readerBlock(host, 'hermes')
     expect(hermes.getAttribute('data-presence')).toBe('set_up')
     expect(hermes.hasAttribute('data-state')).toBe(false)
     expect(hermes.querySelector('[data-state]')).toBeNull()
-    expect(hermes.textContent).toBe('HermesSet up')
+    expect(hermes.textContent).toBe('Hermes')
+    expect(hermes.getAttribute('data-compact')).toBe('true')
+    expect(host.querySelector('[data-syn-id="reader:codex"]')?.hasAttribute('data-compact')).toBe(false)
     expect(hermes.getAttribute('aria-label')).toBe('Hermes: Set up')
+    expect(hermes.style.height).toBe('36px')
+    expect(codexHeight(host)).toBe('56px')
     expect(host.querySelector('[data-syn-id="edge:reader:hermes"]')).toBeNull()
     expect(host.textContent).not.toMatch(/configured/i)
   })
@@ -170,7 +176,7 @@ describe('reader blocks', () => {
     expect(picked).toEqual(['reader:hermes'])
   })
 
-  it('draws every reader the same way in the narrow list: caption once, "Set up", no dot', async () => {
+  it('draws the narrow list with the caption once, set-up readers by name only and no dot', async () => {
     const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 375 })
     class Observer {
@@ -185,7 +191,8 @@ describe('reader blocks', () => {
       const rows = [...host.querySelectorAll('section[aria-label="Readers"] button')] as HTMLElement[]
       expect(rows.map((row) => row.getAttribute('data-presence'))).toEqual(['set_up', 'not_set_up', null])
       expect(rows[0].querySelector('[data-state]')).toBeNull()
-      expect(rows[0].textContent).toBe('HermesSet up')
+      expect(rows[0].textContent).toBe('Hermes')
+    expect(rows[1].textContent).toBe('CodexNot set up')
       expect(rows[2].querySelector('[data-state="warning"]')).not.toBeNull()
       expect(host.textContent).not.toMatch(/configured/i)
       expect((host.textContent ?? '').split("Live connections can't be read from this machine.")).toHaveLength(2)
@@ -193,6 +200,90 @@ describe('reader blocks', () => {
       globalThis.ResizeObserver = previous
       if (original) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original)
       else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth
+    }
+  })
+})
+
+describe('recovered history in the Notes card', () => {
+  const at = (n: number) => new Date(Date.UTC(2026, 10, 11, 0, n)).toISOString()
+  const recovered = (count: number) =>
+    Array.from({ length: count }, (_, i) => {
+      const banner: IncidentBanner = {
+        title: 'Worst recent regression still needs acknowledgement',
+        detail: `1,433 missing embeddings / 3 caveats / queue 14 / 2 / 0 at ${at(i)}.`,
+        snapshotId: `s${i}`,
+        kind: 'recent-regression',
+      }
+      return { key: `s${i}`, banner }
+    })
+  const withRecovered = (count: number, notes = notesFor([]), onAcknowledge = () => undefined) =>
+    createElement(NotesPanel, { notes, recovered: recovered(count), onAcknowledge })
+  const recoveredToggle = (host: HTMLElement) =>
+    [...host.querySelectorAll('button[aria-expanded]')].find((b) => /recovered/.test(b.textContent ?? '')) as HTMLButtonElement
+
+  it('is not something to act on: with only recovered history the top says so and there is no action list', async () => {
+    const host = await mount(withRecovered(99))
+    expect(host.textContent).toContain('Nothing needs action.')
+    expect(host.querySelector('ul[aria-label="Needs action"]')).toBeNull()
+    expect(host.textContent).not.toContain('Recovered:')
+  })
+
+  it('keeps a real action note in the action list and the history out of it', async () => {
+    const host = await mount(withRecovered(3, notesFor(LIVE)))
+    const top = host.querySelector('ul[aria-label="Needs action"]')!
+    expect(top.querySelectorAll('li')).toHaveLength(1)
+    expect(top.textContent).not.toMatch(/recovered|1,433/)
+  })
+
+  it('has one summary line, folded by default, with the latest time and the Acknowledge button in the header', async () => {
+    const host = await mount(withRecovered(99))
+    const toggle = recoveredToggle(host)
+    expect(toggle.textContent).toMatch(/^99 past problems recovered on their own · latest /)
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(document.getElementById(toggle.getAttribute('aria-controls')!)!.hidden).toBe(true)
+    expect([...host.querySelectorAll('button')].some((b) => b.textContent === 'Acknowledge all 99')).toBe(true)
+    const one = await mount(withRecovered(1))
+    expect(recoveredToggle(one).textContent).toMatch(/^1 past problem recovered on its own/)
+    expect([...one.querySelectorAll('button')].some((b) => b.textContent === 'Acknowledge')).toBe(true)
+  })
+
+  it('shows the ten most recent, newest first, in plain parts, then all of them on request', async () => {
+    const onAck: string[] = []
+    const host = await mount(withRecovered(99, notesFor([]), () => onAck.push('ack')))
+    await act(async () => recoveredToggle(host).click())
+    expect(recoveredToggle(host).getAttribute('aria-expanded')).toBe('true')
+    const rows = [...host.querySelectorAll('ul[aria-label="Recovered on their own"] li')] as HTMLElement[]
+    expect(rows).toHaveLength(10)
+    expect(rows[0].textContent).toContain('1,433 missing embeddings · 3 notes · queue: 14 waiting, 2 active, 0 stalled')
+    expect(rows[0].textContent).not.toContain(' / ')
+    const times = rows.map((row) => row.querySelector('time')!.getAttribute('datetime')!)
+    expect(times).toEqual([...times].sort().reverse())
+    expect(times[0]).toBe(at(98))
+    const more = [...host.querySelectorAll('button')].find((b) => b.textContent === 'Show all 99') as HTMLButtonElement
+    await act(async () => more.click())
+    expect(host.querySelectorAll('ul[aria-label="Recovered on their own"] li')).toHaveLength(99)
+    expect([...host.querySelectorAll('button')].some((b) => /^Show all/.test(b.textContent ?? ''))).toBe(false)
+  })
+
+  it('never uses a warning or critical state on a recovered row', async () => {
+    const host = await mount(withRecovered(12))
+    await act(async () => recoveredToggle(host).click())
+    const region = document.getElementById(recoveredToggle(host).getAttribute('aria-controls')!)!
+    expect(region.querySelector('[data-state]')).toBeNull()
+    expect(region.innerHTML).not.toMatch(/warning|critical/i)
+  })
+
+  it('uses the same disclosure for recovered history and for information', async () => {
+    const host = await mount(withRecovered(2, notesFor(LIVE)))
+    const toggles = [...host.querySelectorAll('button[aria-expanded]')] as HTMLButtonElement[]
+    expect(toggles.map((t) => t.textContent)).toEqual([
+      expect.stringMatching(/^2 past problems recovered on their own/),
+      '3 more for information',
+    ])
+    expect(new Set(toggles.map((t) => t.className)).size).toBe(1)
+    for (const toggle of toggles) {
+      expect(toggle.getAttribute('aria-controls')).toBeTruthy()
+      expect(toggle.querySelector('svg')).not.toBeNull()
     }
   })
 })

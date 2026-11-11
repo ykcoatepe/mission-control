@@ -34,7 +34,7 @@ export interface SynopticLayout {
   width: number
   height: number
   headers: Array<{ id: 'readers' | 'core' | 'sources'; x: number; y: number }>
-  /** The one caption under the Readers heading; null when none was asked for. */
+  /** The one caption, below the last reader block in the Readers column; null when none was asked for. */
   readerCaption: { x: number; y: number; w: number; h: number } | null
   core: Box
   queue: Box
@@ -59,11 +59,17 @@ export const labelWidth = (chars: number) => Math.ceil(chars * GLYPH) + 8
 const ARROW_LEN = 6
 const ARROW_HALF = 4
 const NEAR_CORE = 14
-/** The reader caption is 12px text: about 6.2px a glyph, 16px a line, starting 20px under the top of the heading. */
+/** The reader caption is 12px text: about 6.4px a glyph (a little over, so it never clips), 16px a line. */
 const CAPTION_GLYPH = 6.4
 const CAPTION_LINE = 16
-const CAPTION_TOP = 20
-const CAPTION_GAP = 12
+export const CAPTION_GAP = 12
+/** A reader that is only set up is a single line, centred in its row slot so its edge still leaves from the row centre. */
+export const COMPACT_H = 36
+
+/** The drawn box of a compact block inside its row slot: same centre, shorter. */
+export function compactBox(slot: Box): Box {
+  return { ...slot, y: slot.y + (slot.h - COMPACT_H) / 2, h: COMPACT_H }
+}
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
@@ -149,7 +155,7 @@ export interface LayoutInput {
   queueId: string
   /** Longest line label (characters) on the reader side and on the source side; makes the gutters wide enough to show them. */
   labelChars?: { readers: number; sources: number }
-  /** Length of the caption under the Readers heading, in characters; the reader blocks start below it. */
+  /** Length of the caption below the readers, in characters; it takes room under the last reader and moves no row. */
   readerCaptionChars?: number
 }
 
@@ -171,22 +177,23 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
 
   const rows = Math.max(readerIds.length, groupIds.length, 1)
   const stackH = (n: number) => (n <= 0 ? 0 : n * ROW_H + (n - 1) * ROW_GAP)
+  const bodyH = Math.max(stackH(rows), CORE_H)
   const bodyTop = PAD + HEADER_H
-  // The caption sits just under the heading and wraps within the column; the readers start below it.
-  const captionLines = readerCaptionChars ? Math.ceil((readerCaptionChars * CAPTION_GLYPH) / colW) : 0
-  const readerCaption = captionLines > 0
-    ? { x: readersX, y: PAD + CAPTION_TOP, w: colW, h: captionLines * CAPTION_LINE }
-    : null
-  const captionClear = readerCaption ? Math.max(0, readerCaption.y + readerCaption.h + CAPTION_GAP - bodyTop) : 0
-  const bodyH = Math.max(stackH(rows), CORE_H, captionClear + stackH(readerIds.length))
   const coreTop = bodyTop + Math.round((bodyH - CORE_H) / 2)
   const stackTop = (n: number) => bodyTop + Math.round((bodyH - stackH(n)) / 2)
-  const readerTop = bodyTop + captionClear + Math.round((bodyH - captionClear - stackH(readerIds.length)) / 2)
 
-  const place = (n: number, x: number, top = stackTop(n)) =>
-    Array.from({ length: n }, (_, i): Box => ({ x, y: top + i * (ROW_H + ROW_GAP), w: colW, h: ROW_H }))
-  const readerBoxes = place(readerIds.length, readersX, readerTop)
+  // Readers and sources share one row pitch and, for equal counts, the same row lines.
+  const place = (n: number, x: number) =>
+    Array.from({ length: n }, (_, i): Box => ({ x, y: stackTop(n) + i * (ROW_H + ROW_GAP), w: colW, h: ROW_H }))
+  const readerBoxes = place(readerIds.length, readersX)
   const groupBoxes = place(groupIds.length, sourcesX)
+
+  // The caption sits below the last reader, in the column, so it never moves a row.
+  const captionLines = readerCaptionChars ? Math.ceil((readerCaptionChars * CAPTION_GLYPH) / colW) : 0
+  const lastReader = readerBoxes[readerBoxes.length - 1]
+  const readerCaption = captionLines > 0 && lastReader
+    ? { x: readersX, y: lastReader.y + lastReader.h + CAPTION_GAP, w: colW, h: captionLines * CAPTION_LINE }
+    : null
 
   const core: Box = { x: coreX, y: coreTop, w: coreW, h: CORE_H }
   const queue: Box = { x: coreX, y: coreTop + CORE_H + QUEUE_GAP, w: coreW, h: QUEUE_H }
@@ -243,7 +250,7 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
     },
   }
 
-  const height = Math.max(stackTop(rows) + stackH(rows), readerTop + stackH(readerIds.length), queue.y + QUEUE_H) + PAD
+  const height = Math.max(stackTop(rows) + stackH(rows), queue.y + QUEUE_H, readerCaption ? readerCaption.y + readerCaption.h : 0) + PAD
 
   return {
     width,

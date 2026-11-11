@@ -772,11 +772,46 @@ export function collapseIncidents(
   return [...seen].map(([key, banner]) => ({ key, banner }))
 }
 
-/** Split "3 caveats at 2026-…Z." into plain text and the time it happened. */
+/**
+ * The incident ledger joins its parts with " / " and writes the queue as "queue 14 / 2 / 0", which is
+ * waiting / active / stalled (the overview's own queue value). Say the parts out; a part whose meaning
+ * is not certain keeps its label.
+ */
+function incidentParts(body: string): string {
+  const raw = body.split(' / ').map((part) => part.trim()).filter(Boolean)
+  const parts: string[] = []
+  for (let i = 0; i < raw.length; i += 1) {
+    const queue = raw[i].match(/^queue (\d+)$/i)
+    if (queue && /^\d+$/.test(raw[i + 1] ?? '') && /^\d+$/.test(raw[i + 2] ?? '')) {
+      parts.push(`queue: ${queue[1]} waiting, ${raw[i + 1]} active, ${raw[i + 2]} stalled`)
+      i += 2
+    } else {
+      parts.push(plainWords(raw[i]))
+    }
+  }
+  return parts.join(' · ')
+}
+
+/** Split "1,433 missing embeddings / 3 caveats at 2026-…Z." into plain parts and the time it happened. */
 export function describeIncident(banner: IncidentBanner): { text: string; at: string | null } {
   const match = banner.detail.match(/^(.*?)\s+at\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\.?$/)
-  if (!match) return { text: plainWords(banner.detail), at: null }
-  return { text: plainWords(match[1]), at: match[2] }
+  if (!match) return { text: incidentParts(banner.detail), at: null }
+  return { text: incidentParts(match[1]), at: match[2] }
+}
+
+export interface RecoveredLine {
+  key: string
+  text: string
+  at: string | null
+}
+
+/** Recovered problems for display: plain parts, newest first (entries without a time last, in ledger order). */
+export function recoveredLines(recovered: ReadonlyArray<{ key: string; banner: IncidentBanner }>): RecoveredLine[] {
+  const time = (at: string | null) => (at === null ? Number.NEGATIVE_INFINITY : Date.parse(at))
+  return recovered
+    .map(({ key, banner }, index) => ({ line: { key, ...describeIncident(banner) }, index }))
+    .sort((a, b) => time(b.line.at) - time(a.line.at) || a.index - b.index)
+    .map(({ line }) => line)
 }
 
 // ---- recent readings ----

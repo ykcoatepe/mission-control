@@ -11,6 +11,7 @@ import {
   describeElement,
   describeLookupFailure,
   describeIncident,
+  recoveredLines,
   fmtAge,
   fmtCount,
   groupBlockId,
@@ -449,7 +450,30 @@ describe('recovered regressions', () => {
 
   it('writes the incident in plain words with its time', () => {
     expect(describeIncident(banner('a'))).toEqual({ text: '3 notes', at: '2026-11-11T08:05:20.562Z' })
-    expect(describeIncident(banner('a', 'queue 10 / 2 / 0'))).toEqual({ text: 'queue 10 / 2 / 0', at: null })
+    // Waiting / active / stalled, as the overview writes its queue value.
+    expect(describeIncident(banner('a', 'queue 10 / 2 / 0'))).toEqual({ text: 'queue: 10 waiting, 2 active, 0 stalled', at: null })
+    expect(
+      describeIncident(banner('a', '1,433 missing embeddings / 3 caveats / queue 14 / 2 / 0 at 2026-11-11T08:05:20.562Z.')),
+    ).toEqual({ text: '1,433 missing embeddings · 3 notes · queue: 14 waiting, 2 active, 0 stalled', at: '2026-11-11T08:05:20.562Z' })
+  })
+
+  it('keeps the label of a part whose meaning is not certain', () => {
+    expect(describeIncident(banner('a', '2 stale sources / queue 7 at 2026-11-11T08:05:20.562Z.')).text).toBe('2 stale sources · queue 7')
+    expect(describeIncident(banner('a', 'queue 7 / 2 at 2026-11-11T08:05:20.562Z.')).text).toBe('queue 7 · 2')
+  })
+
+  it('lists the recovered problems newest first, those without a time last', () => {
+    const at = (iso: string | null, key: string) => ({
+      key,
+      banner: banner(key, iso ? `3 caveats at ${iso}.` : '3 caveats'),
+    })
+    const lines = recoveredLines([
+      at('2026-11-11T07:00:00.000Z', 'old'),
+      at(null, 'none'),
+      at('2026-11-11T09:00:00.000Z', 'new'),
+      at('2026-11-11T08:00:00.000Z', 'mid'),
+    ])
+    expect(lines.map((line) => line.key)).toEqual(['new', 'mid', 'old', 'none'])
   })
 
   it('never lets history change the current verdict', () => {
