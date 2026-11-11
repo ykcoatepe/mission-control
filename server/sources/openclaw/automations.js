@@ -28,7 +28,7 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
     const present = new Set(jobs.map(job => job.id));
     for (const id of observedRuns.keys()) if (!present.has(id)) observedRuns.delete(id);
     return jobs.map(job => {
-      job = { ...job, nextRunOverdue: job.enabled === true && Number.isFinite(Date.parse(job.nextRun)) && Date.parse(job.nextRun) < now() };
+      job = { ...job, nextRunOverdue: job.enabled === true && Number.isFinite(Date.parse(job.nextRun)) && Date.parse(job.nextRun) <= now() };
       const known = observedRuns.get(job.id);
       if (known && !(Date.parse(job.lastRun) >= Date.parse(known.lastRun))) {
         return { ...job, lastRun: known.lastRun, history: known.history,

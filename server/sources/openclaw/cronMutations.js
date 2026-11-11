@@ -3,16 +3,24 @@ const { publishMutation } = require('./writeThrough');
 const { httpError } = require('../../core/http');
 const { redactString } = require('../../core/config');
 
-function freshReadingAfter(source, generation, scheduler, data, meta) {
+function readStartedAfter(proof, observation) {
+  // A new source refresh may join a probe that predates the write. Its source
+  // generation/completion time says nothing about when upstream was read.
+  return Number.isFinite(proof?.readStartedAtMs) && proof.readStartedAtMs >= observation.atMs
+    && Number.isSafeInteger(proof.readStartedOrder) && proof.readStartedOrder > observation.order;
+}
+
+function freshReadingAfter(source, generation, scheduler, data, meta, observation) {
   const proof = data?.cron?.schedulers?.[scheduler];
   return (!meta?.error || meta.error.code === 'scheduler_stale')
     && (source?.readState?.().reads ?? source?.status?.().reads ?? 0) > generation && proof?.sourceSucceeded === true
-    && !proof.stale && !Object.hasOwn(proof, 'cacheAgeMs');
+    && !proof.stale && !Object.hasOwn(proof, 'cacheAgeMs') && readStartedAfter(proof, observation);
 }
 
 async function publishObserved(source, cronService, scheduler, rawJobs) {
   const generation = source?.readState?.().reads ?? source?.status?.().reads ?? 0;
   const observedAtMs = source?.nowMs?.() ?? Date.now();
+  const observation = cronService.markCronObservation?.() || { atMs: observedAtMs, order: Infinity };
   const at = new Date(observedAtMs).toISOString();
   const before = source?.snapshot()?.data;
   rawJobs = rawJobs.map(job => {
@@ -43,7 +51,7 @@ async function publishObserved(source, cronService, scheduler, rawJobs) {
       const proof = base.data?.cron?.schedulers?.[scheduler];
       const ageMs = Math.max(0, (source?.nowMs?.() ?? Date.now()) - observedAtMs);
       const laterUnavailable = (state?.reads ?? generation) > generation
-        && (base.meta?.error || !proof?.sourceSucceeded || proof.stale || Object.hasOwn(proof, 'cacheAgeMs'));
+        && (base.meta?.error || !proof?.sourceSucceeded || proof.stale || Object.hasOwn(proof, 'cacheAgeMs') || !readStartedAfter(proof, observation));
       const stale = !allCurrent || Boolean(laterUnavailable) || ageMs > (state?.staleAfterMs ?? 90000);
       return { ok: !stale, stale, observedAt: at, ageMs, verified: true,
         error: laterUnavailable && base.meta?.error ? base.meta.error : stale ? { code: 'scheduler_stale', message: 'Current scheduler confirmation is unavailable' } : null };
@@ -56,11 +64,11 @@ async function publishObserved(source, cronService, scheduler, rawJobs) {
         operationsSource: { ...data?.evidence?.operationsSource, sourceSucceeded: true, provenance: 'scheduler-readers', observedAt: at, schedulers },
       } };
     },
-    confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta),
+    confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta, observation),
   }, { refresh: false });
 }
 
-async function commitCronMutation({ source, cronService, scheduler, sourceId, operation, rawJob, patch = {}, beforeRun, createJob }) {
+async function commitCronMutation({ source, cronService, scheduler, sourceId, operation, rawJob, patch = {}, beforeRun, createJob, expectedBaseUrl }) {
   const before = source?.snapshot()?.data;
   const commandJob = rawJob?.job || rawJob;
   sourceId ||= commandJob?.id;
@@ -74,12 +82,13 @@ async function commitCronMutation({ source, cronService, scheduler, sourceId, op
   catch (error) {
     if (error.code !== 'upstream_read_failed') throw error;
     const generation = source?.status?.().reads ?? 0;
+    const observation = cronService.markCronObservation?.() || { atMs: source?.nowMs?.() ?? Date.now(), order: Infinity };
     const job = { ...previous, id, sourceId, scheduler, verified: false };
     const snap = await publishMutation(source, {
       key: `cron:${id}:verification`, meta: { verified: false },
       apply: data => ({ ...data, cron: { ...data?.cron,
         jobs: (data?.cron?.jobs || []).map(row => row.id === id ? { ...row, verified: false } : row) } }),
-      confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta),
+      confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta, observation),
     }, { refresh: false });
     return { job, verified: false, observed: false, requested: patch, meta: { ...snap.meta, stale: true } };
   }
@@ -87,6 +96,7 @@ async function commitCronMutation({ source, cronService, scheduler, sourceId, op
   const actualRaw = rawJobs.find(job => String(job.sourceId ?? job.id) === String(sourceId));
   const actual = actualRaw ? cronService.mapCronJobForApi(actualRaw) : null;
   let matches = !!actual && Object.entries(patch).every(([field, value]) => actual[field] === value);
+  if (scheduler === 'hermes' && expectedBaseUrl !== undefined) matches &&= (actualRaw?.base_url || null) === expectedBaseUrl;
   if (operation === 'delete') matches = !actual && !!sourceId;
   if (operation === 'create') {
     const schedule = actualRaw?.schedule, requested = createJob?.schedule;
@@ -107,7 +117,7 @@ async function commitCronMutation({ source, cronService, scheduler, sourceId, op
   const job = actual ? { ...(displayed || actual), verified: true } : { id, sourceId, scheduler, deleted: true, verified: true };
   let error = null;
   const invalidMetadata = actualRaw && (typeof actualRaw.enabled !== 'boolean'
-    || [actualRaw.payload?.model, actualRaw.payload?.thinking, actualRaw.model, actualRaw.provider]
+    || [actualRaw.payload?.model, actualRaw.payload?.thinking, actualRaw.model, actualRaw.provider, actualRaw.base_url]
       .some(value => value != null && typeof value !== 'string')
     || ['lastRunAtMs', 'runningAtMs', 'nextRunAtMs'].some(field => {
       const value = actualRaw.state?.[field];

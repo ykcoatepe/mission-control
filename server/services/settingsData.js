@@ -172,6 +172,12 @@ function createSettingsService({
   let committedMcText = null;
   let pendingExternalWrite = null;
   let externalVerified = null;
+  // Config reads are not single-flighted by the OpenClaw client. Keep their
+  // start order, rather than their completion order: a scheduled reconciliation
+  // may still be in flight when a later command/read-back observes new values.
+  // The ordinal also distinguishes operations within one clock millisecond.
+  let configEvidenceOrder = 0;
+  let configEvidenceBarrier = 0;
   const externalPaths = {
     main: 'agents.defaults.model.primary',
     subagent: 'agents.defaults.subagents.model.primary',
@@ -203,16 +209,25 @@ function createSettingsService({
     for (const [field] of expected) observedOpenclawFields.set(field, configValue(before, field));
   }
 
+  function assertCurrentConfigRead(startedOrder) {
+    if (startedOrder <= configEvidenceBarrier) {
+      throw httpError(409, 'upstream_unverified', 'A newer OpenClaw configuration change superseded this read; the current values are retained');
+    }
+  }
+
   async function verifyExternalWrite(expected) {
+    const startedOrder = ++configEvidenceOrder;
     let result;
     try {
       // The existing client runs this argv on the serialized OpenClaw lane.
       // Read the parent so an intentionally unset heartbeat model is observable.
       result = await openclawExec(['config', 'get', 'agents.defaults', '--json'], 8000);
     } catch {
+      assertCurrentConfigRead(startedOrder);
       externalVerified = false;
       return false;
     }
+    assertCurrentConfigRead(startedOrder);
     let defaults;
     try {
       const text = String(result?.stdout || '');
@@ -237,6 +252,7 @@ function createSettingsService({
       values.set(field, value);
     }
     const current = structuredClone(lastOpenclawConfig || {});
+    configEvidenceBarrier = ++configEvidenceOrder;
     observedOpenclawFields.clear();
     for (const [field, value] of values) {
       setConfigValue(current, field, value);
@@ -481,6 +497,7 @@ function createSettingsService({
         ? ['config', 'unset', paths[field]]
         : ['config', 'set', paths[field], value], 15000);
       hasOpenclawMutation = true;
+      configEvidenceBarrier = ++configEvidenceOrder;
     }
     let verified = true;
     if (provided.length) {
@@ -511,6 +528,7 @@ function createSettingsService({
     const before = readOpenclawConfigSafe();
     await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', normalized], 15000);
     hasOpenclawMutation = true;
+    configEvidenceBarrier = ++configEvidenceOrder;
     const expected = new Map([['agents.defaults.heartbeat.every', normalized]]);
     rememberUnverified(expected, before);
     const verified = await verifyExternalWrite(expected);

@@ -216,6 +216,71 @@ test('testHermesCronFailureWithoutCacheIsUnavailable', async () => {
   assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, false);
 });
 
+test('an explicitly partial cron inventory cannot become complete evidence through the table fallback', async () => {
+  const calls = [];
+  const { service, homeDir } = makeCronServiceWithJobs([], {
+    openclawExec: async args => {
+      calls.push(args);
+      return { stdout: args.includes('--json') ? JSON.stringify({ jobs: [], total: 1, offset: 0, limit: 200, hasMore: true, nextOffset: 1 }) : 'No cron jobs.', stderr: '' };
+    },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ result: { details: { jobs: [], hasMore: true, nextOffset: 1 } } }) }),
+  });
+  try {
+    const evidence = await service.fetchCronJobsForOperations();
+    assert.equal(evidence.operationsSource.schedulers.openclaw.sourceSucceeded, false);
+    assert.equal(calls.some(args => !args.includes('--json')), false, 'explicitly partial JSON cannot be downgraded to table evidence');
+  } finally { fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('generic cron table fallback includes paused jobs via --all', async () => {
+  const id = 'deadbeef-0000-0000-0000-000000000001';
+  const widths = [38, 18, 20, 10, 10, 12, 12, 10, 20];
+  const row = fields => fields.map((value, index) => value.padEnd(widths[index])).join('');
+  const table = row(['ID', 'Name', 'Schedule', 'Next', 'Last', 'Status', 'Target', 'Agent', 'Model']) + '\n'
+    + row([id, 'Paused job', '0 * * * *', '—', 'never', 'disabled', 'isolated', '—', 'local/model']);
+  const { service, homeDir } = makeCronServiceWithJobs([], {
+    openclawExec: async args => {
+      if (args.includes('--json')) throw new Error('JSON unavailable');
+      return { stdout: args.includes('--all') ? table : 'No cron jobs.', stderr: '' };
+    },
+    fetchImpl: async () => { throw new Error('No network'); },
+  });
+  try {
+    const evidence = await service.fetchCronJobsForOperations();
+    assert.equal(evidence.operationsSource.schedulers.openclaw.sourceSucceeded, true);
+    assert.equal(evidence.jobs.find(job => job.sourceId === id)?.enabled, false);
+  } finally { fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('gateway cron inventory explicitly includes paused jobs', async () => {
+  const paused = { id: 'paused', enabled: false, state: {}, schedule: { kind: 'cron', expr: '0 * * * *' } };
+  const { service, homeDir } = makeCronServiceWithJobs([], {
+    openclawExec: async () => { throw new Error('CLI unavailable'); },
+    fetchImpl: async (_url, options) => {
+      const args = JSON.parse(options.body).args;
+      const jobs = args.includeDisabled === true ? [paused] : [];
+      return { ok: true, json: async () => ({ result: { details: { jobs, scope: 'gateway', total: jobs.length, hasMore: false, nextOffset: null } } }) };
+    },
+  });
+  try {
+    const evidence = await service.fetchCronJobsForOperations();
+    assert.equal(evidence.jobs.find(job => job.sourceId === paused.id)?.enabled, false);
+  } finally { fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
+test('a caller-scoped Gateway inventory is not full-scheduler evidence', async () => {
+  const { service, homeDir } = makeCronServiceWithJobs([], {
+    openclawExec: async () => { throw new Error('CLI unavailable'); },
+    fetchImpl: async () => ({ ok: true, json: async () => ({ result: { details: {
+      jobs: [], scope: 'caller', scopeHint: 'Restricted inventory', total: 0, hasMore: false, nextOffset: null,
+    } } }) }),
+  });
+  try {
+    const evidence = await service.fetchCronJobsForOperations();
+    assert.equal(evidence.operationsSource.schedulers.openclaw.sourceSucceeded, false);
+  } finally { fs.rmSync(homeDir, { recursive: true, force: true }); }
+});
+
 async function testSlowOpenclawProbeNeverStarvesHermesCronEvidence() {
   let release;
   const gate = new Promise((resolve) => { release = resolve; });

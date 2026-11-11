@@ -14,11 +14,19 @@ async function fixture(mode = 'observed') {
   fs.writeFileSync(path.join(rootDir, 'package.json'), '{"version":"test"}');
   const initial = { agents: { defaults: { model: { primary: 'provider/before' }, subagents: { model: { primary: 'provider/child' } }, heartbeat: { model: 'provider/heartbeat', every: '30m' } } } };
   let upstream = structuredClone(initial); fs.writeFileSync(ocPath, JSON.stringify(initial));
-  const calls = []; let behavior = mode;
+  const calls = []; let behavior = mode, heldRead = null;
   const runner = { async run(bin, argv, options) {
     calls.push({ bin, argv, options });
     if (argv[0] !== 'config') return { ok: false, error: { code: 'test_disabled' } };
     if (argv[1] === 'get') {
+      if (heldRead && !heldRead.started) {
+        heldRead.started = true;
+        const result = heldRead.result || { ok: true, stdout: JSON.stringify(upstream.agents.defaults), stderr: '' };
+        heldRead.onStart();
+        await heldRead.promise;
+        heldRead = null;
+        return result;
+      }
       if (behavior === 'read-failed') return { ok: false, error: { code: 'fake_read_failure' } };
       if (behavior === 'malformed') return { ok: true, stdout: 'not JSON', stderr: '' };
       if (behavior === 'private-field') return { ok: true, stdout: JSON.stringify({ model: { primary: 'sk-SENTINEL123456789012345678901234567890' } }), stderr: '' };
@@ -54,7 +62,37 @@ async function fixture(mode = 'observed') {
       let text = ''; res.on('data', part => { text += part; }); res.on('end', () => resolve({ status: res.statusCode, body: JSON.parse(text) }));
     }); req.on('error', reject); req.end(body);
   });
-  return { request, calls, settingsService, setMode(value) { behavior = value; }, upstream: () => upstream, async close() { app.locals.runtime.dispose(); await new Promise(resolve => server.close(resolve)); fs.rmSync(rootDir, { recursive: true, force: true }); } };
+  return { request, calls, settingsService, setMode(value) { behavior = value; }, holdNextRead(result = null) {
+    let release, started;
+    const promise = new Promise(resolve => { release = resolve; });
+    const whenStarted = new Promise(resolve => { started = resolve; });
+    heldRead = { promise, onStart: started, started: false, result };
+    return { release, whenStarted };
+  }, upstream: () => upstream, async close() { app.locals.runtime.dispose(); await new Promise(resolve => server.close(resolve)); fs.rmSync(rootDir, { recursive: true, force: true }); } };
+}
+
+for (const [label, result] of [
+  ['failed', { ok: false, error: { code: 'fake_read_failure' } }],
+  ['malformed', { ok: true, stdout: 'not JSON', stderr: '' }],
+]) {
+  test(`verified settings late ${label} reconciliation cannot downgrade a newer verified observation`, async () => withLiveLoop(async () => {
+    const f = await fixture('read-failed'); let held, oldRead;
+    try {
+      await f.request('POST', '/api/settings/model-routing', { main: 'provider/first' });
+      f.setMode('observed'); held = f.holdNextRead(result);
+      oldRead = f.settingsService.refreshExternalWrites();
+      await held.whenStarted;
+      const saved = await f.request('POST', '/api/settings/model-routing', { main: 'provider/latest' });
+      assert.equal(saved.status, 200); assert.equal(saved.body.verified, true);
+      held.release(); await oldRead;
+      const current = await f.request('GET', '/api/settings/model-routing');
+      assert.equal(current.body.main, 'provider/latest'); assert.equal(current.body.verified, true);
+      assert.deepEqual(await f.settingsService.refreshExternalWrites(), { verified: true, pending: false });
+    } finally {
+      held?.release(); if (oldRead) await oldRead;
+      await f.close();
+    }
+  }));
 }
 for (const kind of ['model-routing', 'heartbeat']) for (const mode of ['observed', 'rejected', 'command-failed', 'read-failed']) {
   test(`verified settings HTTP ${kind}: ${mode}`, async () => withLiveLoop(async () => {
@@ -124,3 +162,29 @@ for (const mode of ['malformed', 'private-field']) test(`verified settings ${mod
     assert.equal(JSON.stringify([write.body, current.body]).includes('SENTINEL'), false);
   } finally { await f.close(); }
 }));
+
+for (const [firstKind, lastKind] of [['model-routing', 'model-routing'], ['heartbeat', 'heartbeat'], ['model-routing', 'heartbeat']]) {
+  test(`verified settings ${firstKind} old in-flight reconciliation cannot replace newer ${lastKind} observation`, async () => withLiveLoop(async () => {
+    const f = await fixture('read-failed'); let held, oldRead;
+    try {
+      const firstField = firstKind === 'heartbeat' ? 'interval' : 'main';
+      const lastField = lastKind === 'heartbeat' ? 'interval' : 'main';
+      const firstValue = firstKind === 'heartbeat' ? '11m' : 'provider/first';
+      const lastValue = lastKind === 'heartbeat' ? '19m' : 'provider/latest';
+      const sent = await f.request('POST', '/api/settings/' + firstKind, { [firstField]: firstValue });
+      assert.equal(sent.status, 200); assert.equal(sent.body.verified, false);
+      f.setMode('observed'); held = f.holdNextRead();
+      oldRead = f.settingsService.refreshExternalWrites();
+      await held.whenStarted;
+      const latest = await f.request('POST', '/api/settings/' + lastKind, { [lastField]: lastValue });
+      assert.equal(latest.status, 200); assert.equal(latest.body.verified, true);
+      held.release(); await oldRead;
+      const current = await f.request('GET', '/api/settings/' + lastKind);
+      assert.equal(current.body[lastField], lastValue, 'a pre-observation read must not roll back a verified config field');
+      assert.equal(current.body.verified, true);
+    } finally {
+      held?.release(); if (oldRead) await oldRead;
+      await f.close();
+    }
+  }));
+}

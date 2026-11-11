@@ -194,7 +194,7 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
         }
         await cronService.updateHermesCronJobModel(assertSafeCronSourceId(ref.sourceId), normalizedModel);
         const modelRef = cronService.splitHermesModelRef(normalizedModel);
-        const published = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'edit', patch: { model: [modelRef.provider, modelRef.model].filter(Boolean).join('/') } });
+        const published = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'edit', expectedBaseUrl: modelRef.base_url, patch: { model: [modelRef.provider, modelRef.model].filter(Boolean).join('/') } });
         return res.json({
           ok: true,
           message: published.verified ? `Hermes cron model updated to ${normalizedModel || 'default'}` : 'Hermes model command sent; awaiting verification',

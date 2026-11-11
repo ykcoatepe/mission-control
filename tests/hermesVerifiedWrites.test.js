@@ -18,8 +18,9 @@ async function fixture() {
     if (args[0] !== 'cron') return { ok: false, error: { code: 'fake_disabled' } };
     const command = args[1], id = args[2], rows = isHermes ? hermes : oc;
     if (command === 'list') {
+      if (!isHermes && mode.gatewayPending && !mode.mutated) return { ok: false, error: { code: 'timeout' } };
       if (mode.mutated && mode.value === 'read-failed') return { ok: false, error: { code: 'timeout' } };
-      return { ok: true, stdout: isHermes ? 'Hermes jobs listed' : JSON.stringify({ jobs: rows }) };
+      return { ok: true, stdout: isHermes ? 'Hermes jobs listed' : JSON.stringify({ jobs: rows, ...(mode.mutated ? mode.listEnvelope : {}) }) };
     }
     if (mode.value === 'cli-failed') return { ok: false, error: { code: 'command_failed' }, stderr: 'unsafe failure' };
     mode.mutated = true;
@@ -28,6 +29,7 @@ async function fixture() {
       if (isHermes) {
         if (['resume', 'pause'].includes(command)) { job.enabled = command === 'resume'; job.state = job.enabled ? (mode.resumeState || 'scheduled') : 'paused'; job.paused_reason = job.enabled ? null : 'Operator paused'; job.paused_at = job.enabled && !mode.keepPauseMarker ? null : '2026-11-11T00:00:00Z'; }
         if (command === 'edit') for (const [flag, field] of [['--model', 'model'], ['--provider', 'provider']]) { const value = args.find(arg => arg.startsWith(flag + '=')); if (value) job[field] = value.slice(flag.length + 1); else if (args.includes(flag)) job[field] = args[args.indexOf(flag) + 1]; }
+        if (command === 'edit' && mode.changedBaseUrl) job.base_url = 'http://127.0.0.1:9999/v1';
         persist();
       } else {
         if (['enable', 'disable'].includes(command)) job.enabled = command === 'enable';
@@ -40,7 +42,7 @@ async function fixture() {
     return { ok: true, stdout: JSON.stringify(job || { id: 'created' }) };
   }, killAll() {}, drain: async () => true, status: () => ({ lanes: {}, children: 0, quarantined: [] }) };
   const exec = async args => { const result = await runner.run('openclaw', args, { lane: 'openclaw' }); if (!result.ok) throw new Error('CLI failed'); return result; };
-  const cronService = createCronService({ runner, now: () => clock.value, hermesBin: 'fake-hermes', homeDir: root, calendarFile: path.join(root, 'calendar.json'), getOpenclawDefaultModelKey: () => '', openclawExec: exec, fetchImpl: async () => { throw new Error('No network'); } });
+  const cronService = createCronService({ runner, now: () => clock.value, operationsSoftDeadlineMs: 20, hermesBin: 'fake-hermes', homeDir: root, calendarFile: path.join(root, 'calendar.json'), getOpenclawDefaultModelKey: () => '', openclawExec: exec, fetchImpl: async () => { if (mode.gatewayFetch) return mode.gatewayFetch(); throw new Error('No network'); } });
   const registered = [];
   const app = createApp({ clock: { now: () => clock.value }, config: loadConfig({ rootDir: root, homeDir: root, env: { PORT: '0' } }), exec: runner,
     logger: { log() {}, warn() {}, error() {} }, fetch: async () => { throw new Error('No network'); },
@@ -191,8 +193,12 @@ test('create verifies the isolated session default sent to OpenClaw', () => run(
 test('a fresh target scheduler supersedes its observation while the other scheduler is unavailable', () => run(async f => {
   await f.request('POST', '/api/cron/openclaw:o1/toggle', { enabled: true });
   f.oc[0].enabled = false;
-  f.cronService.fetchCronJobsForOperations = async () => ({ jobs: f.oc.map(job => ({ ...structuredClone(job), scheduler: 'openclaw', sourceId: job.id })),
-    operationsSource: { schedulers: { openclaw: { sourceSucceeded: true }, hermes: { sourceSucceeded: false } } } });
+  const readEvidence = f.cronService.fetchCronJobsForOperations.bind(f.cronService);
+  f.cronService.fetchCronJobsForOperations = async () => {
+    const evidence = await readEvidence();
+    return { jobs: evidence.jobs.filter(job => job.scheduler === 'openclaw'), operationsSource: { ...evidence.operationsSource,
+      schedulers: { openclaw: evidence.operationsSource.schedulers.openclaw, hermes: { sourceSucceeded: false } } } };
+  };
   await f.registered.find(source => source.id === 'openclaw.automations').refresh();
   const read = (await f.request('GET', '/api/cron')).body;
   assert.equal(read.jobs.find(job => job.id === 'openclaw:o1').enabled, false); assert.equal(read.meta.stale, true);
@@ -232,4 +238,96 @@ test('metadata-only verification preserves a calendar baseline even without cach
   const response = await f.request('POST', '/api/cron/hermes:h1/toggle', { enabled: true }); assert.equal(response.status, 200);
   const row = JSON.parse(fs.readFileSync(f.calendarFile, 'utf8')).entries.find(row => row.linkedJobId === 'hermes:h1');
   assert.equal(row.notes, 'Known calendar baseline');
+}));
+
+test('a new automations read joining an older gateway fetch cannot undo a verified toggle', () => run(async f => {
+  const source = f.registered.find(source => source.id === 'openclaw.automations');
+  f.oc[0].enabled = true; await source.refresh();
+  const oldJobs = structuredClone(f.oc);
+  let enter, release;
+  const entered = new Promise(resolve => { enter = resolve; });
+  const held = new Promise(resolve => { release = resolve; });
+  f.mode.gatewayPending = true;
+  f.mode.gatewayFetch = async () => { enter(); await held; return { ok: true, json: async () => ({ result: { details: { jobs: oldJobs } } }) }; };
+  const operations = f.cronService.fetchCronJobsForOperations();
+  try {
+    await entered;
+    const response = await f.request('POST', '/api/cron/openclaw:o1/toggle', { enabled: false });
+    assert.equal(response.status, 200); assert.equal(response.body.verified, true);
+    const joined = source.refresh();
+    // Let the new source read join the cache's held probe before releasing it.
+    await new Promise(resolve => setImmediate(resolve)); release();
+    await Promise.all([operations, joined]);
+    const read = (await f.request('GET', '/api/cron')).body;
+    assert.equal(read.jobs.find(job => job.id === 'openclaw:o1').enabled, false);
+    assert.equal(read.meta.stale, true);
+    // A truly later upstream read is allowed to supersede the observation,
+    // including when both starts have the same injected millisecond clock.
+    f.oc[0].enabled = true;
+    await source.refresh();
+    assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.id === 'openclaw:o1').enabled, true);
+  } finally { release(); await operations; }
+}));
+
+for (const scheduler of ['hermes', 'openclaw']) test(`a held ${scheduler} evidence result retains its original upstream read identity`, () => run(async f => {
+  const source = f.registered.find(source => source.id === 'openclaw.automations');
+  const read = f.cronService.fetchCronJobsForOperations.bind(f.cronService);
+  const older = await read();
+  let release; const pending = new Promise(resolve => { release = resolve; });
+  try {
+    const response = await f.request('POST', `/api/cron/${scheduler}:${scheduler === 'hermes' ? 'h1' : 'o1'}/toggle`, { enabled: true });
+    assert.equal(response.status, 200); assert.equal(response.body.verified, true);
+    f.cronService.fetchCronJobsForOperations = async () => { await pending; return older; };
+    const joined = source.refresh(); release(); await joined;
+    assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.scheduler === scheduler).enabled, true);
+  } finally { release(); }
+}));
+
+for (const [provider, baseUrl, model] of [
+  ['local', null, 'custom/qwen'],
+  ['custom', 'http://127.0.0.1:11434/v1', 'openai-codex/gpt-5.5'],
+  ['custom', 'http://127.0.0.1:9999/v1', 'custom/qwen'],
+]) test(`Hermes model changes requiring an unsupported base URL change are refused (${provider}, ${model})`, () => run(async f => {
+  Object.assign(f.hermes[0], { provider, base_url: baseUrl }); fs.writeFileSync(f.jobsFile, JSON.stringify({ jobs: f.hermes }));
+  const before = fs.readFileSync(f.jobsFile, 'utf8'); const start = f.calls.length;
+  const response = await f.request('PATCH', '/api/cron/hermes:h1/model', { model });
+  assert.equal(response.status, 409); assert.equal(response.body.error.code, 'hermes_base_url_requires_external_change');
+  assert.match(response.body.error.message, /changed in Hermes/);
+  assert.equal(f.calls.slice(start).some(call => call.argv.includes('edit')), false);
+  assert.equal(fs.readFileSync(f.jobsFile, 'utf8'), before);
+}));
+
+test('Hermes model verification includes the observed base URL', () => run(async f => {
+  Object.assign(f.hermes[0], { provider: 'custom', base_url: 'http://127.0.0.1:11434/v1' });
+  fs.writeFileSync(f.jobsFile, JSON.stringify({ jobs: f.hermes })); f.mode.changedBaseUrl = true;
+  const response = await f.request('PATCH', '/api/cron/hermes:h1/model', { model: 'custom/qwen' });
+  assert.equal(response.status, 409); assert.equal(response.body.error.code, 'upstream_rejected');
+}));
+
+test('next run exactly now is overdue in the job and excluded from the future summary', () => run(async f => {
+  f.hermes[0].next_run_at = new Date(f.clock.value).toISOString(); fs.writeFileSync(f.jobsFile, JSON.stringify({ jobs: f.hermes }));
+  const response = await f.request('POST', '/api/cron/hermes:h1/toggle', { enabled: true }); assert.equal(response.status, 200);
+  assert.equal(response.body.job.nextRunOverdue, true);
+  const read = (await f.request('GET', '/api/cron')).body;
+  assert.equal(read.jobs.find(job => job.id === 'hermes:h1').nextRunOverdue, true); assert.equal(read.summary.nextRunAt, null);
+}));
+
+for (const incomplete of [
+  // Structure copied from the installed CLI's canonical Gateway page shape.
+  { snapshotRevision: 'r1', total: 1, offset: 0, limit: 200, hasMore: true, nextOffset: 1 },
+  { total: 1, hasMore: false, nextOffset: null },
+  { total: 0, hasMore: false, nextOffset: 1 },
+  { total: 0, offset: 200, hasMore: false, nextOffset: null },
+]) test(`an incomplete OpenClaw inventory cannot verify deletion (${JSON.stringify(incomplete)})`, () => run(async f => {
+  f.mode.listEnvelope = incomplete;
+  const response = await f.request('DELETE', '/api/cron/openclaw:o1');
+  assert.equal(response.status, 409); assert.equal(response.body.error.code, 'upstream_unverified');
+  assert.ok((await f.request('GET', '/api/cron')).body.jobs.some(job => job.id === 'openclaw:o1'));
+}));
+
+test('a complete aggregated OpenClaw inventory verifies deletion', () => run(async f => {
+  f.mode.listEnvelope = { snapshotRevision: 'r1', total: 0, offset: 0, limit: 200, hasMore: false, nextOffset: null };
+  const response = await f.request('DELETE', '/api/cron/openclaw:o1');
+  assert.equal(response.status, 200); assert.equal(response.body.verified, true);
+  assert.equal((await f.request('GET', '/api/cron')).body.jobs.some(job => job.id === 'openclaw:o1'), false);
 }));

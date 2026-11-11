@@ -38,6 +38,22 @@ function dateIsoOrNull(value) {
   return ms === null ? null : new Date(ms).toISOString();
 }
 
+function completeCronInventoryJobs(inventory) {
+  const jobs = Array.isArray(inventory) ? inventory : inventory?.jobs;
+  if (!Array.isArray(jobs)) throw new Error('Invalid cron inventory');
+  // The installed OpenClaw CLI collects Gateway pages before JSON output.
+  // Never interpret a nonterminal/truncated page as proof a job was deleted.
+  if (!Array.isArray(inventory) && (
+    (inventory.hasMore !== undefined && inventory.hasMore !== false)
+    || (inventory.nextOffset !== undefined && inventory.nextOffset !== null)
+    || (inventory.offset !== undefined && inventory.offset !== 0)
+    || (inventory.total !== undefined && (!Number.isSafeInteger(inventory.total) || inventory.total !== jobs.length))
+    || (inventory.scope !== undefined && inventory.scope !== 'gateway')
+    || inventory.truncated === true
+  )) throw Object.assign(new Error('Incomplete cron inventory'), { code: 'cron_inventory_incomplete' });
+  return jobs;
+}
+
 function normalizeOpenclawCronJob(job) {
   if (!job || typeof job !== 'object' || Array.isArray(job)) return { scheduler: 'openclaw', id: null, sourceId: null };
   return { ...job, scheduler: 'openclaw', sourceId: job.id };
@@ -319,6 +335,10 @@ function createCronService({
   const openclawCronRunsDir = path.join(homeDir, '.openclaw', 'cron', 'runs');
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
   const maxHistoryRuns = 10;
+  // An upstream read keeps this identity when another consumer joins it.
+  // Wall time is real; the ordinal disambiguates starts in the same ms.
+  let evidenceOrder = 0;
+  function markCronObservation() { return { atMs: now(), order: ++evidenceOrder }; }
 
   function effectiveCronEnabled(job = {}) {
     const state = job.schedulerState ?? (typeof job.state === 'string' ? job.state.trim() : null);
@@ -402,7 +422,7 @@ function createCronService({
       status: normalizeCronRunStatus({ ...job, enabled }),
       lastRun: typeof job.state?.lastRunAtMs === 'number' ? dateIsoOrNull(job.state.lastRunAtMs) : null,
       nextRun,
-      nextRunOverdue: enabled && nextRun !== null && Date.parse(nextRun) < now(),
+      nextRunOverdue: enabled && nextRun !== null && Date.parse(nextRun) <= now(),
       verified: true,
       ...(scheduler === 'hermes' ? { schedulerState: job.schedulerState ?? null, upstreamEnabled: typeof job.enabled === 'boolean' ? job.enabled : null,
         pausedAt: dateIsoOrNull(job.paused_at),
@@ -529,8 +549,14 @@ function createCronService({
   }
 
   async function updateHermesCronJobModel(sourceId = '', modelRef = '') {
-    if (!strictHermesJobs().some(job => job.id === sourceId)) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
+    const existing = strictHermesJobs().find(job => job.id === sourceId);
+    if (!existing) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
     const next = splitHermesModelRef(modelRef);
+    // The supported edit interface cannot set or clear base_url. Never send
+    // a provider/model change that requires an endpoint change it cannot make.
+    if ((existing.base_url || null) !== next.base_url) {
+      throw httpError(409, 'hermes_base_url_requires_external_change', 'The job base URL must be changed in Hermes before this model change');
+    }
     return runHermesCron(['edit', sourceId, `--model=${next.model || ''}`, `--provider=${next.provider || ''}`]);
   }
 
@@ -546,7 +572,7 @@ function createCronService({
       // state document. Never parse/promote the human list's prompt text.
       await runHermesCron(['list', '--all'], { read: true });
       const fields = ['id', 'name', 'enabled', 'state', 'paused_at', 'paused_reason', 'schedule', 'schedule_display',
-        'model', 'provider', 'last_run_at', 'next_run_at', 'last_status', 'last_duration_ms'];
+        'model', 'provider', 'base_url', 'last_run_at', 'next_run_at', 'last_status', 'last_duration_ms'];
       let jobs;
       try { jobs = strictHermesJobs(); } catch { throw Object.assign(new Error('Hermes state could not be read'), { code: 'upstream_read_failed' }); }
       return jobs.map(job => ({ ...normalizeHermesCronJob(Object.fromEntries(fields.filter(key => Object.hasOwn(job, key)).map(key => [key, job[key]]))), _verificationMetadataOnly: true }));
@@ -554,19 +580,20 @@ function createCronService({
     let result;
     try { result = await openclawExec(['cron', 'list', '--json', '--all'], 8000); }
     catch { throw Object.assign(new Error('OpenClaw read-back failed'), { code: 'upstream_read_failed' }); }
-    try { return extractJsonPayload([result.stdout, result.stderr].filter(Boolean).join('\n')).jobs.map(normalizeOpenclawCronJob); }
-    catch { throw httpError(409, 'upstream_unverified', 'OpenClaw did not return a readable cron list'); }
+    try { return completeCronInventoryJobs(extractJsonPayload([result.stdout, result.stderr].filter(Boolean).join('\n'))).map(normalizeOpenclawCronJob); }
+    catch { throw httpError(409, 'upstream_unverified', 'OpenClaw did not return a readable, complete cron inventory'); }
   }
 
 
   async function fetchOpenclawCronJobsEvidence({ acceptEmpty = true } = {}) {
+    let incompleteInventory = false;
     try {
       const { stdout, stderr } = await openclawExec(['cron', 'list', '--json', '--all'], 15000);
       const raw = [stdout, stderr].filter(Boolean).join('\n');
       if (raw.trim()) {
         try {
           const result = extractJsonPayload(raw);
-          const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
+          const jobs = completeCronInventoryJobs(result);
           if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron JSON');
           return {
             jobs: jobs.map(normalizeOpenclawCronJob),
@@ -574,12 +601,15 @@ function createCronService({
             provenance: 'openclaw-cron-cli-json',
             observedAt: new Date().toISOString(),
           };
-        } catch {}
+        } catch (error) { incompleteInventory = error.code === 'cron_inventory_incomplete'; }
       }
     } catch {}
 
     try {
-      const { stdout } = await openclawExec(['cron', 'list'], 15000);
+      // A human table cannot prove an explicitly nonterminal JSON page is a
+      // complete inventory. Only another complete JSON source may replace it.
+      if (incompleteInventory) throw new Error('Incomplete inventory');
+      const { stdout } = await openclawExec(['cron', 'list', '--all'], 15000);
       const jobs = parseCronTableOutput(stdout);
       if (!jobs.length && !String(stdout || '').split('\n').some(line => /^No cron jobs\b/i.test(line.trim()))) throw new Error('Unrecognized cron table');
       if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron table');
@@ -603,14 +633,14 @@ function createCronService({
         signal: controller.signal,
         body: JSON.stringify({
           tool: 'cron',
-          args: { action: 'list' },
+          args: { action: 'list', includeDisabled: true },
         }),
       });
       if (!response.ok) throw new Error('OpenClaw cron gateway unavailable');
       const data = await response.json();
       const details = data?.result?.details;
       if (details?.jobs || Array.isArray(details)) {
-        const jobs = Array.isArray(details) ? details : details.jobs;
+        const jobs = completeCronInventoryJobs(details);
         return {
           jobs: (jobs || []).map(normalizeOpenclawCronJob),
           sourceSucceeded: true,
@@ -620,7 +650,7 @@ function createCronService({
       }
       const textResult = data?.result?.content?.[0]?.text || '{}';
       const result = extractJsonPayload(textResult);
-      const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
+      const jobs = completeCronInventoryJobs(result);
       return {
         jobs: jobs.map(normalizeOpenclawCronJob),
         sourceSucceeded: true,
@@ -667,7 +697,11 @@ function createCronService({
     function refresh() {
       if (!inFlight) {
         inFlight = Promise.resolve()
-          .then(read)
+          .then(() => {
+            const started = markCronObservation();
+            return Promise.resolve(read()).then(evidence => ({ ...evidence,
+              readStartedAtMs: started.atMs, readStartedOrder: started.order }));
+          })
           .then((evidence) => {
             if (evidence?.sourceSucceeded) lastGood = { evidence, at: now() };
             return evidence;
@@ -718,11 +752,13 @@ function createCronService({
       ? new Date(Math.max(...observedTimes)).toISOString()
       : null;
     const sourceProof = ({
-      sourceSucceeded, provenance, observedAt: sourceObservedAt, stale, staleAgeMs, cacheAgeMs,
+      sourceSucceeded, provenance, observedAt: sourceObservedAt, stale, staleAgeMs, cacheAgeMs, readStartedAtMs, readStartedOrder,
     }) => ({
       sourceSucceeded,
       provenance,
       observedAt: sourceObservedAt,
+      readStartedAtMs,
+      readStartedOrder,
       ...(stale ? { stale: true, staleAgeMs } : {}),
       ...(cacheAgeMs !== undefined ? { cacheAgeMs } : {}),
       // The cache limits travel with the proof, so a holder of this reading
@@ -1081,6 +1117,7 @@ function createCronService({
     updateHermesCronJobModel,
     updateHermesCronJobEnabled,
     readCronJobsForVerification,
+    markCronObservation,
     splitHermesModelRef,
     toIsoOrNull,
     normalizeCalendarEntry,
