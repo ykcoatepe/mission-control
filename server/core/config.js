@@ -26,11 +26,10 @@ const crypto = require('crypto');
 const BUILTIN_DEFAULTS = Object.freeze({
   name: 'Mission Control',
   subtitle: 'Mission Control',
-  modules: { dashboard: true, chat: true, workshop: true, costs: true, cron: true, agents: true, settings: true, skills: true },
+  modules: { dashboard: true, costs: true, cron: true, settings: true, gbrainTimeline: true, aws: false },
   gateway: { port: 18789, token: '' },
-  aws: { enabled: false, bucket: '', region: 'us-east-1' },
+  aws: { enabled: false, region: 'us-east-1' },
   notion: { enabled: false, dbId: '', token: '' },
-  scout: { enabled: false, braveApiKey: '' },
   workspace: '',
   skillsPath: '',
   memoryPath: '',
@@ -211,13 +210,17 @@ function redactString(input) {
 //   aws.enabled      Usage page AWS toggle (pages/costs/lib.ts awsIntegrationEnabled)
 
 // Every module id that may appear in the public view: the `module` /
-// `anyModule` keys of the route registry (frontend/src/appRoutes.tsx) plus the
-// flags server/ reads (modules.aws, modules.gbrainTimeline). A new module id
+// `anyModule` keys of the route registry (frontend/src/appRoutes.tsx), except
+// the compatibility redirects to `/` (a removed screen's flag decides nothing;
+// with the id absent the redirect stays enabled), plus the flags server/ reads
+// (modules.aws, modules.gbrainTimeline). Removed modules (scout, docs, skills,
+// office, team, workshop, chat, agents) are not listed: an existing config may
+// still hold their flags, which are ignored and preserved on write. A new module id
 // must be added here; tests/corePublicView.test.js fails when the frontend
 // registry or server/ uses one that is missing.
 const PUBLIC_MODULE_IDS = Object.freeze([
   'dashboard', 'attention', 'cron', 'costs', 'services', 'ollamaMonitor', 'settings', 'councils', 'gbrain',
-  'calendar', 'workshop', 'chat', 'agents', 'office', 'team', 'docs', 'scout', 'aws', 'skills', 'gbrainTimeline',
+  'calendar', 'aws', 'gbrainTimeline',
 ]);
 
 const DISPLAY_LABEL = { $string: { max: 120, fallback: BUILTIN_DEFAULTS.name } };

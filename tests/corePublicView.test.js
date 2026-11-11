@@ -300,7 +300,12 @@ test('counter-example: an unknown module key is omitted; the list covers the fro
   const repo = path.join(__dirname, '..');
   const routes = fs.readFileSync(path.join(repo, 'frontend/src/appRoutes.tsx'), 'utf8');
   const used = new Set();
-  for (const match of routes.matchAll(/\bmodule:\s*['"]([^'"]+)['"]/g)) used.add(match[1]);
+  // A compatibility redirect to `/` (component RedirectHome) ignores its flag:
+  // the screen was removed, so its module id is not part of the public view.
+  for (const line of routes.split('\n')) {
+    if (/component:\s*RedirectHome\b/.test(line)) continue;
+    for (const match of line.matchAll(/\bmodule:\s*['"]([^'"]+)['"]/g)) used.add(match[1]);
+  }
   for (const match of routes.matchAll(/\banyModule:\s*\[([^\]]*)\]/g)) {
     for (const id of match[1].matchAll(/['"]([^'"]+)['"]/g)) used.add(id[1]);
   }

@@ -2,11 +2,27 @@
 
 const express = require('express');
 const { createGBrainOverviewService } = require('../../services/gbrainOverviewData');
-const { sendEnvelope, httpError } = require('../../core/http');
+const { sendEnvelope, httpError, safeMessage } = require('../../core/http');
 const { limitInput, slugInput } = require('../../sources/gbrain/lookups');
 const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
 const { requiresExplicitConfirmation } = require('./actionPolicy');
+
+// The action result keeps every field the frontend reads (status, pending,
+// refreshAfter, summary, checkedAt, ...); only `error` takes the one error
+// contract shape. Status codes are unchanged.
+const ACTION_ERROR_CODES = {
+  'confirmation-required': 'confirmation_required',
+  rejected: 'gbrain_action_rejected',
+  busy: 'gbrain_action_busy',
+  'timed-out': 'gbrain_action_timed_out',
+  failed: 'gbrain_action_failed',
+};
+function actionErrorBody(result) {
+  const code = ACTION_ERROR_CODES[result.status] || 'gbrain_action_failed';
+  const message = safeMessage(typeof result.error === 'string' && result.error ? result.error : 'GBrain action failed');
+  return { ...result, error: { code, message } };
+}
 
 function buildGBrainRouter(options = {}) {
   const router = express.Router();
@@ -15,12 +31,20 @@ function buildGBrainRouter(options = {}) {
   router.get('/api/gbrain/overview', async (_req, res) => {
     res.json(await overviewService.getOverview());
   });
+  // Legacy reading shapes plus meta. With no reading yet the answer is the
+  // error contract (503, meta alongside); a failed refresh after a good one
+  // keeps the last good reading and its meta says stale.
   for (const name of ['health', 'sources', 'version']) {
     router.get(`/api/gbrain/${name}`, async (_req, res) => {
-      const health = name === 'health' ? (await overviewService.readSnapshot()).live.health : null;
-      const snap = health ? { data: health, meta: health.meta } : overviewService.probeSnapshot(name);
-      res.json({ ...(snap.data || { ok: false, mode: 'live-read-only', status: 'unavailable' }),
-        ...(snap.meta.error ? { ok: false, status: 'unavailable' } : {}), meta: snap.meta });
+      const probe = overviewService.probeSnapshot(name);
+      if (probe.data === null || probe.data === undefined) {
+        return res.status(503).json({
+          error: { code: `gbrain_${name}_unavailable`, message: `GBrain ${name} has not been read` },
+          meta: probe.meta,
+        });
+      }
+      const reading = name === 'health' ? (await overviewService.readSnapshot()).live.health : { ...probe.data, meta: probe.meta };
+      return res.json({ ...reading, meta: reading.meta || probe.meta });
     });
   }
   router.get('/api/gbrain/integration-health', (_req, res) => {
@@ -40,18 +64,22 @@ function buildGBrainRouter(options = {}) {
       ? GBrainActionDefinitions[action]
       : null;
     if (requiresExplicitConfirmation(definition, req.body)) {
-      return res.status(400).json({
+      return res.status(400).json(actionErrorBody({
         ok: false,
         action,
         status: 'confirmation-required',
         checkedAt: new Date().toISOString(),
         error: 'Explicit confirmation is required for this action.',
-      });
+      }));
     }
     const result = await runGBrainAction(req.body?.action, { ...options, exec: options.exec || overviewService.actionExec, confirmed: req.body?.confirmed });
     if (result.status === 'unavailable') throw httpError(503, 'gbrain_action_quarantined', result.error);
     const statusCode = result.status === 'timed-out' ? 504 : result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
-    res.status(statusCode).json(result);
+    if (statusCode === 200) {
+      const { error: _unused, ...success } = result;
+      return res.json(success);
+    }
+    return res.status(statusCode).json(actionErrorBody(result));
   });
 
   router.get('/api/gbrain/timeline', (req, res) => {

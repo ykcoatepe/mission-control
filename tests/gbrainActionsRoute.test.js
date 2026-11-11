@@ -24,7 +24,7 @@ test('rejects W1 action API calls without explicit confirmation', async () => {
       ok: false,
       action: 'sync-sources',
       status: 'confirmation-required',
-      error: 'Explicit confirmation is required for this action.',
+      error: { code: 'confirmation_required', message: 'Explicit confirmation is required for this action.' },
     }, {
       ok: payload.ok,
       action: payload.action,

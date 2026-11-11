@@ -102,12 +102,15 @@ describe('verdict', () => {
       { elementId: 'gbrain.health', state: 'critical', text: 'GBrain core requires attention (quality 40).' },
     )
     const verdict = deriveVerdict(syn, META)
-    // The server ranks a failed reading above critical and warning; the page keeps that order.
-    expect(verdict.state).toBe('unavailable')
+    // One ordering everywhere: an observed critical outranks a warning, which outranks a reading that failed.
+    expect(verdict.state).toBe('critical')
     expect(verdict.state).toBe(syn.verdict?.state)
     expect(verdict.state).toBe(syn.state)
-    expect(verdict.text).toBe('GBrain readings are incomplete: Hermes: integration unavailable (and 2 more)')
-    expect(verdict.conditions.map((c) => c.id)).toEqual(['hermes', 'gbrain.health', 'queue'])
+    expect(verdict.text).toBe('GBrain needs attention: GBrain core requires attention (quality 40) (and 2 more)')
+    expect(verdict.conditions.map((c) => c.id)).toEqual(['gbrain.health', 'queue', 'hermes'])
+
+    const incomplete = withVerdict(synoptic(), syn.verdict!.reasons[1])
+    expect(deriveVerdict(incomplete, META)).toMatchObject({ state: 'unavailable', text: 'GBrain readings are incomplete: Hermes: integration unavailable' })
 
     const critical = withVerdict(synoptic(), syn.verdict!.reasons[0], syn.verdict!.reasons[2])
     expect(deriveVerdict(critical, META)).toMatchObject({ state: 'critical', text: 'GBrain needs attention: GBrain core requires attention (quality 40) (and 1 more)' })

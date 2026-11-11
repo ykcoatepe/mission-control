@@ -118,12 +118,32 @@ function asyncHandler(fn) {
   };
 }
 
+// Marks an error built here. Only these carry an authored, client-facing
+// message; any other error (raw, child-process, fs, third-party http-errors
+// whose message can hold a filesystem path) is answered generically.
+const AUTHORED = Symbol.for('mission-control.httpError');
+
 function httpError(status, code, message) {
   const error = new Error(message);
   error.status = status;
+  error.statusCode = status;
   error.code = code;
   error.expose = true;
+  Object.defineProperty(error, AUTHORED, { value: true });
   return error;
+}
+
+function isAuthored(error) {
+  return Boolean(error && error[AUTHORED] === true);
+}
+
+// Defence in depth for authored messages: no absolute path under a home or
+// temp directory, no bearer value, ever leaves in a response.
+function safeMessage(value) {
+  return String(value).split('\n')[0]
+    .replace(/(?:[A-Za-z]:)?(?:\/(?:Users|home|private|var|tmp|root|Volumes)\/)[^\s'"`,;)]*/g, '[path]')
+    .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+    .slice(0, 300);
 }
 
 function requestContext({ logger = console, now = Date.now, idFactory = () => crypto.randomUUID() } = {}) {
@@ -170,10 +190,14 @@ const STATUS_CODES = {
   409: 'conflict',
   413: 'payload_too_large',
   415: 'unsupported_media_type',
+  410: 'gone',
   422: 'unprocessable',
   429: 'too_many_requests',
+  501: 'not_implemented',
   503: 'unavailable',
 };
+
+const CODE_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 
 function resolveStatus(error) {
   const raw = Number(error?.status ?? error?.statusCode);
@@ -197,9 +221,13 @@ function errorHandler({ logger = console } = {}) {
     }
     let code;
     let message;
+    const authored = isAuthored(error) && typeof error.message === 'string' && error.message.length > 0;
     if (status >= 500) {
-      code = status === 503 && error?.expose && typeof error.code === 'string' ? error.code : 'internal_error';
-      message = status === 503 && error?.expose && error.message ? String(error.message).slice(0, 300) : 'Internal server error';
+      // 501 and 503 are deliberate and keep an authored message; any other
+      // 5xx, and any 5xx that was not authored, never exposes internals.
+      const exposed = authored && (status === 501 || status === 503);
+      code = exposed && CODE_PATTERN.test(error.code) ? error.code : exposed ? STATUS_CODES[status] : 'internal_error';
+      message = exposed ? safeMessage(error.message) : 'Internal server error';
     } else if (error?.type === 'entity.parse.failed') {
       code = 'invalid_json';
       message = 'Request body is not valid JSON';
@@ -207,12 +235,12 @@ function errorHandler({ logger = console } = {}) {
       code = 'payload_too_large';
       message = 'Request body is too large';
     } else {
-      code = typeof error?.code === 'string' && /^[a-z][a-z0-9_]{1,63}$/.test(error.code)
+      code = typeof error?.code === 'string' && CODE_PATTERN.test(error.code)
         ? error.code
         : STATUS_CODES[status] || 'request_error';
-      // 4xx messages are client-facing only when the thrower marked them so.
-      message = error?.expose && error.message
-        ? String(error.message).split('\n')[0].slice(0, 300)
+      // Only errors built with httpError() carry a client-facing message.
+      message = authored
+        ? safeMessage(error.message)
         : STATUS_CODES[status]?.replace(/_/g, ' ') || 'Request error';
     }
     res.status(status).json({ error: { code, message } });
@@ -261,6 +289,8 @@ module.exports = {
   apiFallthrough,
   asyncHandler,
   httpError,
+  isAuthored,
+  safeMessage,
   requestContext,
   apiNotFound,
   errorHandler,

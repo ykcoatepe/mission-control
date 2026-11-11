@@ -16,7 +16,12 @@
 //   logger      console-like
 //   services    overrides for heavy services (gbrainOverviewService,
 //               hermesKanbanService, hermesGatewayHealthService,
-//               notionActivity) so tests never reach a real CLI
+//               notionActivity, usageService, settingsService,
+//               statusService, cronService, sessionsService,
+//               operationsOverviewService) so tests never reach a real CLI
+//               and can force any route's dependency to fail
+//   sources     overrides for scheduled sources (automations, calendar,
+//               models, ollama, loops, launchd, reachability, awsCosts)
 //
 // app.locals.runtime carries the core objects: { config, configStore, exec,
 // scheduler, sources, guard, start(), dispose(), setBoundPort() }.
@@ -25,8 +30,6 @@ const express = require('express');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const util = require('util');
-const childProcess = require('child_process');
 
 const { loadConfig, createConfigStore } = require('./core/config');
 const { createExec } = require('./core/exec');
@@ -127,8 +130,6 @@ function createApp(deps = {}) {
   // Every OpenClaw CLI call runs on the serialized `openclaw` lane.
   const openclawExec = createOpenclawExec({ runner: exec, bin: OPENCLAW_BIN, configPath: OPENCLAW_CONFIG_PATH });
   const openclawCli = createOpenclawCli({ runner: exec, bin: OPENCLAW_BIN, configPath: OPENCLAW_CONFIG_PATH });
-  // Shell runner for the AWS cost read (GET /api/aws/costs).
-  const execPromise = util.promisify(childProcess.exec);
 
   const fetchSessions = createFetchSessions({
     openclawExec,
@@ -171,7 +172,7 @@ function createApp(deps = {}) {
   app.use(nonApiOnly(express.static(config.paths.frontendDist)));
   app.use('/public', nonApiOnly(express.static(config.paths.publicDir)));
   app.use('/data', nonApiOnly((req, res) => {
-    res.status(404).json({ error: 'Not found' });
+    res.status(404).json({ error: { code: 'not_found', message: 'Not found' } });
   }));
 
   // --- services ----------------------------------------------------------
@@ -184,7 +185,7 @@ function createApp(deps = {}) {
     home: process.env.MC_USER_HOME || process.env.HOME || os.homedir(),
   });
 
-  const settingsService = createSettingsService({
+  const settingsService = services.settingsService || createSettingsService({
     mcConfig,
     missionControlConfigPath: MC_CONFIG_PATH,
     missionControlDefaultConfigPath: MC_DEFAULT_CONFIG_PATH,
@@ -197,6 +198,9 @@ function createApp(deps = {}) {
     bedrockRegion: config.aws.region,
     openclawExec,
     configStore,
+    // Setup reports the gateway from the scheduled reachability reading
+    // (declared with the attention area below; read lazily, never probed).
+    gatewayReachability: () => attentionArea.sources.reachability.snapshot(),
   });
 
   const STATUS_CACHE_TTL = 60000;
@@ -210,7 +214,7 @@ function createApp(deps = {}) {
     baseDir: config.paths.runtimeDir,
   });
 
-  const statusService = createStatusService({
+  const statusService = services.statusService || createStatusService({
     mcConfig,
     memoryPath: MEMORY_PATH,
     prettyModelName,
@@ -231,7 +235,7 @@ function createApp(deps = {}) {
   scheduler.register(statusSource, { intervalMs: STATUS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
 
   const CRON_CACHE_TTL = 30000;
-  const cronService = createCronService({
+  const cronService = services.cronService || createCronService({
     openclawExec: (...args) => openclawExec(...args),
     gatewayPort: GATEWAY_PORT,
     gatewayToken: GATEWAY_TOKEN,
@@ -259,7 +263,7 @@ function createApp(deps = {}) {
   function buildOllamaRouter(options) { return require('./routes/ollama').buildOllamaRouter({ ...options, ollamaSource }); }
   // --- end runtime area --------------------------------------------------
 
-  const sessionsService = createSessionsService({
+  const sessionsService = services.sessionsService || createSessionsService({
     fetchSessions,
     hiddenSessionsPath: path.join(projectRoot, 'hidden-sessions.json'),
     now,
@@ -311,7 +315,7 @@ function createApp(deps = {}) {
     for (const entry of Object.values(operationsSources)) {
       scheduler.register(entry.source, { intervalMs: entry.intervalMs, jitterMs: 2000 });
     }
-    const overviewService = createOperationsOverviewService({
+    const overviewService = services.operationsOverviewService || createOperationsOverviewService({
       sources: sourcesByName,
       listCapabilities: () => listGBrainActions(),
     });
@@ -385,7 +389,7 @@ function createApp(deps = {}) {
 
   app.use(buildGBrainRouter({ projectRoot, mcConfig, gbrainOverviewService, exec }));
   // end gbrain area
-  app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
+  app.use(buildHermesKanbanRouter({ hermesSource: attentionArea.sources.hermes }));
   app.use(buildOperationsRouter({ operationsOverviewService }));
   app.use(buildStatusRouter({ statusService, statusSource }));
   app.use(buildCronRouter({
@@ -398,13 +402,22 @@ function createApp(deps = {}) {
   app.use(buildCalendarRouter({ calendarService: cronService, cronCacheTtl: CRON_CACHE_TTL }));
   // Standalone cron search page (public/cron-search.html), reads /api/cron.
   app.get('/cron-search', (req, res) => res.sendFile(path.join(config.paths.publicDir, 'cron-search.html')));
-  app.use(buildAwsRouter({
-    exec: execPromise,
-    AWS_ACCESS_KEY_ID: config.aws.accessKeyId,
-    AWS_SECRET_ACCESS_KEY: config.aws.secretAccessKey,
-    AWS_REGION: config.aws.region,
-    mcConfig,
-  }));
+  // AWS month-to-date cost: a scheduled read through the core runner while
+  // the module is enabled; the route only reads the snapshot.
+  const awsEnabled = () => Boolean(mcConfig.modules?.aws && mcConfig.aws?.enabled);
+  const awsCostsSource = deps.sources?.awsCosts || require('./sources/aws/costs').createAwsCostsSource({
+    exec,
+    isEnabled: awsEnabled,
+    env: {
+      ...(config.aws.accessKeyId ? { AWS_ACCESS_KEY_ID: config.aws.accessKeyId } : {}),
+      ...(config.aws.secretAccessKey ? { AWS_SECRET_ACCESS_KEY: config.aws.secretAccessKey } : {}),
+      ...(config.aws.region ? { AWS_REGION: config.aws.region } : {}),
+    },
+    now,
+    logger,
+  });
+  scheduler.register(awsCostsSource, { intervalMs: require('./sources/aws/costs').AWS_COSTS_REFRESH_INTERVAL_MS, jitterMs: 5000 });
+  app.use(buildAwsRouter({ awsCostsSource, isEnabled: awsEnabled }));
   app.use(buildModelsRouter({}));
   // usage area: isolated provider lanes, scheduler reads, and pure legacy routes.
   const usageService = services.usageService || require('./sources/usage').createUsageService({
@@ -433,9 +446,6 @@ function createApp(deps = {}) {
   app.use(buildSettingsRouter({ settingsService, projectRoot }));
   app.use(buildOllamaRouter({}));
   app.use(buildCouncilsRouter({
-    readRuntimeSnapshot,
-    writeRuntimeSnapshot,
-    runtimeSnapshotTtl: RUNTIME_SNAPSHOT_TTL,
     decisionLogPath: DECISION_LOG_PATH,
     opsEventsPath: OPS_EVENTS_PATH,
     readJsonFileSafe,

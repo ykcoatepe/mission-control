@@ -412,9 +412,7 @@ function createCronService({
     }
     const index = jobs.findIndex((candidate) => String(candidate.id) === String(sourceId));
     if (index === -1) {
-      const error = new Error(`Hermes cron job not found: ${sourceId}`);
-      error.statusCode = 404;
-      throw error;
+      throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
     }
 
     const nextJob = { ...jobs[index], ...patch };
@@ -780,9 +778,8 @@ function createCronService({
     const schedulers = evidence?.operationsSource?.schedulers || {};
     const observed = Object.keys(schedulers).filter(key => schedulers[key].sourceSucceeded && !schedulers[key].stale);
     if (!Array.isArray(evidence?.jobs) || !observed.length) {
-      const error = new Error('No fresh scheduler evidence for calendar sync');
-      error.code = 'calendar_scheduler_unavailable';
-      throw error;
+      // Nothing fresh to sync from: a typed 503, and nothing is written.
+      throw httpError(503, 'calendar_scheduler_unavailable', 'No fresh scheduler evidence; the calendar was not synced');
     }
     const stored = readCalendarDataSafe({ strict: true });
     const current = { ...stored, entries: stored.entries.map(entry => ({
@@ -811,9 +808,7 @@ function createCronService({
     const nowIso = new Date().toISOString();
     if (payload.linkedJobId != null) throw httpError(400, 'invalid_calendar_link', 'Scheduler-linked entries are created by cron sync');
     if (!String(payload.title || '').trim()) {
-      const error = new Error('title required');
-      error.statusCode = 400;
-      throw error;
+      throw httpError(400, 'calendar_title_required', 'title required');
     }
 
     const current = readCalendarDataSafe({ strict: true });
@@ -841,9 +836,7 @@ function createCronService({
     const current = readCalendarDataSafe({ strict: true });
     const idx = current.entries.findIndex((entry) => entry.id === id);
     if (idx < 0) {
-      const error = new Error('Calendar entry not found');
-      error.statusCode = 404;
-      throw error;
+      throw httpError(404, 'calendar_entry_not_found', 'Calendar entry not found');
     }
 
     const existing = current.entries[idx];

@@ -306,8 +306,8 @@ export function readPayloadVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null |
   return { state: v.state, reasons }
 }
 
-/** The server's precedence for a verdict (state.js deriveState): unavailable outranks critical, then warning. */
-const VERDICT_ORDER: Record<UiState, number> = { unavailable: 0, critical: 1, warning: 2, healthy: 3, inactive: 4 }
+/** The one ordering (lib/state.ts worstState, server state.js): critical, warning, unavailable, healthy, inactive. */
+const VERDICT_ORDER: Record<UiState, number> = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 }
 
 const sentence = (text: string) => text.trim().replace(/[.\s]+$/, '')
 
@@ -382,7 +382,7 @@ export function deriveSourceSync(groups: SynopticSourceGroup[]): ReadingSet['sou
  * "Not read" is not an alarm and is kept.
  */
 export function alignWithVerdict(state: UiState, verdictState: UiState): UiState {
-  // A failed reading outranks everything in the server's verdict: any lit tile is consistent with it.
+  // An unavailable verdict means no observed warning or critical outranked it: a tile keeps its own state.
   if (verdictState === 'unavailable') return state
   if (state === 'critical' && verdictState !== 'critical') {
     return verdictState === 'warning' ? 'warning' : 'healthy'

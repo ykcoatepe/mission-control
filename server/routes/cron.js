@@ -21,28 +21,15 @@ function parseCronJobRef(id = '', schedulerHint = '') {
 
 function assertSafeCronSourceId(sourceId) {
   const value = String(sourceId || '').trim();
-  if (!value) {
-    const error = new Error('Cron job id is required');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
-  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)) {
-    const error = new Error('Invalid cron job id');
-    error.statusCode = 400;
-    error.expose = true;
-    throw error;
-  }
+  if (!value) throw httpError(400, 'cron_id_required', 'Cron job id is required');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/.test(value)) throw httpError(400, 'invalid_cron_id', 'Invalid cron job id');
   return value;
 }
 
 function assertOpenclawCronAction(id, schedulerHint = '') {
   const ref = parseCronJobRef(id, schedulerHint);
   if (ref.scheduler !== 'openclaw') {
-    const error = new Error('Hermes cron jobs are shown read-only in Mission Control for now. Manage them from Hermes Agent.');
-    error.statusCode = 501;
-    error.expose = true;
-    throw error;
+    throw httpError(501, 'hermes_cron_read_only', 'Hermes cron jobs are shown read-only in Mission Control for now. Manage them from Hermes Agent.');
   }
   return assertSafeCronSourceId(ref.sourceId);
 }

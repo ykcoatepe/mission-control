@@ -10,12 +10,12 @@ const m = (value: number | null, unit = 'chunks', state: 'healthy' | 'warning' |
 
 export const META: Meta = { ok: true, stale: false, observedAt: AT, ageMs: 1000, error: null }
 
-/** The server's precedence (server/sources/gbrain/state.js): a failed reading outranks critical, then warning. */
-const RANK = { unavailable: 0, critical: 1, warning: 2, healthy: 3, inactive: 4 } as const
+/** The one ordering (server/sources/gbrain/state.js, lib/state.ts): critical, warning, unavailable, healthy. */
+const RANK = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 } as const
 
 /**
  * A payload verdict the way the server builds it: the most severe non-inactive
- * reason decides (unavailable > critical > warning), and a verdict with no such reason is healthy.
+ * reason decides (critical > warning > unavailable), and a verdict with no such reason is healthy.
  */
 export function verdictOf(...reasons: VerdictReason[]): PayloadVerdict {
   const attention = reasons.filter((reason) => reason.state !== 'inactive')

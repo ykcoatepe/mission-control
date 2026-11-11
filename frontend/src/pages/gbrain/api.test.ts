@@ -35,18 +35,30 @@ describe('postGBrainAction', () => {
     expect(headers.get('content-type')).toBe('application/json')
   })
 
-  it('keeps the action result on the thrown error and uses its message', async () => {
+  it('reads the unified error shape and keeps the action result, with error as text', async () => {
     const payload = {
       ok: false,
       action: 'sync-sources',
       status: 'busy',
-      error: 'Another GBrain action is already running',
+      error: { code: 'gbrain_action_busy', message: 'Another GBrain action is already running' },
       checkedAt: '2026-07-10T12:00:00.000Z',
     }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload, 409)))
 
     const error = await postGBrainAction('sync-sources').catch((reason: unknown) => reason)
     expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'gbrain_action_busy',
+      message: 'Another GBrain action is already running',
+      payload: { ...payload, error: 'Another GBrain action is already running' },
+    })
+  })
+
+  it('still reads a legacy string error', async () => {
+    const payload = { ok: false, status: 'busy', error: 'Another GBrain action is already running', checkedAt: '2026-07-10T12:00:00.000Z' }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload, 409)))
+    const error = await postGBrainAction('sync-sources').catch((reason: unknown) => reason)
     expect(error).toMatchObject({ status: 409, message: payload.error, payload })
   })
 
@@ -61,10 +73,24 @@ describe('postGBrainAction', () => {
   })
 
   it('a timed-out action that is still cleaning up stays recognisable as pending', async () => {
-    const payload = { ok: false, status: 'timed-out', pending: true, error: 'GBrain action timed out.', checkedAt: '2026-07-10T12:00:00.000Z' }
+    const payload = {
+      ok: false,
+      status: 'timed-out',
+      pending: true,
+      refreshAfter: true,
+      summary: 'cleanup running',
+      error: { code: 'gbrain_action_timed_out', message: 'GBrain action timed out.' },
+      checkedAt: '2026-07-10T12:00:00.000Z',
+    }
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(payload, 504)))
     const error = await postGBrainAction('sync-sources', true).catch((reason: unknown) => reason)
-    expect(resolvePendingActionResult(error)).toMatchObject({ pending: true })
+    expect(error).toMatchObject({ status: 504, code: 'gbrain_action_timed_out' })
+    expect(resolvePendingActionResult(error)).toMatchObject({
+      pending: true,
+      refreshAfter: true,
+      summary: 'cleanup running',
+      error: 'GBrain action timed out.',
+    })
   })
 
   it('sends explicit confirmation for confirmed actions', async () => {

@@ -1,5 +1,5 @@
 'use strict';
-const { deriveState } = require('./state');
+const { worstState } = require('./state');
 const STATES = ['healthy', 'warning', 'critical', 'unavailable', 'inactive'];
 const caveatStates = new Set(['warning', 'critical', 'unavailable']);
 function verdictCaveats(verdict) {
@@ -28,6 +28,18 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
     else if (snapshot.data !== null && snapshot.meta.stale) add(`gbrain.${name}`, 'warning', `${name} evidence is stale.`);
   }
   const m = live.health?.metrics || {};
+  // Every reading the page shows as a state is a reason here, whatever status
+  // GBrain itself reports: link extraction and missing embeddings past their
+  // tolerance are named separately from the quality score.
+  const overdue = (value) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
+  const staleOverdue = overdue(m.stalePagesOverdue ?? (m.stalePagesCatchingUp === undefined ? m.stalePages : 0));
+  if (m.stalePagesUnavailable !== true && staleOverdue > 0) {
+    add('link-extraction', 'warning', `Link extraction is behind: ${staleOverdue} ${staleOverdue === 1 ? 'page' : 'pages'} past the tolerance.`);
+  }
+  const missingOverdue = overdue(m.missingEmbeddingsOverdue ?? (m.missingEmbeddingsCatchingUp === undefined ? m.missingEmbeddings : 0));
+  if (m.missingEmbeddingsUnavailable !== true && missingOverdue > 0) {
+    add('missing-embeddings', 'warning', `${missingOverdue} ${missingOverdue === 1 ? 'chunk is' : 'chunks are'} missing embeddings past the tolerance.`);
+  }
   if (m.embedJobProbeUnavailable === true) add('embed-job-probe', 'unavailable', 'Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.');
   if (m.missingEmbeddingsUnavailable === true) add('missing-embeddings', 'unavailable', 'Missing-embedding count unavailable.');
   if (m.stalePagesUnavailable === true) add('stale-pages', 'unavailable', 'Stale-page count unavailable.');
@@ -43,7 +55,7 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   for (const r of readers) if (r.state !== 'healthy') add(r.id, r.state,
     r.state === 'inactive' ? `${r.label}: integration not configured.` : `${r.label}: integration ${r.state}.`);
   if (readersState === 'unavailable' && !readers.length) add('readers', readersState, 'Reader integration reading unavailable.');
-  return { state: deriveState({ observed: true, failed: reasons.some((r) => r.state === 'unavailable'),
-    critical: reasons.some((r) => r.state === 'critical'), warning: reasons.some((r) => r.state === 'warning') }), reasons };
+  // Inactive reasons are listed but never degrade the verdict.
+  return { state: worstState(['healthy', ...reasons.map((r) => r.state).filter((state) => state !== 'inactive')]), reasons };
 }
 module.exports = { buildGBrainVerdict, verdictCaveats, isGBrainVerdict };

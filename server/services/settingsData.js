@@ -1,15 +1,13 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { redact, publicMcView, validateMcConfig } = require('../core/config');
+const { redact, publicMcView, validateMcConfig, PUBLIC_MODULE_IDS } = require('../core/config');
 const { httpError } = require('../core/http');
 
 function normalizeMonthlyBudget(monthly) {
   if (monthly === null) return null;
   if (typeof monthly !== 'number' || !Number.isFinite(monthly) || monthly < 0) {
-    const error = httpError(400, 'invalid_budget', 'monthly budget must be a finite number, zero or positive, or null');
-    error.statusCode = 400;
-    throw error;
+    throw httpError(400, 'invalid_budget', 'monthly budget must be a finite number, zero or positive, or null');
   }
   return monthly;
 }
@@ -108,6 +106,11 @@ function restoreRedactedValues(imported, current, hasCurrent = false, path = [],
   return imported;
 }
 
+const SETUP_FIELDS = new Set(['dashboardName', 'gateway', 'modules']);
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 function createSettingsService({
   mcConfig,
   missionControlConfigPath,
@@ -125,6 +128,9 @@ function createSettingsService({
   fsImpl = fs,
   homeDir = os.homedir(),
   fetchImpl = (...args) => fetch(...args),
+  // () => reachability snapshot ({ data: { gateways: { openclaw: { state } } }, meta }).
+  // Read from memory only; setup never probes the gateway itself.
+  gatewayReachability = null,
 }) {
   const fs = fsImpl;
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
@@ -283,8 +289,7 @@ function createSettingsService({
   }
 
   async function getSetupStatus() {
-    // Gateway reachability has not been measured by this local config reader.
-    const gatewayRunning = null;
+    const gatewayRunning = readGatewayRunning();
     const gatewayVersion = null;
 
     let needsSetup = !fs.existsSync(missionControlConfigPath);
@@ -335,16 +340,60 @@ function createSettingsService({
     };
   }
 
-  function updateSetup({ dashboardName, gateway, modules, scout }) {
+  // The OpenClaw gateway reading the scheduled reachability source holds:
+  // true (up), false (down), null when it is not a current reading.
+  function readGatewayRunning() {
+    let snapshot = null;
+    try {
+      snapshot = typeof gatewayReachability === 'function' ? gatewayReachability() : null;
+    } catch {
+      snapshot = null;
+    }
+    if (!snapshot?.data || snapshot.meta?.stale !== false) return null;
+    const state = snapshot.data.gateways?.openclaw?.state;
+    return state === 'up' ? true : state === 'down' ? false : null;
+  }
+
+  // POST /api/setup accepts exactly what the Setup page sends. Blocks of
+  // removed modules (scout, ...) and unknown module ids are refused; blocks an
+  // existing config already holds are left untouched on write.
+  function updateSetup(body = {}) {
+    if (!isPlainObject(body)) throw httpError(400, 'invalid_setup', 'Setup body must be an object');
+    for (const key of Object.keys(body)) {
+      if (!SETUP_FIELDS.has(key)) {
+        const label = /^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(key) ? `"${key}"` : 'that field';
+        throw httpError(400, 'unsupported_setup_field', `Setup does not accept ${label}`);
+      }
+    }
+    const { dashboardName, gateway, modules } = body;
+    if (dashboardName !== undefined && dashboardName !== null && dashboardName !== '' && typeof dashboardName !== 'string') {
+      throw httpError(400, 'invalid_config', 'dashboardName must be a string');
+    }
+    if (gateway != null) {
+      if (!isPlainObject(gateway) || Object.keys(gateway).some((key) => !['port', 'token'].includes(key))) {
+        throw httpError(400, 'invalid_gateway', 'gateway accepts only port and token');
+      }
+      if (gateway.port !== undefined && !(Number.isInteger(gateway.port) && gateway.port > 0 && gateway.port < 65536)) {
+        throw httpError(400, 'invalid_gateway', 'gateway.port must be a port number');
+      }
+      if (gateway.token !== undefined && (typeof gateway.token !== 'string' || gateway.token.length > 4096)) {
+        throw httpError(400, 'invalid_gateway', 'gateway.token must be a string');
+      }
+    }
+    if (modules != null) {
+      if (!isPlainObject(modules)) throw httpError(400, 'invalid_module_flag', 'modules must be an object');
+      for (const [id, flag] of Object.entries(modules)) {
+        if (!PUBLIC_MODULE_IDS.includes(id)) throw httpError(400, 'unknown_module', 'Unknown module id');
+        if (typeof flag !== 'boolean') throw httpError(400, 'invalid_module_flag', 'Module flags must be true or false');
+      }
+    }
     const next = readCurrentMcConfig();
     if (dashboardName) {
-      if (typeof dashboardName !== 'string') throw httpError(400, 'invalid_config', 'dashboardName must be a string');
       next.name = dashboardName;
       next.subtitle = dashboardName;
     }
     if (gateway != null) next.gateway = { ...next.gateway, ...gateway };
     if (modules != null) next.modules = { ...next.modules, ...modules };
-    if (scout != null) next.scout = { ...next.scout, ...scout };
     persistMcConfig(next);
     return { success: true, config: getPublicConfig() };
   }

@@ -55,16 +55,17 @@ async function testBoardUsesProfileAndKeepsPayloadShape() {
 }
 
 async function testRouterIsAReadOnlyBoardWrapper() {
-  const service = {
-    profile: 'hmudur',
-    getBoard: async () => ({ marker: 'board' }),
-  };
-  const router = buildHermesKanbanRouter({ hermesKanbanService: service });
+  // The route reads the scheduled source; it never calls the Hermes CLI.
+  let snapshot = { data: { marker: 'board' }, meta: { ok: true, source: 'operations.hermes' } };
+  const router = buildHermesKanbanRouter({ hermesSource: { snapshot: () => snapshot } });
 
   assert.deepEqual(await invokeRoute(router, 'get', '/api/hermes-kanban'), {
     statusCode: 200,
-    body: { marker: 'board' },
+    body: { marker: 'board', meta: { ok: true, source: 'operations.hermes' } },
   });
+  snapshot = { data: null, meta: { ok: false, source: 'operations.hermes' } };
+  await assert.rejects(invokeRoute(router, 'get', '/api/hermes-kanban'), { status: 503, code: 'hermes_kanban_unavailable' });
+  assert.throws(() => buildHermesKanbanRouter({}), /hermesSource required/);
   assert.deepEqual(
     router.stack.filter((entry) => entry.route).map((entry) => `${Object.keys(entry.route.methods).join(',')} ${entry.route.path}`),
     ['get /api/hermes-kanban'],

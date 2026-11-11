@@ -4,13 +4,8 @@
 // Asserts: the mounted route table, the JSON 404 contract, /api/health, and
 // that a representative set of GET routes never writes to disk.
 //
-// Known GET writers left for their area units (not in the sweep below):
-//   GET /api/cron                         runtime snapshot data/runtime/cron.json
-//   GET /api/calendar                     calendar sync writes calendar-entries.json
-//   GET /api/councils/summary, /governance/scorecard   runtime snapshots
-//   GET /api/gbrain/timeline              timeline ledger
-// Routes that spawn their own CLIs (costs, ollama, gbrain probes, hermes
-// kanban) are also outside this sweep.
+// Every GET is pure: the sweep below covers the routes that compose from
+// memory, and the contract sweep at the end forces a failure on every route.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -95,6 +90,12 @@ const PURE_GET_SWEEP = [
   '/api/settings/heartbeat',
   '/api/models',
   '/api/gbrain/actions',
+  '/api/hermes-kanban',
+  '/api/aws/costs',
+  '/api/councils/summary',
+  '/api/councils/decisions',
+  '/api/councils/governance/scorecard',
+  '/api/councils/decisions/DEC-1/timeline',
   '/api/nope',
 ];
 
@@ -511,6 +512,160 @@ test('boot smoke: no encoding, dot-segment or method variant lets static files o
     }
     assert.equal((await request(port, { urlPath: '/app.js' })).status, 200, 'ordinary static files still serve');
     assert.match((await request(port, { method: 'OPTIONS', urlPath: '/apix' })).body, /GET/, 'non-API OPTIONS is untouched');
+  } finally {
+    app.locals.runtime.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+// --- final integration: one error contract on every route ------------------
+// For every route in EXPECTED_ROUTES, a forced failure (a throwing source,
+// service, scheduler, clock, unreadable archive or failing CLI) answers a
+// non-200 status with { error: { code, message } } and no stack, path or
+// secret text. The only route without a failing dependency is the static
+// GBrain action catalog.
+const LEAK = 'Bearer sk-SENTINEL1234567890 at /Users/someone/private/file.js:1:1';
+function failingService(overrides = {}) {
+  return new Proxy(overrides, {
+    get(target, prop) {
+      if (prop in target) return target[prop];
+      if (typeof prop === 'symbol' || prop === 'then' || prop === 'register' || prop === 'toJSON') return undefined;
+      return () => { throw new Error(`${String(prop)} failed: ${LEAK}`); };
+    },
+  });
+}
+function throwingSource(id) {
+  const fail = () => { throw new Error(`${id} snapshot failed: ${LEAK}`); };
+  return { id, refresh: async () => {}, snapshot: fail, history: fail, status: () => ({ id }) };
+}
+
+const CONTRACT_SWEEP = [
+  ['GET /api/loops', '/api/loops'], ['GET /api/loops/:project', '/api/loops/some-project'],
+  ['GET /api/services', '/api/services'], ['GET /api/signals', '/api/signals'],
+  ['GET /api/health', '/api/health'], ['GET /healthz', '/healthz', { clock: true }],
+  ['GET /api/gbrain/overview', '/api/gbrain/overview'], ['GET /api/gbrain/health', '/api/gbrain/health'],
+  ['GET /api/gbrain/sources', '/api/gbrain/sources'], ['GET /api/gbrain/version', '/api/gbrain/version'],
+  ['GET /api/gbrain/integration-health', '/api/gbrain/integration-health'],
+  ['POST /api/gbrain/actions', '/api/gbrain/actions', { body: { action: 'doctor-fast' } }],
+  ['GET /api/gbrain/timeline', '/api/gbrain/timeline'], ['GET /api/gbrain/synoptic', '/api/gbrain/synoptic'],
+  ['GET /api/gbrain/search', '/api/gbrain/search?q=x'], ['GET /api/gbrain/pages/:slug', '/api/gbrain/pages/projects'],
+  ['GET /api/gbrain/graph', '/api/gbrain/graph?around=projects'],
+  ['GET /api/hermes-kanban', '/api/hermes-kanban'], ['GET /api/operations/overview', '/api/operations/overview'],
+  ['GET /api/status', '/api/status'], ['GET /api/cron', '/api/cron'],
+  ['POST /api/cron/:id/toggle', '/api/cron/job-1/toggle', { body: { enabled: true } }],
+  ['POST /api/cron/:id/run', '/api/cron/job-1/run', { body: {} }],
+  ['POST /api/cron/create', '/api/cron/create', { body: { job: { name: 'n', schedule: { kind: 'every', everyMs: 60000 }, payload: { kind: 'agentTurn', message: 'hi' } } } }],
+  ['DELETE /api/cron/:id', '/api/cron/job-1', { body: {} }],
+  ['PATCH /api/cron/:id/model', '/api/cron/job-1/model', { body: { model: 'openai/gpt-5' } }],
+  ['GET /api/calendar', '/api/calendar'], ['POST /api/calendar/sync-cron', '/api/calendar/sync-cron', { body: {} }],
+  ['POST /api/calendar', '/api/calendar', { body: { title: 'x' } }], ['PATCH /api/calendar/:id', '/api/calendar/entry-1', { body: { title: 'x' } }],
+  ['GET /cron-search', '/cron-search'], ['GET /api/aws/costs', '/api/aws/costs'], ['GET /api/models', '/api/models'],
+  ['GET /api/costs', '/api/costs'], ['GET /api/costs/codexbar', '/api/costs/codexbar'], ['GET /api/costs/months', '/api/costs/months'],
+  ['GET /api/usage/summary', '/api/usage/summary'], ['GET /api/sessions', '/api/sessions'],
+  ['POST /api/settings/budget', '/api/settings/budget', { body: { monthly: 5 } }], ['GET /api/config', '/api/config'],
+  ['GET /api/setup', '/api/setup'], ['POST /api/setup', '/api/setup', { body: { dashboardName: 'x' } }],
+  ['GET /api/settings', '/api/settings'], ['GET /api/settings/model-routing', '/api/settings/model-routing'],
+  ['POST /api/settings/model-routing', '/api/settings/model-routing', { body: { main: 'openai/gpt-5' } }],
+  ['GET /api/settings/heartbeat', '/api/settings/heartbeat'], ['POST /api/settings/heartbeat', '/api/settings/heartbeat', { body: { interval: '30m' } }],
+  ['GET /api/settings/export', '/api/settings/export'], ['POST /api/settings/import', '/api/settings/import', { body: {} }],
+  ['GET /api/ollama/telemetry', '/api/ollama/telemetry'], ['GET /api/ollama/telemetry/history', '/api/ollama/telemetry/history'],
+  ['GET /api/ollama/telemetry/models', '/api/ollama/telemetry/models'],
+  ['GET /api/councils/summary', '/api/councils/summary'], ['GET /api/councils/decisions', '/api/councils/decisions'],
+  ['GET /api/councils/governance/scorecard', '/api/councils/governance/scorecard'],
+  ['GET /api/councils/decisions/:decisionId/timeline', '/api/councils/decisions/DEC-1/timeline'],
+  ['POST /api/councils/decisions/:decisionId/action', '/api/councils/decisions/DEC-1/action', { body: { action: 'approve', note: 'x' } }],
+  ['GET /^\\/(?!api(?:\\/|$)).*/', '/attention'],
+];
+const CONTRACT_EXEMPT = { 'GET /api/gbrain/actions': 'static allowlist catalog; it has no dependency that can fail' };
+
+function sendJson(port, { method, urlPath, body }) {
+  return new Promise((resolve, reject) => {
+    const payload = body === undefined ? null : JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1', port, method, path: urlPath,
+      headers: { Host: `127.0.0.1:${port}`, 'X-MC-Request': '1', ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}) },
+    }, (res) => {
+      let text = '';
+      res.on('data', (chunk) => { text += chunk; });
+      res.on('end', () => {
+        let json = null;
+        try { json = JSON.parse(text); } catch {}
+        resolve({ status: res.statusCode, headers: res.headers, json, body: text });
+      });
+    });
+    req.on('error', reject);
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+test('boot smoke: contract sweep — every route answers the error contract on a forced failure', async () => {
+  const sweepRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-boot-contract-'));
+  for (const name of ['mc-config.json', 'package.json']) fs.copyFileSync(path.join(ROOT, name), path.join(sweepRoot, name));
+  fs.mkdirSync(path.join(sweepRoot, 'data'), { recursive: true });
+  fs.writeFileSync(path.join(sweepRoot, 'data', 'decision-log.json'), '{ not json');
+  fs.writeFileSync(path.join(sweepRoot, 'data', 'ops-events.json'), '{ not json');
+  const { createScheduler } = require('../server/core/scheduler');
+  const { createSource } = require('../server/core/source');
+  const scheduler = createScheduler({ logger: { log() {}, warn() {}, error() {} } });
+  scheduler.status = () => { throw new Error(`scheduler status failed: ${LEAK}`); };
+  let clockFails = false;
+  const clock = { now: () => { if (clockFails) throw new Error(`clock failed: ${LEAK}`); return Date.now(); } };
+  const sessionsSource = createSource({ id: 'openclaw.sessions', read: () => Promise.reject(new Error(LEAK)) });
+
+  const app = createApp({
+    config: loadConfig({ rootDir: sweepRoot, homeDir: HOME, env: { PORT: '0' } }),
+    exec: createExec({ execFileImpl: fakeExecFile }),
+    scheduler,
+    clock,
+    logger: { log() {}, warn() {}, error() {} },
+    services: {
+      gbrainOverviewService: failingService(),
+      hermesKanbanService: failingService({ profile: 'test' }),
+      hermesGatewayHealthService: failingService(),
+      notionActivity: failingService(),
+      usageService: failingService({ dispose() {}, ownedExec: null }),
+      settingsService: failingService(),
+      statusService: failingService(),
+      cronService: failingService(),
+      sessionsService: failingService({ visibleSessionsSource: sessionsSource }),
+      operationsOverviewService: failingService(),
+    },
+    sources: Object.fromEntries(['automations', 'calendar', 'models', 'ollama', 'loops', 'launchd', 'reachability', 'awsCosts']
+      .map((name) => [name, throwingSource(`sweep.${name}`)])),
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  app.locals.runtime.setBoundPort(port);
+  try {
+    const swept = new Set(CONTRACT_SWEEP.map(([route]) => route));
+    for (const route of EXPECTED_ROUTES) {
+      assert.ok(swept.has(route) || route in CONTRACT_EXEMPT, `${route} has no forced-failure case in the contract sweep`);
+    }
+    for (const [route, urlPath, options = {}] of CONTRACT_SWEEP) {
+      const method = route.split(' ')[0];
+      clockFails = Boolean(options.clock);
+      let response;
+      try {
+        response = await sendJson(port, { method, urlPath, body: options.body });
+      } finally {
+        clockFails = false;
+      }
+      const label = `${route} (${urlPath}) -> ${response.status} ${response.body.slice(0, 200)}`;
+      assert.ok(response.status >= 400 && response.status <= 599, label);
+      assert.match(String(response.headers['content-type']), /application\/json/, label);
+      assert.equal(typeof response.json?.error, 'object', label);
+      assert.match(response.json.error.code, /^[a-z][a-z0-9_]{1,63}$/, label);
+      assert.equal(typeof response.json.error.message, 'string', label);
+      assert.ok(response.json.error.message.length > 0, label);
+      assert.doesNotMatch(response.body, /SENTINEL|Bearer |\/Users\/|\/private\/|\/var\/folders|\bat \S+:\d+:\d+|stack/i, label);
+      assert.equal(response.body.includes(sweepRoot), false, label);
+      assert.equal(response.body.includes(HOME), false, label);
+    }
+    const catalog = await sendJson(port, { method: 'GET', urlPath: '/api/gbrain/actions' });
+    assert.equal(catalog.status, 200);
+    assert.equal(fs.readFileSync(path.join(sweepRoot, 'data', 'decision-log.json'), 'utf8'), '{ not json', 'an unreadable archive is never overwritten');
   } finally {
     app.locals.runtime.dispose();
     await new Promise((resolve) => server.close(resolve));

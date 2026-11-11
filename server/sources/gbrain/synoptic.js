@@ -33,8 +33,14 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
     quality: { ...metric(h.data?.score, 'points/100', h, { critical: live.health?.status === 'critical', warning: live.health?.status !== 'healthy' }),
       components: COMPONENT_KEYS.map((id) => ({ id, ...metric(h.data?.components?.[id], 'points', h) })) },
   };
-  core.state = deriveState({ observed: [h, st, v].some((s) => s.data),
-    failed: [h, st, v].some((s) => s.meta.error), critical: Object.values(core).some((m) => m.state === 'critical'), warning: Object.values(core).some((m) => m.state !== 'healthy') });
+  // A failed core probe makes the core unavailable; a metric the answering
+  // probes did not report is a partial reading (warning). An observed
+  // critical/warning outranks both (one ordering, see state.js).
+  const coreStates = Object.values(core).map((m) => m.state);
+  const coreProbeFailed = [h, st, v].some((s) => s.meta.error);
+  core.state = deriveState({ observed: [h, st, v].some((s) => s.data), failed: coreProbeFailed,
+    critical: coreStates.includes('critical'),
+    warning: coreStates.includes('warning') || (!coreProbeFailed && coreStates.includes('unavailable')) });
   core.observedAt = h.meta.observedAt;
   const groups = new Map();
   for (const s of ss.data?.sources || []) {

@@ -3,11 +3,13 @@ const test = require('node:test');
 const express = require('express');
 
 const { buildOperationsRouter } = require('../server/routes/operations');
+const { errorHandler } = require('../server/core/http');
 const { createOperationsOverviewService } = require('../server/services/operationsOverview');
 
 async function withServer(service, run) {
   const app = express();
   app.use(buildOperationsRouter({ operationsOverviewService: service }));
+  app.use(errorHandler({ logger: { error() {} } }));
   const server = app.listen(0);
   try {
     const { port } = server.address();
@@ -37,11 +39,12 @@ test('returns a bounded response when overview construction fails catastrophical
     },
   }, async (base) => {
     const response = await fetch(`${base}/api/operations/overview`);
-    assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), {
-      ok: false,
-      error: 'Operations overview unavailable',
+    assert.equal(response.status, 503);
+    const text = await response.text();
+    assert.deepEqual(JSON.parse(text), {
+      error: { code: 'operations_unavailable', message: 'Operations overview unavailable' },
     });
+    assert.doesNotMatch(text, /Bearer|Users/);
   });
 });
 
