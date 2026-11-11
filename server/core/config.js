@@ -35,19 +35,74 @@ const BUILTIN_DEFAULTS = Object.freeze({
   memoryPath: '',
 });
 
+// --- redaction ---------------------------------------------------------------
+// One implementation for structured data (redact) and for strings
+// (redactString). Two independent layers:
+//   1. by name: whatever sits under a credential-named key is replaced whole;
+//   2. by value: every remaining string is scanned for credentials, whatever
+//      its key is called (URL userinfo, Bearer tokens, well-known key formats,
+//      name=value pairs with a credential-ish name).
+//
 // A key names a credential when, ignoring case and - _ . separators, it
-// contains one of these words, or ends in Key/Token (braveApiKey, clientToken,
-// private-key). Matched on the key before looking at the value, so arrays and
-// objects under a credential key are redacted whole.
+// contains one of SECRET_WORDS or ends in one of SECRET_ENDINGS. Ordinary
+// English words that happen to end in "key" are excepted.
 const SECRET_WORDS = ['token', 'secret', 'password', 'passwd', 'passphrase', 'apikey', 'authorization',
-  'cookie', 'credential', 'privatekey', 'accesskey', 'secretkey', 'sessionkey', 'bearer'];
+  'cookie', 'credential', 'privatekey', 'accesskey', 'secretkey', 'sessionkey', 'sessionid', 'bearer'];
+const SECRET_ENDINGS = ['key', 'pwd', 'auth', 'session', 'signature'];
+const ORDINARY_KEY_WORDS = ['monkey', 'turkey', 'donkey', 'hotkey', 'hockey', 'jockey', 'whiskey'];
+// Token counts are numbers, not credentials (maxTokens: 4096).
+const TOKEN_COUNT_KEY = /(?:tokens|(?:max|min|total|input|output|prompt|completion|context|cache[d]?|reasoning)tokens?|token(?:count|limit|budget|usage))$/;
+
+function squashKey(keyName) {
+  return String(keyName || '').toLowerCase().replace(/[-_.\s]/g, '');
+}
 
 function isSecretKey(keyName) {
-  const raw = String(keyName || '');
-  if (!raw) return false;
-  const squashed = raw.toLowerCase().replace(/[-_.\s]/g, '');
+  const squashed = squashKey(keyName);
+  if (!squashed) return false;
   if (SECRET_WORDS.some((word) => squashed.includes(word))) return true;
-  return /[a-z0-9](Key|Token)$/.test(raw) || /(^|[-_.])(key|token)$/i.test(raw);
+  if (ORDINARY_KEY_WORDS.some((word) => squashed.endsWith(word))) return false;
+  return SECRET_ENDINGS.some((ending) => squashed.endsWith(ending));
+}
+
+const REDACTED = '[redacted]';
+const KEY_FORMATS = [
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g,
+  /\bsk-(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]{12,}/g, // OpenAI / Anthropic style
+  /\bxox[baprs]-[A-Za-z0-9-]{8,}/g, // Slack
+  /\bgh[pousr]_[A-Za-z0-9]{20,}/g, // GitHub
+  /\bgithub_pat_[A-Za-z0-9_]{20,}/g,
+  /\bglpat-[A-Za-z0-9_-]{16,}/g, // GitLab
+  /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/g, // AWS access key id
+  /\bAIza[0-9A-Za-z_-]{30,}/g, // Google API key
+  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT
+  /\b\d{6,}:[A-Za-z0-9_-]{30,}/g, // Telegram bot token
+];
+// name=value / name: value inside a string. "Strong" names hide any value;
+// "weak" names (token, key, ...) hide only a long opaque blob, so prose such
+// as "press any key: enter" survives.
+const ASSIGN_VALUE = '("[^"]*"|\'[^\']*\'|[^\\s"\',;&}\\]]+)';
+const STRONG_ASSIGN = new RegExp(`([A-Za-z0-9_.-]*(?:password|passwd|passphrase|pwd|secret)[A-Za-z0-9_.-]*["']?\\s*[:=]\\s*)${ASSIGN_VALUE}`, 'gi');
+const WEAK_ASSIGN = new RegExp(`([A-Za-z0-9_.-]*(?:token|key|auth|authorization|credential|cookie|session|signature)[A-Za-z0-9_.-]*["']?\\s*[:=]\\s*)${ASSIGN_VALUE}`, 'gi');
+const OPAQUE_BLOB = /^["']?[A-Za-z0-9+/_=.~%-]{16,}["']?$/;
+
+// Redact credentials inside one string. Idempotent; never throws.
+function redactString(input) {
+  if (typeof input !== 'string' || input.length < 6) return input;
+  let text = input;
+  // scheme://user:password@host -> the password only. The password runs to
+  // the last "@" of the authority, so an unencoded "@" or ":" stays hidden.
+  text = text.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@?#]*:)[^\s/?#]*@/gi, `$1${REDACTED}@`);
+  // Authorization values and Bearer tokens. "Bearer" spelled as the HTTP
+  // scheme always hides what follows; other casings need a token-like word.
+  text = text.replace(/(authorization["']?\s*[:=]\s*["']?(?:basic|bearer|token|digest)\s+)[^\s"',;]+/gi, `$1${REDACTED}`);
+  text = text.replace(/\bBearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]+/g, `Bearer ${REDACTED}`);
+  text = text.replace(/\b(bearer\s+)(?!\[redacted\])([A-Za-z0-9._~+/=-]{8,})/gi,
+    (match, lead, token) => (/\d/.test(token) || token.length >= 20 ? `${lead}${REDACTED}` : match));
+  for (const pattern of KEY_FORMATS) text = text.replace(pattern, REDACTED);
+  text = text.replace(STRONG_ASSIGN, (match, lead, value) => (value ? `${lead}${REDACTED}` : match));
+  text = text.replace(WEAK_ASSIGN, (match, lead, value) => (OPAQUE_BLOB.test(value) ? `${lead}${REDACTED}` : match));
+  return text;
 }
 
 function resolveEnvPlaceholders(value, env = process.env) {
@@ -234,13 +289,18 @@ function existingMode(fsImpl, file) {
 function redactSecretValue(value) {
   if (value === '' || value === null || value === undefined) return value;
   if (typeof value === 'boolean') return value; // "is configured" flags are not secrets
-  return '[redacted]';
+  return REDACTED;
 }
 
 // Redact by key first, then recurse: whatever sits under a credential key
-// (string, number, array, object) is replaced whole.
+// (string, number, array, object) is replaced whole. Every other string is
+// scanned by value.
 function redact(value, keyName = '') {
-  if (keyName && isSecretKey(keyName)) return redactSecretValue(value);
+  if (keyName && isSecretKey(keyName)
+    && !(typeof value === 'number' && TOKEN_COUNT_KEY.test(squashKey(keyName)))) {
+    return redactSecretValue(value);
+  }
+  if (typeof value === 'string') return redactString(value);
   if (Array.isArray(value)) return value.map((item) => redact(item));
   if (isPlainObject(value)) {
     const out = {};
@@ -323,6 +383,7 @@ module.exports = {
   publicView,
   redact,
   isSecretKey,
+  redactString,
   resolveEnvPlaceholders,
   validateMcConfig,
   checkGatewayToken,
