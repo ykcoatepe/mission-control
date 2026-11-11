@@ -3,6 +3,8 @@
 // HTTP plumbing shared by every route:
 //   asyncHandler     wrap an async handler so a rejection reaches the error handler
 //   requestContext   request id (X-Request-Id) + one structured log line per /api request
+//   apiBoundary      classify once (API or not), 400 for malformed targets; with
+//   nonApiOnly / apiFallthrough: static and SPA can never answer an API path
 //   apiNotFound      JSON 404 for any unknown /api/* path
 //   errorHandler     the one final error handler: { error: { code, message } }
 //   httpError        build an error with a status and a client-safe code/message
@@ -11,23 +13,101 @@
 
 const crypto = require('crypto');
 
-// Classify a request path the way Express routes it, conservatively:
-// case-insensitive, percent-decoded, repeated slashes collapsed, trailing
-// slash ignored. A path that cannot be decoded counts as API (guards apply).
-function normalizeRequestPath(rawUrl) {
-  let value = String(rawUrl || '').split('?')[0].split('#')[0];
+// The one canonicalization of a request target. Used by the guard, the audit,
+// the request log and apiBoundary, so they can never disagree.
+//   - absolute-form targets (GET http://host/api/x) lose scheme and authority;
+//   - the path is percent-decoded exactly once (a second level stays literal,
+//     as it does for Express and for static serving);
+//   - backslashes count as slashes, repeated slashes collapse, "." and ".."
+//     segments are resolved, case is folded.
+// A path is API when ANY reading of it is under /api: as sent, decoded, or
+// fully resolved. "/x/../api/health" is API (static serving would resolve it
+// to a file under api/), and so is "/api/../x" (Express can still match it
+// against an /api/:param route). A target that cannot be decoded is malformed
+// and counts as API so guards apply before it is rejected with 400.
+function isUnderApi(pathValue) {
+  return pathValue === '/api' || pathValue.startsWith('/api/');
+}
+
+function foldPath(value) {
+  return value.replace(/\\/g, '/').replace(/\/{2,}/g, '/').toLowerCase();
+}
+
+function classifyRequestPath(rawUrl) {
+  let value = String(rawUrl ?? '');
+  const absolute = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i.exec(value);
+  if (absolute) value = value.slice(absolute[0].length) || '/';
+  value = value.split('?')[0].split('#')[0];
+  let decoded;
   try {
-    value = decodeURIComponent(value);
+    decoded = decodeURIComponent(value);
   } catch {
-    return null;
+    decoded = null;
   }
-  return value.replace(/\/{2,}/g, '/').toLowerCase();
+  if (decoded === null || decoded.includes('\0')) return { malformed: true, api: true, canonical: null };
+  const asSent = foldPath(value);
+  const asDecoded = foldPath(decoded);
+  const segments = [];
+  for (const segment of asDecoded.split('/')) {
+    if (segment === '' || segment === '.') continue;
+    if (segment === '..') segments.pop();
+    else segments.push(segment);
+  }
+  const canonical = `/${segments.join('/')}`;
+  return {
+    malformed: false,
+    api: isUnderApi(asSent) || isUnderApi(asDecoded) || isUnderApi(canonical),
+    canonical,
+  };
+}
+
+// The canonical path, or null when the target is malformed.
+function normalizeRequestPath(rawUrl) {
+  return classifyRequestPath(rawUrl).canonical;
 }
 
 function isApiPath(rawUrl) {
-  const value = normalizeRequestPath(rawUrl);
-  if (value === null) return true;
-  return value === '/api' || value.startsWith('/api/');
+  return classifyRequestPath(rawUrl).api;
+}
+
+function requestIsApi(req) {
+  if (typeof req.isApiRequest === 'boolean') return req.isApiRequest;
+  return isApiPath(req.originalUrl || req.url);
+}
+
+// Install before any static or SPA handler. Classifies the request once, for
+// every method:
+//   - a malformed target is a 400 in the error contract;
+//   - OPTIONS on an API path is a JSON 405 (there is no CORS surface, and
+//     Express would otherwise answer "200 GET, HEAD" in plain text);
+//   - req.isApiRequest tells nonApiOnly() and apiFallthrough() what to do.
+function apiBoundary() {
+  return function apiBoundaryMiddleware(req, res, next) {
+    const verdict = classifyRequestPath(req.originalUrl || req.url);
+    if (verdict.malformed) return next(httpError(400, 'bad_request', 'Malformed request path'));
+    req.isApiRequest = verdict.api;
+    if (verdict.api && String(req.method).toUpperCase() === 'OPTIONS') {
+      return next(httpError(405, 'method_not_allowed', 'OPTIONS is not supported on the API'));
+    }
+    return next();
+  };
+}
+
+// Wrap every handler that is not an API route (static files, the SPA shell):
+// it never sees an API request.
+function nonApiOnly(handler) {
+  return function nonApiOnlyMiddleware(req, res, next) {
+    return requestIsApi(req) ? next() : handler(req, res, next);
+  };
+}
+
+// Mount after the last API router: whatever API request is still unanswered
+// gets the JSON 404, for any method.
+function apiFallthrough() {
+  const notFound = apiNotFound();
+  return function apiFallthroughMiddleware(req, res, next) {
+    return requestIsApi(req) ? notFound(req, res) : next();
+  };
 }
 
 function asyncHandler(fn) {
@@ -175,6 +255,10 @@ function listRoutes(appOrRouter) {
 module.exports = {
   isApiPath,
   normalizeRequestPath,
+  classifyRequestPath,
+  apiBoundary,
+  nonApiOnly,
+  apiFallthrough,
   asyncHandler,
   httpError,
   requestContext,

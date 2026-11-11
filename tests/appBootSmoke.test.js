@@ -437,3 +437,82 @@ test('boot smoke: a file at frontend/dist/api/health cannot shadow the API', asy
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// --- review round 2: one canonical API classification, any method ----------
+test('boot smoke: no encoding, dot-segment or method variant lets static files or the SPA answer an API path', async () => {
+  const distRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-boot-dist2-'));
+  fs.writeFileSync(path.join(distRoot, 'mc-config.json'), JSON.stringify({ name: 'Dist Test', gateway: { port: 1 } }));
+  fs.mkdirSync(path.join(distRoot, 'frontend', 'dist', 'api', 'nope'), { recursive: true });
+  fs.mkdirSync(path.join(distRoot, 'public', 'api'), { recursive: true });
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'api', 'health'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'api', 'nope', 'index.html'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'api%2Fnope'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'public', 'api', 'health'), 'SHADOW');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'index.html'), '<!doctype html>SPA');
+  fs.writeFileSync(path.join(distRoot, 'frontend', 'dist', 'app.js'), 'console.log(1)');
+  const config = loadConfig({ rootDir: distRoot, homeDir: HOME, env: {} });
+  const app = createApp({
+    config,
+    exec: createExec({ execFileImpl: fakeExecFile }),
+    logger: { log() {}, warn() {}, error() {} },
+    services: {
+      gbrainOverviewService: { readSnapshot: unavailable },
+      hermesKanbanService: { profile: 'test', getBoard: unavailable },
+      hermesGatewayHealthService: { getHealth: async () => ({ ok: false }) },
+      notionActivity: { fetchNotionActivity: async () => null },
+    },
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  app.locals.runtime.setBoundPort(port);
+  try {
+    const apiPaths = [
+      '/x/../api/health', '/x/../api/nope', '/x/../api/nope/', '/API/', '/API', '//api/health', '///api//health',
+      '/api/../api/health', '/x/%2e%2e/api/health', '/x/%2E%2E/api/health', '/x/%2e%2e%2fapi/health', '/x/.%2e/api/health',
+      '/x/%2e./api/nope', '/./api/health', '/%2e/api/health', '/api%2Fnope', '/api%2fhealth', '/%61pi%2Fnope',
+      '/api/../index.html', '/api/../app.js', '/API/../app.js', '/public/../api/health', '/data/../api/health',
+      '/%5Capi/health', '/x/..%5Capi/health', '/api/status', '/api/health', '/api/nope',
+      `http://127.0.0.1:${port}/api/nope`,
+    ];
+    for (const method of ['GET', 'HEAD', 'OPTIONS', 'DELETE']) {
+      for (const urlPath of apiPaths) {
+        const response = await request(port, { method, urlPath, headers: { 'X-MC-Request': '1' } });
+        const label = `${method} ${urlPath}`;
+        assert.doesNotMatch(response.body, /SHADOW|SPA|GET, ?HEAD/, `${label} was answered by static/SPA/default OPTIONS`);
+        assert.match(String(response.headers['content-type']), /application\/json/, `${label} must be JSON, got ${response.status} ${response.headers['content-type']}`);
+        if (response.status !== 200) {
+          assert.ok([404, 405].includes(response.status), `${label} -> ${response.status}`);
+          if (method !== 'HEAD') assert.match(response.json?.error?.code || '', /^(not_found|method_not_allowed)$/, label);
+        }
+        if (method === 'OPTIONS') assert.notEqual(response.status, 200, `${label} must not be a default 200`);
+      }
+    }
+    // The reviewer's reproductions, pinned exactly.
+    const dotted = await request(port, { urlPath: '/x/../api/health' });
+    assert.notEqual(dotted.body, 'SHADOW');
+    const options = await request(port, { method: 'OPTIONS', urlPath: '/api%2Fnope' });
+    assert.ok([404, 405].includes(options.status));
+    assert.ok(options.json?.error?.code);
+
+    for (const urlPath of ['/%E0%A4%A', '/api/%zz', '/assets/%', '/x/%', '/api/sessions/%E0%A4%A']) {
+      for (const method of ['GET', 'HEAD', 'OPTIONS', 'POST']) {
+        const response = await request(port, { method, urlPath, headers: { 'X-MC-Request': '1' } });
+        assert.equal(response.status, 400, `${method} ${urlPath}`);
+        assert.match(String(response.headers['content-type']), /application\/json/);
+        if (method !== 'HEAD') assert.equal(response.json?.error?.code, 'bad_request', `${method} ${urlPath}`);
+      }
+    }
+
+    for (const urlPath of ['/apix', '/apix/y', '/attention', '/x/../attention', '/x/%252e%252e/api/health', '/api-docs', '/apis']) {
+      const response = await request(port, { urlPath });
+      assert.equal(response.status, 200, urlPath);
+      assert.match(response.body, /SPA/, `${urlPath} is not an API path and must get the SPA`);
+    }
+    assert.equal((await request(port, { urlPath: '/app.js' })).status, 200, 'ordinary static files still serve');
+    assert.match((await request(port, { method: 'OPTIONS', urlPath: '/apix' })).body, /GET/, 'non-API OPTIONS is untouched');
+  } finally {
+    app.locals.runtime.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

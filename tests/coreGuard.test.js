@@ -240,3 +240,21 @@ test('counter-example: case and slash variants cannot skip the write guard or th
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+// --- review round 2: one canonicalization (dot segments, encodings) --------
+const { normalizeRequestPath, classifyRequestPath } = require('../server/core/http');
+
+test('isApiPath resolves dot segments and every encoding of them; non-API stays non-API', () => {
+  for (const p of ['/x/../api/health', '/x/%2e%2e/api/health', '/x/%2E%2E%2Fapi/health', '/x/.%2e/api', '/./api', '/../api/x',
+    '/api/../api/health', '/API/', '//api/health', '/api%2Fnope', '/%5Capi/x', '/x/..%5Capi',
+    // Express may still route these under /api, so they stay API (guard + audit apply).
+    '/api/../index.html', '/api/%2e%2e/x', 'http://host:1/api/x', 'HTTP://host/x/../API']) {
+    assert.equal(isApiPath(p), true, p);
+  }
+  for (const p of ['/apix', '/apix/../y', '/x/../apix', '/x/%252e%252e/api/health', '/assets/api/../x.js', '/api-docs', 'http://host/apix', '*']) {
+    assert.equal(isApiPath(p), false, p);
+  }
+  assert.equal(normalizeRequestPath('/x/../API//Health/?q=1'), '/api/health');
+  assert.equal(normalizeRequestPath('/%zz'), null);
+  assert.deepEqual(classifyRequestPath('/a/%00'), { malformed: true, api: true, canonical: null });
+});

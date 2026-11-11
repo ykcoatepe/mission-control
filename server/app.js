@@ -31,9 +31,10 @@ const { createExec } = require('./core/exec');
 const { createScheduler } = require('./core/scheduler');
 const {
   requestContext,
-  apiNotFound,
   errorHandler,
-  isApiPath,
+  apiBoundary,
+  nonApiOnly,
+  apiFallthrough,
 } = require('./core/http');
 const { createGuard, createAuditLog, auditWrites } = require('./core/guard');
 const { createEventLoopMonitor, buildHealthPayload } = require('./core/health');
@@ -156,16 +157,18 @@ function createApp(deps = {}) {
   app.use(requestContext({ logger, now }));
   app.use(auditWrites({ auditLog }));
   app.use(guard.middleware);
-  app.use(express.json());
 
-  // Static files never answer an API path (any case, encoding or slash
-  // variant): a file at frontend/dist/api/health must not shadow the route.
-  const serveDist = express.static(config.paths.frontendDist);
-  app.use((req, res, next) => (isApiPath(req.originalUrl || req.url) ? next() : serveDist(req, res, next)));
-  app.use('/public', express.static(config.paths.publicDir));
-  app.use('/data', (req, res) => {
+  // One classification for every method, before anything static: an API path
+  // (any case, encoding, slash or dot-segment variant) is answered only by an
+  // API route or the JSON 404/405. A file at frontend/dist/api/health must
+  // not shadow the route.
+  app.use(apiBoundary());
+  app.use(express.json());
+  app.use(nonApiOnly(express.static(config.paths.frontendDist)));
+  app.use('/public', nonApiOnly(express.static(config.paths.publicDir)));
+  app.use('/data', nonApiOnly((req, res) => {
     res.status(404).json({ error: 'Not found' });
-  });
+  }));
 
   // --- services ----------------------------------------------------------
 // gbrain area: scheduler owns all probes; the shared runner owns the gbrain lane.
@@ -433,18 +436,16 @@ function createApp(deps = {}) {
     writeJsonFileAtomic,
   }));
 
-  // Unknown /api/* is a JSON 404, never the SPA shell or an HTML page.
-  app.use('/api', apiNotFound());
+  // Unknown API path, any method: JSON 404, never the SPA shell or HTML.
+  app.use(apiFallthrough());
 
-  // SPA catch-all: serve index.html for all non-API routes.
+  // SPA catch-all: serve index.html for every non-API route.
   // Express 5 uses path-to-regexp v8 and no longer accepts bare `*`.
-  app.get(/^\/(?!api(?:\/|$)).*/, (req, res, next) => {
-    // The regex is case-sensitive; /API/... and encoded variants are API too.
-    if (isApiPath(req.originalUrl || req.url)) return apiNotFound()(req, res);
-    return res.sendFile('index.html', { root: config.paths.frontendDist }, (error) => {
+  app.get(/^\/(?!api(?:\/|$)).*/, nonApiOnly((req, res, next) => {
+    res.sendFile('index.html', { root: config.paths.frontendDist }, (error) => {
       if (error) next(error);
     });
-  });
+  }));
 
   app.use(errorHandler({ logger }));
 
