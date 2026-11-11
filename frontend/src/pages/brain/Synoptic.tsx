@@ -47,8 +47,15 @@ export interface SynopticProps {
   onSelect: (id: string) => void
 }
 
-/** A configured reader is neither healthy nor failing as far as anyone observed: a neutral dot, never green. */
-const dotState = (item: { state: UiState; neutral?: boolean }): UiState => (item.neutral ? 'inactive' : item.state)
+/**
+ * A reader that is set up, or not set up, is a fact and not a state: it has no dot and no state colour.
+ * Only an observed reader (or a failed read) carries its state.
+ */
+const stateAttr = (item: { state: UiState; neutral?: boolean }): UiState | undefined => (item.neutral ? undefined : item.state)
+
+/** Said once, under the Readers heading, wherever a reader is shown as set up. */
+export const READERS_CAPTION = "Set up to use GBrain. Live connections can't be read from this machine."
+const showsCaption = (model: BrainModel) => model.readers.some((reader) => reader.neutral)
 
 const accessibleName = (block: BlockModel) =>
   block.neutral ? `${block.label}: ${block.sub}` : `${block.label}: ${stateLabel(block.state).toLowerCase()}, ${block.sub}`
@@ -78,9 +85,6 @@ export function Synoptic({ model, selectedId, onSelect }: SynopticProps) {
         <li>
           <StateDot state="inactive" /> Sync off
         </li>
-        <li>
-          <StateDot state="inactive" /> Configured, not observed
-        </li>
       </ul>
     </div>
   )
@@ -102,6 +106,7 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
       readers: longest(model.readers.map((r) => r.id)),
       sources: longest(model.groups.map((g) => g.id)),
     },
+    readerCaptionChars: showsCaption(model) ? READERS_CAPTION.length : 0,
   })
   const edgeByBlock = new Map(model.edges.map((e) => [e.blockId, e]))
 
@@ -118,7 +123,10 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
   })
 
   const blockItems = placed.map(({ block, box }) => ({ id: block.id, x: box.x + box.w / 2, y: box.y + box.h / 2 }))
-  const edgeItems = edgesPlaced.map(({ edge, le }) => ({
+  // A line with no label (a reader that is merely set up) is still clickable but is not a keyboard stop:
+  // its block opens the same detail.
+  const labelled = edgesPlaced.filter(({ edge }) => edge.label !== '')
+  const edgeItems = labelled.map(({ edge, le }) => ({
     id: edge.id,
     x: le.label.align === 'end' ? le.label.x - le.label.maxWidth / 2 : le.label.x + le.label.maxWidth / 2,
     y: le.label.y + 8,
@@ -153,7 +161,7 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
           <g
             key={edge.id}
             className={styles.edge}
-            data-state={dotState(edge)}
+            data-state={stateAttr(edge)}
             data-selected={selectedId === edge.id || undefined}
           >
             <path className={styles.line} d={pathData(le.points)} />
@@ -169,6 +177,15 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
         </span>
       ))}
 
+      {layout.readerCaption && showsCaption(model) && (
+        <p
+          className={styles.readerCaption}
+          style={{ left: layout.readerCaption.x, top: layout.readerCaption.y, width: layout.readerCaption.w }}
+        >
+          {READERS_CAPTION}
+        </p>
+      )}
+
       {placed.map(({ block, box }) => (
         <BlockButton
           key={block.id}
@@ -182,7 +199,7 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
         />
       ))}
 
-      {edgesPlaced.map(({ edge, le }) => (
+      {labelled.map(({ edge, le }) => (
         <EdgeButton
           key={edge.id}
           edge={edge}
@@ -218,7 +235,8 @@ function BlockButton({
     <button
       type="button"
       className={cx(styles.block, core && styles.coreBlock)}
-      data-state={block.state}
+      data-state={stateAttr(block)}
+      data-presence={block.presence}
       data-kind={block.kind}
       data-syn-id={block.id}
       data-selected={selected || undefined}
@@ -230,7 +248,7 @@ function BlockButton({
       onClick={onSelect}
     >
       <span className={styles.blockTitle}>
-        <StateDot state={dotState(block)} />
+        {!block.neutral && <StateDot state={block.state} />}
         {/* The CSS ellipsis clips only what does not fit; the full text is always in the title. */}
         <span className={styles.name} title={block.label}>
           {block.label}
@@ -277,7 +295,7 @@ function EdgeButton({
     <button
       type="button"
       className={cx(styles.edgeLabel, anchor.align === 'end' && styles.edgeLabelEnd)}
-      data-state={dotState(edge)}
+      data-state={stateAttr(edge)}
       data-syn-id={edge.id}
       data-selected={selected || undefined}
       style={{ left: anchor.x, top: anchor.y, maxWidth: anchor.maxWidth }}
@@ -300,6 +318,7 @@ function SynopticList({ model, selectedId, onSelect }: Omit<SynopticProps, 'widt
     blocks.length === 0 ? null : (
       <section className={styles.listSection} aria-label={title}>
         <h3 className={styles.listTitle}>{title}</h3>
+        {title === 'Readers' && showsCaption(model) && <p className={styles.listCaption}>{READERS_CAPTION}</p>}
         <ul>
           {blocks.map((block) => {
             const line = lineFor(block.id)
@@ -308,18 +327,19 @@ function SynopticList({ model, selectedId, onSelect }: Omit<SynopticProps, 'widt
                 <button
                   type="button"
                   className={styles.listRow}
-                  data-state={block.state}
+                  data-state={stateAttr(block)}
+                  data-presence={block.presence}
                   data-selected={selectedId === block.id || undefined}
                   aria-pressed={selectedId === block.id}
                   aria-label={accessibleName(block)}
                   onClick={() => onSelect(block.id)}
                 >
-                  <StateDot state={dotState(block)} />
+                  {!block.neutral && <StateDot state={block.state} />}
                   <span className={styles.listName}>{block.label}</span>
                   {block.count !== null && <Mono muted>{block.count}</Mono>}
                   <span className={styles.listSub}>{block.sub}</span>
                   {/* The line label is shown only when it adds something the row does not already say. */}
-                  {line && block.kind !== 'core' && !block.sub.includes(line.label) && (
+                  {line && line.label !== '' && block.kind !== 'core' && !block.sub.includes(line.label) && (
                     <Mono muted className={styles.listLine}>
                       {line.label}
                     </Mono>

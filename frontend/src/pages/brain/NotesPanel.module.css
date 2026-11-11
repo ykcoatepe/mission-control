@@ -34,3 +34,61 @@
   margin: 0;
   color: var(--text-3);
 }
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* The quiet group: text-3, no dots, no state colour. */
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--sp-1);
+  min-height: 28px;
+  padding: 0 var(--sp-1);
+  margin-left: calc(-1 * var(--sp-1));
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  border-radius: var(--r-sm);
+}
+
+.toggle:hover {
+  color: var(--text-2);
+}
+
+.toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.chevron {
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.toggle[aria-expanded='true'] .chevron {
+  transform: rotate(180deg);
+}
+
+.infoList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.infoList[hidden] {
+  display: none;
+}

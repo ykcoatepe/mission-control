@@ -155,3 +155,27 @@ describe('moveFocus', () => {
     expect(moveFocus([], 'x', 'left')).toBeNull()
   })
 })
+
+describe('the caption under the Readers heading', () => {
+  const CAPTION = "Set up to use GBrain. Live connections can't be read from this machine.".length
+  const withCaption = (readers: number, width = 1100) =>
+    computeSynopticLayout({ width, readerIds: ids('r', readers), groupIds: ids('g', 4), queueId: 'queue', readerCaptionChars: CAPTION })
+
+  it.each([[4, 1100], [2, 960], [1, 720], [4, 720]])('leaves it clear of the heading and of the first reader (%i readers at %i px)', (readers, width) => {
+    const l = withCaption(readers, width)
+    const header = l.headers.find((h) => h.id === 'readers')!
+    const caption = l.readerCaption!
+    expect(caption.y).toBeGreaterThan(header.y)
+    expect(caption.w).toBe(l.readers[0].box.w)
+    expect(l.readers[0].box.y).toBeGreaterThanOrEqual(caption.y + caption.h)
+    // Everything still fits inside the drawing, and the other columns do not move.
+    expect(l.height).toBeGreaterThanOrEqual(l.readers[readers - 1].box.y + l.readers[readers - 1].box.h)
+    const boxes = [l.core, l.queue, ...l.readers.map((r) => r.box), ...l.groups.map((g) => g.box)]
+    boxes.forEach((a, i) => boxes.slice(i + 1).forEach((b) => expect(overlaps(a, b)).toBe(false)))
+  })
+
+  it('is absent without a request, and then the layout is the one it always was', () => {
+    expect(layout(4, 4).readerCaption).toBeNull()
+    expect(layout(4, 4).readers[0].box.y).toBe(layout(4, 4).groups[0].box.y)
+  })
+})

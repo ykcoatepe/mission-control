@@ -34,6 +34,8 @@ export interface SynopticLayout {
   width: number
   height: number
   headers: Array<{ id: 'readers' | 'core' | 'sources'; x: number; y: number }>
+  /** The one caption under the Readers heading; null when none was asked for. */
+  readerCaption: { x: number; y: number; w: number; h: number } | null
   core: Box
   queue: Box
   readers: Array<{ index: number; box: Box }>
@@ -57,6 +59,11 @@ export const labelWidth = (chars: number) => Math.ceil(chars * GLYPH) + 8
 const ARROW_LEN = 6
 const ARROW_HALF = 4
 const NEAR_CORE = 14
+/** The reader caption is 12px text: about 6.2px a glyph, 16px a line, starting 20px under the top of the heading. */
+const CAPTION_GLYPH = 6.4
+const CAPTION_LINE = 16
+const CAPTION_TOP = 20
+const CAPTION_GAP = 12
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
 
@@ -142,9 +149,11 @@ export interface LayoutInput {
   queueId: string
   /** Longest line label (characters) on the reader side and on the source side; makes the gutters wide enough to show them. */
   labelChars?: { readers: number; sources: number }
+  /** Length of the caption under the Readers heading, in characters; the reader blocks start below it. */
+  readerCaptionChars?: number
 }
 
-export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, queueId, labelChars }: LayoutInput): SynopticLayout {
+export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, queueId, labelChars, readerCaptionChars }: LayoutInput): SynopticLayout {
   const width = Math.max(MIN_WIDTH, Math.round(rawWidth))
   const coreW = clamp(Math.round(width * 0.24), 184, 280)
   // Room for the longest label, the first vertical run and a little air.
@@ -162,14 +171,21 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
 
   const rows = Math.max(readerIds.length, groupIds.length, 1)
   const stackH = (n: number) => (n <= 0 ? 0 : n * ROW_H + (n - 1) * ROW_GAP)
-  const bodyH = Math.max(stackH(rows), CORE_H)
   const bodyTop = PAD + HEADER_H
+  // The caption sits just under the heading and wraps within the column; the readers start below it.
+  const captionLines = readerCaptionChars ? Math.ceil((readerCaptionChars * CAPTION_GLYPH) / colW) : 0
+  const readerCaption = captionLines > 0
+    ? { x: readersX, y: PAD + CAPTION_TOP, w: colW, h: captionLines * CAPTION_LINE }
+    : null
+  const captionClear = readerCaption ? Math.max(0, readerCaption.y + readerCaption.h + CAPTION_GAP - bodyTop) : 0
+  const bodyH = Math.max(stackH(rows), CORE_H, captionClear + stackH(readerIds.length))
   const coreTop = bodyTop + Math.round((bodyH - CORE_H) / 2)
   const stackTop = (n: number) => bodyTop + Math.round((bodyH - stackH(n)) / 2)
+  const readerTop = bodyTop + captionClear + Math.round((bodyH - captionClear - stackH(readerIds.length)) / 2)
 
-  const place = (n: number, x: number) =>
-    Array.from({ length: n }, (_, i): Box => ({ x, y: stackTop(n) + i * (ROW_H + ROW_GAP), w: colW, h: ROW_H }))
-  const readerBoxes = place(readerIds.length, readersX)
+  const place = (n: number, x: number, top = stackTop(n)) =>
+    Array.from({ length: n }, (_, i): Box => ({ x, y: top + i * (ROW_H + ROW_GAP), w: colW, h: ROW_H }))
+  const readerBoxes = place(readerIds.length, readersX, readerTop)
   const groupBoxes = place(groupIds.length, sourcesX)
 
   const core: Box = { x: coreX, y: coreTop, w: coreW, h: CORE_H }
@@ -227,7 +243,7 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
     },
   }
 
-  const height = Math.max(stackTop(rows) + stackH(rows), queue.y + QUEUE_H) + PAD
+  const height = Math.max(stackTop(rows) + stackH(rows), readerTop + stackH(readerIds.length), queue.y + QUEUE_H) + PAD
 
   return {
     width,
@@ -237,6 +253,7 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
       { id: 'core', x: coreX, y: PAD },
       { id: 'sources', x: sourcesX, y: PAD },
     ],
+    readerCaption,
     core,
     queue,
     readers: readerBoxes.map((box, index) => ({ index, box })),

@@ -35,7 +35,8 @@ export function ElementDrawer({
       description={
         detail && (
           <span className={styles.lead}>
-            <StatePill state={detail.stateWord ? 'inactive' : detail.state} label={detail.stateWord ?? undefined} />
+            {/* A fact such as "Set up" is not a state: plain text, no pill. */}
+            {detail.stateWord ? <span>{detail.stateWord}</span> : <StatePill state={detail.state} />}
             <span>
               last read <TimeAgo value={detail.observedAt} fallback="not read" />
             </span>

@@ -55,9 +55,10 @@ export function HealthView({
   const readings = deriveReadings(syn, model, health, verdict.state)
   const detail = selectedId ? describeElement(selectedId, syn, model, { sources, health }) : null
   const recovered = collapseIncidents(timeline?.incidentBanners, acknowledged)
-  // The notes are the verdict's own reasons. The Operations overview repeats them as caveats, from a
-  // different reading, so they are not listed a second time.
-  const notes = currentNotes(verdict, [], syn.readersNote)
+  // The notes are the verdict's own reasons, split by the server into what needs action and what is
+  // for information. The Operations overview repeats them as caveats, from a different reading, so
+  // they are not listed a second time.
+  const notes = currentNotes(verdict)
   const rows = recentReadings(timeline?.entries, 6, { state: verdict.state, observedAt: data.observedAt })
 
   const runFromDetail = (action: OperationCapability) => {

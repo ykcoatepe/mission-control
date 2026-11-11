@@ -89,16 +89,14 @@ describe('verdict', () => {
     expect(verdict.text).toBe('GBrain is normal')
     // As the server sends a configuration read: inactive state, observation 'configured'.
     expect(model.states[readerBlockId('hermes')]).toBe('inactive')
-    expect(model.readers[0].sub).toBe('configured')
-    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'inactive', label: 'configured', neutral: true })
+    expect(model.readers[0].sub).toBe('Set up')
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'inactive', label: '', neutral: true })
     expect(verdict.conditions).toEqual([])
   })
 
-  it('shows the readers note once in Notes and no old workaround', () => {
+  it('has no notes for a normal reading: the readers note is not a line of its own any more', () => {
     const syn = synoptic()
-    const notes = currentNotes(deriveVerdict(syn, META), [], syn.readersNote).map((n) => n.text)
-    expect(notes).toEqual(['Connection telemetry is not observable locally.'])
-    expect(currentNotes(deriveVerdict(syn, META), [], undefined)).toEqual([])
+    expect(currentNotes(deriveVerdict(syn, META))).toEqual({ action: [], info: [] })
   })
 
   it('is the payload verdict: same state, first reason as the sentence, the rest counted', () => {
@@ -142,8 +140,10 @@ describe('verdict', () => {
     const syn = withVerdict(synoptic(), { elementId: 'off', state: 'inactive', text: 'off: sync disabled.' })
     const verdict = deriveVerdict(syn, META)
     expect(verdict).toMatchObject({ state: 'healthy', text: 'GBrain is normal' })
-    expect(verdict.conditions).toEqual([{ id: 'off', state: 'inactive', text: 'off: sync off' }])
-    expect(currentNotes(verdict, [], undefined).map((n) => n.state)).toEqual(['inactive'])
+    expect(verdict.conditions).toEqual([{ id: 'off', state: 'inactive', text: 'off: sync off', kind: 'info' }])
+    const notes = currentNotes(verdict)
+    expect(notes.action).toEqual([])
+    expect(notes.info.map((n) => n.state)).toEqual(['inactive'])
   })
 
   it('does not trust a payload with no verdict, and does not repair it', () => {
@@ -330,11 +330,12 @@ describe('element detail', () => {
     expect(describeElement('queue', syn, model)?.actionIds).toEqual(['embed-stale', 'embed-missing'])
     const reader = describeElement(readerBlockId('hermes'), syn, model)
     expect(reader?.actionIds).toEqual([])
-    expect(reader?.rows.find((r) => r.label === 'Configuration')?.value).toBe('configured')
-    expect(reader?.rows.find((r) => r.label === 'Connection')).toBeUndefined()
+    expect(reader?.rows.find((r) => r.label === 'Setup')?.value).toBe('Set up')
+    expect(reader?.rows.find((r) => r.label === 'Connection')?.value).toBe("Can't be read from this machine")
     expect(reader?.notes).toEqual([])
     const line = describeElement('edge:reader:hermes', syn, model)
-    expect(line?.rows[0]).toMatchObject({ label: 'Line', value: 'configured', state: 'inactive' })
+    expect(line?.title).toBe('Hermes to GBrain core')
+    expect(line?.stateWord).toBe('Set up')
   })
 
   it('describes a line with its own reading and the actions of its block', () => {
@@ -388,7 +389,7 @@ describe('optional fields never crash the page', () => {
       expect(readings.queue.value).toBeNull()
       const verdict = deriveVerdict(syn, META)
       expect(['healthy', 'unavailable']).toContain(verdict.state)
-      expect(() => currentNotes(verdict, [], syn.readersNote)).not.toThrow()
+      expect(() => currentNotes(verdict)).not.toThrow()
       expect(model.core.rows.map((r) => r.value)).toEqual(['—', '—', '—'])
       expect(model.core.sub).toBe('version not read')
       const ids = [
@@ -602,8 +603,8 @@ describe('configured is not observed healthy', () => {
   it('shows a configured reader as configured with a neutral dot, and an unreadable one as not read', () => {
     const syn = synoptic()
     const model = buildBrainModel(syn)
-    expect(model.readers.every((reader) => reader.neutral === true && reader.sub === 'configured')).toBe(true)
-    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ label: 'configured', neutral: true })
+    expect(model.readers.every((reader) => reader.neutral === true && reader.sub === 'Set up' && reader.presence === 'set_up')).toBe(true)
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ label: '', neutral: true })
     const unread = buildBrainModel(minimalSynoptic())
     expect(unread.readers[0].neutral).toBe(false)
     expect(unread.readers[0].sub).toBe('not read')
@@ -614,8 +615,8 @@ describe('configured is not observed healthy', () => {
   it('says in the detail that the reader was configured, with no health colour on that row', () => {
     const syn = synoptic()
     const detail = describeElement(readerBlockId('hermes'), syn, buildBrainModel(syn))
-    expect(detail?.stateWord).toBe('configured')
-    expect(detail?.rows[0]).toMatchObject({ label: 'Configuration', value: 'configured', state: undefined })
+    expect(detail?.stateWord).toBe('Set up')
+    expect(detail?.rows[0]).toMatchObject({ label: 'Setup', value: 'Set up', state: undefined })
   })
 
   it('treats the reader by its observation: observed readers carry their state colours, the others do not', () => {
@@ -625,13 +626,16 @@ describe('configured is not observed healthy', () => {
     const model = buildBrainModel(syn)
     expect(model.readers[0]).toMatchObject({ neutral: false, sub: 'warning', state: 'warning' })
     expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ neutral: false, label: 'warning' })
-    expect(model.readers[1]).toMatchObject({ neutral: false, sub: 'not configured' })
+    // A reader that is not set up is a fact too: no dot, no state word, but it says so.
+    expect(model.readers[1]).toMatchObject({ neutral: true, sub: 'Not set up', presence: 'not_set_up' })
+    expect(model.edges.find((e) => e.blockId === readerBlockId('codex'))).toMatchObject({ neutral: true, label: '' })
+    expect(describeElement(readerBlockId('codex'), syn, model)?.rows.find((r) => r.label === 'Setup')?.value).toBe('Not set up')
   })
 
   it('does not call an inactive reader "not configured" when the server says it is configured', () => {
     const syn = synoptic()
     expect(syn.readers[0].state).toBe('inactive')
-    expect(buildBrainModel(syn).readers[0].sub).toBe('configured')
+    expect(buildBrainModel(syn).readers[0].sub).toBe('Set up')
   })
 
   it('says "not read" for an unreadable reader or one without an observation, and never colours it', () => {
@@ -646,7 +650,7 @@ describe('configured is not observed healthy', () => {
   it('does not let a normal verdict claim more than was observed', () => {
     const verdict = deriveVerdict(synoptic(), META)
     expect(verdict.text).toBe('GBrain is normal')
-    expect(verdict.caveat).toBe('reader connections are configured, not observed')
+    expect(verdict.caveat).toBe("reader connections can't be read from this machine")
     expect(deriveVerdict(minimalSynoptic(), META).caveat).toBeNull()
     expect(deriveVerdict(withVerdict(synoptic(), { elementId: 'queue', state: 'warning', text: 'queue stalled.' }), META).caveat).toBeNull()
   })
@@ -659,8 +663,8 @@ describe('one vocabulary for a source that is switched off', () => {
     const model = buildBrainModel(syn)
     expect(model.groups[0].sub).toBe('all fresh · 1 sync off')
     expect(deriveSourceSync(syn.sources).hint).toBe('1 sync off')
-    const notes = currentNotes(deriveVerdict(syn, META), [], undefined)
-    expect(notes[0].text).toBe('tk-omc-ain: sync off.')
+    const notes = currentNotes(deriveVerdict(syn, META))
+    expect(notes.info[0].text).toBe('tk-omc-ain: sync off.')
     expect(startSentence('tk-omc-ain: sync off')).toBe('tk-omc-ain: sync off')
     expect(startSentence('embed-job probe unavailable')).toBe('embed-job probe unavailable')
     expect(startSentence('connection telemetry is not observable')).toBe('Connection telemetry is not observable')
