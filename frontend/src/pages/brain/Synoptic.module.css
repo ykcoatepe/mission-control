@@ -62,6 +62,14 @@
 
 /* ---- headers, blocks, labels ---- */
 
+.readerCaption {
+  position: absolute;
+  margin: 0;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  line-height: 16px;
+}
+
 .columnHeader {
   position: absolute;
   color: var(--text-3);
@@ -102,7 +110,20 @@
 .block[data-state='unavailable'] { border-color: var(--line-strong); }
 .block[data-state='inactive'] { color: var(--text-3); border-color: var(--line); }
 
+/* A reader that is only set up is an ordinary present block with its name alone: the same surface and
+   border as a source, name in text-1, no dot, no dimming. The caption under the column says the rest. */
+.block[data-compact] {
+  justify-content: center;
+}
+
+/* A reader that is not set up is visibly different but not dimmed to grey-out: dashed edge, name in text-2. */
+.block[data-presence='not_set_up'] {
+  color: var(--text-2);
+  border-style: dashed;
+}
+
 .block[data-selected] {
+  border-style: solid;
   border-color: var(--accent);
   background: var(--accent-bg);
 }
@@ -300,3 +321,11 @@
 .listCore > span {
   white-space: nowrap;
 }
+
+.listCaption {
+  margin: 0 0 var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.listRow[data-presence='not_set_up'] .listName { color: var(--text-2); }

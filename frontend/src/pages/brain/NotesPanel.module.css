@@ -13,6 +13,8 @@
   gap: var(--sp-3);
   color: var(--text-1);
   font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
 }
 
 .item > :first-child {
@@ -21,16 +23,61 @@
   align-self: center;
 }
 
-.item[data-history] {
-  color: var(--text-2);
-}
-
 .time {
   color: var(--text-3);
   font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
 }
 
 .none {
   margin: 0;
   color: var(--text-3);
+}
+
+.groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+/* The quiet groups: no state dots, no state colour. */
+.infoList,
+.recoveredList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.infoList {
+  color: var(--text-3);
+}
+
+.recoveredList {
+  color: var(--text-2);
+}
+
+.more {
+  align-self: flex-start;
+  min-height: 28px;
+  padding: 0 var(--sp-1);
+  margin: var(--sp-1) 0 0 calc(-1 * var(--sp-1));
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--r-sm);
+}
+
+.more:hover {
+  color: var(--text-1);
+}
+
+.more:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }

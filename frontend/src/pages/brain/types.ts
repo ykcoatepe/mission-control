@@ -94,10 +94,14 @@ export interface SynopticQueue extends Evidence {
 }
 
 /** One reason behind the verdict; `elementId` names the block, source, reader or probe it is about. */
+export type ReasonKind = 'action' | 'info'
+
 export interface VerdictReason {
   elementId: string
   state: UiState
   text: string
+  /** Set by the server (verdict.js). Optional here only so a payload without it is still read. */
+  kind?: ReasonKind
 }
 
 /** The single operational verdict (server/sources/gbrain/verdict.js). Every consumer transports it unchanged. */

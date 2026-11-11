@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  CAPTION_GAP,
+  COMPACT_H,
   CORE_H,
   MIN_WIDTH,
+  compactBox,
   computeSynopticLayout,
   moveFocus,
   pathData,
@@ -153,5 +156,59 @@ describe('moveFocus', () => {
     expect(moveFocus(items, 'a', 'up')).toBeNull()
     expect(moveFocus(items, 'missing', 'left')).toBe('a')
     expect(moveFocus([], 'x', 'left')).toBeNull()
+  })
+})
+
+describe('the caption below the readers', () => {
+  const CAPTION = "Set up to use GBrain. Live connections can't be read from this machine.".length
+  const withCaption = (readers: number, groups: number, width = 1100) =>
+    computeSynopticLayout({ width, readerIds: ids('r', readers), groupIds: ids('g', groups), queueId: 'queue', readerCaptionChars: CAPTION })
+
+  it.each([[4, 4, 1100], [2, 2, 960], [1, 1, 720], [4, 4, 720]])(
+    'keeps reader rows on the source row lines (%i readers, %i groups, %i px)',
+    (readers, groups, width) => {
+      const plain = layout(readers, groups, width)
+      const l = withCaption(readers, groups, width)
+      l.readers.forEach((r, i) => {
+        expect(r.box.y).toBe(l.groups[i].box.y)
+        expect(r.box.h).toBe(l.groups[i].box.h)
+        // The caption moves nothing: the rows are where they were without it.
+        expect(r.box.y).toBe(plain.readers[i].box.y)
+      })
+      expect(l.core).toEqual(plain.core)
+      expect(l.edges.map((e) => e.points)).toEqual(plain.edges.map((e) => e.points))
+    },
+  )
+
+  it.each([[4, 1100], [2, 960], [1, 720], [4, 720], [6, 900]])('puts the caption under the last reader, in its column (%i readers at %i px)', (readers, width) => {
+    const l = withCaption(readers, 4, width)
+    const last = l.readers[readers - 1].box
+    const caption = l.readerCaption!
+    expect(caption.x).toBe(last.x)
+    expect(caption.w).toBe(last.w)
+    expect(caption.y).toBe(last.y + last.h + CAPTION_GAP)
+    expect(l.height).toBeGreaterThanOrEqual(caption.y + caption.h)
+    const boxes = [l.core, l.queue, ...l.readers.map((r) => r.box), ...l.groups.map((g) => g.box)]
+    boxes.forEach((a, i) => boxes.slice(i + 1).forEach((b) => expect(overlaps(a, b)).toBe(false)))
+    expect(overlaps({ ...caption }, l.core)).toBe(false)
+  })
+
+  it('keeps the three headings on one baseline', () => {
+    const l = withCaption(4, 4)
+    expect(new Set(l.headers.map((h) => h.y)).size).toBe(1)
+  })
+
+  it('is absent without a request', () => {
+    expect(layout(4, 4).readerCaption).toBeNull()
+  })
+
+  it('draws a compact block shorter than its slot but centred on the row line', () => {
+    const slot = layout(1, 1).readers[0].box
+    const compact = compactBox(slot)
+    expect(compact.h).toBe(COMPACT_H)
+    expect(compact.h).toBeLessThan(slot.h)
+    expect(compact.y + compact.h / 2).toBe(slot.y + slot.h / 2)
+    expect(compact.x).toBe(slot.x)
+    expect(compact.w).toBe(slot.w)
   })
 })

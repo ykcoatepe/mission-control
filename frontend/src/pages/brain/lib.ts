@@ -8,6 +8,7 @@ import type {
   IncidentBanner,
   Meta,
   PayloadVerdict,
+  ReasonKind,
   VerdictReason,
   SourceRecord,
   SourcesReading,
@@ -116,10 +117,12 @@ export interface BlockModel {
   /** Item count shown in the block title (source groups). */
   count: number | null
   /**
-   * The state is a configuration reading, not an observed one (readers): the dot is
-   * neutral and the word is "configured". Green is kept for observed-healthy readings.
+   * The block is a configuration reading, not an observed state (readers): it carries no state
+   * dot, no state colour and no state word. Observed readings keep the dot.
    */
   neutral?: boolean
+  /** Readers only: whether the integration is set up. A reader that is not set up looks different, not dim. */
+  presence?: 'set_up' | 'not_set_up'
 }
 
 export interface CoreModel extends BlockModel {
@@ -135,7 +138,7 @@ export interface EdgeModel {
   label: string
   /** Full description for the tooltip and the accessible name. */
   title: string
-  /** A configuration line, not an observed one: shown neutral. */
+  /** A configuration line, not an observed one: a plain neutral line with no label and no state colour. */
   neutral?: boolean
 }
 
@@ -143,6 +146,8 @@ export interface Condition {
   id: string
   state: UiState
   text: string
+  /** The server's own split: something to act on, or something to know. */
+  kind: ReasonKind
 }
 
 export interface BrainModel {
@@ -167,16 +172,16 @@ function stateOf(evidence: { state: UiState } | null | undefined): UiState {
 }
 
 /**
- * Short word under a reader name, from the server's `observation`: a configuration read is
- * "configured" whatever the reader's state says (the state is inactive for it), an observed reader
- * shows its state, and a reader whose observation was not sent is "not read".
+ * Short words under a reader name, from the server's `observation`. A reader whose configuration was
+ * read is "Set up": whether it is connected right now cannot be observed here, so that is not a state.
+ * An observed reader shows its state; one whose observation was not sent is "not read".
  */
 function readerSub(reader: SynopticReader): string {
   switch (reader.observation) {
     case 'configured':
-      return 'configured'
+      return 'Set up'
     case 'not_configured':
-      return 'not configured'
+      return 'Not set up'
     case 'observed':
       return stateLabel(reader.state).toLowerCase()
     default:
@@ -293,26 +298,28 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
   }
 
   // ---- readers ----
-  // `observation` says what the reader's state rests on: a configuration read is neutral and says
-  // "configured"; only an observed reader gets the state colours.
+  // `observation` says what the reader's state rests on. Configuration cannot show a connection, so
+  // "set up" and "not set up" are facts, not states: no dot, no state colour, no label on the line.
+  // Only an observed reader (real telemetry, if a server ever sends it) or a failed read gets a state.
   const readers: BlockModel[] = []
   for (const reader of syn.readers) {
     const id = readerBlockId(reader.id)
     const state = reader.state
     const sub = readerSub(reader)
-    const neutral = reader.observation === 'configured'
-    readers.push({ id, kind: 'reader', label: reader.label, state, sub, count: null, neutral })
+    const neutral = reader.observation === 'configured' || reader.observation === 'not_configured'
+    const presence = reader.observation === 'configured' ? 'set_up' : reader.observation === 'not_configured' ? 'not_set_up' : undefined
+    readers.push({ id, kind: 'reader', label: reader.label, state, sub, count: null, neutral, presence })
     states[id] = state
-    const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.label === 'configured')
+    const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.to === 'gbrain')
     const edgeState: UiState = payloadEdge?.state ?? state
-    // The line says what the block says.
-    const label = sub
+    // A neutral line says nothing; an observed one says its state word.
+    const label = neutral ? '' : sub
     edges.push({
       id: edgeId(id),
       blockId: id,
       state: edgeState,
       label,
-      title: `${reader.label} to GBrain core: ${label}`,
+      title: neutral ? `${reader.label} to GBrain core` : `${reader.label} to GBrain core: ${label}`,
       neutral,
     })
   }
@@ -375,6 +382,9 @@ export function readPayloadVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null |
 /** The one ordering (lib/state.ts worstState, server state.js): critical, warning, unavailable, healthy, inactive. */
 const VERDICT_ORDER: Record<UiState, number> = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 }
 
+/** The server's `kind`. An older server sends none: an inactive reason is information, anything else is action. */
+const kindOf = (reason: VerdictReason): ReasonKind => reason.kind ?? (reason.state === 'inactive' ? 'info' : 'action')
+
 const sentence = (text: string) => sameVocabulary(text.trim().replace(/[.\s]+$/, ''))
 
 /**
@@ -393,10 +403,12 @@ export function deriveVerdict(
   if (!payload) return { state: 'unavailable', text: 'GBrain did not report a verdict', conditions: [], caveat: null }
   // Readers read from configuration only: a normal verdict must say they were not observed.
   const configOnly = (syn.readers ?? []).some((reader) => reader.observation === 'configured')
-  const caveat = configOnly ? 'reader connections are configured, not observed' : null
+  const caveat = configOnly ? "reader connections can't be read from this machine" : null
   const conditions: Condition[] = payload.reasons
-    .map((reason, index) => ({ condition: { id: reason.elementId, state: reason.state, text: sentence(reason.text) }, index }))
-    .sort((a, b) => VERDICT_ORDER[a.condition.state] - VERDICT_ORDER[b.condition.state] || a.index - b.index)
+    .map((reason, index) => ({ condition: { id: reason.elementId, state: reason.state, text: sentence(reason.text), kind: kindOf(reason) }, index }))
+    // At equal severity something to act on leads: the headline is the first one.
+    .sort((a, b) => VERDICT_ORDER[a.condition.state] - VERDICT_ORDER[b.condition.state]
+      || Number(a.condition.kind === 'info') - Number(b.condition.kind === 'info') || a.index - b.index)
     .map(({ condition }) => condition)
   const attention = conditions.filter((condition) => condition.state !== 'inactive')
   const first = attention[0]
@@ -667,14 +679,21 @@ export function describeElement(
     const integration = reader.integration
     rows.push(
       {
-        label: 'Configuration',
-        value: integration?.configured === true ? 'configured' : integration?.configured === false ? 'not configured' : 'not read',
+        label: 'Setup',
+        value:
+          reader.observation === 'not_configured' ? 'Not set up'
+          : reader.observation === 'configured' || integration?.configured === true ? 'Set up'
+          : integration?.configured === false ? 'Not set up'
+          : 'not read',
         observedAt: integration?.observedAt ?? null,
         // A configuration reading carries no state colour: it is not an observed connection.
-        state: reader.observation === 'configured' ? undefined : (integration?.state ?? 'unavailable'),
+        state: block.neutral ? undefined : (integration?.state ?? 'unavailable'),
       },
       { label: 'Read from', value: integration?.evidence || '—' },
     )
+    if (block.neutral) {
+      rows.push({ label: 'Connection', value: "Can't be read from this machine" })
+    }
   }
 
   if (edge) {
@@ -685,7 +704,7 @@ export function describeElement(
     id: elementId,
     title: edge ? `${block.label} to GBrain core` : block.label,
     state: edge ? edge.state : block.state,
-    stateWord: (edge ? edge.neutral : block.neutral) ? 'configured' : null,
+    stateWord: (edge ? edge.neutral : block.neutral) ? block.sub : null,
     observedAt,
     rows,
     items,
@@ -700,31 +719,35 @@ export interface NoteLine {
   id: string
   state: UiState
   text: string
+  kind: ReasonKind
 }
 
-/** Current notes: conditions first, then reading limitations. Deduplicated, plain words. */
-export function currentNotes(
-  verdict: Verdict,
-  caveats: readonly string[] = [],
-  readersNote?: string | null,
-): NoteLine[] {
+export interface NoteGroups {
+  /** Warning, critical and unread readings, most severe first. */
+  action: NoteLine[]
+  /** For information only: sync-off sources, set-up readers, reading limitations. Never coloured as a fault. */
+  info: NoteLine[]
+}
+
+/**
+ * Current notes, split the way the server split them (`kind`): what needs action, and what is only
+ * for information. Deduplicated, plain words. The page never decides which is which.
+ */
+export function currentNotes(verdict: Verdict, caveats: readonly string[] = []): NoteGroups {
   const lines: NoteLine[] = verdict.conditions.map((condition) => ({
     id: `condition:${condition.id}`,
     state: condition.state,
     text: `${startSentence(condition.text)}.`,
+    kind: condition.kind,
   }))
-  const note = readersNote?.trim()
-  if (note) {
-    lines.push({ id: 'readers-note', state: 'unavailable', text: `${startSentence(note)}${/[.!?]$/.test(note) ? '' : '.'}` })
-  }
   const seen = new Set(lines.map((line) => line.text.toLowerCase()))
   for (const caveat of caveats) {
     const text = plainWords(caveat.trim())
     if (!text || seen.has(text.toLowerCase())) continue
     seen.add(text.toLowerCase())
-    lines.push({ id: `note:${text}`, state: 'warning', text })
+    lines.push({ id: `note:${text}`, state: 'warning', text, kind: 'action' })
   }
-  return lines
+  return { action: lines.filter((line) => line.kind === 'action'), info: lines.filter((line) => line.kind === 'info') }
 }
 
 export function incidentKey(banner: IncidentBanner): string {
@@ -749,11 +772,46 @@ export function collapseIncidents(
   return [...seen].map(([key, banner]) => ({ key, banner }))
 }
 
-/** Split "3 caveats at 2026-…Z." into plain text and the time it happened. */
+/**
+ * The incident ledger joins its parts with " / " and writes the queue as "queue 14 / 2 / 0", which is
+ * waiting / active / stalled (the overview's own queue value). Say the parts out; a part whose meaning
+ * is not certain keeps its label.
+ */
+function incidentParts(body: string): string {
+  const raw = body.split(' / ').map((part) => part.trim()).filter(Boolean)
+  const parts: string[] = []
+  for (let i = 0; i < raw.length; i += 1) {
+    const queue = raw[i].match(/^queue (\d+)$/i)
+    if (queue && /^\d+$/.test(raw[i + 1] ?? '') && /^\d+$/.test(raw[i + 2] ?? '')) {
+      parts.push(`queue: ${queue[1]} waiting, ${raw[i + 1]} active, ${raw[i + 2]} stalled`)
+      i += 2
+    } else {
+      parts.push(plainWords(raw[i]))
+    }
+  }
+  return parts.join(' · ')
+}
+
+/** Split "1,433 missing embeddings / 3 caveats at 2026-…Z." into plain parts and the time it happened. */
 export function describeIncident(banner: IncidentBanner): { text: string; at: string | null } {
   const match = banner.detail.match(/^(.*?)\s+at\s+(\d{4}-\d{2}-\d{2}T[\d:.]+Z)\.?$/)
-  if (!match) return { text: plainWords(banner.detail), at: null }
-  return { text: plainWords(match[1]), at: match[2] }
+  if (!match) return { text: incidentParts(banner.detail), at: null }
+  return { text: incidentParts(match[1]), at: match[2] }
+}
+
+export interface RecoveredLine {
+  key: string
+  text: string
+  at: string | null
+}
+
+/** Recovered problems for display: plain parts, newest first (entries without a time last, in ledger order). */
+export function recoveredLines(recovered: ReadonlyArray<{ key: string; banner: IncidentBanner }>): RecoveredLine[] {
+  const time = (at: string | null) => (at === null ? Number.NEGATIVE_INFINITY : Date.parse(at))
+  return recovered
+    .map(({ key, banner }, index) => ({ line: { key, ...describeIncident(banner) }, index }))
+    .sort((a, b) => time(b.line.at) - time(a.line.at) || a.index - b.index)
+    .map(({ line }) => line)
 }
 
 // ---- recent readings ----

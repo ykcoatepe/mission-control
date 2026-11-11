@@ -123,7 +123,15 @@ Production activation and useful-live confirmation remain with the coordinator.
 
 ## Shared operational verdict
 
-`verdict.js:buildGBrainVerdict` alone produces `{state,reasons:[{elementId,state,text}]}`.
+`verdict.js:buildGBrainVerdict` alone produces `{state,reasons:[{elementId,state,text,kind}]}`.
+`kind` is `action` or `info` and is derived in one place (`add`): an inactive reason and the
+embed-job probe limitation are `info`, everything else is `action`. It is presentation only: the
+state, the caveats and the Operations attention list still follow `state`.
+The core line (`gbrain-core`) is emitted only when no other reason already names why the core is
+not healthy at the same severity or worse (link extraction, missing embeddings, stale pages, a
+failed or stale health/stats/version probe); the core's own state still counts toward the verdict
+state. When it is emitted it names the cause. Readers that are set up are one `info` reason
+(`readers`); a reader that is not set up or has a real state keeps its own reason.
 The synoptic state and the overview's state/trust status are that verdict state;
 overview caveats are exactly its warning/critical/unavailable reason texts.
 Inactive exclusion reasons are visible in the verdict and do not degrade health.
@@ -135,11 +143,12 @@ The legacy presentation helper's compatibility path remains for older callers
 without a verdict; every mounted GBrain endpoint supplies the shared verdict.
 
 A declared embed-job probe failure is an **unavailable reason**, not an omitted
-note: `embed-job-probe` / `Embed-job probe unavailable; the missing-embedding
-verdict uses embedding age only.` This exact reason and state appear in both
+note: `embed-job-probe` / `Embedding job status couldn't be read, so missing
+embeddings are judged by age only.` (kind `info`) This exact reason and state appear in both
 contracts; it cannot silently leave Operations healthy. Failed scheduled probes
 also have unavailable reasons. Unobservable reader connection telemetry remains
-the existing readersNote and does not degrade health.
+the existing readersNote and does not degrade health; the page says it once, in the
+`readers` info reason.
 
 Producer/consumer seam: scheduled probe snapshots -> source freshness classifier
 + shared verdict -> synoptic and overview -> Operations memory projection ->

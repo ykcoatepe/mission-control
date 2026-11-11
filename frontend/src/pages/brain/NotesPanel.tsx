@@ -1,7 +1,7 @@
+import { useState } from 'react'
 import { Button, Panel, StateDot, TimeAgo } from '../../components/ui'
-import { toUiState } from '../../lib/state'
-import type { UiState } from '../../lib/state'
-import { describeIncident, type NoteLine } from './lib'
+import { Disclosure } from './Disclosure'
+import { recoveredLines, type NoteGroups } from './lib'
 import styles from './NotesPanel.module.css'
 import type { IncidentBanner } from './types'
 
@@ -10,24 +10,36 @@ export interface RecoveredNote {
   banner: IncidentBanner
 }
 
-/** Current notes and the recovered-regression history in one list. History never changes the verdict. */
+/** How many recovered problems show before "Show all". */
+export const RECOVERED_SHOWN = 10
+
+/**
+ * Current notes and the history of problems that recovered. Three quiet tiers, in this order: what
+ * needs action (coloured by its state), problems that recovered on their own (a summary, folded),
+ * and what the server marked as information (folded). History never changes the verdict and is
+ * never coloured as a fault.
+ */
 export function NotesPanel({
   notes,
   recovered,
   onAcknowledge,
 }: {
-  notes: NoteLine[]
+  notes: NoteGroups
   recovered: RecoveredNote[]
   onAcknowledge: () => void
 }) {
-  const empty = notes.length === 0 && recovered.length === 0
+  const { action, info } = notes
+  const lines = recoveredLines(recovered)
+  const empty = action.length === 0 && info.length === 0 && lines.length === 0
+  // Only action notes are something to do: recovered history and information are not.
+  const nothingToDo = action.length === 0
   return (
     <Panel
       title="Notes"
       actions={
-        recovered.length > 0 ? (
+        lines.length > 0 ? (
           <Button size="sm" onClick={onAcknowledge}>
-            {recovered.length === 1 ? 'Acknowledge' : `Acknowledge all ${recovered.length}`}
+            {lines.length === 1 ? 'Acknowledge' : `Acknowledge all ${lines.length}`}
           </Button>
         ) : undefined
       }
@@ -35,33 +47,73 @@ export function NotesPanel({
       {empty ? (
         <p className={styles.none}>No notes.</p>
       ) : (
-        <ul className={styles.list}>
-          {notes.map((note) => (
-            <li key={note.id} className={styles.item}>
-              <StateDot state={note.state} />
-              <span>{note.text}</span>
-            </li>
-          ))}
-          {recovered.map(({ key, banner }) => {
-            const { text, at } = describeIncident(banner)
-            const state: UiState = toUiState(banner.status)
-            return (
-              <li key={key} className={styles.item} data-history>
-                <StateDot state={state === 'unavailable' ? 'inactive' : state} />
-                <span>
-                  Recovered: {text}
-                  {at && (
-                    <>
-                      {' '}
-                      <TimeAgo value={at} className={styles.time} />
-                    </>
-                  )}
-                </span>
-              </li>
-            )
-          })}
-        </ul>
+        <div className={styles.groups}>
+          {nothingToDo ? (
+            <p className={styles.none}>Nothing needs action.</p>
+          ) : (
+            <ul className={styles.list} aria-label="Needs action">
+              {action.map((note) => (
+                <li key={note.id} className={styles.item}>
+                  <StateDot state={note.state} />
+                  <span>{note.text}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {lines.length > 0 && <RecoveredGroup lines={lines} />}
+          {info.length > 0 && (
+            <Disclosure summary={`${info.length} more for information`}>
+              <ul className={styles.infoList} aria-label="For information">
+                {info.map((note) => (
+                  <li key={note.id}>{note.text}</li>
+                ))}
+              </ul>
+            </Disclosure>
+          )}
+        </div>
       )}
     </Panel>
+  )
+}
+
+function RecoveredGroup({ lines }: { lines: ReturnType<typeof recoveredLines> }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? lines : lines.slice(0, RECOVERED_SHOWN)
+  const latest = lines.find((line) => line.at !== null)?.at ?? null
+  const count = lines.length
+  return (
+    <Disclosure
+      tone="secondary"
+      summary={
+        <>
+          {count === 1 ? '1 past problem recovered on its own' : `${count} past problems recovered on their own`}
+          {latest && (
+            <>
+              {' · latest '}
+              <TimeAgo value={latest} />
+            </>
+          )}
+        </>
+      }
+    >
+      <ul className={styles.recoveredList} aria-label="Recovered on their own">
+        {shown.map((line) => (
+          <li key={line.key}>
+            <span>{line.text}</span>
+            {line.at && (
+              <>
+                {' '}
+                <TimeAgo value={line.at} className={styles.time} />
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+      {count > shown.length && (
+        <button type="button" className={styles.more} onClick={() => setAll(true)}>
+          Show all {count}
+        </button>
+      )}
+    </Disclosure>
   )
 }

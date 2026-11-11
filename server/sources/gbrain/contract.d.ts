@@ -22,7 +22,13 @@ export interface ReaderIntegrationEdge extends Evidence {
   from: string; to: string; label: 'configured'; unit?: never; measurement?: never;
 }
 export type Edge = MeasuredEdge | ReaderIntegrationEdge;
-export interface VerdictReason { elementId: string; state: State; text: string }
+/**
+ * `action`: something a person can do or must look at (warning, critical, a missing reading).
+ * `info`: something to know, never a fault: every inactive reason, and a reading limitation such
+ * as the embed-job probe. Derived once, in verdict.js. `kind` never changes `Verdict.state`.
+ */
+export type ReasonKind = 'action' | 'info';
+export interface VerdictReason { elementId: string; state: State; text: string; kind: ReasonKind }
 export interface Verdict { state: State; reasons: VerdictReason[] }
 export interface GBrainSynoptic {
   schemaVersion: '1'; state: State; verdict: Verdict;

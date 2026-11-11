@@ -342,7 +342,7 @@ function assertJobUnavailable(r, count, label) {
   assert.equal(r.health.metrics.missingEmbeddingsOverdue, 0, label);
   assert.equal(r.health.metrics.missingEmbeddingsCatchingUp, count, label);
   assert.equal(r.overview.trust.status, 'warning', label);
-  assert.match(r.overview.caveats.join(' '), /Embed-job probe unavailable; the missing-embedding verdict uses embedding age only/, label);
+  assert.match(r.overview.caveats.join(' '), /Embedding job status couldn't be read, so missing embeddings are judged by age only/, label);
 }
 
 test('embed-job waiting tolerance is 20 minutes; queue scope is default', () => {
@@ -544,7 +544,7 @@ test('job probe failure / unparseable -> age-only verdict + caveat; never health
     const old = await overviewFor(healthPayload(2, { missing_embeddings_oldest_age_seconds: 1500 }), { jobs });
     assert.equal(old.health.metrics.missingEmbeddingsOverdue, 2, label);
     assertDegraded(old, 2);
-    assert.match(old.overview.caveats.join(' '), /Embed-job probe unavailable/, label);
+    assert.match(old.overview.caveats.join(' '), /Embedding job status couldn't be read/, label);
   }
 });
 

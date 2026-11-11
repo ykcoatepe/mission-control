@@ -6,7 +6,7 @@ const {
 } = require('./constants');
 const { formatCount, formatPercent, liveHealthStatus, liveSourceStatus } = require('./liveProbes');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
-const { verdictCaveats } = require('../../sources/gbrain/verdict');
+const { verdictCaveats, EMBED_JOB_PROBE_TEXT } = require('../../sources/gbrain/verdict');
 const { listGBrainActions } = require('./actionsExecutor');
 
 function statusLabelText(status) {
@@ -97,7 +97,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
     ? `Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}${missingJobReasonText}.`
     : null;
   const embedJobProbeUnavailableText = liveHealth?.metrics?.embedJobProbeUnavailable === true
-    ? 'Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.'
+    ? EMBED_JOB_PROBE_TEXT
     : null;
   const missingUnavailableText = 'Live health did not report a valid missing-embedding count.';
   const queue = liveHealth?.metrics?.queue || {};
