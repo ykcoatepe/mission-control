@@ -401,7 +401,11 @@ function createApp(deps = {}) {
   }));
   app.use(buildCalendarRouter({ calendarService: cronService, cronCacheTtl: CRON_CACHE_TTL }));
   // Standalone cron search page (public/cron-search.html), reads /api/cron.
-  app.get('/cron-search', (req, res) => res.sendFile(path.join(config.paths.publicDir, 'cron-search.html')));
+  // Relative to its root: a dot segment in the install path (a worktree) must
+  // not turn the page into a 404.
+  app.get('/cron-search', (req, res, next) => res.sendFile('cron-search.html', { root: config.paths.publicDir }, (error) => {
+    if (error) next(error);
+  }));
   // AWS month-to-date cost: a scheduled read through the core runner while
   // the module is enabled; the route only reads the snapshot.
   const awsEnabled = () => Boolean(mcConfig.modules?.aws && mcConfig.aws?.enabled);

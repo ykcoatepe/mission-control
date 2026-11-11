@@ -369,3 +369,30 @@ test('asyncHandler rejection with a home path never leaks', async () => {
     assertErrorContract(response, 500, 'internal_error');
   });
 });
+
+// --- item 10: response scan findings ---------------------------------------
+
+test('item 10: settings and setup show configured folders home-relative, never as absolute home paths', async () => {
+  const probe = settingsFixture();
+  const home = path.dirname(probe.configPath);
+  const { service } = settingsFixture({ homeDir: home, memoryPath: path.join(home, 'clawd', 'memory'), skillsPath: '/opt/skills' });
+  fs.mkdirSync(path.join(home, '.openclaw'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.openclaw', 'openclaw.json'), JSON.stringify({ agents: { defaults: { workspace: path.join(home, 'clawd') } } }));
+  const payload = service.getSettingsPayload();
+  assert.equal(payload.memory_path, '~/clawd/memory');
+  assert.equal(payload.skills_path, '/opt/skills', 'a path outside home is unchanged');
+  const setup = await service.getSetupStatus();
+  assert.equal(setup.detectedConfig.workspacePath, '~/clawd');
+  assert.doesNotMatch(JSON.stringify({ payload, setup }), new RegExp(home.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+});
+
+test('item 10: the Hermes board shows task workspaces home-relative', async () => {
+  const { buildHermesKanbanRouter } = require('../server/routes/hermesKanban');
+  const board = { ok: true, columns: { done: [{ id: 't1', workspace_path: '/Users/someone/clawd/x', body: 'kept' }] } };
+  await serve((app) => app.use(buildHermesKanbanRouter({ hermesSource: { snapshot: () => ({ data: board, meta: { ok: true } }) }, homeDir: '/Users/someone' })), async (base) => {
+    const response = await call(base, 'GET', '/api/hermes-kanban');
+    assert.equal(response.status, 200);
+    assert.equal(response.json.columns.done[0].workspace_path, '~/clawd/x');
+    assert.equal(response.json.columns.done[0].body, 'kept');
+  });
+});

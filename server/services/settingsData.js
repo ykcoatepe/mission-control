@@ -133,6 +133,12 @@ function createSettingsService({
   gatewayReachability = null,
 }) {
   const fs = fsImpl;
+  // Display paths are home-relative: no absolute home path in a response.
+  const homeRelative = (value) => {
+    if (typeof value !== 'string' || !value) return value || null;
+    const home = String(homeDir || '').replace(/\/+$/, '');
+    return home && (value === home || value.startsWith(`${home}/`)) ? `~${value.slice(home.length)}` : value;
+  };
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
 
   function readCurrentMcConfig() {
@@ -216,8 +222,8 @@ function createSettingsService({
     return {
       model: defaultModel,
       gateway_port: gatewayPort ?? null,
-      memory_path: memoryPath || null,
-      skills_path: skillsPath || null,
+      memory_path: homeRelative(memoryPath),
+      skills_path: homeRelative(skillsPath),
       bedrock_region: bedrockRegion || null,
       system: {
         mission_control_version: readMissionControlVersion(),
@@ -311,14 +317,14 @@ function createSettingsService({
       if (fs.existsSync(openclawConfigPath)) {
         const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
         detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || null;
-        detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || null;
+        detectedConfig.workspacePath = homeRelative(openclawConfig.agents?.defaults?.workspace || null);
         detectedConfig.gatewayTokenConfigured = !!(openclawConfig.gateway?.auth?.token || openclawConfig.gateway?.http?.auth?.token);
 
         if (openclawConfig.channels) {
           detectedConfig.channels = Object.keys(openclawConfig.channels).filter((channel) => openclawConfig.channels[channel]?.enabled !== false);
         }
 
-        const ws = detectedConfig.workspacePath;
+        const ws = openclawConfig.agents?.defaults?.workspace || null;
         try {
           const identity = fs.readFileSync(path.join(ws, 'IDENTITY.md'), 'utf8');
           const nameMatch = identity.match(/\*\*Name:\*\*\s*(.+)/);
