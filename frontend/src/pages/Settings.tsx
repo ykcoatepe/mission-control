@@ -3,7 +3,7 @@ import type { ChangeEvent } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { describeApiError, isApiError, postForm, postJson, useApi } from '../lib/hooks'
-import { applyCommitted, isStaleWrite } from '../lib/writes'
+import { applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../lib/writes'
 import { StaleWriteNote } from '../components/StaleWriteNote'
 import { changedRouting, describeHeartbeat, heartbeatError, routingErrors } from './settings/lib'
 import type { Routing, RoutingField } from './settings/lib'
@@ -61,10 +61,12 @@ interface ModelInfo {
 
 interface SaveMessages {
   success: string
+  /** The command was sent but the system has not confirmed it. */
+  unconfirmed?: string
   error: string
 }
 
-type SaveResult = { ok: true; response: unknown } | { ok: false; error: unknown; message: string }
+type SaveResult = { ok: true; response: unknown; unconfirmed: boolean } | { ok: false; error: unknown; message: string }
 
 /**
  * One save path for every write on this page: busy flag per action and a toast
@@ -76,16 +78,22 @@ function useSaver() {
   const [busy, setBusy] = useState<string | null>(null)
   // The save whose follow-up reading the server could not confirm yet (meta.stale): it is saved, the list is behind.
   const [catchingUp, setCatchingUp] = useState<string | null>(null)
+  // The save the system has not confirmed (verified: false): a warning, never a success.
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null)
 
   const run = useCallback(
     async (key: string, request: () => Promise<unknown>, messages: SaveMessages): Promise<SaveResult> => {
       setBusy(key)
       setCatchingUp(null)
+      setUnconfirmed(null)
       try {
         const response = await request()
-        setCatchingUp(isStaleWrite(response) ? key : null)
-        toast.show('success', messages.success)
-        return { ok: true, response }
+        const notConfirmed = isUnconfirmedWrite(response)
+        setUnconfirmed(notConfirmed ? key : null)
+        setCatchingUp(!notConfirmed && isStaleWrite(response) ? key : null)
+        if (notConfirmed) toast.show('warning', messages.unconfirmed ?? 'Sent, not yet confirmed')
+        else toast.show('success', messages.success)
+        return { ok: true, response, unconfirmed: notConfirmed }
       } catch (error) {
         const message = describeApiError(error)
         toast.show('error', `${messages.error}: ${message}`)
@@ -103,7 +111,10 @@ function useSaver() {
     [run],
   )
 
-  return { busy, catchingUp, run, post }
+  /** The note under a panel's form: the calm "list may be behind" line, or the unconfirmed warning. */
+  const noteFor = (key: string) => ({ show: catchingUp === key || unconfirmed === key, unconfirmed: unconfirmed === key })
+
+  return { busy, noteFor, run, post }
 }
 
 type Saver = ReturnType<typeof useSaver>
@@ -255,22 +266,30 @@ function ModelsPanel({ saver }: { saver: Saver }) {
       const result = await saver.post('routing', '/api/settings/model-routing', changed, {
         success: 'Model routing saved',
         error: 'Model routing could not be saved',
+        unconfirmed: 'Model routing sent, not yet confirmed',
       })
       if (result.ok) {
         const entity = committedRouting(result.response)
         if (entity) {
-          // The server's own account of what is configured now: nothing to keep locally.
+          // The server's own account of what is configured now. When the change could not be confirmed this is
+          // the previous setting: the requested value is never shown as current.
           await applyCommitted<ModelRoutingData>(queryClient, ROUTING_URL, () => entity)
           setSaved(null)
         } else {
-          setSaved(routing)
+          setSaved(result.unconfirmed ? null : routing)
           void queryClient.invalidateQueries({ queryKey: ['api', ROUTING_URL] })
         }
         setDraft({})
-      } else if (isApiError(result.error) && result.error.status === 400) {
-        // The server validates every model value; say so next to the fields that were sent.
+      } else if (isApiError(result.error) && (result.error.status === 400 || isUpstreamRefusal(result.error))) {
+        // The server validates every model value, and the system may refuse one: say so next to the fields that were sent.
         const sent = Object.keys(changed) as RoutingField[]
         setFieldErrors(Object.fromEntries(sent.map((field) => [field, result.message])))
+        if (isUpstreamRefusal(result.error)) {
+          // Never keep the refused value: show what the system reports.
+          setDraft({})
+          setSaved(null)
+          void queryClient.invalidateQueries({ queryKey: ['api', ROUTING_URL] })
+        }
       }
     }
 
@@ -300,7 +319,7 @@ function ModelsPanel({ saver }: { saver: Saver }) {
             Only the current choices are listed.
           </Notice>
         )}
-        <StaleWriteNote show={saver.catchingUp === 'routing'} />
+        <StaleWriteNote {...saver.noteFor('routing')} />
         <div className={styles.actions}>
           <Button
             variant="primary"
@@ -363,6 +382,7 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
     const result = await saver.post('heartbeat', '/api/settings/heartbeat', { interval }, {
       success: 'Heartbeat interval saved',
       error: 'Heartbeat interval could not be saved',
+      unconfirmed: 'Heartbeat interval sent, not yet confirmed',
     })
     if (result.ok) {
       // The interval the server answers with is what is configured now; the draft is no longer needed.
@@ -371,7 +391,14 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
         committed === undefined ? current : { ...current, interval: committed },
       )
       setDraft(null)
-    } else if (isApiError(result.error) && result.error.status === 400) setError(result.message)
+    } else if (isApiError(result.error) && (result.error.status === 400 || isUpstreamRefusal(result.error))) {
+      setError(result.message)
+      if (isUpstreamRefusal(result.error)) {
+        // Never keep the refused value: show what the system reports.
+        setDraft(null)
+        void queryClient.invalidateQueries({ queryKey: ['api', HEARTBEAT_URL] })
+      }
+    }
   }
 
   return (
@@ -393,7 +420,7 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
             )}
           </Field>
         </div>
-        <StaleWriteNote show={saver.catchingUp === 'heartbeat'} />
+        <StaleWriteNote {...saver.noteFor('heartbeat')} />
         <div className={styles.actions}>
           <Button
             variant="primary"
@@ -526,7 +553,7 @@ function BackupPanel({ saver }: { saver: Saver }) {
             onChange={onFile}
           />
         </div>
-        <StaleWriteNote show={saver.catchingUp === 'import'} />
+        <StaleWriteNote {...saver.noteFor('import')} />
         {importError && (
           <Notice tone="critical" title="This file was not imported">
             {importError}

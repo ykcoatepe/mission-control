@@ -154,3 +154,85 @@ describe('Settings: a save is on screen before the refetch lands', () => {
     await act(async () => root.unmount())
   })
 })
+
+describe('Settings: verified writes (model routing and heartbeat)', () => {
+
+  /** The four answers a model routing write can get. */
+  const BEFORE = { ...ROUTING, main: 'a/b' }
+
+  it('verified: the confirmed model shows at once, with no warning', async () => {
+    const s = stub({ routing: BEFORE, heartbeat: { interval: '1h' } }, (_path, st) => {
+      st.routing = { ...BEFORE, main: 'c/d' }
+      return json({ status: 'saved', ...st.routing, verified: true, entity: { main: 'c/d', verified: true }, meta: { ok: true, stale: false } })
+    })
+    const { host, root } = await mount()
+    await choose(select(host, 'Main model'), 'c/d')
+    await act(async () => button(host, 'Save routing').click())
+    await settle()
+    expect(select(host, 'Main model').value).toBe('c/d')
+    expect(host.textContent).not.toContain('Sent, not yet confirmed')
+    s.release()
+    await act(async () => root.unmount())
+  })
+
+  it('sent but not confirmed: a warning, and the select shows what the system reports, not the request', async () => {
+    const s = stub({ routing: BEFORE, heartbeat: { interval: '1h' } }, (_path, st) =>
+      // Nothing was promoted: the answer carries the previous model.
+      json({ status: 'unverified', ...st.routing, verified: false, entity: { main: 'a/b', verified: false }, meta: STALE }),
+    )
+    const { host, root } = await mount()
+    await choose(select(host, 'Main model'), 'c/d')
+    await act(async () => button(host, 'Save routing').click())
+    await settle()
+    expect(select(host, 'Main model').value).toBe('a/b')
+    expect(host.textContent).toContain('Sent, not yet confirmed')
+    expect(host.textContent).not.toContain(STALE_WRITE_NOTE)
+    expect(document.querySelector('[data-tone="success"]')).toBeNull()
+    expect(document.querySelector('[data-tone="warning"]')).not.toBeNull()
+    s.release()
+    await settle()
+    expect(select(host, 'Main model').value).toBe('a/b')
+    await act(async () => root.unmount())
+  })
+
+  for (const code of ['upstream_rejected', 'upstream_unverified'] as const) {
+    it(`409 ${code}: the message is an error next to the field, and the refused value is gone`, async () => {
+      const message = code === 'upstream_rejected'
+        ? 'OpenClaw reports main as a/b; the requested change was not accepted'
+        : 'OpenClaw returned an unreadable configuration; the change could not be verified'
+      const s = stub({ routing: BEFORE, heartbeat: { interval: '1h' } }, () => json({ error: { code, message } }, 409))
+      const { host, root } = await mount()
+      const readsBefore = s.reads.filter((path) => path === '/api/settings/model-routing').length
+      await choose(select(host, 'Main model'), 'c/d')
+      await act(async () => button(host, 'Save routing').click())
+      await settle()
+      const describedBy = select(host, 'Main model').getAttribute('aria-describedby') ?? ''
+      const near = describedBy.split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ')
+      expect(near).toContain(message)
+      expect(select(host, 'Main model').value).toBe('a/b')
+      expect(s.reads.filter((path) => path === '/api/settings/model-routing').length).toBeGreaterThan(readsBefore)
+      s.release()
+      await act(async () => root.unmount())
+    })
+  }
+
+  it('heartbeat: unconfirmed keeps the previous interval and warns; a refusal shows the message', async () => {
+    let answer: () => Response = () => json({ status: 'unverified', interval: '1h', verified: false, entity: { interval: '1h', verified: false }, meta: STALE })
+    const s = stub({ routing: ROUTING, heartbeat: { interval: '1h' } }, () => answer())
+    const { host, root } = await mount()
+    await choose(select(host, 'Check interval'), '30m')
+    await act(async () => button(host, 'Save interval').click())
+    await settle()
+    expect(select(host, 'Check interval').value).toBe('1h')
+    expect(host.textContent).toContain('Sent, not yet confirmed')
+
+    answer = () => json({ error: { code: 'upstream_rejected', message: 'OpenClaw reports interval as 1h; the requested change was not accepted' } }, 409)
+    await choose(select(host, 'Check interval'), '30m')
+    await act(async () => button(host, 'Save interval').click())
+    await settle()
+    expect(host.textContent).toContain('OpenClaw reports interval as 1h')
+    expect(select(host, 'Check interval').value).toBe('1h')
+    s.release()
+    await act(async () => root.unmount())
+  })
+})

@@ -218,6 +218,10 @@ export async function cronRequest(
 export interface CronWriteResponse {
   ok?: boolean
   message?: string
+  /** The scheduler shows the change. `false`: the command was sent and the read-back failed; nothing was promoted. */
+  verified?: boolean
+  /** On an unconfirmed write: the values that were asked for (never shown as current). */
+  requested?: unknown
   job?: Partial<CronJob> & { deleted?: boolean }
   entity?: Partial<CronJob>
   meta?: { ok?: boolean; stale?: boolean; error?: { code?: string; message?: string } | null }
@@ -234,32 +238,35 @@ export async function cronWrite(
 }
 
 export type CronWriteArg =
-  | { kind: 'update'; jobId: string; response: CronWriteResponse | null; fallback?: Partial<CronJob> }
-  | { kind: 'delete'; jobId: string }
+  | { kind: 'update'; jobId: string; response: CronWriteResponse | null }
+  | { kind: 'delete'; jobId: string; response: CronWriteResponse | null }
   | { kind: 'create'; response: CronWriteResponse | null }
 
 const isWholeJob = (job: Partial<CronJob> | undefined): job is CronJob =>
   Boolean(job) && typeof job?.id === 'string' && typeof job?.name === 'string' && typeof job?.enabled === 'boolean'
 
 /**
- * The list after a write, from what the server committed. An update merges the
- * returned job over the one on screen (or, with no entity, the change that was
- * asked for), a delete drops the row, a create adds the new job once. A response
- * that carries no usable entity leaves the list as it is: the refetch decides.
+ * The list after a write, from what the server reports. Only what the system confirmed is put on screen:
+ * an update merges the returned job over the one shown (when the command could not be confirmed the returned
+ * job is the previous state, marked `verified: false`), a delete drops the row only when the answer says the
+ * job is gone, a create adds the new job once. A requested value is never shown: with no usable job in the
+ * answer the list stays as it is and the refetch decides.
  */
 export function applyCronWrite(data: CronApiResponse, write: CronWriteArg): CronApiResponse {
   const jobs = data.jobs ?? []
-  if (write.kind === 'delete') return { ...data, jobs: jobs.filter((job) => job.id !== write.jobId) }
+  const committed = write.response?.job
+  if (write.kind === 'delete') {
+    if (committed?.deleted !== true || write.response?.verified === false) return data
+    return { ...data, jobs: jobs.filter((job) => job.id !== write.jobId) }
+  }
   if (write.kind === 'create') {
-    const created = write.response?.entity ?? write.response?.job
-    if (!isWholeJob(created) || jobs.some((job) => job.id === created.id)) return data
+    const created = write.response?.entity ?? committed
+    if (write.response?.verified === false || !isWholeJob(created) || jobs.some((job) => job.id === created.id)) return data
     return { ...data, jobs: [...jobs, created] }
   }
-  const committed = write.response?.job
-  const patch = committed && committed.id === write.jobId ? committed : write.fallback
-  if (!patch || !jobs.some((job) => job.id === write.jobId)) return data
+  if (!committed || committed.id !== write.jobId || committed.deleted === true || !jobs.some((job) => job.id === write.jobId)) return data
   // `deleted` is a marker on the response, not a field of the job.
-  const fields: Partial<CronJob> & { deleted?: boolean } = { ...patch }
+  const fields: Partial<CronJob> & { deleted?: boolean } = { ...committed }
   delete fields.deleted
   return { ...data, jobs: jobs.map((job) => (job.id === write.jobId ? { ...job, ...fields } : job)) }
 }

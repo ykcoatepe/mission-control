@@ -1,7 +1,8 @@
 import { useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
 import { useEffect } from 'react'
-import { onWriteSucceeded } from './hooks'
+import { isApiError, onWriteSucceeded } from './hooks'
+import type { ApiError } from './hooks'
 import { SIGNALS_URL } from './signals'
 
 /**
@@ -23,6 +24,29 @@ function record(value: unknown): Record<string, unknown> | null {
 /** True when a write response says the post-write refresh did not complete. */
 export function isStaleWrite(response: unknown): boolean {
   return record(record(response)?.meta)?.stale === true
+}
+
+/**
+ * The command was sent, but the read-back that would prove it took effect failed: `verified: false` (and
+ * `meta.stale`). Settings writes also say `status: 'unverified'`. Nothing was promoted: the answer carries what
+ * the system reports now, never the requested values. A write that says nothing about verification is not
+ * an unconfirmed one.
+ */
+export function isUnconfirmedWrite(response: unknown): boolean {
+  const body = record(response)
+  return body?.verified === false || body?.status === 'unverified'
+}
+
+export const UNCONFIRMED_TITLE = 'Sent, not yet confirmed'
+export const UNCONFIRMED_NOTE = 'The change was sent, but the system has not confirmed it. What you see is what it reports now.'
+
+/**
+ * 409 `upstream_rejected` (the system refused, or reports a different state) and `upstream_unverified` (its
+ * answer could not be trusted): the message names what it reported. The page shows it as an error, next to
+ * the control, and reads the real state again.
+ */
+export function isUpstreamRefusal(error: unknown): error is ApiError {
+  return isApiError(error) && error.status === 409 && (error.code === 'upstream_rejected' || error.code === 'upstream_unverified')
 }
 
 export function apiQueryKey(url: string) {

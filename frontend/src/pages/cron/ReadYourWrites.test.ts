@@ -140,13 +140,13 @@ describe('automations: a write is on screen before the refetch lands', () => {
     await act(async () => root.unmount())
   })
 
-  it('toggle without an entity in the answer still shows the change that was asked for', async () => {
+  it('toggle with no job in the answer shows nothing that was only asked for; the refetch decides', async () => {
     const state: State = { jobs: [job({ id: 'ok-job' })], entries: [] }
     const s = server(() => json({ ok: true, message: 'ok' }), state)
     const root = await mount(createElement(JobsView))
     await act(async () => switchFor('ok-job enabled').click())
     await settle()
-    expect(switchFor('ok-job enabled').getAttribute('aria-checked')).toBe('false')
+    expect(switchFor('ok-job enabled').getAttribute('aria-checked')).toBe('true')
     s.release()
     await act(async () => root.unmount())
   })

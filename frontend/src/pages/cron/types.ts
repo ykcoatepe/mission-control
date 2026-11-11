@@ -38,6 +38,15 @@ export interface CronJob {
   history: CronHistoryEntry[]
   /** Why the last run failed, when the API reports it. Absent today: only run history can carry a reason. */
   lastError?: string | null
+  /** The scheduler confirmed the last change to this job. `false`: the command was sent and the read-back failed. */
+  verified?: boolean
+  /** An active job whose next run is already in the past. It is not "next". */
+  nextRunOverdue?: boolean
+  /** Hermes only: the scheduler's own state, whether it is switched on upstream, and when and why it was paused. */
+  schedulerState?: string | null
+  upstreamEnabled?: boolean | null
+  pausedAt?: string | null
+  pausedReason?: string | null
 }
 
 /** GET /api/cron `summary`: `active` counts every enabled job, failed ones included. */

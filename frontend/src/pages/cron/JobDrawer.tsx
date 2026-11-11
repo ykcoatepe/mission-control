@@ -4,6 +4,7 @@ import { Button, Drawer, Meter, Mono, Notice, Select, StatePill, Switch, TimeAgo
 import { calcSuccessRate, getCronSchedulerLabel, normalizeCronModelValue } from './lib'
 import type { CronJob, CronOverlapMarker, ModelOption } from './types'
 import { jobState } from './jobState'
+import { NextRun } from './NextRun'
 import { scheduleDisplay } from './cronSchedule'
 import { LIST_DESCRIPTION_LIMIT, describeJobText, describeRunKind, failureReason, isInternalKey } from './jobWords'
 import { formatRelative, parseTime } from '../../lib/time'
@@ -21,6 +22,8 @@ interface JobDrawerProps {
   /** Set when the job's scheduler could only be read earlier; its details may have changed. */
   staleSince?: SchedulerReading | null
   pendingAction: string | null
+  /** What the system said when it refused the last change to this job. */
+  error?: string | null
   onToggle: (job: CronJob) => void
   onRun: (job: CronJob) => void
   onDelete: (job: CronJob) => void
@@ -45,6 +48,7 @@ export default function JobDrawer({
   displayModel,
   staleSince,
   pendingAction,
+  error,
   onToggle,
   onRun,
   onDelete,
@@ -107,6 +111,16 @@ export default function JobDrawer({
       }
     >
       <div className={styles.body}>
+        {error && (
+          <Notice tone="critical" title="Not changed">
+            {error}
+          </Notice>
+        )}
+        {job.verified === false && (
+          <Notice tone="warning" title="Not confirmed">
+            The last change to this job was sent, but the scheduler has not confirmed it. What is shown is what it reports now.
+          </Notice>
+        )}
         <dl className={styles.facts}>
           <Fact label="State">
             <span className={styles.inline}>
@@ -127,7 +141,10 @@ export default function JobDrawer({
           <Fact label="Last run">
             <TimeAgo value={job.lastRun} />
           </Fact>
-          <Fact label="Next run">{job.enabled ? <TimeAgo value={job.nextRun} /> : '—'}</Fact>
+          <Fact label="Next run">
+            <NextRun job={job} />
+          </Fact>
+          {job.pausedReason ? <Fact label="Paused because">{job.pausedReason}</Fact> : null}
           {job.duration ? (
             <Fact label="Duration">
               <Mono>{job.duration}</Mono>

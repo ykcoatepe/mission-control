@@ -73,6 +73,7 @@
 
 .stateCell {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-3);
 }
@@ -236,4 +237,18 @@
   color: var(--accent);
   font-size: var(--fs-small);
   font-weight: var(--fw-semibold);
+}
+
+.unconfirmed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}
+
+.refusal {
+  flex-basis: 100%;
+  color: var(--state-critical);
+  font-size: var(--fs-small);
 }

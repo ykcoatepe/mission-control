@@ -15,6 +15,7 @@ import {
   Panel,
   SearchInput,
   Skeleton,
+  StateDot,
   StatePill,
   Stat,
   StatRow,
@@ -24,7 +25,7 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
-import { applyCommitted, isStaleWrite } from '../../lib/writes'
+import { applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../../lib/writes'
 import { StaleWriteNote } from '../../components/StaleWriteNote'
 import { useNow } from '../../lib/useNow'
 import { normalizeCronStatus } from '../../lib/status'
@@ -48,6 +49,7 @@ import type {
   CronStatusFilter,
 } from './types'
 import { jobState } from './jobState'
+import { NextRun } from './NextRun'
 import { scheduleDisplay } from './cronSchedule'
 import { isJobOn, summarizeJobs } from './jobsSummary'
 import {
@@ -91,7 +93,9 @@ export default function JobsView() {
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   // The last write succeeded but the server could not confirm its follow-up reading yet.
-  const [catchingUp, setCatchingUp] = useState(false)
+  const [writeNote, setWriteNote] = useState<'stale' | 'unconfirmed' | null>(null)
+  // What the system said when it refused a change, by job: shown next to the control until the job is changed again.
+  const [refusals, setRefusals] = useState<Record<string, string>>({})
   // A job that was just created: tagged for a few seconds, scrolled to and focused once its row is on screen.
   const [justCreated, setJustCreated] = useState<string | null>(null)
   const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null)
@@ -251,18 +255,39 @@ export default function JobsView() {
     response: CronWriteResponse | null,
     write: (response: CronWriteResponse | null) => CronWriteArg,
   ) => {
-    setCatchingUp(isStaleWrite(response))
+    setWriteNote(isUnconfirmedWrite(response) ? 'unconfirmed' : isStaleWrite(response) ? 'stale' : null)
     await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyCronWrite(current, write(response)))
+  }
+
+  const clearRefusal = (job: CronJob) =>
+    setRefusals((prev) => {
+      if (!(job.id in prev)) return prev
+      const { [job.id]: _removed, ...rest } = prev
+      void _removed
+      return rest
+    })
+
+  /**
+   * A change the system refused (409 upstream_rejected / upstream_unverified): its own message, next to the
+   * control, and the real state read again. No requested value stays on screen.
+   */
+  const refuse = (job: CronJob, err: unknown, fallback: string) => {
+    setRefusals((prev) => ({ ...prev, [job.id]: errorMessage(err) }))
+    setWriteNote(null)
+    toast.show('error', `${fallback}: ${errorMessage(err)}`)
+    void queryClient.invalidateQueries({ queryKey: ['api', '/api/cron'] })
   }
 
   const handleToggle = async (job: CronJob) => {
     if (job.actions?.toggle === false) return
     setPendingAction(`toggle-${job.id}`)
+    clearRefusal(job)
     try {
       const response = await toggleMutation.mutateAsync(job)
-      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r, fallback: { enabled: !job.enabled } }))
+      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r }))
     } catch (err) {
-      toast.show('error', `Failed to toggle "${job.name}": ${errorMessage(err)}`)
+      if (isUpstreamRefusal(err)) refuse(job, err, `"${job.name}" was not changed`)
+      else toast.show('error', `Failed to toggle "${job.name}": ${errorMessage(err)}`)
     } finally {
       setPendingAction(null)
     }
@@ -280,10 +305,12 @@ export default function JobsView() {
     setPendingAction(`run-${job.id}`)
     try {
       const response = await runMutation.mutateAsync(job)
-      toast.show('success', `"${job.name}" triggered`)
+      if (isUnconfirmedWrite(response)) toast.show('warning', `"${job.name}": run sent, not yet confirmed`)
+      else toast.show('success', `"${job.name}" triggered`)
       await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r }))
     } catch (err) {
-      toast.show('error', `Run failed: ${errorMessage(err)}`)
+      if (isUpstreamRefusal(err)) refuse(job, err, `"${job.name}" did not run`)
+      else toast.show('error', `Run failed: ${errorMessage(err)}`)
     } finally {
       setRunTarget(null)
       setPendingAction(null)
@@ -302,11 +329,15 @@ export default function JobsView() {
     setPendingAction(`delete-${job.id}`)
     try {
       const response = await deleteMutation.mutateAsync(job)
-      toast.show('success', `"${job.name}" deleted`)
-      if (selectedJob?.id === job.id) setJobParam(null)
-      await showCommitted(response, () => ({ kind: 'delete', jobId: job.id }))
+      if (isUnconfirmedWrite(response)) toast.show('warning', `"${job.name}": delete sent, not yet confirmed`)
+      else {
+        toast.show('success', `"${job.name}" deleted`)
+        if (selectedJob?.id === job.id) setJobParam(null)
+      }
+      await showCommitted(response, (r) => ({ kind: 'delete', jobId: job.id, response: r }))
     } catch (err) {
-      toast.show('error', `Delete failed: ${errorMessage(err)}`)
+      if (isUpstreamRefusal(err)) refuse(job, err, `"${job.name}" was not deleted`)
+      else toast.show('error', `Delete failed: ${errorMessage(err)}`)
     } finally {
       setDeleteTarget(null)
       setPendingAction(null)
@@ -347,15 +378,18 @@ export default function JobsView() {
   const handleCreateJob = async (job: CreateCronJobPayload) => {
     try {
       const response = await createMutation.mutateAsync(job)
-      toast.show('success', `"${job.name}" created`)
+      const unconfirmed = isUnconfirmedWrite(response)
+      if (unconfirmed) toast.show('warning', `"${job.name}": create sent, not yet confirmed`)
+      else toast.show('success', `"${job.name}" created`)
       await showCommitted(response, (r) => ({ kind: 'create', response: r }))
       const created = response?.entity ?? response?.job
-      if (created?.id && created.name) {
+      if (!unconfirmed && created?.id && created.name) {
         if (passesFilters(created as CronJob)) revealCreated(created.id)
         else setHiddenCreated({ id: created.id, name: created.name })
       }
     } catch (err) {
-      toast.show('error', `Create failed: ${errorMessage(err)}`)
+      toast.show('error', `${isUpstreamRefusal(err) ? 'Not created' : 'Create failed'}: ${errorMessage(err)}`)
+      if (isUpstreamRefusal(err)) void queryClient.invalidateQueries({ queryKey: ['api', '/api/cron'] })
       throw err
     }
   }
@@ -363,12 +397,15 @@ export default function JobsView() {
   const handleModelChange = async (job: CronJob, model: string) => {
     if (job.actions?.model === false) return
     setPendingAction(`model-${job.id}`)
+    clearRefusal(job)
     try {
       const response = await modelMutation.mutateAsync({ job, model })
-      toast.show('success', `"${job.name}" model set to ${model || 'default'}`)
-      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r, fallback: { model } }))
+      if (isUnconfirmedWrite(response)) toast.show('warning', `"${job.name}": model change sent, not yet confirmed`)
+      else toast.show('success', `"${job.name}" model set to ${model || 'default'}`)
+      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r }))
     } catch (err) {
-      toast.show('error', `Model update failed: ${errorMessage(err)}`)
+      if (isUpstreamRefusal(err)) refuse(job, err, `"${job.name}" model was not changed`)
+      else toast.show('error', `Model update failed: ${errorMessage(err)}`)
     } finally {
       setPendingAction(null)
     }
@@ -439,6 +476,17 @@ export default function JobsView() {
               />
             )}
             <StatePill state={state.state} label={state.label} />
+            {job.verified === false && (
+              <span className={styles.unconfirmed}>
+                <StateDot state="warning" />
+                Not confirmed
+              </span>
+            )}
+            {refusals[job.id] && (
+              <span className={styles.refusal} role="alert">
+                {refusals[job.id]}
+              </span>
+            )}
           </div>
         )
       },
@@ -451,7 +499,7 @@ export default function JobsView() {
     {
       key: 'next',
       header: 'Next run',
-      cell: (job) => (job.enabled ? <TimeAgo className={styles.time} value={job.nextRun} /> : '—'),
+      cell: (job) => <NextRun className={styles.time} job={job} />,
     },
     {
       key: 'model',
@@ -547,7 +595,7 @@ export default function JobsView() {
 
   return (
     <div className={styles.view}>
-      <StaleWriteNote show={catchingUp} />
+      <StaleWriteNote show={writeNote !== null} unconfirmed={writeNote === 'unconfirmed'} />
       {hiddenCreated && (
         <Notice
           tone="info"
@@ -687,6 +735,7 @@ export default function JobsView() {
         displayModel={displayModel}
         staleSince={selectedJob && readings[getCronScheduler(selectedJob)].state === 'stale' ? readings[getCronScheduler(selectedJob)] : null}
         pendingAction={pendingAction}
+        error={selectedJob ? refusals[selectedJob.id] ?? null : null}
         onToggle={handleToggle}
         onRun={(job) => requestRun(job, true)}
         onDelete={(job) => requestDelete(job, true)}
