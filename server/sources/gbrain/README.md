@@ -273,3 +273,41 @@ changed. Final sandbox gate: 648/648 root tests; 132/132 GBrain tests. Ten QA te
 were added; eight fix counter-examples were observed RED before GREEN, while the
 investigation guard and consumer seam were additional passing checks. This is
 scoped live API evidence, not deployment or frontend-rendering confirmation.
+
+## Pre-PR bounded page/search redaction
+
+`lookups.js` uses `redaction.js` for every displayed page/search string. The
+shared `scrubText`/`redactString` protections remain the base. Local lexing shields
+assignment separators to preserve the N4 whole-key/multiword-prose distinction;
+short single-token credentials, provider tokens, auth values, URL passwords,
+database connections and encoded JSON are still withheld. No recursive regex or
+input-controlled recursive call remains in the page redaction path.
+
+Input is capped at 40,000 characters BEFORE lexing, decoding or parsing. Callers
+cannot lift this limit. Decoded quoted examples use an explicit stack, at most
+8 layers, and a 480,000-character aggregate work budget. An example past a limit
+is withheld rather than returned uninspected. Incomplete final quoted/token
+fragments at an input cut are dropped; this prevents exposure of a credential
+fragment after earlier redactions shorten the output. All truncation carries a
+visible `…[truncated]` marker within the existing output length limit. The page's
+existing `truncated` boolean now also includes these local limits; snippets and
+other string fields carry the marker. No new payload fields or dependencies.
+
+The scanner uses monotone cursors and precomputed whitespace/field boundaries,
+so repeated assignment candidates cannot rescan overlapping long suffixes. Its
+regexes are bounded character checks or terminal runs, and quoted strings are
+consumed once. Literal shielding characters are escaped and restored losslessly.
+
+`tests/gbrainRedactionLinearTime.test.js` runs the shared 88-entry 200 KB corpus
+plus whitespace, both backslash/quote spellings and all five assignment-repeat
+reproductions in isolated Node children. Each child has a 5-second SIGKILL
+budget; per-case budgets follow the shared harness's max(250ms, 40x baseline).
+Before repair, whitespace and quotes hit the hard timeout, repeat inputs crashed,
+and truncation failed. Additional fragment, punctuation-token and quoted-prose
+counter-examples were observed RED before repair. Existing positive/negative
+redaction tables remain intact. On the final full run the worst reproduction
+was 29.32ms; the full common corpus's worst entry was 14.89ms. Root tests passed
+711/711; GBrain tests passed 141/141. These are sandbox measurements, not live
+endpoint or deployment proof. Independent review was unavailable: mloop parent
+preflight for mission-control-rehaul/gbrain-reviewer returned NOT_INITIALIZED;
+the author performed a separate bypass/regression pass, not independent review.

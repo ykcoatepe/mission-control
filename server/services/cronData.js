@@ -513,7 +513,7 @@ function createCronService({
     try {
       const { stdout } = await openclawExec(['cron', 'list'], 15000);
       const jobs = parseCronTableOutput(stdout);
-      if (!jobs.length && !/^\s*No cron jobs\b/im.test(stdout || '')) throw new Error('Unrecognized cron table');
+      if (!jobs.length && !String(stdout || '').split('\n').some(line => /^No cron jobs\b/i.test(line.trim()))) throw new Error('Unrecognized cron table');
       if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron table');
       return {
         jobs: jobs.map(normalizeOpenclawCronJob),

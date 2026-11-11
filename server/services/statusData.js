@@ -1,4 +1,46 @@
 const { readOperationsSource } = require('./sessionsData');
+const MAX_STATUS_CHARS = 256 * 1024;
+const MAX_STATUS_LINE_CHARS = 4096;
+
+// Status is a line/table protocol. Never let whitespace cross row boundaries,
+// and never scan an unbounded field looking for a later delimiter. Whole-output
+// overflow fails the read (the source retains last-good); overlong rows are
+// ignored rather than truncated into apparently valid evidence.
+function parseStatusOutput(output) {
+  const text = typeof output === 'string' ? output : '';
+  if (text.length > MAX_STATUS_CHARS) {
+    throw Object.assign(new Error('OpenClaw status output exceeded the parsing limit'), { code: 'status_output_too_large' });
+  }
+  let sessionsMatch = null, modelMatch = null, memoryMatch = null, heartbeatInterval = null, agentsMatch = null;
+  const channels = [];
+  for (const raw of text.split('\n')) {
+    if (!raw || raw.length > MAX_STATUS_LINE_CHARS) continue;
+    const line = raw.trim();
+    if (!line) continue;
+    sessionsMatch ||= line.match(/^(\d{1,12})[ \t]{1,64}active sessions\b/i);
+    const cells = line.split('│').map(cell => cell.trim());
+    if (!cells[0]) cells.shift();
+    if (cells[0] === 'Agents') agentsMatch ||= cells[1]?.match(/^(\d{1,12})\b/) ?? null;
+    if (cells[0] === 'Heartbeat') heartbeatInterval ||= cells[1]?.match(/^([A-Za-z0-9_]{1,64})(?:[ \t·]|$)/) ?? null;
+    const words = line.split(/[ \t│·]+/);
+    const modelIndex = words.indexOf('default');
+    if (!modelMatch && modelIndex >= 0) {
+      const candidate = words[modelIndex + 1]?.split('(')[0];
+      if (candidate && /^[^\s(]{1,256}$/.test(candidate)) modelMatch = [null, candidate];
+    }
+    if (!memoryMatch) {
+      const files = words.indexOf('files'), chunks = words.indexOf('chunks');
+      if (files > 0 && chunks > files && /^\d{1,12}$/.test(words[files - 1]) && /^\d{1,12}$/.test(words[chunks - 1])) {
+        memoryMatch = [null, words[files - 1], words[chunks - 1]];
+      }
+    }
+    if (['Discord', 'WhatsApp', 'Telegram'].includes(cells[0])
+        && ['ON', 'OFF'].includes(cells[1]) && ['OK', 'OFF', 'ERROR'].includes(cells[2]) && cells[3]) {
+      channels.push({ name: cells[0], enabled: cells[1], state: cells[2], detail: redactChannelDetail(cells[3]) });
+    }
+  }
+  return { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels };
+}
 
 function heartbeatValueToSeconds(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -109,8 +151,18 @@ function combinedOutput(result) {
 // CLI channel details sometimes include only a token prefix/suffix; those are
 // credentials too. Preserve status text while removing both previews and values.
 function redactChannelDetail(value) {
-  return String(value || '')
-    .replace(/\btoken\s+(?:config|configured)\s*\([^)]*\)/gi, 'token [redacted]')
+  const bounded = String(value || '').slice(0, MAX_STATUS_LINE_CHARS);
+  const preview = /\btoken[ \t]{1,4096}(?:configured|config)[ \t]{0,4096}\(/gi;
+  let cursor = 0, text = '', match;
+  while ((match = preview.exec(bounded)) !== null) {
+    const closing = bounded.indexOf(')', preview.lastIndex);
+    text += bounded.slice(cursor, match.index) + 'token [redacted]';
+    // A cut/unfinished preview is still a credential. Consume it once and
+    // advance past it; never retry a suffix from every embedded "token".
+    cursor = closing < 0 ? bounded.length : closing + 1;
+    preview.lastIndex = cursor;
+  }
+  return (text + bounded.slice(cursor))
     .replace(/\b(token|api[_ -]?key|secret|password)\s*[:=]\s*[^\s·,;]+/gi, '$1=[redacted]')
     .replace(/\bBearer\s+[^\s·,;]+/gi, 'Bearer [redacted]')
     .replace(/\b\d{6,}:[A-Za-z0-9_.…-]{8,}/g, '[redacted]')
@@ -285,18 +337,7 @@ function createStatusService({
           || '';
       } catch {}
 
-      const sessionsMatch = ocStatus.match(/(?:^|\n)\s*(\d+)\s+active sessions\b/i);
-      const modelMatch = ocStatus.match(/default\s+([^\s(]+)/);
-      const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
-      const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
-      const agentsMatch = ocStatus.match(/Agents\s*│\s*(\d+)/);
-
-      const channels = [];
-      const channelRegex = /│\s*(Discord|WhatsApp|Telegram)\s*│\s*(ON|OFF)\s*│\s*(OK|OFF|ERROR)\s*│\s*(.+?)\s*│/g;
-      let match;
-      while ((match = channelRegex.exec(ocStatus)) !== null) {
-        channels.push({ name: match[1], enabled: match[2], state: match[3], detail: redactChannelDetail(match[4].trim()) });
-      }
+      const { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels } = parseStatusOutput(ocStatus);
 
       const statusShapeObserved = Boolean(
         sessionsMatch || modelMatch || memoryMatch || heartbeatInterval || agentsMatch || channels.length,
@@ -454,4 +495,7 @@ module.exports = {
   mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
   redactChannelDetail,
+  parseStatusOutput,
+  MAX_STATUS_CHARS,
+  MAX_STATUS_LINE_CHARS,
 };

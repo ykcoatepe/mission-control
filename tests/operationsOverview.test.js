@@ -822,11 +822,11 @@ test('promotes caveatless stale GBrain sources to warning with explicit proof', 
   assert.equal(overview.overall.state, 'warning');
   assert.deepEqual(overview.systems.gbrain.caveats, []);
   assert.ok(staleAttention);
-  assert.equal(staleAttention.detailHref, '/gbrain');
+  assert.equal(staleAttention.detailHref, '/');
   assert.deepEqual(staleAttention.evidenceRefs, ['gbrain:source-freshness']);
   assert.ok(staleEvidence);
   assert.equal(staleEvidence.status, 'warning');
-  assert.equal(staleEvidence.detailHref, '/gbrain');
+  assert.equal(staleEvidence.detailHref, '/');
   assert.match(staleEvidence.summary, /3 stale/i);
 });
 

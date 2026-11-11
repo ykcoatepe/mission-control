@@ -3,6 +3,21 @@ const { STATE_RANK, worstState, stateRank } = require('../core/state');
 const { scrubText } = require('../core/scrub');
 const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
+// The one place screen links are chosen. Every value must be a screen that
+// renders (frontend/src/appRoutes.tsx primary/utility routes); a test reads
+// that file and checks every detailHref the backend emits.
+const DETAIL_HREFS = Object.freeze({
+  gbrain: Object.freeze({ default: '/' }),
+  openclaw: Object.freeze({ default: '/services', scheduling: '/automations' }),
+  // blocked or stuck tasks and loop findings are operator work: Attention.
+  hermes: Object.freeze({ default: '/services', scheduling: '/automations', work: '/attention' }),
+});
+
+function detailHref(system, topic = 'default') {
+  const hrefs = DETAIL_HREFS[system];
+  return hrefs[topic] || hrefs.default;
+}
+
 const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
 // The worst system state by the one ordering (server/core/state.js); with no
@@ -245,7 +260,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     return unavailableSystem(
       'openclaw',
       'OpenClaw',
-      '/systems',
+      detailHref('openclaw'),
       generatedAt,
       'OpenClaw status and sessions could not be read.',
     );
@@ -297,7 +312,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           ? 'Status does not expose a comparable active-session count'
         : `${statusSessions} active sessions reported by status`,
       '/api/status',
-      '/systems',
+      detailHref('openclaw'),
     ),
     evidence(
       'openclaw:sessions',
@@ -309,7 +324,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
         ? `Session evidence unavailable; status reports ${activeSessions} active sessions`
         : `${activeSessions} active sessions`,
       '/api/sessions',
-      '/sessions',
+      detailHref('openclaw'),
     ),
     evidence(
       'openclaw:heartbeat',
@@ -323,7 +338,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           ? 'Heartbeat stale or unavailable'
           : 'Heartbeat current',
       '/api/status',
-      '/systems',
+      detailHref('openclaw'),
     ),
   ];
   if (cronUnavailable) {
@@ -335,7 +350,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       cronAt,
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
-      '/automations',
+      detailHref('openclaw', 'scheduling'),
     ));
   }
   const attention = [];
@@ -347,7 +362,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_status_unavailable',
       title: 'OpenClaw status evidence unavailable',
       detail: 'The status reader did not return evidence; session evidence remains available.',
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:status-sessions', 'openclaw:heartbeat'],
     });
   }
@@ -359,7 +374,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_sessions_unavailable',
       title: 'OpenClaw session evidence unavailable',
       detail: 'The session reader did not return evidence; status evidence remains available.',
-      detailHref: '/sessions',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:sessions'],
     });
   }
@@ -371,7 +386,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_cron_unavailable',
       title: 'OpenClaw scheduling evidence unavailable',
       detail: 'The cron reader did not return OpenClaw scheduling evidence.',
-      detailHref: '/automations',
+      detailHref: detailHref('openclaw', 'scheduling'),
       evidenceRefs: ['openclaw:cron'],
     });
   }
@@ -383,7 +398,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_session_count_conflict',
       title: 'OpenClaw session evidence conflicts',
       detail: sessionConflictDetail,
-      detailHref: '/sessions',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:status-sessions', 'openclaw:sessions'],
     });
   }
@@ -395,7 +410,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_heartbeat_stale',
       title: 'OpenClaw heartbeat needs fresh proof',
       detail: 'The last verified heartbeat is older than two hours or unavailable.',
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:heartbeat'],
     });
   }
@@ -418,7 +433,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           : null,
       },
       evidence: openclawEvidence,
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
     },
     attention,
   };
@@ -447,7 +462,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     return unavailableSystem(
       'hermes',
       'Hermes',
-      '/work',
+      detailHref('hermes'),
       generatedAt,
       'Hermes gateway and Kanban could not be read.',
     );
@@ -457,6 +472,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
   const attention = [];
   const caveats = [];
   const states = [];
+  let blockedCaveat = null;
 
   // Gateway
   let gatewayAt = null;
@@ -471,7 +487,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     };
     hermesEvidence.push(evidence(
       'hermes:gateway', 'hermes', 'gateway', gatewayState, gatewayAt,
-      summaries[gateway.status], 'hermes gateway state', '/work',
+      summaries[gateway.status], 'hermes gateway state', detailHref('hermes'),
     ));
     if (gateway.status === 'down') {
       attention.push({
@@ -481,7 +497,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_gateway_down',
         title: 'Hermes gateway is down',
         detail: 'The Hermes gateway process is not running; Kanban reads do not prove Hermes is serving.',
-        detailHref: '/work',
+        detailHref: detailHref('hermes'),
         evidenceRefs: ['hermes:gateway'],
       });
       caveats.push('Hermes gateway is down.');
@@ -493,7 +509,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_gateway_stale',
         title: 'Hermes gateway heartbeat is stale',
         detail: 'The gateway process exists but has not refreshed its heartbeat recently.',
-        detailHref: '/work',
+        detailHref: detailHref('hermes'),
         evidenceRefs: ['hermes:gateway'],
       });
       caveats.push('Hermes gateway heartbeat is stale.');
@@ -502,7 +518,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:gateway', 'hermes', 'gateway', 'unavailable', null,
-      'Hermes gateway liveness unavailable', 'hermes gateway state', '/work',
+      'Hermes gateway liveness unavailable', 'hermes gateway state', detailHref('hermes'),
     ));
     attention.push({
       id: 'hermes:gateway-unverified',
@@ -511,7 +527,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_gateway_unverified',
       title: 'Hermes gateway liveness unverified',
       detail: 'The gateway state could not be read, so Hermes cannot be reported healthy.',
-      detailHref: '/work',
+      detailHref: detailHref('hermes'),
       evidenceRefs: ['hermes:gateway'],
     });
     caveats.push('Hermes gateway liveness is unverified.');
@@ -531,7 +547,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     const proof = evidence(
       'hermes:kanban', 'hermes', 'work', kanbanState, at,
       `${running} running, ${blocked} blocked${kanbanStale ? ' (stale)' : ''}`,
-      '/api/hermes-kanban', '/work',
+      '/api/hermes-kanban', detailHref('hermes', blocked > 0 ? 'work' : 'default'),
     );
     hermesEvidence.push(proof);
     if (blocked > 0) {
@@ -542,10 +558,11 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_tasks_blocked',
         title: 'Hermes work is blocked',
         detail: `${blocked} tasks require operator review.`,
-        detailHref: '/work',
+        detailHref: detailHref('hermes', 'work'),
         evidenceRefs: [proof.id],
       });
       caveats.push(`${blocked} Hermes tasks are blocked.`);
+      blockedCaveat = caveats[caveats.length - 1];
     }
     if (kanbanStale) {
       caveats.push(`Hermes Kanban data is stale${kanbanAgeSeconds === null ? '' : ` (${formatAge(kanbanAgeSeconds)} old)`}.`);
@@ -554,7 +571,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:kanban', 'hermes', 'work', 'unavailable', null,
-      'Hermes Kanban could not be read', '/api/hermes-kanban', '/work',
+      'Hermes Kanban could not be read', '/api/hermes-kanban', detailHref('hermes'),
     ));
     attention.push({
       id: 'hermes:kanban-unavailable',
@@ -563,7 +580,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_kanban_unavailable',
       title: 'Hermes Kanban could not be read',
       detail: 'The gateway state is known, but work evidence is unavailable.',
-      detailHref: '/work',
+      detailHref: detailHref('hermes'),
       evidenceRefs: ['hermes:kanban'],
     });
     caveats.push('Hermes Kanban could not be read.');
@@ -577,7 +594,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:cron', 'hermes', 'scheduling', 'unavailable', cronAt,
-      'Hermes scheduling evidence unavailable', '/api/cron', '/automations',
+      'Hermes scheduling evidence unavailable', '/api/cron', detailHref('hermes', 'scheduling'),
     ));
     attention.push({
       id: 'hermes:cron-unavailable',
@@ -586,7 +603,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_cron_unavailable',
       title: 'Hermes scheduling evidence unavailable',
       detail: 'The cron reader did not return Hermes scheduling evidence.',
-      detailHref: '/automations',
+      detailHref: detailHref('hermes', 'scheduling'),
       evidenceRefs: ['hermes:cron'],
     });
     caveats.push('Hermes scheduling evidence is unavailable.');
@@ -594,7 +611,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     hermesEvidence.push(evidence(
       'hermes:cron', 'hermes', 'scheduling', 'healthy', cronAt,
       `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
-      '/api/cron', '/automations',
+      '/api/cron', detailHref('hermes', 'scheduling'),
     ));
     if (cronStale) caveats.push('Hermes scheduling evidence is stale.');
   }
@@ -625,7 +642,8 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         ...(kanbanAgeSeconds !== null ? { kanbanAgeSeconds } : {}),
       },
       evidence: hermesEvidence,
-      detailHref: '/work',
+      // The system links where its leading reason is handled.
+      detailHref: detailHref('hermes', caveats[0] && caveats[0] === blockedCaveat ? 'work' : 'default'),
     },
     attention,
   };
@@ -634,27 +652,27 @@ function adaptHermes(board, cron, generatedAt, gateway) {
 function adaptGBrain(overview, generatedAt) {
   // The GBrain producer owns this verdict; do not reconstruct it from score/caveats.
   if (overview?.verdict) {
-    if (!isGBrainVerdict(overview.verdict)) return unavailableSystem('gbrain', 'GBrain', '/gbrain', generatedAt, 'GBrain verdict invalid.');
+    if (!isGBrainVerdict(overview.verdict)) return unavailableSystem('gbrain', 'GBrain', detailHref('gbrain'), generatedAt, 'GBrain verdict invalid.');
     const { state } = overview.verdict;
     const caveats = verdictCaveats(overview.verdict);
     const at = observedAt(overview.meta?.observedAt || overview.trust?.lastVerifiedAt, generatedAt);
     const proof = evidence('gbrain:trust', 'gbrain', 'trust', state, at,
-      overview.trust?.label || `GBrain ${state}`, '/api/gbrain/overview', '/gbrain');
+      overview.trust?.label || `GBrain ${state}`, '/api/gbrain/overview', detailHref('gbrain'));
     return { system: { id: 'gbrain', label: 'GBrain', state, observedAt: at,
       freshness: state === 'unavailable' ? 'unavailable' : overview.meta?.stale || overview.live?.sources?.freshness?.staleCount > 0 ? 'stale' : 'fresh',
       caveats, metrics: { trustScore: overview.trust?.score ?? null,
         staleSources: overview.live?.sources?.freshness?.staleCount ?? null, caveats: caveats.length },
-      evidence: [proof], detailHref: '/gbrain' },
+      evidence: [proof], detailHref: detailHref('gbrain') },
     attention: overview.verdict.reasons.filter((r) => ['warning', 'critical', 'unavailable'].includes(r.state)).map((r, index) => ({
       id: `gbrain:caveat:${index}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
-      title: 'GBrain requires attention', detail: r.text, detailHref: '/gbrain', evidenceRefs: [proof.id],
+      title: 'GBrain requires attention', detail: r.text, detailHref: detailHref('gbrain'), evidenceRefs: [proof.id],
     })) };
   }
   if (!hasGBrainProof(overview, generatedAt)) {
     return unavailableSystem(
       'gbrain',
       'GBrain',
-      '/gbrain',
+      detailHref('gbrain'),
       generatedAt,
       'GBrain overview could not be read.',
     );
@@ -674,7 +692,7 @@ function adaptGBrain(overview, generatedAt) {
     at,
     `${cleanText(overview?.trust?.label, 'GBrain trust unavailable')} · ${Number(overview?.trust?.score || 0)}/100`,
     '/api/gbrain/overview',
-    '/gbrain',
+    detailHref('gbrain'),
   );
   const staleProof = sourceStale ? evidence(
     'gbrain:source-freshness',
@@ -684,7 +702,7 @@ function adaptGBrain(overview, generatedAt) {
     at,
     `${staleSources} stale GBrain sources`,
     '/api/gbrain/overview',
-    '/gbrain',
+    detailHref('gbrain'),
   ) : null;
   const attention = caveats.map((detail, index) => ({
     id: `gbrain:caveat:${index}`,
@@ -693,7 +711,7 @@ function adaptGBrain(overview, generatedAt) {
     reasonCode: 'gbrain_active_caveat',
     title: 'GBrain has an active caveat',
     detail,
-    detailHref: '/gbrain',
+    detailHref: detailHref('gbrain'),
     evidenceRefs: [proof.id],
   }));
   if (staleProof) {
@@ -704,7 +722,7 @@ function adaptGBrain(overview, generatedAt) {
       reasonCode: 'gbrain_stale_sources',
       title: 'GBrain source evidence is stale',
       detail: `${staleSources} sources require a fresh verification signal.`,
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
       evidenceRefs: [staleProof.id],
     });
   }
@@ -722,7 +740,7 @@ function adaptGBrain(overview, generatedAt) {
         caveats: caveats.length,
       },
       evidence: staleProof ? [proof, staleProof] : [proof],
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
     },
     attention,
   };
@@ -743,7 +761,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
       generatedAt,
       'GBrain capability metadata unavailable',
       'GBrain capability registry',
-      '/gbrain',
+      detailHref('gbrain'),
     );
     adapted.gbrain.system.evidence.push(capabilityProof);
     adapted.gbrain.attention.push({
@@ -753,7 +771,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
       reasonCode: 'gbrain_capabilities_unavailable',
       title: 'GBrain capability metadata unavailable',
       detail: 'Read evidence remains available, but the safe action catalog could not be read.',
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
       evidenceRefs: [capabilityProof.id],
     });
   }
@@ -1032,6 +1050,7 @@ function createOperationsReaders({
 }
 
 module.exports = {
+  DETAIL_HREFS,
   OPERATIONS_SOURCE_BUDGETS,
   OPERATIONS_SOURCE_NAMES,
   STATE_RANK,

@@ -205,7 +205,7 @@ test('signals: nothing observed yields nulls and unavailable systems, never zero
   });
   assert.equal(status, 200);
   assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage']);
-  assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null, reason: 'GBrain overview could not be read.', detailHref: '/gbrain' });
+  assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null, reason: 'GBrain overview could not be read.', detailHref: '/' });
   assert.equal(body.data.automations, null);
   assert.equal(body.data.loops, null);
   assert.equal(body.data.services, null);
@@ -242,7 +242,7 @@ test('signals compose loops, services, automations and usage from memory', async
     usageSummary: () => ({ todayUsd: 3.5, budgetUsedPct: 41 }),
     now: () => T0,
   });
-  assert.deepEqual(body.data.systems.hermes, { state: 'healthy', observedAt: generatedAt, reason: null, detailHref: '/work' });
+  assert.deepEqual(body.data.systems.hermes, { state: 'healthy', observedAt: generatedAt, reason: null, detailHref: '/services' });
   assert.deepEqual(body.data.loops, { openFindings: 3, overdueConfirmations: 2 });
   assert.deepEqual(body.data.services, { down: 3 });
   assert.deepEqual(body.data.automations, { failed: 1, nextRunAt: '2026-07-10T12:30:00.000Z' });

@@ -1,7 +1,7 @@
 'use strict';
 const { createSource } = require('../../core/source');
 const { httpError } = require('../../core/http');
-const { redactString } = require('../../core/config');
+const { safeText, safeTextResult } = require('./redaction');
 const { createEvidenceCache } = require('./cache');
 const { readError } = require('./client');
 const SLUG_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]*(?:\/[a-zA-Z0-9][a-zA-Z0-9_-]*)*$/;
@@ -20,71 +20,6 @@ function queryInput(value) {
 }
 const privateRecord = (r) => [r.type, r.slug, r.chunk_source, r.source_kind].some((v) =>
   typeof v === 'string' && /transcript|conversation|(?:^|[/:_-])sessions?(?:[/:_-]|$)/i.test(v));
-const PAGE_CREDENTIAL_KEYS = new Set([
-  'token', 'pass', 'password', 'passwd', 'pwd', 'secret', 'apikey', 'authorization', 'credential',
-  // Previously supported complete credential names; never match a substring.
-  'secretkey', 'accesstoken', 'authtoken',
-]);
-function redactPageText(text) {
-  // Segment assignments before core redaction: applying core's strong-name rule
-  // to an entire prose RHS would erase its first word. Other core protections
-  // (provider tokens, Authorization, URL userinfo, private keys) stay in use.
-  const pairs = /(^|[\r\n{,;])([ \t]*(?:[-*+][ \t]+)?["'`]?)([A-Za-z][A-Za-z0-9_. -]*?)(["'`]?[ \t]*(?::(?!\/\/)|=)\s*)("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`[^`]*`|[^\r\n,;{}\[\]]*)/g;
-  let output = ''; let cursor = 0;
-  for (const match of text.matchAll(pairs)) {
-    const [, boundary, lead, name, separator, raw] = match;
-    const value = raw.trimEnd(); const trailing = raw.slice(value.length);
-    const quote = /^["'`]/.test(value) && value.at(-1) === value[0] ? value[0] : '';
-    let decoded = quote ? value.slice(1, -1) : value;
-    if (quote === '"') { try { decoded = JSON.parse(value); } catch {} }
-    const key = name.trim().toLowerCase()
-      .replace(/^api(?:[ \t]+|[_.-])key$/, 'apikey')
-      .replace(/^secret[_-]key$/, 'secretkey')
-      .replace(/^(access|auth)[_-]token$/, '$1token');
-    const following = text.slice(match.index + match[0].length);
-    const quotedProse = quote && /^[ \t]+[^ \t\r\n,;{}\[\]#]/.test(following);
-    let replacement;
-    const databasePair = decoded.match(/^(\S{4,})([ \t]+)((?:postgres(?:ql)?|mysql|redis):\/\/\S+)$/i);
-    if (quotedProse) replacement = redactPageText(decoded);
-    else if (PAGE_CREDENTIAL_KEYS.has(key) && databasePair) {
-      // Adjacent database connection fields are structured credentials, not prose.
-      replacement = '[redacted]' + databasePair[2] + redactString(databasePair[3]);
-    } else if (PAGE_CREDENTIAL_KEYS.has(key) && /^\S{4,}$/u.test(decoded)) replacement = '[redacted]';
-    else if (key === 'authorization' && /^(?:basic|bearer|token|digest)\s+\S{4,}$/i.test(decoded)) {
-      replacement = redactString(`Authorization: ${decoded}`).slice('Authorization: '.length);
-    } else replacement = redactPageText(decoded);
-    let rendered = value;
-    if (replacement !== decoded) rendered = quote === '"' ? JSON.stringify(replacement)
-      : quote ? `${quote}${replacement}${quote}` : replacement;
-    const left = boundary + lead + name + separator;
-    output += redactString(text.slice(cursor, match.index)) + redactString(left) + rendered + trailing;
-    cursor = match.index + match[0].length;
-  }
-  return output + redactString(text.slice(cursor));
-}
-function redactQuotedExamples(text) {
-  // Serialized JSON examples can encode credential field names/quotes more than
-  // once. Decode only valid quoted string literals, inspect their shorter value,
-  // and re-encode only if something was actually redacted. Prose stays byte-for-byte.
-  return text.replace(/"(?:\\.|[^"\\])*"/g, (quoted) => {
-    if (!quoted.includes('\\')) return quoted;
-    try {
-      const decoded = JSON.parse(quoted);
-      const redacted = redactPageText(redactQuotedExamples(decoded));
-      return redacted === decoded ? quoted : JSON.stringify(redacted);
-    } catch { return quoted; }
-  });
-}
-function safeText(value, max = 1000) {
-  if (typeof value !== 'string') return null;
-  // Core handles JSON/TOML assignments, private keys, provider token formats,
-  // Authorization schemes and URL passwords. Page-specific short API secrets
-  // and database connection strings are also withheld, before truncation.
-  return redactPageText(redactQuotedExamples(value))
-    .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]')
-    .replace(/(?:postgres(?:ql)?|mysql|redis):\/\/[^\s)"']+/gi, '[redacted connection]')
-    .slice(0, max);
-}
 function createLookups({ client, now = Date.now, ttlMs = 15_000, capacity = 100 } = {}) {
   const cache = createEvidenceCache({ capacity, useful: (data) => data != null
     && (Array.isArray(data.results) ? data.results.length > 0 : typeof data.content === 'string' && data.content.length > 0) });
@@ -127,9 +62,10 @@ function createLookups({ client, now = Date.now, ttlMs = 15_000, capacity = 100 
         if (p.slug !== slug) throw readError('gbrain_page_unavailable');
         if (privateRecord(p)) throw readError('gbrain_private_content');
         if (typeof p.window?.text !== 'string') throw readError('gbrain_invalid_payload');
-        return { slug: safeText(slug, 240), title: safeText(p.title), type: safeText(p.type, 80), content: safeText(p.window.text, 40_000),
+        const content = safeTextResult(p.window.text, 40_000);
+        return { slug: safeText(slug, 240), title: safeText(p.title), type: safeText(p.type, 80), content: content.text,
           revision: safeText(p.revision, 100), updatedAt: safeText(p.updated_at, 80),
-          truncated: Boolean(p.truncated || (typeof p.size?.total_bytes === 'number' && p.window.byte_end < p.size.total_bytes)) };
+          truncated: Boolean(content.truncated || p.truncated || (typeof p.size?.total_bytes === 'number' && p.window.byte_end < p.size.total_bytes)) };
       });
     },
   };

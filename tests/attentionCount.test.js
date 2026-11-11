@@ -40,7 +40,7 @@ function loopsSourceFor({ checkRows, teyit = [] }) {
 }
 
 function overviewWith(attention = [], systems = {}) {
-  const system = (id, extra = {}) => ({ id, state: 'healthy', observedAt: '2026-11-11T09:59:00.000Z', caveats: [], detailHref: `/${id}`, ...extra });
+  const system = (id, extra = {}) => ({ id, state: 'healthy', observedAt: '2026-11-11T09:59:00.000Z', caveats: [], detailHref: id === 'gbrain' ? '/' : '/services', ...extra });
   return {
     async getOverview() {
       return {
@@ -150,22 +150,22 @@ test('signals give each non-healthy system a scrubbed reason and its detail link
       state: 'warning',
       observedAt: '2026-11-11T09:59:00.000Z',
       caveats: ['Heartbeat proof is stale; see /Users/alice/.openclaw/heartbeat.json'],
-      detailHref: '/systems',
+      detailHref: '/services',
     },
-    gbrain: { id: 'gbrain', state: 'unavailable', observedAt: null, caveats: [], detailHref: '/gbrain' },
+    gbrain: { id: 'gbrain', state: 'unavailable', observedAt: null, caveats: [], detailHref: '/' },
   });
   const { signals } = await both({ loopsSource: empty, overview });
   assert.deepEqual(signals.data.systems.openclaw, {
     state: 'warning',
     observedAt: '2026-11-11T09:59:00.000Z',
     reason: 'Heartbeat proof is stale; see ~/.openclaw/heartbeat.json',
-    detailHref: '/systems',
+    detailHref: '/services',
   });
   // No caveat: the first attention item for the system, else a plain fallback.
   assert.equal(signals.data.systems.gbrain.reason, 'GBrain evidence is unavailable.');
-  assert.equal(signals.data.systems.gbrain.detailHref, '/gbrain');
+  assert.equal(signals.data.systems.gbrain.detailHref, '/');
   assert.equal(signals.data.systems.hermes.reason, null);
-  assert.equal(signals.data.systems.hermes.detailHref, '/hermes');
+  assert.equal(signals.data.systems.hermes.detailHref, '/services');
 });
 
 // --- review fix round 1: missing and overlapping evidence -----------------

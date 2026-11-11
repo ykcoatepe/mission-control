@@ -5,6 +5,32 @@ const { redact, publicMcView, validateMcConfig, PUBLIC_MODULE_IDS } = require('.
 const { httpError } = require('../core/http');
 const { homeRelativePath } = require('../core/scrub');
 
+// The core scanner deliberately bounds URL schemes. Exports must also hide
+// userinfo behind longer schemes. Scan separators instead of retrying an
+// unbounded scheme pattern at every letter. Backward scheme runs are disjoint
+// (a previous :// stops them); forward authority runs end at the next slash or
+// whitespace, before another candidate's authority can start. Total work O(n).
+function hasUrlCredentials(value) {
+  const isLetter = code => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+  for (let separator = value.indexOf('://'); separator >= 0; separator = value.indexOf('://', separator + 3)) {
+    let letter = false;
+    for (let i = separator - 1; i >= 0; i--) {
+      const code = value.charCodeAt(i);
+      if (isLetter(code)) letter = true;
+      else if (!((code >= 48 && code <= 57) || code === 43 || code === 45 || code === 46)) break;
+    }
+    if (!letter) continue;
+    let colon = false;
+    for (let i = separator + 3; i < value.length; i++) {
+      const char = value[i];
+      if (char === '/' || /^\s$/.test(char)) break;
+      if (char === ':') colon = true;
+      if (char === '@' && colon) return true;
+    }
+  }
+  return false;
+}
+
 function normalizeMonthlyBudget(monthly) {
   if (monthly === null) return null;
   if (typeof monthly !== 'number' || !Number.isFinite(monthly) || monthly < 0) {
@@ -204,7 +230,7 @@ function createSettingsService({
       if (/(token|secret|password|api[_-]?key|access[_-]?key|credential|authorization|private[_-]?key|connection[_-]?string|(?:database|db)[_-]?url|dsn)/i.test(key)) return value == null ? null : '[redacted]';
       if (Array.isArray(value)) return value.map((item) => stripCredentials(item));
       if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, stripCredentials(item, name)]));
-      if (typeof value === 'string' && /[a-z][a-z0-9+.-]*:\/\/[^/\s]*:[^/\s]*@/i.test(value)) return '[redacted]';
+      if (typeof value === 'string' && hasUrlCredentials(value)) return '[redacted]';
       return value;
     }
     return stripCredentials(redact(mcConfig));
