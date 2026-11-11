@@ -82,13 +82,26 @@ describe('ProvidersPanel', () => {
     expect(row.slice(2, 5)).toEqual(['—', '—', '—'])
   })
 
-  it('keeps a real zero reading as zero: a platform that was read and used nothing', async () => {
+  it('a platform that was read and recorded nothing is "No usage recorded" with dashes, not Ready with zeros', async () => {
     const host = await render([
-      provider({ id: 'openclaw', label: 'OpenClaw', tokens: 0, apiEquivalentUsd: 0, billedUsd: 0 }),
+      provider({ id: 'openclaw', label: 'OpenClaw', tokens: 0, apiEquivalentUsd: 0, billedUsd: 0, note: 'Local usage records; billing unknown unless explicitly recorded' }),
     ])
     const [row] = cells(host)
-    expect(row[1]).toContain('Ready')
-    expect(row.slice(2, 5)).toEqual(['0', '$0.00', '$0.00'])
+    expect(row[1]).toContain('No usage recorded')
+    expect(row[1]).not.toContain('Ready')
+    expect(row.slice(2, 5)).toEqual(['—', '—', '—'])
+    expect(host.querySelector('tbody tr')!.textContent).not.toMatch(/\$0/)
+  })
+
+  it('billed shows a figure only when billing is known: money actually billed, or an explicit billingKnown', async () => {
+    const host = await render([
+      provider({ id: 'a', label: 'A', billedUsd: 0 }),
+      provider({ id: 'b', label: 'B', billedUsd: 0, billingKnown: true }),
+      provider({ id: 'c', label: 'C', billedUsd: 12.5 }),
+      provider({ id: 'd', label: 'D', billedUsd: null, billingKnown: true }),
+    ])
+    const rows = cells(host)
+    expect(rows.map(row => row[4])).toEqual(['—', '$0.00', '$12.50', '—'])
   })
 
   it('marks stale and partial providers in amber words, not as ready', async () => {

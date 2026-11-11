@@ -27,6 +27,15 @@ import type { UiState } from '../lib/state'
 import { fetchJson, useApi } from '../lib/hooks'
 import { nextTokenUsageRefetch, shouldRetryTokenUsageFast } from './ollamaTokenRetry'
 import type { TokenUsageRetryState } from './ollamaTokenRetry'
+import {
+  describeTokenUsage,
+  finiteNumber,
+  formatMiB,
+  formatSize,
+  formatTokens,
+  gpuLoadLabel,
+  splitLocalTokens,
+} from './ollamaFormat'
 import styles from './OllamaMonitor.module.css'
 
 type OllamaModel = {
@@ -102,12 +111,12 @@ type OllamaTelemetryHistoryResponse = {
 
 type OllamaModelTelemetryItem = {
   name: string
-  requestCount: number
-  errorCount: number
-  errorRate: number
+  requestCount: number | null
+  errorCount: number | null
+  errorRate: number | null
   avgLatencyMs: number | null
   p95LatencyMs: number | null
-  requestsPerMinute: number
+  requestsPerMinute: number | null
   status: string
   estimated: boolean
 }
@@ -118,7 +127,7 @@ type OllamaModelTelemetryResponse = {
   estimated: boolean
   telemetrySource: string
   limitations?: string[]
-  windowMs: number
+  windowMs: number | null
   models: OllamaModelTelemetryItem[]
 }
 
@@ -217,27 +226,6 @@ const PERIOD_OPTIONS: { value: UsagePeriod; label: string }[] = [
   { value: 'month', label: 'This month' },
 ]
 
-function formatBytes(bytes?: number | null) {
-  if (!Number.isFinite(bytes || NaN) || (bytes || 0) <= 0) return '—'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = Number(bytes)
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`
-}
-
-function formatMiB(v?: number | null) {
-  if (typeof v !== 'number' || !Number.isFinite(v) || v < 0) return '—'
-  return v >= 1024 ? `${(v / 1024).toFixed(1)} GB` : `${Math.round(v)} MB`
-}
-
-function finiteNumber(value?: number | null): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
-
 function presentText(value?: string | null): string | null {
   const text = String(value || '').trim()
   return text && text !== '—' ? text : null
@@ -299,15 +287,6 @@ function formatMetric(value?: number | null, digits = 2) {
 function formatErrorRate(rate?: number | null) {
   if (!Number.isFinite(rate as number)) return '—'
   return (Number(rate) * 100).toFixed(1) + '%'
-}
-
-function formatTokens(value?: number | null) {
-  const n = Number(value || 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n >= 10_000_000_000 ? 1 : 2)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 1 : 2)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 1 : 2)}K`
-  return String(Math.round(n))
 }
 
 function canonicalLocalModelName(value?: string | null) {
@@ -413,13 +392,21 @@ export default function OllamaMonitor() {
   }, [data?.models])
   const modelMetrics = useMemo(() => modelTelemetryData?.models || [], [modelTelemetryData?.models])
   const modelTelemetryIsEstimated = !!modelTelemetryData?.estimated
+  // Per-model request and error figures exist only when the API actually measured them.
+  const requestFiguresMeasured =
+    !modelTelemetryIsEstimated &&
+    modelMetrics.some((metric) => finiteNumber(metric.requestsPerMinute) !== null || finiteNumber(metric.errorRate) !== null)
+  const requestFiguresUnmeasured = !!modelTelemetryData && !modelTelemetryIsEstimated && !requestFiguresMeasured
   const modelMetricMap = useMemo(() => new Map(modelMetrics.map((metric) => [metric.name, metric])), [modelMetrics])
   const modelTokenUsageMap = useMemo(() => aggregateLocalTokenUsage(tokenUsageData?.byService || []), [tokenUsageData?.byService])
-  const periodTokens = useMemo(() => {
-    const total = Array.from(modelTokenUsageMap.values()).reduce((sum, usage) => sum + usage.tokens, 0)
-    const matched = models.reduce((sum, model) => sum + (modelTokenUsageMap.get(canonicalLocalModelName(model.name))?.tokens || 0), 0)
-    return matched || total
-  }, [modelTokenUsageMap, models])
+  const tokenSplit = useMemo(
+    () =>
+      splitLocalTokens(
+        modelTokenUsageMap,
+        new Set(models.map((model) => canonicalLocalModelName(model.name))),
+      ),
+    [modelTokenUsageMap, models],
+  )
   const probeSamples = useMemo(() => {
     const counts = modelMetrics.map((metric) => finiteNumber(metric.requestCount)).filter((n): n is number => n !== null)
     return counts.length ? Math.max(...counts) : null
@@ -491,20 +478,22 @@ export default function OllamaMonitor() {
   const memPercent = finiteNumber(data.system?.memory?.usedPercent)
   const alerts = data.alerts || []
   const status = data.server.status
-  const canAccept = data.runtime.canAcceptRequests
+  // Unknown stays unknown: only an explicit false is "not accepting requests".
+  const canAccept = typeof data.runtime.canAcceptRequests === 'boolean' ? data.runtime.canAcceptRequests : null
   const alertState: UiState = alerts.some((a) => a.severity === 'critical') ? 'critical' : alerts.length ? 'warning' : 'healthy'
   const verdictState = worstState([
     serverState(status),
     scoreState(healthScore),
     alertState,
-    canAccept ? 'healthy' : 'warning',
+    canAccept === null ? 'unavailable' : canAccept ? 'healthy' : 'warning',
   ])
   let verdictText = 'Ollama is running normally'
   if (status === 'offline') verdictText = 'Ollama is not responding'
   else if (status === 'degraded') verdictText = 'Ollama is degraded'
   else if (status !== 'online') verdictText = 'Ollama status could not be read'
-  else if (!canAccept) verdictText = 'Ollama is running but not accepting requests'
+  else if (canAccept === false) verdictText = 'Ollama is running but not accepting requests'
   else if (alerts.length) verdictText = `Ollama is running with ${alerts.length} active alert${alerts.length === 1 ? '' : 's'}`
+  else if (canAccept === null) verdictText = 'Ollama is running, but it did not report whether it accepts requests'
   else if (verdictState !== 'healthy') verdictText = 'Ollama is running with a low health score'
 
   const verdict = (
@@ -565,7 +554,7 @@ export default function OllamaMonitor() {
       },
     },
   ]
-  if (!modelTelemetryIsEstimated && modelMetrics.length > 0) {
+  if (requestFiguresMeasured) {
     columns.push(
       {
         key: 'rate',
@@ -602,7 +591,7 @@ export default function OllamaMonitor() {
   ) : null
 
   const panelDescription = tokenUsageData
-    ? `${formatTokens(periodTokens)} tokens by local models · ${periodLabel.toLowerCase()}`
+    ? describeTokenUsage(tokenSplit, periodLabel)
     : tokenUsageQuery.isFetching && !tokenUsageError
       ? 'Reading token usage…'
       : undefined
@@ -664,7 +653,11 @@ export default function OllamaMonitor() {
           value={memPercent !== null ? Math.round(memPercent) : null}
           unit="%"
           state={percentState(memPercent)}
-          hint={`${formatBytes(data.system?.memory?.usedBytes)} of ${formatBytes(data.system?.memory?.totalBytes)}`}
+          hint={
+            finiteNumber(data.system?.memory?.usedBytes) !== null && finiteNumber(data.system?.memory?.totalBytes) !== null
+              ? `${formatSize(data.system.memory.usedBytes)} of ${formatSize(data.system.memory.totalBytes)}`
+              : undefined
+          }
         />
         <Stat
           label="GPU load"
@@ -675,7 +668,7 @@ export default function OllamaMonitor() {
         <Stat
           label="Models loaded"
           value={finiteNumber(data.runtime.runningModels)}
-          unit={`of ${data.runtime.totalModels}`}
+          unit={finiteNumber(data.runtime.totalModels) !== null ? `of ${data.runtime.totalModels}` : undefined}
           hint={
             runningModelNames.length
               ? runningModelNames.join(', ')
@@ -700,7 +693,9 @@ export default function OllamaMonitor() {
       {modelTelemetryIsEstimated ? (
         <Notice title="Request figures are not measured per model">
           Mission Control samples Ollama&rsquo;s health probe
-          {probeSamples !== null ? ` (${probeSamples} samples in the last ${Math.round((modelTelemetryData?.windowMs || 0) / 60000)} min)` : ''}
+          {probeSamples !== null && finiteNumber(modelTelemetryData?.windowMs) !== null
+            ? ` (${probeSamples} samples in the last ${Math.round((modelTelemetryData?.windowMs ?? 0) / 60000)} min)`
+            : ''}
           {' '}rather than reading a request log, so request and error counts are not shown per model.
           {finiteNumber(data.server.latencyMs) !== null ? ` Latest probe: ${data.server.latencyMs} ms.` : ''}
           {' '}Updated <TimeAgo value={modelTelemetryData?.generatedAt} />.
@@ -733,6 +728,11 @@ export default function OllamaMonitor() {
           maxHeight="none"
           empty={<EmptyState title="No models found" description="Ollama did not list any local models." />}
         />
+        {requestFiguresUnmeasured ? (
+          <p className={styles.tableNote}>
+            Requests per minute and error rate are not shown: Ollama does not count requests per model.
+          </p>
+        ) : null}
       </Panel>
 
       {gpuDevices.length > 0 ? (
@@ -758,7 +758,9 @@ export default function OllamaMonitor() {
                       <DetailRow label={device.memUsedEstimate ? 'Memory (estimated)' : 'Memory used'}>
                         <Mono>
                           {formatMiB(memUsed)}
-                          {memTotal !== null ? ` of ${formatMiB(memTotal)}` : ''}
+                          {memTotal !== null
+                            ? ` of ${formatMiB(memTotal)}${device.memorySource === 'apple-ioreg-unified-memory' ? ' allocated' : ''}`
+                            : ''}
                         </Mono>
                         {memTotal !== null ? (
                           <Meter value={memUsed} max={memTotal} label="GPU memory used" />
@@ -766,7 +768,7 @@ export default function OllamaMonitor() {
                       </DetailRow>
                     ) : null}
                     {memFree !== null ? <DetailRow label="Memory free"><Mono>{formatMiB(memFree)}</Mono></DetailRow> : null}
-                    {utilMemory !== null ? <DetailRow label="Memory pressure"><Mono>{Math.round(utilMemory)}%</Mono></DetailRow> : null}
+                    {utilMemory !== null ? <DetailRow label={gpuLoadLabel(device.metricSource)}><Mono>{Math.round(utilMemory)}%</Mono></DetailRow> : null}
                     {tempC !== null ? <DetailRow label="Temperature"><Mono>{Math.round(tempC)} °C</Mono></DetailRow> : null}
                     {powerDraw !== null || powerLimit !== null ? (
                       <DetailRow label="Power">
@@ -818,11 +820,17 @@ export default function OllamaMonitor() {
                 <DetailRow label="Used by">
                   {selectedUsage && selectedUsage.sources.length > 0 ? selectedUsage.sources.join(', ') : MISSING}
                 </DetailRow>
-                {!modelTelemetryIsEstimated && selectedMetric ? (
+                {requestFiguresMeasured && selectedMetric ? (
                   <>
-                    <DetailRow label="Requests/min"><Mono>{formatMetric(selectedMetric.requestsPerMinute, 2)}</Mono></DetailRow>
-                    <DetailRow label="Requests in window"><Mono>{selectedMetric.requestCount}</Mono></DetailRow>
-                    <DetailRow label="Error rate"><Mono>{formatErrorRate(selectedMetric.errorRate)}</Mono></DetailRow>
+                    <DetailRow label="Requests/min">
+                      {finiteNumber(selectedMetric.requestsPerMinute) !== null ? <Mono>{formatMetric(selectedMetric.requestsPerMinute, 2)}</Mono> : MISSING}
+                    </DetailRow>
+                    <DetailRow label="Requests in window">
+                      {finiteNumber(selectedMetric.requestCount) !== null ? <Mono>{selectedMetric.requestCount}</Mono> : MISSING}
+                    </DetailRow>
+                    <DetailRow label="Error rate">
+                      {finiteNumber(selectedMetric.errorRate) !== null ? <Mono>{formatErrorRate(selectedMetric.errorRate)}</Mono> : MISSING}
+                    </DetailRow>
                     <DetailRow label="p95 latency">
                       {finiteNumber(selectedMetric.p95LatencyMs) !== null ? <Mono>{formatMetric(selectedMetric.p95LatencyMs, 0)} ms</Mono> : MISSING}
                     </DetailRow>

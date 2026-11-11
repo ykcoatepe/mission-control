@@ -6,6 +6,7 @@ import styles from './VerdictLine.module.css'
 export function VerdictLine({
   verdict,
   probeAt,
+  caveat = null,
   stale,
   verifying,
   onRunCheck,
@@ -14,6 +15,8 @@ export function VerdictLine({
 }: {
   verdict: Verdict
   probeAt: string | null
+  /** What the reading could not observe, kept next to a normal verdict. */
+  caveat?: string | null
   stale: boolean
   verifying: boolean
   /** Runs the fast doctor Check through the action flow; never a page reload. */
@@ -31,6 +34,7 @@ export function VerdictLine({
         <p className={styles.probe}>
           last probe <TimeAgo value={probeAt} fallback="not read" />
           {stale && <span className={styles.stale}> · stale</span>}
+          {caveat && <span> · {caveat}</span>}
           {verifying && <span className={styles.stale}> · verifying, waiting for a newer reading</span>}
         </p>
       </div>

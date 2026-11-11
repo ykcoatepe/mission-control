@@ -7,6 +7,7 @@ import {
   formatInterval,
   isAbnormal,
   scheduleNote,
+  parseServiceFilter,
   serviceHint,
   serviceStatus,
   servicesVerdict,
@@ -169,9 +170,36 @@ describe('servicesVerdict', () => {
   it('is healthy only when everything was read and nothing is down', () => {
     expect(servicesVerdict(data())).toEqual({
       state: 'healthy',
-      text: 'All 2 services are running as expected',
+      text: 'No service is down (2 read)',
       detail: '1 running · 1 idle',
     })
+  })
+
+  it('does not say everything is as expected while a service is unidentified or a gateway reports a warning', () => {
+    const unidentified = servicesVerdict(
+      data({ services: [row({ label: 'a' }), row({ label: 'b', kind: null, plist: 'not-found' }), row({ label: 'c', kind: null, plist: 'unreadable' })] }),
+    )
+    expect(unidentified.state).toBe('warning')
+    expect(unidentified.text).toBe('No service is down, but 2 services have no definition file, so their kind is unknown')
+    const one = servicesVerdict(data({ services: [row({ kind: null, plist: 'not-found' })] }))
+    expect(one.text).toBe('No service is down, but 1 service has no definition file, so its kind is unknown')
+
+    const gateway = servicesVerdict(data(), { openclaw: { state: 'warning' }, hermes: { state: 'healthy' } })
+    expect(gateway).toMatchObject({ state: 'warning', text: 'No service is down, but OpenClaw is reporting a warning' })
+    const both = servicesVerdict(
+      data({ services: [row({ kind: null, plist: 'not-found' })] }),
+      { openclaw: { state: 'warning' }, hermes: { state: 'critical' } },
+    )
+    expect(both.state).toBe('critical')
+    expect(both.text).toBe(
+      'No service is down, but 1 service has no definition file, so its kind is unknown, Hermes is reporting a critical state and OpenClaw is reporting a warning',
+    )
+  })
+
+  it('stays healthy when the shell reports the gateways healthy, unread or not at all', () => {
+    expect(servicesVerdict(data(), { openclaw: { state: 'healthy' }, hermes: null }).state).toBe('healthy')
+    expect(servicesVerdict(data(), { openclaw: { state: 'unavailable' } }).state).toBe('healthy')
+    expect(servicesVerdict(data(), null).state).toBe('healthy')
   })
 
   it('names down services', () => {
@@ -210,5 +238,14 @@ describe('servicesVerdict', () => {
 
   it('still reports unreachable endpoints when the service list is missing', () => {
     expect(servicesVerdict(data({ services: null, ollama: up({ state: 'down', reachable: false }) })).state).toBe('critical')
+  })
+})
+
+describe('parseServiceFilter', () => {
+  it('accepts the known filters and falls back to all', () => {
+    expect(parseServiceFilter('down')).toBe('down')
+    expect(parseServiceFilter('one-shot')).toBe('one-shot')
+    expect(parseServiceFilter('bogus')).toBe('all')
+    expect(parseServiceFilter(null)).toBe('all')
   })
 })

@@ -8,7 +8,7 @@ import { ActionStatusNotice } from './brain/ActionStatusNotice'
 import { HealthView, type BrainData } from './brain/HealthView'
 import { KnowledgeView } from './brain/KnowledgeView'
 import { VerdictLine } from './brain/VerdictLine'
-import { buildBrainModel, deriveVerdict } from './brain/lib'
+import { buildBrainModel, deriveVerdict, startSentence } from './brain/lib'
 import { resolveTimeline } from './brain/BrainHomeState'
 import { useGBrainActions } from './brain/useGBrainActions'
 import styles from './brain/BrainHome.module.css'
@@ -97,6 +97,7 @@ export default function BrainHome() {
           sources: sourcesArg,
           timeline: timelineReading.reading,
           timelineStale: timelineReading.state === 'stale',
+          observedAt: meta?.observedAt ?? null,
           capabilities,
         }
       : null
@@ -104,8 +105,9 @@ export default function BrainHome() {
   const attentionReason = verdict.conditions.find((condition) => condition.state !== 'inactive')
   const confirmContext = {
     state: verdict.state,
-    freshness: !meta ? 'not read' : meta.stale ? 'stale' : 'fresh',
-    note: attentionReason ? `${attentionReason.text}.` : null,
+    observedAt: meta?.observedAt ?? null,
+    stale: Boolean(meta?.stale),
+    note: attentionReason ? `${startSentence(attentionReason.text)}.` : null,
   }
 
   const head = (
@@ -116,6 +118,7 @@ export default function BrainHome() {
         <VerdictLine
           verdict={verdict}
           probeAt={meta?.observedAt ?? null}
+          caveat={verdict.caveat}
           stale={Boolean(meta?.stale)}
           verifying={actions.verifying}
           onRunCheck={checkAction ? () => actions.request(checkAction) : undefined}

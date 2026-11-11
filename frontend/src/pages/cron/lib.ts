@@ -17,7 +17,7 @@ export const CRON_PRESETS = [
   { label: 'Daily 8am', expr: '0 8 * * *' },
   { label: 'Daily 6pm', expr: '0 18 * * *' },
   { label: 'Weekly Monday', expr: '0 9 * * 1' },
-  { label: 'Every 30min', expr: '*/30 * * * *' },
+  { label: 'Every 30 minutes', expr: '*/30 * * * *' },
 ]
 
 // ── Success rate ──────────────────────────────────────────────────────────
@@ -31,10 +31,6 @@ export function calcSuccessRate(history: CronHistoryEntry[]): SuccessRate | null
   return { rate: `${pct}%`, pct, total, ok, failed }
 }
 
-export function successRateColor(pct: number): string {
-  return pct === 100 ? '#32D74B' : pct >= 75 ? '#FFD60A' : pct >= 50 ? '#FF9500' : '#FF453A'
-}
-
 // ── Scheduler helpers ─────────────────────────────────────────────────────
 
 export function getCronScheduler(job?: Pick<CronJob, 'scheduler'>): CronScheduler {
@@ -43,10 +39,6 @@ export function getCronScheduler(job?: Pick<CronJob, 'scheduler'>): CronSchedule
 
 export function getCronSchedulerLabel(job?: Pick<CronJob, 'scheduler' | 'schedulerLabel'>) {
   return job?.schedulerLabel || (getCronScheduler(job) === 'hermes' ? 'Hermes' : 'OpenClaw')
-}
-
-export function getCronSchedulerColor(job?: Pick<CronJob, 'scheduler'>) {
-  return getCronScheduler(job) === 'hermes' ? '#64D2FF' : '#BF5AF2'
 }
 
 // ── Model options ─────────────────────────────────────────────────────────

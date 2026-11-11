@@ -15,13 +15,13 @@ interface CreateJobDialogProps {
 const FORM_ID = 'create-automation-form'
 
 const SESSION_TARGETS = [
-  { value: 'isolated', label: 'Isolated session' },
-  { value: 'main', label: 'Main session' },
+  { value: 'isolated', label: 'Its own session' },
+  { value: 'main', label: 'The main session' },
 ]
 
 const PAYLOAD_TYPES = [
-  { value: 'agentTurn', label: 'Agent turn' },
-  { value: 'systemEvent', label: 'System event' },
+  { value: 'agentTurn', label: 'Ask the agent' },
+  { value: 'systemEvent', label: 'Send a system message' },
 ]
 
 const EMPTY_FORM = {
@@ -112,7 +112,7 @@ export default function CreateJobDialog({ open, onClose, onSubmit, modelOptions 
           )}
         </Field>
 
-        <Field label="Schedule" hint="Format: minute hour day month weekday (* = any)">
+        <Field label="Schedule" hint="Five fields: minute, hour, day of month, month, day of week. * means any.">
           {(control) => (
             <>
               <TextInput
@@ -139,7 +139,7 @@ export default function CreateJobDialog({ open, onClose, onSubmit, modelOptions 
         </Field>
 
         <div className={styles.pair}>
-          <Field label="Session target">
+          <Field label="Where it runs">
             {(control) => (
               <Select
                 {...control}
@@ -149,7 +149,7 @@ export default function CreateJobDialog({ open, onClose, onSubmit, modelOptions 
               />
             )}
           </Field>
-          <Field label="Payload type">
+          <Field label="What it does">
             {(control) => (
               <Select
                 {...control}

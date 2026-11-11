@@ -17,7 +17,11 @@ import {
   plainWords,
   readerBlockId,
   reasonsForBlock,
+  confirmLabel,
+  fmtClock,
+  ledgerState,
   recentReadings,
+  startSentence,
 } from './lib'
 import { ApiError } from '../../lib/hooks'
 import { META, health, minimalSynoptic, synoptic, verdictOf, withVerdict } from './fixtures'
@@ -135,7 +139,7 @@ describe('verdict', () => {
     const syn = withVerdict(synoptic(), { elementId: 'off', state: 'inactive', text: 'off: sync disabled.' })
     const verdict = deriveVerdict(syn, META)
     expect(verdict).toMatchObject({ state: 'healthy', text: 'GBrain is normal' })
-    expect(verdict.conditions).toEqual([{ id: 'off', state: 'inactive', text: 'off: sync disabled' }])
+    expect(verdict.conditions).toEqual([{ id: 'off', state: 'inactive', text: 'off: sync off' }])
     expect(currentNotes(verdict, [], undefined).map((n) => n.state)).toEqual(['inactive'])
   })
 
@@ -268,7 +272,7 @@ describe('readings', () => {
     syn.sources[1].items[0] = { ...syn.sources[1].items[0], state: 'inactive', excludedByPolicy: true }
     const sync = deriveSourceSync(syn.sources)
     expect(sync.value).toBe('1 of 3')
-    expect(sync.hint).toBe('1 stale · 1 excluded')
+    expect(sync.hint).toBe('1 stale · 1 sync off')
     expect(sync.state).toBe('warning')
   })
 
@@ -463,7 +467,7 @@ describe('recent readings', () => {
     const rows = recentReadings([entry('2', 'warning', null, '3'), entry('1', 'healthy', '100/100')])
     expect(rows[0]).toMatchObject({ state: 'warning', quality: 'not read' })
     expect(rows[0].headline).toContain('State Normal → Warning')
-    expect(rows[1]).toMatchObject({ quality: '100/100', headline: 'No change' })
+    expect(rows[1]).toMatchObject({ quality: '100/100', headline: 'Earliest reading shown' })
     expect(recentReadings(null)).toEqual([])
 
     const many = entry('9', 'warning', 'Unavailable', '3')
@@ -504,5 +508,157 @@ describe('lookup failures', () => {
       message: 'q must be 1-300 characters',
     })
     expect(describeLookupFailure(null, 'This page')).toMatchObject({ kind: 'error', title: 'This page could not be read' })
+  })
+})
+
+describe('history rows are history, never a second current state', () => {
+  const at = (minutes: number) => new Date(Date.parse('2026-11-11T12:00:00.000Z') - minutes * 60_000).toISOString()
+  const ledger = (
+    id: string,
+    minutes: number,
+    status: TimelineEntry['trust']['status'],
+    metrics: TimelineEntry['metrics'] = {},
+    label = `GBrain ${status}`,
+  ): TimelineEntry => ({
+    id,
+    capturedAt: at(minutes),
+    trust: { label, status, score: 99 },
+    metrics: { health: '99/100', caveats: '1', ...metrics },
+    sourceFreshness: { status: 'healthy' },
+    warnings: [],
+  })
+
+  it('reads the ledger "unavailable" label as unavailable, not critical, and an unknown status as unavailable', () => {
+    expect(ledgerState({ trust: { label: 'GBrain unavailable', status: 'critical', score: 99 } })).toBe('unavailable')
+    expect(ledgerState({ trust: { label: 'GBrain critical', status: 'critical', score: 1 } })).toBe('critical')
+    expect(ledgerState({ trust: { label: '', status: 'bogus' as never, score: null } })).toBe('unavailable')
+    expect(ledgerState({} as TimelineEntry)).toBe('unavailable')
+    expect(recentReadings([ledger('a', 1, 'critical', {}, 'GBrain unavailable'), ledger('b', 5, 'healthy')])[0]).toMatchObject({
+      state: 'unavailable',
+      stateWord: 'unavailable',
+    })
+  })
+
+  it('collapses consecutive readings whose only change is the oldest-age tick into one row with a count', () => {
+    const tick = (id: string, minutes: number, age: number) =>
+      ledger(id, minutes, 'warning', {
+        missingEmbeddings: 4,
+        missingEmbeddingsOverdue: 0,
+        missingEmbeddingsOldestAgeSeconds: age,
+        embeddingsDetail: `4 missing, catching up (oldest ${Math.round(age / 60)}m)`,
+      })
+    const rows = recentReadings([
+      tick('e', 3, 900),
+      tick('d', 6, 720),
+      tick('c', 9, 540),
+      ledger('b', 12, 'healthy', { missingEmbeddings: 0, missingEmbeddingsOverdue: 0 }),
+    ])
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toMatchObject({ id: 'e', count: 3, since: at(9), state: 'warning' })
+    expect(rows[0].headline).toContain('Missing embeddings 0 → 4 catching up')
+    expect(rows[0].headline).not.toContain('oldest')
+    expect(rows[1]).toMatchObject({ id: 'b', count: 1, since: null })
+  })
+
+  it('does not collapse a real change, even between equal-looking states', () => {
+    const rows = recentReadings([ledger('c', 1, 'warning', { stalePages: 2 }), ledger('b', 4, 'warning', { stalePages: 0 }), ledger('a', 7, 'warning', { stalePages: 0 })])
+    expect(rows.map((row) => row.count)).toEqual([1, 2])
+  })
+
+  it('marks the newest row only when it disagrees with the current reading, and says how', () => {
+    const entries = [ledger('b', 3, 'critical', {}, 'GBrain unavailable'), ledger('a', 6, 'healthy')]
+    const now = at(0)
+    expect(recentReadings(entries, 6, { state: 'unavailable', observedAt: now })[0].note).toBeNull()
+    expect(recentReadings(entries, 6, { state: 'healthy', observedAt: now })[0].note).toBe('Older than the current reading')
+    expect(recentReadings(entries, 6, { state: 'healthy', observedAt: at(10) })[0].note).toBe('Newer than the current reading')
+    expect(recentReadings(entries, 6, { state: 'healthy', observedAt: null })[0].note).toBe('Differs from the current reading')
+    expect(recentReadings(entries, 6, null)[0].note).toBeNull()
+    expect(recentReadings(entries, 6, { state: 'healthy', observedAt: now })[1].note).toBeNull()
+  })
+})
+
+describe('configured is not observed healthy', () => {
+  it('shows a healthy reader as configured with a neutral dot, and a reader that was not read as not read', () => {
+    const syn = synoptic()
+    const model = buildBrainModel(syn)
+    expect(model.readers.every((reader) => reader.neutral === true && reader.sub === 'configured')).toBe(true)
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ label: 'configured', neutral: true })
+    const unread = buildBrainModel(minimalSynoptic())
+    expect(unread.readers[0].neutral).toBe(false)
+    expect(unread.readers[0].sub).toBe('not read')
+    // Observed things stay green.
+    expect(model.queue.neutral).toBeUndefined()
+  })
+
+  it('says in the detail that the reader was configured, with no health colour on that row', () => {
+    const syn = synoptic()
+    const detail = describeElement(readerBlockId('hermes'), syn, buildBrainModel(syn))
+    expect(detail?.stateWord).toBe('configured')
+    expect(detail?.rows[0]).toMatchObject({ label: 'Configuration', value: 'configured', state: undefined })
+  })
+
+  it('keeps a failing reader visible: a warning reader is not neutral', () => {
+    const syn = synoptic()
+    syn.readers[0] = { ...syn.readers[0], state: 'warning' }
+    expect(buildBrainModel(syn).readers[0].neutral).toBe(false)
+  })
+
+  it('does not let a normal verdict claim more than was observed', () => {
+    const verdict = deriveVerdict(synoptic(), META)
+    expect(verdict.text).toBe('GBrain is normal')
+    expect(verdict.caveat).toBe('reader connections are configured, not observed')
+    expect(deriveVerdict(minimalSynoptic(), META).caveat).toBeNull()
+    expect(deriveVerdict(withVerdict(synoptic(), { elementId: 'queue', state: 'warning', text: 'queue stalled.' }), META).caveat).toBeNull()
+  })
+})
+
+describe('one vocabulary for a source that is switched off', () => {
+  it('uses "sync off" in the group, the line, the readings strip and the notes, and never re-cases an id', () => {
+    const syn = withVerdict(synoptic(), { elementId: 'tk-omc-ain', state: 'inactive', text: 'tk-omc-ain: sync disabled.' })
+    syn.sources[0].items[1] = { ...syn.sources[0].items[1], state: 'inactive', excludedByPolicy: true }
+    const model = buildBrainModel(syn)
+    expect(model.groups[0].sub).toBe('all fresh · 1 sync off')
+    expect(deriveSourceSync(syn.sources).hint).toBe('1 sync off')
+    const notes = currentNotes(deriveVerdict(syn, META), [], undefined)
+    expect(notes[0].text).toBe('tk-omc-ain: sync off.')
+    expect(startSentence('tk-omc-ain: sync off')).toBe('tk-omc-ain: sync off')
+    expect(startSentence('embed-job probe unavailable')).toBe('embed-job probe unavailable')
+    expect(startSentence('connection telemetry is not observable')).toBe('Connection telemetry is not observable')
+    const detail = describeElement(groupBlockId('projects'), syn, model)
+    expect(detail?.items.find((item) => item.id === 'off')?.note).toBeNull()
+  })
+})
+
+describe('null never becomes 0 or healthy on this page', () => {
+  it('keeps an unknown catching-up count out of the link extraction reading', () => {
+    const reading = deriveLinkExtraction(health({ stalePagesCatchingUp: undefined }))
+    expect(reading).toMatchObject({ value: 'current', unit: null })
+    expect(deriveLinkExtraction(health({ stalePages: null, stalePagesOverdue: null }))).toMatchObject({ value: null, state: 'unavailable' })
+  })
+
+  it('shows an unread queue and core as dashes', () => {
+    const syn = minimalSynoptic()
+    const model = buildBrainModel(syn)
+    expect(model.queue.sub).toBe('— waiting · — active · — stalled')
+    expect(model.core.rows.map((row) => row.value)).toEqual(['—', '—', '—'])
+    expect(deriveReadings(syn, model, undefined, 'unavailable').queue.value).toBeNull()
+  })
+})
+
+describe('confirmation wording', () => {
+  it('uses a plain sentence-case verb, never "Run " plus a title-case label', () => {
+    expect(confirmLabel({ id: 'sync-sources', label: 'Sync local sources' })).toBe('Run sync')
+    expect(confirmLabel({ id: 'embed-missing', label: 'Backfill missing embeddings' })).toBe('Run backfill')
+    expect(confirmLabel({ id: 'new-thing', label: 'Compact storage' })).toBe('Compact storage')
+  })
+})
+
+describe('clock labels', () => {
+  it('writes the time of a row and the date only when it is another day; a missing time stays a dash', () => {
+    expect(fmtClock(null)).toBe('—')
+    expect(fmtClock('nonsense')).toBe('—')
+    const same = fmtClock('2026-11-11T12:01:25.000Z', '2026-11-11T12:30:00.000Z')
+    expect(same).toMatch(/^\d{2}:\d{2}$/)
+    expect(fmtClock('2026-11-09T12:01:25.000Z', '2026-11-11T12:30:00.000Z')).toMatch(/^\d+ \w+, \d{2}:\d{2}$/)
   })
 })

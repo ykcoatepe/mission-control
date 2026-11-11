@@ -43,7 +43,10 @@ describe('BudgetPanel', () => {
     const toggle = host.querySelector('[role="switch"]') as HTMLButtonElement
     expect(toggle.getAttribute('aria-checked')).toBe('true')
     expect(host.textContent).toContain('No monthly budget')
-    expect(host.textContent).toContain('No monthly cap set.')
+    // The fact "no monthly budget" is said once, by the switch.
+    expect(host.textContent).not.toContain('No monthly cap set.')
+    expect(host.textContent?.match(/no (monthly )?(budget|cap)/gi)).toHaveLength(1)
+    expect(toggle.getAttribute('aria-label')).toBe('No monthly budget')
     const input = host.querySelector('input[type="number"]') as HTMLInputElement
     expect(input.disabled).toBe(true)
     expect(input.value).toBe('')
@@ -58,6 +61,7 @@ describe('BudgetPanel', () => {
     expect(input.disabled).toBe(false)
     expect(input.value).toBe('150')
     expect(host.textContent).not.toContain('No monthly cap set.')
+    expect(host.textContent).not.toContain('No cap is saved yet.')
     await act(async () => root.unmount())
   })
 

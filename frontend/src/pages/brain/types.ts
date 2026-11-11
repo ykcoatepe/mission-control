@@ -189,7 +189,8 @@ export interface TimelineEntry {
   capturedAt: string
   trust: {
     label: string
-    status: 'healthy' | 'warning' | 'critical' | 'inactive'
+    /** The ledger folds "unavailable" into critical and says so in `label`. */
+    status: 'healthy' | 'warning' | 'critical' | 'inactive' | 'unavailable'
     score: number | null
   }
   metrics: Record<string, string | number | null>

@@ -1,5 +1,7 @@
 import { ErrorState, Freshness, Page, Skeleton } from '../components/ui'
 import { useApi } from '../lib/hooks'
+import { SIGNALS_POLL_MS, SIGNALS_URL, attentionReading } from '../lib/signals'
+import type { SignalsEnvelope } from '../lib/signals'
 import AttentionView from './attention/AttentionView'
 import { errorText } from './attention/lib'
 import type { Envelope, LoopsData } from './attention/types'
@@ -8,13 +10,16 @@ const POLL_MS = 30_000
 
 export default function Attention() {
   const { data: envelope, loading, error, refetch } = useApi<Envelope<LoopsData>>('/api/loops', POLL_MS)
+  // The attention number is the shell's: the same reading the top bar and the sidebar use (one shared request).
+  const { data: signalsEnvelope } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
+  const attention = attentionReading(signalsEnvelope?.data ?? null)
   const data = envelope?.data ?? null
   const meta = envelope?.meta ?? null
 
   return (
     <Page
       title="Attention"
-      description="What needs you across your manager loops?"
+      description="What needs you across your systems and manager loops?"
       actions={
         data && meta ? (
           <Freshness observedAt={meta.observedAt ?? data.observedAt} state={meta.stale ? 'stale' : undefined} />
@@ -35,7 +40,7 @@ export default function Attention() {
           onRetry={refetch}
         />
       ) : (
-        <AttentionView data={data} meta={meta} refreshError={error} onRetry={refetch} />
+        <AttentionView data={data} meta={meta} attention={attention} refreshError={error} onRetry={refetch} />
       )}
     </Page>
   )

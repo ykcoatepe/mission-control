@@ -79,19 +79,40 @@ describe('EntryDialog for a scheduler-linked entry', () => {
     expect(labelled('Starts at')).toBeUndefined()
     expect(dialog().textContent).toContain('Status and next run come from the scheduler')
     expect(dialog().querySelector('a')?.getAttribute('href')).toBe('/automations?view=jobs&job=openclaw%3Adaily')
-    expect(dialog().textContent).toContain('Statusactive')
+    expect(dialog().textContent).toContain('StatusActive')
     await act(async () => root.unmount())
   })
 
   it('sends only the edited overridable field, never status, start time or id', async () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     const root = await open(linked, onSave)
-    await type(field('Cron schedule'), '30 8 * * *')
+    await type(field('Title'), 'Morning digest')
     await save()
     expect(onSave).toHaveBeenCalledOnce()
     const change = onSave.mock.calls[0][0] as EntryChange
-    expect(change).toEqual({ kind: 'update', id: 'cron-openclaw:daily', patch: { schedule: '30 8 * * *' } })
+    expect(change).toEqual({ kind: 'update', id: 'cron-openclaw:daily', patch: { title: 'Morning digest' } })
     expect(Object.keys((change as { patch: object }).patch).some((key) => ['status', 'startsAt', 'id'].includes(key))).toBe(false)
+    await act(async () => root.unmount())
+  })
+
+  it('shows the cron schedule as read-only text: the scheduler owns it', async () => {
+    const root = await open(linked, vi.fn())
+    expect(labelled('Cron schedule')).toBeUndefined()
+    expect(dialog().querySelector('input[placeholder="0 8 * * *"]')).toBeNull()
+    expect(dialog().textContent).toContain('Cron schedule0 8 * * *')
+    await act(async () => root.unmount())
+  })
+
+  it('still lets a schedule the person overrode earlier be handed back to the scheduler', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+    const overridden = { ...linked, userOverrides: ['schedule'], schedule: '5 5 * * *' }
+    const root = await open(overridden, onSave)
+    expect(dialog().textContent).toContain('5 5 * * *')
+    const reset = [...dialog().querySelectorAll('button')].find((b) => b.textContent === 'Reset to schedule value')
+    expect(reset).toBeDefined()
+    await act(async () => reset!.click())
+    await save()
+    expect(onSave.mock.calls[0][0]).toEqual({ kind: 'update', id: 'cron-openclaw:daily', patch: { schedule: null } })
     await act(async () => root.unmount())
   })
 

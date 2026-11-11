@@ -22,23 +22,36 @@ const compactNumberFormatter = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 2,
 })
 
-export function formatCurrency(value: number) {
-  return currencyFormatter.format(Number.isFinite(value) ? value : 0)
+/** What every money and token formatter shows for a value that was not read. Never 0. */
+export const NOT_READ = '—'
+
+function isReading(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value)
 }
 
-export function formatPreciseCurrency(value: number) {
-  const safeValue = Number.isFinite(value) ? value : 0
-  if (Math.abs(safeValue) > 0 && Math.abs(safeValue) < 0.01) return `$${safeValue.toFixed(6)}`
-  return formatCurrency(safeValue)
+/** Money, or a dash when the value is null, undefined or not a finite number. */
+export function formatCurrency(value: number | null | undefined) {
+  return isReading(value) ? currencyFormatter.format(value) : NOT_READ
 }
 
-export function formatTokens(value: number) {
-  return integerFormatter.format(Math.round(Number.isFinite(value) ? value : 0))
+export function formatPreciseCurrency(value: number | null | undefined) {
+  if (!isReading(value)) return NOT_READ
+  if (Math.abs(value) > 0 && Math.abs(value) < 0.01) return `$${value.toFixed(6)}`
+  return formatCurrency(value)
 }
 
-export function formatCompactTokenValue(value: number) {
-  const safeValue = Math.round(Number.isFinite(value) ? value : 0)
-  return compactNumberFormatter.format(safeValue)
+/** A token count, or a dash when the value was not read. */
+export function formatTokens(value: number | null | undefined) {
+  return isReading(value) ? integerFormatter.format(Math.round(value)) : NOT_READ
+}
+
+export function formatCompactTokenValue(value: number | null | undefined) {
+  return isReading(value) ? compactNumberFormatter.format(Math.round(value)) : NOT_READ
+}
+
+/** "1,234 tokens", or a dash when the count was not read (never "— tokens"). */
+export function formatTokenPhrase(value: number | null | undefined, suffix = 'tokens') {
+  return isReading(value) ? `${formatTokens(value)} ${suffix}` : NOT_READ
 }
 
 export function formatComparisonValue(value: number | null | undefined) {
@@ -187,6 +200,8 @@ export function assignSeriesColors(
   activeModels: string[],
   previousAssignments: ReadonlyMap<string, string> = new Map(),
   slots: number = SERIES_COLOR_COUNT,
+  /** Colours held by models that are not active now: newcomers take any other free colour first. */
+  avoid: ReadonlySet<string> = new Set(),
 ): Map<string, string> {
   const pool = Array.from({ length: Math.max(1, Math.min(slots, SERIES_COLOR_COUNT)) }, (_, slot) => seriesColorToken(slot))
   const activeKeys = Array.from(new Set(activeModels.map(modelColorKey).filter(Boolean)))
@@ -204,7 +219,8 @@ export function assignSeriesColors(
   let overflow = 0
   activeKeys.forEach(key => {
     if (assignments.has(key)) return
-    const free = pool.find(color => !reserved.has(color))
+    const free = pool.find(color => !reserved.has(color) && !avoid.has(color))
+      ?? pool.find(color => !reserved.has(color))
     if (free) {
       assignments.set(key, free)
       reserved.add(free)
@@ -216,6 +232,27 @@ export function assignSeriesColors(
   })
 
   return assignments
+}
+
+/**
+ * A model keeps the same colour in every view (Day, 7 days, Month and any month),
+ * not only while it stays in the list. `memory` is every assignment made so far in
+ * this session; a model that was not shown for a while still owns its colour, so a
+ * newcomer is given a colour nobody remembers before one is taken over.
+ * Returns the colours for the active models and the updated memory.
+ */
+export function assignStableSeriesColors(
+  activeModels: string[],
+  memory: ReadonlyMap<string, string> = new Map(),
+  slots: number = SERIES_COLOR_COUNT,
+): { assignments: Map<string, string>; memory: Map<string, string> } {
+  const activeKeys = new Set(activeModels.map(modelColorKey).filter(Boolean))
+  const avoid = new Set<string>()
+  memory.forEach((color, key) => {
+    if (!activeKeys.has(key)) avoid.add(color)
+  })
+  const assignments = assignSeriesColors(activeModels, memory, slots, avoid)
+  return { assignments, memory: new Map([...memory, ...assignments]) }
 }
 
 const MODEL_METRIC_SUFFIX = /_(tokens|input|output|reasoning|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/
@@ -1016,10 +1053,26 @@ export function buildCodexbarChartData(
   })
 }
 
+/** The day count and month a live-month window covers: "2026-11-01" to "2026-11-11" is 11 days of 2026-11. */
+function elapsedDaysOfWindow(window: { start?: string; end?: string } | null | undefined) {
+  const start = window?.start
+  const end = window?.end
+  if (!start || !end || !/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) return null
+  if (start.slice(0, 7) !== end.slice(0, 7) || start > end) return null
+  return { month: start.slice(0, 7), days: Number(end.slice(8)) - Number(start.slice(8)) + 1 }
+}
+
+/**
+ * Labels for the previous-period comparison. The live month is compared with the
+ * SAME number of elapsed days of the month before (the server's previous window),
+ * not with that whole month, so the label says so. `window` is the payload's
+ * `period` ({ start, end }); without it the label still says "same days".
+ */
 export function comparisonLabels(
   period: 'day' | '7d' | 'month',
   monthAnchor: string | null = null,
   now = new Date(),
+  window: { start?: string; end?: string } | null = null,
 ) {
   if (period === 'day') return { period: 'vs previous day', daily: 'vs previous day' }
   if (period === '7d') return { period: 'vs previous 7 days', daily: 'vs previous 7d avg' }
@@ -1027,7 +1080,13 @@ export function comparisonLabels(
     const baseline = monthKeyLabel(previousMonthKey(monthAnchor as string))
     return { period: `vs ${baseline}`, daily: `vs ${baseline} avg` }
   }
-  return { period: 'vs previous month', daily: 'vs previous month avg' }
+  const elapsed = elapsedDaysOfWindow(window)
+  if (!elapsed) return { period: 'vs the same days last month', daily: 'vs last month avg' }
+  const previousKey = previousMonthKey(elapsed.month)
+  const monthName = monthKeyLabel(previousKey).split(' ')[0]
+  if (elapsed.days >= daysInMonthKey(previousKey)) return { period: `vs ${monthName}`, daily: `vs ${monthName} avg` }
+  const span = elapsed.days === 1 ? `1 ${monthName}` : `the first ${elapsed.days} days of ${monthName}`
+  return { period: `vs ${span}`, daily: `vs ${span} avg` }
 }
 
 // Generic period labels read naturally lowercased mid-sentence ("the loaded
@@ -1065,12 +1124,14 @@ export interface ProviderRow {
   /** False when the platform could not be read for the period: its figures are null, not zero. */
   read: boolean
   uiState: UiState
-  /** The word beside the state dot: Ready, Stale, Partial or Not read. */
-  stateWord: 'Ready' | 'Stale' | 'Partial' | 'Not read'
+  /** The word beside the state dot: Ready, Stale, Partial, No usage recorded or Not read. */
+  stateWord: 'Ready' | 'Stale' | 'Partial' | 'No usage recorded' | 'Not read'
   /** Server verdict for `Freshness`; undefined lets the age decide. Null for unread rows (no age to show). */
   freshness: 'stale' | null | undefined
   observedAt: string | null
   coverage: 'complete' | 'partial' | 'unknown'
+  /** Read, and the platform recorded nothing in this period: its own quiet state, not "ready". */
+  noRecords: boolean
   tokens: number | null
   apiEquivalentUsd: number | null
   billedUsd: number | null
@@ -1092,27 +1153,43 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
   return providers.map(provider => {
     const state = String(provider.state ?? '').toLowerCase()
     const tokens = finiteOrNull(provider.tokens)
+    const apiEquivalentUsd = finiteOrNull(provider.apiEquivalentUsd)
     const read = (state === 'ready' || state === 'stale') && tokens !== null
     const coverage = provider.coverage === 'complete' || provider.coverage === 'partial' ? provider.coverage : 'unknown'
     const stale = read && state === 'stale'
+    // A platform that was read but recorded nothing has no usage to show: all of its
+    // figures are dashes and its state is the quiet "No usage recorded", not "Ready".
+    const noRecords = read && tokens === 0 && (apiEquivalentUsd === null || apiEquivalentUsd === 0)
     // A read platform whose records are known to be incomplete (partial coverage) is a
-    // standing condition, not a fault: its word says so and its note carries the detail.
-    // Only a coverage the page does not recognise keeps the amber dot.
+    // standing condition, not a fault: neutral (never green), its word says so and its
+    // note carries the detail. A coverage the page does not recognise, a stale reading
+    // and an unread platform are warnings.
     const partial = read && coverage !== 'complete'
     const standingPartial = partial && coverage === 'partial'
+    const billed = finiteOrNull(provider.billedUsd)
+    // Billing is known only when the payload says so (`billingKnown`) or the platform
+    // reports money actually billed. A bare 0 is "billing unknown unless recorded".
+    const billedKnown = billed !== null && (billed > 0 || provider.billingKnown === true)
     const note = typeof provider.note === 'string' && provider.note.trim() ? provider.note.trim() : null
     return {
       id: String(provider.id),
       label: provider.label || String(provider.id),
       read,
-      uiState: !read ? 'unavailable' : stale || (partial && !standingPartial) ? 'warning' : 'healthy',
-      stateWord: !read ? 'Not read' : stale ? 'Stale' : partial ? 'Partial' : 'Ready',
+      uiState: !read
+        ? 'unavailable'
+        : stale || (partial && !standingPartial)
+          ? 'warning'
+          : standingPartial || noRecords
+            ? 'inactive'
+            : 'healthy',
+      stateWord: !read ? 'Not read' : stale ? 'Stale' : partial ? 'Partial' : noRecords ? 'No usage recorded' : 'Ready',
       freshness: !read ? null : stale ? 'stale' : undefined,
       observedAt: provider.observedAt ?? null,
       coverage,
+      noRecords,
       tokens: read ? tokens : null,
-      apiEquivalentUsd: read ? finiteOrNull(provider.apiEquivalentUsd) : null,
-      billedUsd: read ? finiteOrNull(provider.billedUsd) : null,
+      apiEquivalentUsd: read ? apiEquivalentUsd : null,
+      billedUsd: read && !noRecords && billedKnown ? billed : null,
       note,
     }
   })

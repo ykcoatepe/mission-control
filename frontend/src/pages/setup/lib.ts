@@ -29,12 +29,15 @@ export interface SetupPayload {
 }
 
 export const NAME_MAX = 120
-export const DEFAULT_NAME = 'Mission Control'
 
-/** A name pre-filled from the agent found on this machine; never from anything secret. */
+/**
+ * What the form starts with: the agent name the server detected, exactly as it
+ * reported it, or nothing. The app never makes a dashboard name up (no suffix, no
+ * default), so with no detected value the field stays empty and shows a placeholder.
+ */
 export function suggestName(status: SetupStatus | null | undefined): string {
-  const agent = status?.detectedConfig?.agentName?.trim()
-  return agent ? `${agent} Control`.slice(0, NAME_MAX) : DEFAULT_NAME
+  const agent = status?.detectedConfig?.agentName
+  return typeof agent === 'string' ? agent.trim().slice(0, NAME_MAX) : ''
 }
 
 export function nameError(name: string): string | null {
@@ -87,12 +90,22 @@ export function gatewayLines(status: SetupStatus | null | undefined): DetectedLi
   return lines
 }
 
-/** Other detected values, only the ones that exist. */
-export function detectedLines(status: SetupStatus | null | undefined): Array<{ label: string; value: string }> {
+/**
+ * Other detected values, only the ones that exist. A model is shown by the name
+ * the model catalog gives it (the same name Settings shows) when the catalog was
+ * read, else by its id.
+ */
+export function detectedLines(
+  status: SetupStatus | null | undefined,
+  modelNames?: Readonly<Record<string, string>> | null,
+): Array<{ label: string; value: string }> {
   const detected = status?.detectedConfig
   if (!detected) return []
   const lines: Array<{ label: string; value: string }> = []
-  if (detected.model) lines.push({ label: 'Model', value: detected.model.replace(/^amazon-bedrock\//, '') })
+  if (detected.model) {
+    const known = modelNames && Object.prototype.hasOwnProperty.call(modelNames, detected.model) ? modelNames[detected.model] : null
+    lines.push({ label: 'Model', value: known || detected.model.replace(/^amazon-bedrock\//, '') })
+  }
   if (detected.channels && detected.channels.length > 0) lines.push({ label: 'Channels', value: detected.channels.join(', ') })
   if (detected.workspacePath) lines.push({ label: 'Workspace', value: detected.workspacePath })
   return lines

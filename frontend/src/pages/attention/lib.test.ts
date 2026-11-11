@@ -8,8 +8,12 @@ import {
   errorText,
   filterRows,
   findingAge,
+  findingLabel,
+  findingLabelOrNull,
   groupFindingsByCode,
+  parseAttentionFilter,
   severityState,
+  shortenHomePaths,
   sortConfirmations,
   summarize,
 } from './lib'
@@ -347,3 +351,118 @@ describe('words and states', () => {
     expect(errorText(null)).toBeNull()
   })
 })
+
+// Every code GET /api/loops returned when the labels were written (byCode and attention[].code).
+const CODES_IN_THE_LEDGER = [
+  'ACK_MISSING',
+  'AUTHORITY_UNQUOTED',
+  'BINDING_DEAD',
+  'CODEX_GOAL_NOT_ACTIVE',
+  'DEPLOYED_UNCONFIRMED',
+  'ESCALATED_ROUNDS',
+  'GROKBOT_WEBHOOK_UNAVAILABLE',
+  'GUEST_PUSH_UNSEEN',
+  'GUEST_SENDER_UNVERIFIED',
+  'IMPLEMENTER_SILENT',
+  'MANAGER_SILENT',
+  'PAUSED_STALE',
+  'QUEUED_NOT_DELIVERED',
+  'ROUND_CAP_REACHED',
+  'STATUS_PAGE_STALE',
+  'TEYIT_DUE',
+  'TEYIT_STALE',
+]
+
+describe('findingLabel', () => {
+  it('gives every code the ledger uses a plain-words label without underscores or capitals-only text', () => {
+    for (const code of CODES_IN_THE_LEDGER) {
+      const label = findingLabelOrNull(code)
+      expect(label, code).not.toBeNull()
+      expect(label).not.toMatch(/_/)
+      expect(label).not.toBe(code)
+      expect(label).not.toBe(label?.toUpperCase())
+    }
+  })
+
+  it('falls back to the raw code, never to an invented meaning', () => {
+    expect(findingLabel('SOMETHING_NEW')).toBe('SOMETHING_NEW')
+    expect(findingLabelOrNull('SOMETHING_NEW')).toBeNull()
+    expect(findingLabelOrNull('')).toBeNull()
+    expect(findingLabelOrNull(null)).toBeNull()
+    // Object prototype keys are not codes.
+    expect(findingLabelOrNull('constructor')).toBeNull()
+    expect(findingLabel('toString')).toBe('toString')
+  })
+})
+
+describe('shortenHomePaths', () => {
+  it('shortens absolute home paths to ~/', () => {
+    expect(shortenHomePaths('see /Users/yordamkocatepe/clawd/memory/x.md now')).toBe('see ~/clawd/memory/x.md now')
+    expect(shortenHomePaths('/home/ops/.config/a and /Users/someone/b')).toBe('~/.config/a and ~/b')
+    expect(shortenHomePaths('cd /Users/yordamkocatepe')).toBe('cd ~')
+  })
+
+  it('leaves other paths and text alone, and keeps null as null', () => {
+    expect(shortenHomePaths('/Volumes/External SSD/Work/a')).toBe('/Volumes/External SSD/Work/a')
+    expect(shortenHomePaths('no path here')).toBe('no path here')
+    expect(shortenHomePaths(null)).toBeNull()
+    expect(shortenHomePaths(undefined)).toBeNull()
+  })
+})
+
+describe('parseAttentionFilter', () => {
+  it('accepts the known filters and falls back to all', () => {
+    expect(parseAttentionFilter('overdue')).toBe('overdue')
+    expect(parseAttentionFilter('pending')).toBe('pending')
+    expect(parseAttentionFilter('findings')).toBe('findings')
+    expect(parseAttentionFilter('nonsense')).toBe('all')
+    expect(parseAttentionFilter(null)).toBe('all')
+  })
+})
+
+describe('unread counts of a restricted project stay unread', () => {
+  const unreadCounts = { id: 'argus', restricted: true, openFindings: null, pendingConfirmations: null, overdueConfirmations: null } as unknown as LoopProject
+
+  it('keeps a project with no readable counts in the list, with null counts (not 0)', () => {
+    const rows = buildAttentionRows(data([unreadCounts]), NOW)
+    expect(rows).toEqual([
+      expect.objectContaining({ type: 'restricted', project: 'argus', openFindings: null, pendingConfirmations: null, overdueConfirmations: null }),
+    ])
+  })
+
+  it('still drops a restricted project whose counts were read and are all zero', () => {
+    const zero = { id: 'argus', restricted: true, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 } as LoopProject
+    expect(buildAttentionRows(data([zero]), NOW)).toEqual([])
+  })
+
+  it('shows null in the project table and counts the project as not read', () => {
+    expect(buildProjectRows([unreadCounts], NOW)[0]).toMatchObject({ openFindings: null, pendingConfirmations: null, overdueConfirmations: null })
+    expect(summarize(data([unreadCounts]))).toMatchObject({ unreadProjects: 1, projectsWithOpenItems: 0 })
+  })
+
+  it('does not let an unread count match a filter', () => {
+    const rows = buildAttentionRows(data([unreadCounts]), NOW)
+    expect(filterRows(rows, 'overdue', 'all')).toEqual([])
+    expect(filterRows(rows, 'findings', 'all')).toEqual([])
+    expect(filterRows(rows, 'all', 'all')).toHaveLength(1)
+  })
+
+  it('does not turn missing finding totals of an open project into 0', () => {
+    const open = { ...(alphaForNull() as object), openFindings: null } as unknown as LoopProject
+    expect(buildProjectRows([open], NOW)[0].openFindings).toBeNull()
+  })
+})
+
+function alphaForNull(): LoopProject {
+  return {
+    id: 'alpha',
+    restricted: false,
+    title: 'alpha',
+    outcome: null,
+    openFindings: { total: 0, bySeverity: { error: 0, warning: 0, info: 0 }, byCode: {} },
+    pendingConfirmations: [],
+    participants: [],
+    lastActivityAt: null,
+    errors: [],
+  }
+}

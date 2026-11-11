@@ -21,6 +21,9 @@ import {
 import { postJson, sendJson, useApi, writeFailureMessage } from '../../lib/hooks'
 import { useNow } from '../../lib/useNow'
 import { Link } from 'react-router-dom'
+import { scheduleDisplay } from './cronSchedule'
+import { planWeek } from './weekPlan'
+import { oneOf, useQueryParam } from './urlState'
 import EntryDialog from './EntryDialog'
 import type { EntryChange } from './EntryDialog'
 import type { CalendarEntry, CalendarPayload } from './scheduleLib'
@@ -29,12 +32,14 @@ import {
   SOURCE_OPTIONS,
   calendarNotices,
   entryState,
+  entryStatusLabel,
   formatDayHeader,
   formatTimeLabel,
   formatWeekRange,
   isDisabledEntry,
   isLinkedEntry,
   jobHref,
+  sourceLabel,
   startOfWeek,
   toDayKey,
   writesBlocked,
@@ -44,6 +49,8 @@ import styles from './ScheduleView.module.css'
 type Mode = 'week' | 'today'
 
 const MAX_PER_DAY = 8
+
+const MODES = ['week', 'today'] as const
 
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: 'week', label: 'Week' },
@@ -61,15 +68,33 @@ export default function ScheduleView() {
   const now = useNow()
   const [syncing, setSyncing] = useState(false)
   const [editing, setEditing] = useState<{ entry: CalendarEntry | null } | null>(null)
-  const [mode, setMode] = useState<Mode>('week')
-  const [weekOffset, setWeekOffset] = useState(0)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [hideDisabled, setHideDisabled] = useState(true)
+  // Range, week, filters and search live in the URL, so a reload or a shared link keeps them.
+  const [rangeParam, setRangeParam] = useQueryParam('range')
+  const [weekParam, setWeekParam] = useQueryParam('week')
+  const [findParam, setFindParam] = useQueryParam('find')
+  const [disabledParam, setDisabledParam] = useQueryParam('disabled')
+  const [sourceParam, setSourceParam] = useQueryParam('source')
+  const [assigneeParam, setAssigneeParam] = useQueryParam('assignee')
   const [detailId, setDetailId] = useState<string | null>(null)
-  const [sourceFilter, setSourceFilter] = useState<string | null>(null)
-  const [assigneeFilter, setAssigneeFilter] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
+
+  const mode: Mode = oneOf(rangeParam, MODES, 'week')
+  const parsedWeek = Number.parseInt(weekParam ?? '', 10)
+  const weekOffset = Number.isFinite(parsedWeek) ? Math.max(-52, Math.min(52, parsedWeek)) : 0
+  const searchQuery = findParam ?? ''
+  const hideDisabled = disabledParam !== 'show'
+  const sourceFilter = (SOURCE_OPTIONS as string[]).includes(sourceParam ?? '') ? sourceParam : null
+  const assigneeFilter = (ASSIGNEE_OPTIONS as string[]).includes(assigneeParam ?? '') ? assigneeParam : null
+  const setMode = (value: Mode) => setRangeParam(value === 'week' ? null : value)
+  const setWeekOffset = (update: (previous: number) => number) => {
+    const next = update(weekOffset)
+    setWeekParam(next === 0 ? null : String(next))
+  }
+  const setSearchQuery = (value: string) => setFindParam(value.trim() === '' ? null : value)
+  const setHideDisabled = (value: boolean) => setDisabledParam(value ? null : 'show')
+  const setSourceFilter = (update: (previous: string | null) => string | null) => setSourceParam(update(sourceFilter))
+  const setAssigneeFilter = (update: (previous: string | null) => string | null) => setAssigneeParam(update(assigneeFilter))
 
   const entries = useMemo(() => data?.entries || [], [data])
   const detailEntry = useMemo(
@@ -101,47 +126,28 @@ export default function ScheduleView() {
     [mode, today, weekDays],
   )
 
-  const dayBuckets = useMemo(() => {
-    const keys = weekDays.map(toDayKey)
-    const map: Record<string, CalendarEntry[]> = Object.fromEntries(keys.map((key) => [key, []]))
+  const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
+    return entries.filter((entry) => {
+      if (sourceFilter && entry.source !== sourceFilter) return false
+      if (assigneeFilter && entry.assignee !== assigneeFilter) return false
+      if (query && !String(entry.title || '').toLowerCase().includes(query)) return false
+      return true
+    })
+  }, [assigneeFilter, entries, searchQuery, sourceFilter])
 
-    for (const entry of entries) {
-      if (sourceFilter && entry.source !== sourceFilter) continue
-      if (assigneeFilter && entry.assignee !== assigneeFilter) continue
-      if (query && !String(entry.title || '').toLowerCase().includes(query)) continue
+  const todayStart = useMemo(() => {
+    const start = new Date(now)
+    start.setHours(0, 0, 0, 0)
+    return start
+  }, [now])
 
-      const recurring = !!entry.schedule || (entry.source === 'cron' && !entry.startsAt)
-      if (recurring) {
-        if (hideDisabled && isDisabledEntry(entry)) continue
-        for (const key of keys) map[key].push(entry)
-        continue
-      }
-
-      if (!entry.startsAt) continue
-      const startsAt = new Date(entry.startsAt)
-      if (Number.isNaN(startsAt.getTime())) continue
-      const key = toDayKey(startsAt)
-      if (map[key]) map[key].push(entry)
-    }
-
-    for (const key of keys) {
-      map[key].sort((a, b) => {
-        const ta = a.startsAt ? new Date(a.startsAt).getTime() : 0
-        const tb = b.startsAt ? new Date(b.startsAt).getTime() : 0
-        return ta - tb
-      })
-    }
-    return map
-  }, [assigneeFilter, entries, hideDisabled, searchQuery, sourceFilter, weekDays])
-
-  const hiddenDisabledCount = useMemo(
-    () =>
-      hideDisabled
-        ? entries.filter((entry) => (!!entry.schedule || entry.source === 'cron') && isDisabledEntry(entry)).length
-        : 0,
-    [entries, hideDisabled],
+  const plan = useMemo(
+    () => planWeek(filteredEntries, weekDays, { hideDisabled, todayStart }),
+    [filteredEntries, hideDisabled, todayStart, weekDays],
   )
+  const dayBuckets = plan.byDay
+  const hiddenDisabledCount = plan.hiddenDisabled
 
   const weekLabel = formatWeekRange(weekDays)
 
@@ -235,7 +241,7 @@ export default function ScheduleView() {
             onClick={() => setWeekOffset((prev) => prev + 1)}
           />
           {mode === 'week' && weekOffset !== 0 && (
-            <Button size="sm" variant="ghost" onClick={() => setWeekOffset(0)}>
+            <Button size="sm" variant="ghost" onClick={() => setWeekOffset(() => 0)}>
               This week
             </Button>
           )}
@@ -268,10 +274,9 @@ export default function ScheduleView() {
       <div className={styles.filters}>
         <FilterChips
           ariaLabel="Filter by source"
-          options={SOURCE_OPTIONS.map((source) => ({ value: source, label: source }))}
+          options={SOURCE_OPTIONS.map((source) => ({ value: source, label: sourceLabel(source) }))}
           value={sourceFilter ?? ''}
           onChange={(value) => setSourceFilter((prev) => toggleChip(prev, value))}
-          className={styles.capitalize}
         />
         <span className={styles.divider} aria-hidden="true" />
         <FilterChips
@@ -301,6 +306,7 @@ export default function ScheduleView() {
           const list = dayBuckets[key] || []
           const header = formatDayHeader(day)
           const isToday = key === todayKey
+          const isPast = day.getTime() < todayStart.getTime()
           const expanded = expandedDays.has(key)
           const shown = expanded ? list : list.slice(0, MAX_PER_DAY)
           return (
@@ -314,9 +320,10 @@ export default function ScheduleView() {
               </header>
               <div className={styles.dayBody}>
                 {list.length === 0 ? (
-                  <p className={styles.dayEmpty}>Nothing scheduled.</p>
+                  <p className={styles.dayEmpty}>{isPast ? 'No dated entries.' : 'Nothing scheduled.'}</p>
                 ) : (
-                  shown.map((entry) => {
+                  shown.map((placed) => {
+                    const { entry } = placed
                     const state = entryState(entry.status)
                     return (
                       <button
@@ -325,15 +332,16 @@ export default function ScheduleView() {
                         className={styles.entry}
                         data-state={state ?? undefined}
                         data-dim={isDisabledEntry(entry) || undefined}
+                        title={entry.schedule ? `Schedule: ${entry.schedule}` : undefined}
                         onClick={() => setDetailId(entry.id)}
                       >
                         <span className={styles.entryTitle}>{entry.title}</span>
                         <span className={styles.entryMeta}>
-                          <Mono muted>{formatTimeLabel(entry.startsAt)}</Mono>
+                          <Mono muted>{placed.label}</Mono>
                           {state && state !== 'healthy' && (
                             <span className={styles.entryStatus}>
                               <StateDot state={state} />
-                              {entry.status}
+                              {entryStatusLabel(entry.status)}
                             </span>
                           )}
                         </span>
@@ -353,14 +361,41 @@ export default function ScheduleView() {
       </div>
 
       <p className={styles.footnote}>
-        Recurring entries repeat on every day shown; dated entries appear on their day only.
+        Recurring jobs appear on the days their schedule runs them, from today on, in your local time. A job that runs
+        many times a day is shown once with its run count. Past days show dated entries only.
       </p>
+
+      {plan.unplaced.length > 0 && (
+        <section className={styles.unplaced} aria-label="Schedule not understood">
+          <h3 className={styles.unplacedTitle}>Schedule not understood</h3>
+          <p className={styles.unplacedNote}>
+            {plan.unplaced.length === 1 ? 'This entry has' : `These ${plan.unplaced.length} entries have`} a schedule that
+            cannot be placed on a day, so {plan.unplaced.length === 1 ? 'it is' : 'they are'} not in the week above.
+          </p>
+          <ul className={styles.unplacedList}>
+            {plan.unplaced.map(({ entry, reason }) => {
+              const schedule = scheduleDisplay(entry.schedule)
+              return (
+                <li key={entry.id}>
+                  <button type="button" className={styles.unplacedItem} onClick={() => setDetailId(entry.id)}>
+                    <span className={styles.entryTitle}>{entry.title}</span>
+                    <span className={styles.unplacedMeta}>
+                      {schedule.raw ? <Mono muted>{schedule.text}</Mono> : null}
+                      <span>{reason}</span>
+                    </span>
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </section>
+      )}
 
       <Drawer
         open={detailEntry !== null && editing === null}
         onClose={() => setDetailId(null)}
         title={detailEntry?.title ?? ''}
-        description={detailEntry ? `${detailEntry.source || '—'} · ${detailEntry.assignee || 'Unassigned'}` : undefined}
+        description={detailEntry ? `${sourceLabel(detailEntry.source)} · ${detailEntry.assignee || 'Unassigned'}` : undefined}
         footer={
           detailEntry ? (
             <div className={styles.footer}>
@@ -389,12 +424,22 @@ export default function ScheduleView() {
               <div className={styles.fact}>
                 <dt>State</dt>
                 <dd>
-                  {detailState ? <StatePill state={detailState} label={detailEntry.status} /> : detailEntry.status || '—'}
+                  {detailState ? <StatePill state={detailState} label={entryStatusLabel(detailEntry.status)} /> : entryStatusLabel(detailEntry.status)}
                 </dd>
               </div>
               <div className={styles.fact}>
                 <dt>Schedule</dt>
-                <dd>{detailEntry.schedule ? <Mono>{detailEntry.schedule}</Mono> : formatTimeLabel(detailEntry.startsAt)}</dd>
+                <dd>
+                  {detailEntry.schedule ? (
+                    scheduleDisplay(detailEntry.schedule).raw ? (
+                      <Mono>{detailEntry.schedule}</Mono>
+                    ) : (
+                      scheduleDisplay(detailEntry.schedule).text
+                    )
+                  ) : (
+                    formatTimeLabel(detailEntry.startsAt)
+                  )}
+                </dd>
               </div>
               {detailEntry.startsAt && (
                 <div className={styles.fact}>

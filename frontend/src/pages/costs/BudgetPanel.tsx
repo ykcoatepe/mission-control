@@ -88,8 +88,9 @@ export default function BudgetPanel({
                 Progress is hidden until billing coverage for the period is complete.
               </p>
             </>
-          ) : (
-            <p className={styles.muted}>No monthly cap set.</p>
+          ) : noBudget ? null : (
+            // "No monthly budget" is said once, by the switch below. Only an unsaved edit needs words.
+            <p className={styles.muted}>No cap is saved yet.</p>
           )}
         </div>
 
@@ -106,7 +107,7 @@ export default function BudgetPanel({
                   value={noBudget ? '' : budgetInput}
                   onChange={event => setBudgetInput(event.target.value)}
                   disabled={noBudget}
-                  placeholder={noBudget ? 'No budget' : 'Enter an amount'}
+                  placeholder={noBudget ? undefined : 'Enter an amount'}
                 />
               )}
             </Field>
@@ -114,7 +115,7 @@ export default function BudgetPanel({
               Save
             </Button>
           </div>
-          <Switch checked={noBudget} onChange={setNoBudget} label="No monthly budget" />
+          <Switch checked={noBudget} onChange={setNoBudget} label="No monthly budget" aria-label="No monthly budget" />
         </form>
       </div>
     </Panel>

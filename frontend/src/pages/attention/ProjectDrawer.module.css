@@ -120,6 +120,25 @@
   gap: var(--sp-3);
 }
 
+.groupName {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  margin-right: auto;
+}
+
+.groupLabel {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+/* Codes break only after an underscore, never in the middle of a word. */
+.code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
 .status {
   margin: 0;
   padding: var(--sp-3);

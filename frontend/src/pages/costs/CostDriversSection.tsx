@@ -15,7 +15,7 @@ import {
   formatCompactTokenValue,
   formatCurrency,
   formatPreciseCurrency,
-  formatTokens,
+  formatTokenPhrase,
 } from './lib'
 import type { AgentUsageData, AggregatedBreakdownItem } from './types'
 import styles from './CostDriversSection.module.css'
@@ -124,8 +124,14 @@ function ShareCell({ pct, label }: { pct: number | null; label: string }) {
   )
 }
 
-function TokenCell({ tokens }: { tokens: number }) {
-  return <span title={`${formatTokens(tokens)} tokens`}>{formatCompactTokenValue(tokens)}</span>
+function TokenCell({ tokens }: { tokens: number | null }) {
+  return <span title={formatTokenPhrase(tokens)}>{formatCompactTokenValue(tokens)}</span>
+}
+
+/** Billed spend; a dash with its reason when billing for the row was not read. Never $0.00. */
+function TrackedSpendCell({ cost }: { cost: number | null }) {
+  if (cost === null || !Number.isFinite(cost)) return <span title="Billing for this row was not read">—</span>
+  return <>{formatCurrency(cost)}</>
 }
 
 export default function CostDriversSection({
@@ -186,7 +192,7 @@ export default function CostDriversSection({
       ),
     },
     { key: 'tokens', header: 'Tokens', align: 'end', mono: true, cell: item => <TokenCell tokens={item.tokens} /> },
-    { key: 'tracked', header: 'Tracked spend', align: 'end', mono: true, cell: item => formatCurrency(item.cost) },
+    { key: 'tracked', header: 'Tracked spend', align: 'end', mono: true, cell: item => <TrackedSpendCell cost={item.cost} /> },
   ]
 
   // Tokens and API-equivalent cost per platform are in the Platforms panel
@@ -218,7 +224,9 @@ export default function CostDriversSection({
       cell: agent => (
         <ShareCell
           label={agent.label}
-          pct={totalPlatformTokens > 0 ? (agent.tokens / totalPlatformTokens) * 100 : null}
+          pct={totalPlatformTokens > 0 && agent.tokens > 0 && agent.status !== 'unavailable'
+            ? (agent.tokens / totalPlatformTokens) * 100
+            : null}
         />
       ),
     },
@@ -272,7 +280,7 @@ export default function CostDriversSection({
         columns={awsColumns}
         rows={awsServices}
         rowKey={service => service.name}
-        maxHeight="520px"
+        maxHeight="none"
         empty={<EmptyState title="No AWS services billed" description="Live billing returned no services for this period." />}
       />
     )
@@ -287,7 +295,7 @@ export default function CostDriversSection({
         columns={platformColumns}
         rows={platforms}
         rowKey={agent => agent.key}
-        maxHeight="520px"
+        maxHeight="none"
         empty={<EmptyState title="No platform data yet" description="The split by platform appears once the usage ledger has been read." />}
       />
     )
@@ -304,7 +312,7 @@ export default function CostDriversSection({
           columns={sessionColumns}
           rows={sessions}
           rowKey={session => session.sessionId}
-          maxHeight="520px"
+          maxHeight="none"
           empty={<EmptyState title="No session load yet" description="Sessions with token usage appear here while they are live." />}
         />
       </>
@@ -316,7 +324,7 @@ export default function CostDriversSection({
         columns={modelColumns}
         rows={models}
         rowKey={item => item.name}
-        maxHeight="520px"
+        maxHeight="none"
         empty={<EmptyState title="No model usage yet" description="Models appear here once usage is recorded for this period." />}
       />
     )

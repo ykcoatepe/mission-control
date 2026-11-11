@@ -1,5 +1,5 @@
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
-import { useEffect, useMemo, useRef } from 'react'
+import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { useMemo, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import type { AppRouteDefinition } from '../appRoutes'
 import { useApi } from '../lib/hooks'
@@ -8,6 +8,9 @@ import type { NavBadge, SignalsEnvelope } from '../lib/signals'
 import { useNavigation } from '../lib/useNavigation'
 import { MissionControlMark } from './MissionControlMark'
 import { cx } from './ui/cx'
+import { IconButton } from './ui/IconButton'
+import { useMediaQuery } from './ui/useMediaQuery'
+import { useModal } from './ui/useModal'
 import styles from './Sidebar.module.css'
 
 interface SidebarProps {
@@ -49,20 +52,11 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
     [primary],
   )
 
-  // Off-canvas drawer: Esc closes, focus moves in, and returns to the menu button on close.
-  useEffect(() => {
-    if (!open) return
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    asideRef.current?.querySelector<HTMLElement>('a')?.focus()
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('keydown', onKeyDown)
-      if (previous && document.contains(previous)) previous.focus()
-    }
-  }, [open, onClose])
+  // Under 900px the sidebar is an off-canvas drawer. While it is open it is a modal dialog:
+  // focus moves in, Tab is trapped, Esc closes and focus returns to the menu button.
+  const drawerMode = useMediaQuery('(max-width: 899px)')
+  const modal = drawerMode && open
+  useModal(modal, onClose, asideRef, () => document.querySelector<HTMLElement>('[data-nav-menu]'))
 
   const renderLink = (route: AppRouteDefinition) => {
     const Icon = route.icon
@@ -80,9 +74,13 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
         <Icon className={styles.icon} size={16} strokeWidth={1.75} aria-hidden="true" />
         <span className={styles.label}>{route.label}</span>
         {badge && (
-          <span className={styles.badge} data-tone={badge.tone}>
+          <span className={styles.badge} data-tone={badge.tone} title={badge.secondary ? `${badge.count} ${badge.word} · ${badge.secondary}` : undefined}>
             {badge.count}
-            <span className="visually-hidden"> {badge.word}</span>
+            <span className="visually-hidden">
+              {' '}
+              {badge.word}
+              {badge.secondary ? `, ${badge.secondary}` : ''}
+            </span>
           </span>
         )}
       </NavLink>
@@ -94,13 +92,23 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
       id="mission-control-sidebar"
       ref={asideRef}
       className={cx(styles.sidebar, collapsed && styles.collapsed, open && styles.open)}
-      aria-label="Main"
+      aria-label={modal ? 'Navigation' : 'Main'}
+      role={modal ? 'dialog' : undefined}
+      aria-modal={modal ? true : undefined}
+      tabIndex={modal ? -1 : undefined}
     >
       <div className={styles.brand}>
         <span className={styles.mark}>
           <MissionControlMark size={18} />
         </span>
         <span className={styles.brandName}>{name}</span>
+        <IconButton
+          label="Close navigation"
+          size="sm"
+          className={styles.closeButton}
+          icon={<X size={16} />}
+          onClick={onClose}
+        />
       </div>
 
       <nav className={styles.nav} aria-label="Primary">

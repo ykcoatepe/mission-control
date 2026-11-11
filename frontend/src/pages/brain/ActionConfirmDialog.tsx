@@ -1,14 +1,16 @@
-import { Button, Dialog, Mono, StatePill } from '../../components/ui'
+import { Button, Dialog, Mono, StatePill, TimeAgo } from '../../components/ui'
 import type { UiState } from '../../lib/state'
-import { plainWords } from './lib'
+import { confirmLabel, plainWords } from './lib'
 import styles from './ActionConfirmDialog.module.css'
 import type { OperationCapability } from './types'
 
 export interface ConfirmContext {
   /** The state shown for GBrain right now. */
   state: UiState
-  /** "fresh", "stale" or "not read". */
-  freshness: string
+  /** When the reading behind that state was taken; null when it was never read. */
+  observedAt: string | null
+  /** The reading is older than it should be. */
+  stale: boolean
   /** First current note, if any. */
   note: string | null
 }
@@ -41,7 +43,7 @@ export function ActionConfirmDialog({
             Cancel
           </Button>
           <Button variant="primary" onClick={onConfirm}>
-            {visible ? `Run ${visible.label}` : 'Run'}
+            {visible ? confirmLabel(visible) : 'Run'}
           </Button>
         </>
       }
@@ -50,23 +52,27 @@ export function ActionConfirmDialog({
         <>
           <dl className={styles.facts}>
             <div>
-              <dt>Current reading</dt>
+              <dt>GBrain state</dt>
               <dd>
-                <StatePill state={context.state} /> <span className={styles.muted}>{context.freshness}</span>
+                <StatePill state={context.state} />
+              </dd>
+            </div>
+            <div>
+              <dt>Last read</dt>
+              <dd>
+                <TimeAgo value={context.observedAt} fallback="not read" />
+                {context.stale && <span className={styles.stale}> · stale</span>}
               </dd>
             </div>
             <div>
               <dt>Expected duration</dt>
               <dd>{minutes ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : 'Not specified'}</dd>
             </div>
-            <div>
-              <dt>Exact action</dt>
-              <dd>
-                <Mono>{visible.id}</Mono>
-              </dd>
-            </div>
           </dl>
           {context.note && <p className={styles.note}>{context.note}</p>}
+          <p className={styles.actionId}>
+            Action <Mono muted>{visible.id}</Mono>
+          </p>
         </>
       )}
     </Dialog>

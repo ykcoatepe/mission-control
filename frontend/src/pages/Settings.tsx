@@ -122,17 +122,30 @@ export default function Settings() {
   )
 }
 
-function modelOptions(models: ModelInfo[], current: string, allowInherit: boolean): SelectOption[] {
+/**
+ * The heartbeat model as the person chose "Inherit from main model" on this page. The server reports
+ * `null` for a heartbeat model it could not read, so `''` means "not read" and is never shown as an
+ * inherit setting; only this explicit choice is sent as `''` (unset).
+ */
+const HEARTBEAT_INHERIT = '__inherit__'
+
+function modelOptions(models: ModelInfo[], current: string, heartbeat: boolean): SelectOption[] {
   const options: SelectOption[] = models.map((m) => ({ value: m.id, label: m.name || m.id }))
-  if (current && !models.some((m) => m.id === current)) {
+  if (current && current !== HEARTBEAT_INHERIT && !models.some((m) => m.id === current)) {
     options.unshift({ value: current, label: current })
   }
-  if (allowInherit) {
-    options.unshift({ value: '', label: 'Inherit from main model' })
+  if (heartbeat) {
+    options.unshift({ value: HEARTBEAT_INHERIT, label: 'Inherit from main model' })
+    if (!current) options.unshift({ value: '', label: 'Not read' })
   } else if (!current) {
     options.unshift({ value: '', label: 'Not set' })
   }
   return options
+}
+
+/** The routing as the server takes it: the explicit inherit choice becomes the empty string. */
+function routingForServer(changed: Partial<Routing>): Partial<Routing> {
+  return changed.heartbeat === HEARTBEAT_INHERIT ? { ...changed, heartbeat: '' } : changed
 }
 
 function ModelsPanel({ saver }: { saver: Saver }) {
@@ -179,7 +192,7 @@ function ModelsPanel({ saver }: { saver: Saver }) {
 
     const onSave = async () => {
       // A partial update: only the fields that changed are sent.
-      const changed = changedRouting(baseline, routing)
+      const changed = routingForServer(changedRouting(baseline, routing))
       const invalid = routingErrors(changed)
       if (Object.keys(invalid).length > 0) {
         setFieldErrors(invalid)
@@ -209,7 +222,15 @@ function ModelsPanel({ saver }: { saver: Saver }) {
           <Field label="Sub-agent model" hint="Used by sub-agents the assistant starts." error={fieldErrors.subagent}>
             {(c) => <Select {...c} value={routing.subagent} onChange={set('subagent')} options={modelOptions(list, routing.subagent, false)} />}
           </Field>
-          <Field label="Heartbeat model" hint="Used for scheduled heartbeat checks." error={fieldErrors.heartbeat}>
+          <Field
+            label="Heartbeat model"
+            hint={
+              routing.heartbeat === ''
+                ? 'The current heartbeat model could not be read. Choose one to change it.'
+                : 'Used for scheduled heartbeat checks.'
+            }
+            error={fieldErrors.heartbeat}
+          >
             {(c) => <Select {...c} value={routing.heartbeat} onChange={set('heartbeat')} options={modelOptions(list, routing.heartbeat, true)} />}
           </Field>
         </div>

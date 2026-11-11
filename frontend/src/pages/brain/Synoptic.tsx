@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState, useSyncExternalStore } from 'react'
 import type { KeyboardEvent, RefObject } from 'react'
 import { Mono, StateDot, cx } from '../../components/ui'
-import { stateLabel } from '../../lib/state'
+import { stateLabel, type UiState } from '../../lib/state'
 import { CORE_ID, QUEUE_ID, edgeId, type BlockModel, type BrainModel, type EdgeModel } from './lib'
 import {
   MIN_WIDTH,
@@ -47,7 +47,11 @@ export interface SynopticProps {
   onSelect: (id: string) => void
 }
 
-const accessibleName = (block: BlockModel) => `${block.label}: ${stateLabel(block.state).toLowerCase()}, ${block.sub}`
+/** A configured reader is neither healthy nor failing as far as anyone observed: a neutral dot, never green. */
+const dotState = (item: { state: UiState; neutral?: boolean }): UiState => (item.neutral ? 'inactive' : item.state)
+
+const accessibleName = (block: BlockModel) =>
+  block.neutral ? `${block.label}: ${block.sub}` : `${block.label}: ${stateLabel(block.state).toLowerCase()}, ${block.sub}`
 
 /** Dark-cockpit schematic: readers -> core <- sources, queue under the core. Falls back to a list when narrow. */
 export function Synoptic({ model, selectedId, onSelect }: SynopticProps) {
@@ -72,7 +76,10 @@ export function Synoptic({ model, selectedId, onSelect }: SynopticProps) {
           <StateDot state="unavailable" /> Not read
         </li>
         <li>
-          <StateDot state="inactive" /> Switched off
+          <StateDot state="inactive" /> Sync off
+        </li>
+        <li>
+          <StateDot state="inactive" /> Configured, not observed
         </li>
       </ul>
     </div>
@@ -84,11 +91,17 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
   // Two roving groups, each one Tab stop: the blocks, then the lines.
   const [focusId, setFocusId] = useState<string>(CORE_ID)
   const [edgeFocusId, setEdgeFocusId] = useState<string>(edgeId(QUEUE_ID))
+  const longest = (blockIds: string[]) =>
+    Math.max(0, ...model.edges.filter((e) => blockIds.includes(e.blockId)).map((e) => e.label.length))
   const layout = computeSynopticLayout({
     width,
     readerIds: model.readers.map((r) => r.id),
     groupIds: model.groups.map((g) => g.id),
     queueId: QUEUE_ID,
+    labelChars: {
+      readers: longest(model.readers.map((r) => r.id)),
+      sources: longest(model.groups.map((g) => g.id)),
+    },
   })
   const edgeByBlock = new Map(model.edges.map((e) => [e.blockId, e]))
 
@@ -140,7 +153,7 @@ function SynopticMap({ model, width, selectedId, onSelect }: SynopticProps & { w
           <g
             key={edge.id}
             className={styles.edge}
-            data-state={edge.state}
+            data-state={dotState(edge)}
             data-selected={selectedId === edge.id || undefined}
           >
             <path className={styles.line} d={pathData(le.points)} />
@@ -201,9 +214,6 @@ function BlockButton({
   onFocus: () => void
   onSelect: () => void
 }) {
-  const nameChars = Math.floor((box.w - 52 - (block.count !== null ? 32 : 0)) / 7)
-  const name = truncateLabel(block.label, nameChars)
-  const sub = truncateLabel(block.sub, Math.floor((box.w - 24) / 6.4))
   return (
     <button
       type="button"
@@ -220,14 +230,15 @@ function BlockButton({
       onClick={onSelect}
     >
       <span className={styles.blockTitle}>
-        <StateDot state={block.state} />
-        <span className={styles.name} title={name.truncated ? name.full : undefined}>
-          {name.text}
+        <StateDot state={dotState(block)} />
+        {/* The CSS ellipsis clips only what does not fit; the full text is always in the title. */}
+        <span className={styles.name} title={block.label}>
+          {block.label}
         </span>
         {block.count !== null && <Mono className={styles.count}>{block.count}</Mono>}
       </span>
-      <span className={styles.blockSub} title={sub.truncated ? sub.full : undefined}>
-        {sub.text}
+      <span className={styles.blockSub} title={block.sub}>
+        {block.sub}
       </span>
       {core && (
         <dl className={styles.coreRows}>
@@ -260,18 +271,19 @@ function EdgeButton({
   onFocus: () => void
   onSelect: () => void
 }) {
-  const label = truncateLabel(edge.label, Math.floor(anchor.maxWidth / 6.6))
+  // The button has 4px padding either side, and a 11px mono glyph is about 6.6px wide.
+  const label = truncateLabel(edge.label, Math.floor((anchor.maxWidth - 8) / 6.6))
   return (
     <button
       type="button"
       className={cx(styles.edgeLabel, anchor.align === 'end' && styles.edgeLabelEnd)}
-      data-state={edge.state}
+      data-state={dotState(edge)}
       data-syn-id={edge.id}
       data-selected={selected || undefined}
       style={{ left: anchor.x, top: anchor.y, maxWidth: anchor.maxWidth }}
       aria-label={edge.title}
       aria-pressed={selected}
-      title={label.truncated ? label.full : undefined}
+      title={label.truncated ? `${edge.title}` : edge.label}
       tabIndex={tabIndex}
       onFocus={onFocus}
       onClick={onSelect}
@@ -302,14 +314,24 @@ function SynopticList({ model, selectedId, onSelect }: Omit<SynopticProps, 'widt
                   aria-label={accessibleName(block)}
                   onClick={() => onSelect(block.id)}
                 >
-                  <StateDot state={block.state} />
+                  <StateDot state={dotState(block)} />
                   <span className={styles.listName}>{block.label}</span>
                   {block.count !== null && <Mono muted>{block.count}</Mono>}
                   <span className={styles.listSub}>{block.sub}</span>
-                  {line && block.kind !== 'core' && line.label !== block.sub && (
+                  {/* The line label is shown only when it adds something the row does not already say. */}
+                  {line && block.kind !== 'core' && !block.sub.includes(line.label) && (
                     <Mono muted className={styles.listLine}>
                       {line.label}
                     </Mono>
+                  )}
+                  {block.kind === 'core' && (
+                    <span className={styles.listCore}>
+                      {model.core.rows.map((row) => (
+                        <span key={row.label}>
+                          {row.label} <Mono>{row.value}</Mono>
+                        </span>
+                      ))}
+                    </span>
                   )}
                 </button>
               </li>

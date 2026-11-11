@@ -26,6 +26,11 @@ export interface DataTableProps<T> {
   caption: string
   /** Makes rows clickable and keyboard-operable (Enter / Space). */
   onRowClick?: (row: T) => void
+  /**
+   * Which rows `onRowClick` applies to. A row for which this returns false is a plain row: not focusable,
+   * no pointer cursor, ignored by click and keyboard. Default: every row.
+   */
+  rowClickable?: (row: T) => boolean
   /** Highlights the row whose key matches. */
   selectedKey?: string | null
   /** Dim a row (paused, disabled, archived). */
@@ -43,6 +48,7 @@ export function DataTable<T>({
   rowKey,
   caption,
   onRowClick,
+  rowClickable,
   selectedKey,
   dimmed,
   empty,
@@ -85,18 +91,19 @@ export function DataTable<T>({
         <tbody>
           {rows.map((row) => {
             const key = rowKey(row)
+            const interactive = Boolean(onRowClick) && (rowClickable ? rowClickable(row) : true)
             return (
               <tr
                 key={key}
                 className={cx(
-                  onRowClick && styles.clickable,
+                  interactive && styles.clickable,
                   dimmed?.(row) && styles.dimmed,
                   selectedKey === key && styles.selected,
                 )}
-                tabIndex={onRowClick ? 0 : undefined}
-                aria-selected={onRowClick && selectedKey !== undefined ? selectedKey === key : undefined}
-                onClick={onRowClick ? () => onRowClick(row) : undefined}
-                onKeyDown={onRowClick ? (event) => onKeyDown(event, row) : undefined}
+                tabIndex={interactive ? 0 : undefined}
+                aria-selected={interactive && selectedKey !== undefined ? selectedKey === key : undefined}
+                onClick={interactive ? () => onRowClick?.(row) : undefined}
+                onKeyDown={interactive ? (event) => onKeyDown(event, row) : undefined}
               >
                 {columns.map((column) => (
                   <td

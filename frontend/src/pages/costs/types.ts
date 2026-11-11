@@ -79,6 +79,11 @@ export interface UsageProvider {
   tokens: number | null
   apiEquivalentUsd: number | null
   billedUsd: number | null
+  /**
+   * True when `billedUsd` is a recorded billing figure (so 0 means "billed nothing").
+   * The backend does not send it yet: without it a bare 0 is read as "billing unknown".
+   */
+  billingKnown?: boolean
   note?: string | null
 }
 
@@ -212,7 +217,8 @@ export interface AggregatedBreakdownItem {
   name: string
   rawNames: string[]
   tokens: number
-  cost: number
+  /** Tracked (billed) spend; null when billing for any variant of this model is unknown. */
+  cost: number | null
   apiEquivalentCost: number
   apiEquivalentAvailable: boolean
   share: number

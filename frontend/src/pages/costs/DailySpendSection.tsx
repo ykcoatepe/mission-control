@@ -5,6 +5,7 @@ import {
   formatCurrency,
   formatPreciseCurrency,
   formatTokens,
+  formatTokenPhrase,
   canonicalModelName,
   isLocalModel,
 } from './lib'
@@ -155,7 +156,8 @@ export interface DailySpendSectionProps {
   awsCosts: AWSSCostData | null
   hasSessionEstimateChart: boolean
   sessionEstimateData: SessionEstimateDay[]
-  totalTokens: number
+  /** Null when the period's token total was not read. */
+  totalTokens: number | null
   apiEquivalentReliability: string
 }
 
@@ -246,16 +248,17 @@ export default function DailySpendSection({
     }
   }, [chartData.length, hasChartBars])
 
+  const dayWord = chartDayCount === 1 ? '1 day' : `${chartDayCount} days`
   const description = chartDayCount > 0
     ? ledgerActive
       ? apiEquivalentUnavailable
-        ? `${chartDayCount} days`
-        : `${chartDayCount} days · API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
+        ? dayWord
+        : `${dayWord} · API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
       : codexbarActive
-        ? `${chartDayCount} days · CodexBar estimate`
+        ? `${dayWord} · CodexBar estimate`
         : hasSessionEstimateChart
-          ? `${chartDayCount} days · tokens only, no cost data`
-          : `${chartDayCount} days`
+          ? `${dayWord} · tokens only, no cost data`
+          : dayWord
     : 'Waiting for daily history.'
 
   let body
@@ -389,7 +392,7 @@ export default function DailySpendSection({
               </span>
             </div>
             <p className={styles.hint}>
-              Session activity only: no cost is available for this period ({formatTokens(totalTokens)} tokens observed).
+              Session activity only: no cost is available for this period{totalTokens === null ? '.' : ` (${formatTokenPhrase(totalTokens, 'tokens observed')}).`}
             </p>
           </div>
         )}
@@ -414,7 +417,7 @@ export default function DailySpendSection({
       <EmptyState
         title="Daily history is not available yet"
         description={
-          totalTokens > 0
+          totalTokens !== null && totalTokens > 0
             ? `No priced model ledger is available for ${formatTokens(totalTokens)} tokens.`
             : 'No usage has been recorded for this period.'
         }

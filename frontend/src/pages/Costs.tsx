@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ApiError, describeApiError, fetchJson, postJson, retryOnce, useApi, writeFailureMessage } from '../lib/hooks'
+import { ApiError, apiQueryOptions, describeApiError, fetchJson, postJson, retryOnce, useApi, writeFailureMessage } from '../lib/hooks'
 import { ErrorState, Page, Skeleton, useToast } from '../components/ui'
 import type { UiState } from '../lib/state'
 import costsStyles from './costs/Costs.module.css'
@@ -47,7 +48,8 @@ import {
   currentMonthKey,
   resolveActiveChartDate,
   shouldClearMonthAnchor,
-  assignSeriesColors,
+  assignStableSeriesColors,
+  isValidMonthKey,
   SERIES_COLOR_COUNT,
   seriesColorToken,
   isModelColumnKey,
@@ -95,11 +97,33 @@ type MonthAvailabilityResponse = {
 export default function Costs() {
   const queryClient = useQueryClient()
   const toast = useToast()
-  const [period, setPeriod] = useState<'day' | '7d' | 'month'>('month')
+  // The period and the month are part of the address (?period=day|7d, ?month=YYYY-MM):
+  // a reload, a shared link and the back button keep the view. The defaults (Month, the
+  // live month) are left out. `replace` keeps the history free of every click.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const periodParam = searchParams.get('period')
+  const period: 'day' | '7d' | 'month' = periodParam === 'day' || periodParam === '7d' ? periodParam : 'month'
+  const monthParam = searchParams.get('month')
   // `null` = the live current month. The anchor survives a trip through the Daily /
   // 7 Days tabs (it is simply not sent while those periods are active) and is
   // restored the moment Monthly comes back.
-  const [monthAnchor, setMonthAnchor] = useState<string | null>(null)
+  const monthAnchor: string | null = isValidMonthKey(monthParam) ? monthParam : null
+  const setPeriod = useCallback((next: 'day' | '7d' | 'month') => {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      if (next === 'month') params.delete('period')
+      else params.set('period', next)
+      return params
+    }, { replace: true })
+  }, [setSearchParams])
+  const setMonthAnchor = useCallback((anchor: string | null) => {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      if (anchor === null) params.delete('month')
+      else params.set('month', anchor)
+      return params
+    }, { replace: true })
+  }, [setSearchParams])
   const [activeChartDate, setActiveChartDate] = useState<string | null>(null)
   // A calendar-day click that may point at a month whose rows are still loading;
   // consumed (and scrolled to) once the day exists in the chart pool.
@@ -144,13 +168,17 @@ export default function Costs() {
   }, [monthAnchor, period, queryClient])
 
   // ---- Period-independent fetches (codexbar additionally follows the month anchor) ----
-  const { data: awsCosts } = useApi<AWSSCostData>('/api/aws/costs')
   const { data: configRaw } = useApi<ConfigData>('/api/config')
   const { data: sessionsRaw } = useApi<{ sessions: SessionData[] }>('/api/sessions')
   const { data: codexbarRaw } = useApi<CodexBarCostData & { error?: string }>(codexbarQueryPath(activeMonthAnchor, calendarNow))
   const { data: monthAvailability } = useApi<MonthAvailabilityResponse>('/api/costs/months')
 
   const config: ConfigData = configRaw ?? { modules: {} }
+  // AWS billing is only requested when the public config says the integration is on:
+  // a disabled integration has no route, and asking for it fails on every load.
+  const isAwsEnabled = awsIntegrationEnabled(config)
+  const awsQuery = useQuery({ ...apiQueryOptions<AWSSCostData>('/api/aws/costs'), enabled: isAwsEnabled })
+  const awsCosts: AWSSCostData | null = isAwsEnabled ? awsQuery.data ?? null : null
   const sessions: SessionData[] = useMemo(() => sessionsRaw?.sessions ?? [], [sessionsRaw])
   const codexbarCosts: CodexBarCostData | null =
     codexbarRaw && !codexbarRaw.error ? (codexbarRaw as CodexBarCostData) : null
@@ -194,7 +222,7 @@ export default function Costs() {
     if (!shouldClearMonthAnchor(monthAnchor, currentServerMonth)) return undefined
     const clearAnchorTimer = window.setTimeout(() => setMonthAnchor(null), 0)
     return () => window.clearTimeout(clearAnchorTimer)
-  }, [currentServerMonth, monthAnchor])
+  }, [currentServerMonth, monthAnchor, setMonthAnchor])
   // Classified by the SERVER's month, so a browser in another time zone cannot
   // label a live month-to-date payload as a completed month (or the reverse).
   // Falls back to the browser clock only before the first payload arrives.
@@ -347,14 +375,16 @@ export default function Costs() {
     activeKey: string
     assignments: ReadonlyMap<string, string>
   }>(() => ({ activeKey: '', assignments: new Map() }))
+  // `seriesColorState.assignments` is the session's memory of every model's colour, so a
+  // model that is not in the Day view still owns its colour for the Month view.
   const seriesColors = useMemo(() => (
     seriesColorState.activeKey === seriesColorKey
       ? seriesColorState.assignments
-      : assignSeriesColors(
+      : assignStableSeriesColors(
           rankedSeries.filter(item => !item.rawModels).map(item => item.model),
           seriesColorState.assignments,
           seriesColorSlots,
-        )
+        ).assignments
   ), [rankedSeries, seriesColorKey, seriesColorSlots, seriesColorState])
   const seriesColorsRefreshing =
     costsQuery.isPending ||
@@ -363,7 +393,14 @@ export default function Costs() {
   // Provisional data (loading, fast fallback, refresh in flight) is coloured
   // but not remembered, so the settled data finds the earlier assignments.
   if (!seriesColorsRefreshing && seriesColorState.activeKey !== seriesColorKey) {
-    setSeriesColorState({ activeKey: seriesColorKey, assignments: seriesColors })
+    setSeriesColorState({
+      activeKey: seriesColorKey,
+      assignments: assignStableSeriesColors(
+        rankedSeries.filter(item => !item.rawModels).map(item => item.model),
+        seriesColorState.assignments,
+        seriesColorSlots,
+      ).memory,
+    })
   }
 
   const chartSeries = useMemo<ChartSeriesItem[]>(() => rankedSeries.map(item => ({
@@ -496,30 +533,35 @@ export default function Costs() {
   }
 
   const allTokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
-    const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string> }>()
+    const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string>; costUnknown: boolean }>()
 
+    // `cost` is billed spend: null means billing for that row is unknown, which is not 0.
     const addBucket = (
       rawName: string,
       tokens: number,
-      cost: number,
+      cost: number | null | undefined,
       apiEquivalentCost: number | null | undefined,
       apiEquivalentAvailable: boolean,
     ) => {
-      if (tokens <= 0 && cost <= 0) return
+      const billed = typeof cost === 'number' && Number.isFinite(cost) ? cost : null
+      if (tokens <= 0 && (billed === null || billed <= 0)) return
       const name = canonicalModelName(rawName)
       const current = buckets.get(name) || {
         name,
         rawNames: [],
         rawNamesSet: new Set<string>(),
         tokens: 0,
-        cost: 0,
+        cost: 0 as number | null,
+        costUnknown: false,
         apiEquivalentCost: 0,
         apiEquivalentAvailable: false,
         local: false,
       }
 
       current.tokens += Number.isFinite(tokens) ? tokens : 0
-      current.cost += Number.isFinite(cost) ? cost : 0
+      // One variant without a billing reading makes the model's total unknown.
+      if (billed === null) current.costUnknown = true
+      else current.cost = (current.cost ?? 0) + billed
       if (apiEquivalentAvailable && apiEquivalentCost !== null && apiEquivalentCost !== undefined && Number.isFinite(apiEquivalentCost)) {
         current.apiEquivalentCost += apiEquivalentCost
         current.apiEquivalentAvailable = true
@@ -534,7 +576,7 @@ export default function Costs() {
         addBucket(
           item.name,
           item.tokens || 0,
-          item.cost || 0,
+          item.cost,
           item.apiEquivalentUsd,
           item.apiEquivalentStatus !== 'unavailable' && item.apiEquivalentStatus !== 'not_applicable',
         )
@@ -561,7 +603,7 @@ export default function Costs() {
         addBucket(
           session.model || session.displayName || 'Unknown',
           session.totalTokens || 0,
-          0,
+          null,
           null,
           false,
         )
@@ -572,7 +614,7 @@ export default function Costs() {
       name: item.name,
       rawNames: Array.from(item.rawNamesSet),
       tokens: item.tokens,
-      cost: item.cost,
+      cost: item.costUnknown ? null : item.cost,
       apiEquivalentCost: item.apiEquivalentCost,
       apiEquivalentAvailable: item.apiEquivalentAvailable,
       local: item.local,
@@ -595,13 +637,12 @@ export default function Costs() {
   // (including while the ledger is still pending) the anchored codexbar rows are
   // the only valid source — otherwise the token count reports today's usage
   // under a historical label.
-  const totalTokens = ledgerActive
-    ? tokenData?.summary?.periodTokens ?? tokenData?.summary?.thisMonthTokens ?? tokenData?.summary?.totalTokens ?? 0
+  const totalTokens: number | null = ledgerActive
+    ? ledgerTokenReading(tokenData?.summary)
     : viewingPastMonth
       ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
       : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
 
-  const isAwsEnabled = awsIntegrationEnabled(config)
   // /api/aws/costs always reports the CURRENT month; while an anchored past
   // month is displayed, AWS live billing must not be relabeled as that month —
   // the anchored ledger sources drive every metric instead.
@@ -633,11 +674,9 @@ export default function Costs() {
   const codexbarPeriodCost = sumCostRows(codexbarPeriodDays)
   const codexbarPeriodTokens = codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
 
-  const currentPeriodCost = hasAwsData
-      ? awsCosts?.total || 0
-      : ledgerActive
-        ? (tokenData?.summary?.periodUsd ?? tokenData?.summary?.thisMonthUsd) || 0
-        : 0
+  // Live AWS billing is the only source that feeds these three; every other source reads
+  // its figures from the API-equivalent metrics below, so there is no 0 stand-in for them.
+  const awsPeriodCost: number | null = hasAwsData && awsCosts ? awsCosts.total : null
   const trackedValueAvailable = hasAwsData || ledgerActive
   // The tracked-spend reading itself: null (not read) when billing gave no
   // figure, so the strip shows "—" instead of a made-up $0.00.
@@ -678,16 +717,9 @@ export default function Costs() {
     : codexbarActive
       ? codexbarPeriodDays
       : trackedDays
-  // A complete past month always divides by its real length, even if a fast fallback
-  // payload briefly delivers fewer rows than the month has days.
-  const trackedDayCount = viewingPastMonth && activeMonthAnchor
-    ? daysInMonthKey(activeMonthAnchor)
-    : Math.max(trackedDays.length, 1)
-  const dailyAvg = hasAwsData
-      ? (awsCosts?.daily || []).reduce((sum, d) => sum + (d.cost || 0), 0) / Math.max(awsCosts?.daily?.length || 0, 1)
-      : ledgerActive
-        ? currentPeriodCost / Math.max(trackedDayCount, 1)
-        : 0
+  const dailyAvg: number | null = hasAwsData
+    ? (awsCosts?.daily || []).reduce((sum, d) => sum + (d.cost || 0), 0) / Math.max(awsCosts?.daily?.length || 0, 1)
+    : null
 
   const apiEquivalentMetrics = apiEquivalentMetricValues({
     periodCost: apiEquivalentPeriodCost,
@@ -704,12 +736,12 @@ export default function Costs() {
     completePeriod: viewingPastMonth,
   })
 
-  const compareLabel = comparisonLabels(period, activeMonthAnchor, calendarNow)
+  const compareLabel = comparisonLabels(period, activeMonthAnchor, calendarNow, tokenData?.period)
 
-  // For a finished month the "projection" IS the month total — never extrapolate it.
-  const projectedMonthly = viewingPastMonth ? currentPeriodCost : dailyAvg * 30
+  // AWS only: a finished month never uses AWS (see hasAwsData), so this is always a live projection.
+  const projectedMonthly = dailyAvg === null ? null : dailyAvg * 30
   const metricMode = hasAwsData ? 'tracked' : 'api-equivalent'
-  const metricPeriodCost = hasAwsData ? currentPeriodCost : apiEquivalentMetrics.periodCost
+  const metricPeriodCost = hasAwsData ? awsPeriodCost : apiEquivalentMetrics.periodCost
   const metricDailyAverage = hasAwsData ? dailyAvg : apiEquivalentMetrics.dailyAverage
   const metricProjectedMonthly = hasAwsData ? projectedMonthly : apiEquivalentMetrics.projectedMonthly
   const metricPreviousPeriodCost = hasAwsData ? null : apiEquivalentMetrics.previousPeriodCost
@@ -984,7 +1016,7 @@ export default function Costs() {
               monthlyBudgetBase={monthlyBudgetBase}
               spendLabel={viewingPastMonth && anchoredMonthLabel ? `${anchoredMonthLabel} tracked spend` : 'Tracked spend this month'}
             />
-            {isAwsEnabled && hasAwsData && awsCosts && (
+            {isAwsEnabled && hasAwsData && awsCosts && dailyAvg !== null && (
               <AwsCreditsPanel
                 awsCosts={awsCosts}
                 creditsUsed={creditsUsed}

@@ -1,4 +1,4 @@
-export type GBrainEvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
+export type GBrainEvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive' | 'unavailable'
 
 export interface TimelineDeltaEntry {
   trust: {
@@ -27,6 +27,7 @@ function evidenceStatusLabel(status: GBrainEvidenceStatus) {
   if (status === 'healthy') return 'Normal'
   if (status === 'warning') return 'Warning'
   if (status === 'critical') return 'Critical'
+  if (status === 'unavailable') return 'Unavailable'
   return 'Not read'
 }
 
@@ -63,11 +64,11 @@ function oldestAgeText(seconds: number | null) {
 // Raw missing-embedding count; inside the embed tolerance it is labeled as
 // catching up, beyond it with the oldest age. Snapshots without
 // missingEmbeddingsOverdue treat every missing embedding as overdue.
-function missingEmbeddingsLabel(entry: TimelineDeltaEntry) {
+function missingEmbeddingsLabel(entry: TimelineDeltaEntry, withAge = true) {
   const count = missingEmbeddingsCount(entry)
   if (count === null) return null
   const overdue = structuredCount(entry.metrics, 'missingEmbeddingsOverdue') ?? count
-  const oldest = oldestAgeText(structuredCount(entry.metrics, 'missingEmbeddingsOldestAgeSeconds'))
+  const oldest = withAge ? oldestAgeText(structuredCount(entry.metrics, 'missingEmbeddingsOldestAgeSeconds')) : ''
   if (overdue > 0) return `${count.toLocaleString()}${oldest}`
   if (count > 0) return `${count.toLocaleString()} catching up${oldest}`
   return count.toLocaleString()
@@ -99,10 +100,20 @@ export function deriveQueueEvidenceStatus(input: QueueEvidenceInput): GBrainEvid
   return 'healthy'
 }
 
+export interface DeltaOptions {
+  /**
+   * Include the age of the oldest missing embedding in the line (default). A history list
+   * turns it off: that age grows by itself and is not a change worth a row.
+   */
+  withAge?: boolean
+}
+
 export function timelineDeltaLines(
   current: TimelineDeltaEntry,
   previous: TimelineDeltaEntry | undefined,
+  options: DeltaOptions = {},
 ): string[] {
+  const withAge = options.withAge !== false
   if (!previous) return []
 
   const values: { label: string; from: string | number | null | undefined; to: string | number | null | undefined }[] = [
@@ -116,8 +127,8 @@ export function timelineDeltaLines(
     { label: 'Embeddings', from: previous.metrics.embeddings, to: current.metrics.embeddings },
     {
       label: 'Missing embeddings',
-      from: missingEmbeddingsLabel(previous),
-      to: missingEmbeddingsLabel(current),
+      from: missingEmbeddingsLabel(previous, withAge),
+      to: missingEmbeddingsLabel(current, withAge),
     },
     {
       label: 'Link extraction',

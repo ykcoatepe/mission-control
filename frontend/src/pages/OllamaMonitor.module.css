@@ -47,6 +47,14 @@
 
 .quiet {
   color: var(--text-3);
+  white-space: nowrap;
+}
+
+.tableNote {
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
 .gpuList {

@@ -9,10 +9,18 @@ const FOCUSABLE =
  * container, Tab is trapped, Esc closes, and focus returns to the element that
  * had it before opening.
  */
-export function useModal(open: boolean, onClose: () => void, containerRef: RefObject<HTMLElement | null>) {
+export function useModal(
+  open: boolean,
+  onClose: () => void,
+  containerRef: RefObject<HTMLElement | null>,
+  /** Where focus goes on close when nothing meaningful had it on open (Safari does not focus a clicked button). */
+  fallbackFocus?: () => HTMLElement | null,
+) {
   const onCloseRef = useRef(onClose)
+  const fallbackRef = useRef(fallbackFocus)
   useEffect(() => {
     onCloseRef.current = onClose
+    fallbackRef.current = fallbackFocus
   })
 
   useEffect(() => {
@@ -60,7 +68,9 @@ export function useModal(open: boolean, onClose: () => void, containerRef: RefOb
     document.addEventListener('keydown', onKeyDown, true)
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
-      if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus()
+      const meaningful = previouslyFocused && previouslyFocused !== document.body && document.contains(previouslyFocused)
+      const target = meaningful ? previouslyFocused : (fallbackRef.current?.() ?? null)
+      if (target && document.contains(target)) target.focus()
     }
   }, [open, containerRef])
 }

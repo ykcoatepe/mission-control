@@ -9,6 +9,7 @@ import TopBar from './components/TopBar'
 import { PageTitleProvider, Skeleton, ToastProvider } from './components/ui'
 import { useApi } from './lib/hooks'
 import { cx } from './components/ui/cx'
+import { useMediaQuery } from './components/ui/useMediaQuery'
 
 const COLLAPSED_KEY = 'mc-sidebar-collapsed'
 
@@ -37,6 +38,9 @@ export default function App() {
   // The drawer is open only for the page it was opened on, so navigating closes it.
   const [navOpenedAt, setNavOpenedAt] = useState<string | null>(null)
   const navOpen = navOpenedAt === location.pathname
+  // While the off-canvas navigation is open it is a modal: the page behind it is inert.
+  const drawerMode = useMediaQuery('(max-width: 899px)')
+  const navModal = navOpen && drawerMode
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(readCollapsed)
   const { data: setupData } = useApi<{ needsSetup?: boolean }>('/api/setup')
@@ -91,14 +95,18 @@ export default function App() {
   return (
     <ToastProvider>
       <PageTitleProvider>
-        <a href="#main-content" className={styles.skipLink}>
+        <a href="#main-content" className={styles.skipLink} inert={navModal}>
           Skip to content
         </a>
         <div className={cx(styles.shell, collapsed && styles.shellCollapsed)}>
           <Sidebar collapsed={collapsed} onToggleCollapsed={toggleCollapsed} open={navOpen} onClose={closeNav} />
           {navOpen && <div className={styles.scrim} onClick={closeNav} aria-hidden="true" />}
-          <div className={styles.workspace}>
-            <TopBar onOpenMenu={() => setNavOpenedAt(location.pathname)} onOpenPalette={() => setPaletteOpen(true)} />
+          <div className={styles.workspace} inert={navModal}>
+            <TopBar
+              onOpenMenu={() => setNavOpenedAt(location.pathname)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              menuExpanded={navModal}
+            />
             <main id="main-content" ref={mainRef} tabIndex={-1} className={styles.main}>
               <div className={styles.content}>{routed}</div>
             </main>

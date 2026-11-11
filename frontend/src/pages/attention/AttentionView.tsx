@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { CheckCircle2 } from 'lucide-react'
+import { CheckCircle2, TriangleAlert } from 'lucide-react'
 import {
   Button,
   DataTable,
@@ -16,6 +16,8 @@ import {
   TimeAgo,
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
+import { overdueWords } from '../../lib/signals'
+import type { AttentionReading } from '../../lib/signals'
 import { useNow } from '../../lib/useNow'
 import {
   buildAttentionRows,
@@ -25,7 +27,11 @@ import {
   errorText,
   filterRows,
   findingAge,
+  findingLabel,
+  findingLabelOrNull,
   isRestricted,
+  parseAttentionFilter,
+  shortenHomePaths,
   severityLabel,
   severityState,
   summarize,
@@ -37,6 +43,12 @@ import styles from './AttentionView.module.css'
 interface AttentionViewProps {
   data: LoopsData
   meta: ApiMeta
+  /**
+   * The one attention number (items that need the operator), from the shell signals
+   * (`GET /api/signals`): the same value as the top-bar pill and the sidebar badge.
+   * null while it has not been read.
+   */
+  attention: AttentionReading | null
   /** Set when the latest refresh failed but an earlier reading is still shown. */
   refreshError: string | null
   onRetry: () => void
@@ -51,15 +63,27 @@ const FILTER_OPTIONS = [
 
 const cell = (value: number | null) => (value === null ? '—' : value)
 
-export default function AttentionView({ data, meta, refreshError, onRetry }: AttentionViewProps) {
+export default function AttentionView({ data, meta, attention, refreshError, onRetry }: AttentionViewProps) {
   const now = useNow()
   const [params, setParams] = useSearchParams()
-  const [filter, setFilter] = useState<AttentionFilter>('all')
-  const [project, setProject] = useState('all')
+  // The list filters live in the URL (?filter=overdue&scope=<project>) so a view can be shared or reloaded.
+  const filter = parseAttentionFilter(params.get('filter'))
+  const project = params.get('scope') ?? 'all'
+  const setQuery = (key: 'filter' | 'scope', value: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === 'all') next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+  const setFilter = (value: AttentionFilter) => setQuery('filter', value)
+  const setProject = (value: string) => setQuery('scope', value)
 
   const summary = useMemo(() => summarize(data), [data])
   const allRows = useMemo(() => buildAttentionRows(data, now), [data, now])
-  const rows = useMemo(() => filterRows(allRows, filter, project), [allRows, filter, project])
   const projectRows = useMemo(() => buildProjectRows(data.projects, now), [data.projects, now])
 
   const projectOptions = useMemo(
@@ -73,6 +97,16 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
   )
   // A project that vanished from the reading must not leave the list filtered to nothing.
   const activeProject = projectOptions.some((option) => option.value === project) ? project : 'all'
+  const rows = useMemo(() => filterRows(allRows, filter, activeProject), [allRows, filter, activeProject])
+  // Real counts for the chips, within the chosen project.
+  const filterOptions = useMemo(
+    () =>
+      FILTER_OPTIONS.map((option) => ({
+        ...option,
+        count: filterRows(allRows, option.value as AttentionFilter, activeProject).length,
+      })),
+    [allRows, activeProject],
+  )
 
   // ---- drawer (?project=<id>) ----
 
@@ -81,6 +115,20 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
     const found = projectParam ? data.projects.find((p) => p.id === projectParam) : undefined
     return found && !isRestricted(found) ? found : null
   }, [projectParam, data.projects])
+
+  // A deep link to a restricted or unknown project opens nothing; do not leave it in the address.
+  const dropProjectParam = projectParam !== null && selected === null
+  useEffect(() => {
+    if (!dropProjectParam) return
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('project')
+        return next
+      },
+      { replace: true },
+    )
+  }, [dropProjectParam, setParams])
 
   const openProject = (id: string) => {
     const target = data.projects.find((p) => p.id === id)
@@ -155,9 +203,9 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
     },
     {
       key: 'code',
-      header: 'Code',
+      header: 'Type',
       cell: (row) => {
-        if (row.type === 'finding') return <Mono>{row.code}</Mono>
+        if (row.type === 'finding') return <FindingType code={row.code} />
         if (row.type === 'confirmation') return <span className={styles.muted}>{confirmationKindLabel(row.kind)}</span>
         return <span className={styles.muted}>—</span>
       },
@@ -186,7 +234,12 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
       mono: true,
       cell: (row) =>
         row.overdueConfirmations !== null && row.overdueConfirmations > 0 ? (
-          <span className={styles.overdue}>{row.overdueConfirmations}</span>
+          // Never colour alone: an icon and a word for screen readers go with the number.
+          <span className={styles.overdue}>
+            <TriangleAlert size={12} aria-hidden="true" />
+            {row.overdueConfirmations}
+            <span className="visually-hidden"> overdue</span>
+          </span>
         ) : (
           cell(row.overdueConfirmations)
         ),
@@ -207,7 +260,8 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
   ]
 
   const filtered = filter !== 'all' || activeProject !== 'all'
-  const overdueCount = summary.overdueConfirmations
+  const attentionCount = attention?.count ?? null
+  const overdue = attention ? overdueWords(attention.overdue) : null
 
   return (
     <div className={styles.view}>
@@ -232,6 +286,12 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
 
       <StatRow aria-label="Attention summary">
         <Stat
+          label="Need attention"
+          value={attentionCount}
+          state={attentionCount !== null && attentionCount > 0 ? attention?.state : undefined}
+          hint={overdue ?? (attention === null ? 'not read' : undefined)}
+        />
+        <Stat
           label="Projects with open items"
           value={summary.projectsWithOpenItems}
           hint={summary.projects !== null ? `of ${summary.projects}` : undefined}
@@ -246,19 +306,14 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
               : undefined
           }
         />
-        <Stat
-          label="Overdue confirmations"
-          value={overdueCount}
-          state={overdueCount !== null && overdueCount > 0 ? 'critical' : undefined}
-        />
       </StatRow>
 
       <div className={styles.toolbar}>
         <FilterChips
           ariaLabel="Filter the attention list"
-          options={FILTER_OPTIONS}
+          options={filterOptions}
           value={filter}
-          onChange={(value) => setFilter(value as AttentionFilter)}
+          onChange={(value) => setFilter(parseAttentionFilter(value))}
         />
         <div className={styles.toolbarEnd}>
           {filtered && (
@@ -287,6 +342,7 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
           rows={rows}
           rowKey={(row) => row.key}
           onRowClick={(row) => openProject(row.project)}
+          rowClickable={(row) => row.type !== 'restricted'}
           maxHeight="560px"
           empty={
             <EmptyState
@@ -301,8 +357,15 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
                 allRows.length > 0 ? (
                   <Button
                     onClick={() => {
-                      setFilter('all')
-                      setProject('all')
+                      setParams(
+                        (prev) => {
+                          const next = new URLSearchParams(prev)
+                          next.delete('filter')
+                          next.delete('scope')
+                          return next
+                        },
+                        { replace: true },
+                      )
                     }}
                   >
                     Clear filters
@@ -321,6 +384,7 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
           rows={projectRows}
           rowKey={(row) => row.id}
           onRowClick={(row) => openProject(row.id)}
+          rowClickable={(row) => !row.restricted}
           selectedKey={selected?.id ?? null}
           maxHeight="none"
           empty={<EmptyState title="No manager loops" description="The ledger lists no projects." />}
@@ -334,7 +398,7 @@ export default function AttentionView({ data, meta, refreshError, onRetry }: Att
 
 function WhatCell({ row }: { row: AttentionRow }) {
   if (row.type === 'finding') {
-    const primary = row.detail || row.subject || row.code
+    const primary = shortenHomePaths(row.detail) || row.subject || findingLabel(row.code)
     return (
       <div className={styles.what}>
         <span className={styles.clamp} title={primary}>
@@ -350,7 +414,7 @@ function WhatCell({ row }: { row: AttentionRow }) {
     )
   }
   if (row.type === 'confirmation') {
-    const primary = row.unit || row.id || 'Unnamed confirmation'
+    const primary = shortenHomePaths(row.unit) || row.id || 'Unnamed confirmation'
     return (
       <div className={styles.what}>
         <span className={styles.clamp} title={primary}>
@@ -364,15 +428,39 @@ function WhatCell({ row }: { row: AttentionRow }) {
       </div>
     )
   }
+  const count = (value: number | null, one: string, many: string) =>
+    value === null ? `${many} not read` : `${value} ${value === 1 ? one : many}`
   const parts = [
-    `${row.openFindings} open ${row.openFindings === 1 ? 'finding' : 'findings'}`,
-    `${row.pendingConfirmations} pending`,
-    `${row.overdueConfirmations} overdue`,
+    count(row.openFindings, 'open finding', 'open findings'),
+    row.pendingConfirmations === null ? 'pending not read' : `${row.pendingConfirmations} pending`,
+    row.overdueConfirmations === null ? 'overdue not read' : `${row.overdueConfirmations} overdue`,
   ]
   return (
     <div className={styles.what}>
       <span>Details are restricted</span>
       <span className={styles.sub}>{parts.join(' · ')}</span>
+    </div>
+  )
+}
+
+/** A finding's plain-words label, with the internal code as quiet Mono text under it. */
+function FindingType({ code }: { code: string }) {
+  const label = findingLabelOrNull(code)
+  return (
+    <div className={styles.type}>
+      {label && <span className={styles.typeLabel}>{label}</span>}
+      <Mono muted={label !== null} className={styles.code}>
+        {code.split('_').map((part, index, parts) => (
+          <Fragment key={index}>
+            {part}
+            {index < parts.length - 1 && (
+              <>
+                _<wbr />
+              </>
+            )}
+          </Fragment>
+        ))}
+      </Mono>
     </div>
   )
 }

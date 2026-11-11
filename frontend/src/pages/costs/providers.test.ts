@@ -64,13 +64,31 @@ describe('providerRows', () => {
     expect(row.tokens).toBe(100)
   })
 
-  it('keeps a real zero as zero for a provider that was read', () => {
+  it('a provider that was read and recorded nothing is its own quiet state, with no billed figure', () => {
     const [row] = providerRows([provider({ tokens: 0, apiEquivalentUsd: 0, billedUsd: 0 })])
     expect(row.read).toBe(true)
+    expect(row.noRecords).toBe(true)
     expect(row.tokens).toBe(0)
     expect(row.apiEquivalentUsd).toBe(0)
-    expect(row.billedUsd).toBe(0)
+    expect(row.billedUsd).toBeNull()
+    expect(row.uiState).toBe('inactive')
+    expect(row.stateWord).toBe('No usage recorded')
+  })
+
+  it('a provider with usage is not "no records", even when its API equivalent is unpriced', () => {
+    const [row] = providerRows([provider({ tokens: 5, apiEquivalentUsd: null })])
+    expect(row.noRecords).toBe(false)
     expect(row.uiState).toBe('healthy')
+  })
+
+  it('shows billed only for known billing: a positive figure or an explicit billingKnown', () => {
+    const rows = providerRows([
+      provider({ billedUsd: 0 }),
+      provider({ billedUsd: 0, billingKnown: true }),
+      provider({ billedUsd: 3.2 }),
+      provider({ billedUsd: null, billingKnown: true }),
+    ])
+    expect(rows.map(row => row.billedUsd)).toEqual([null, 0, 3.2, null])
   })
 
   it('maps stale to a warning with a server freshness verdict', () => {
@@ -80,14 +98,28 @@ describe('providerRows', () => {
     expect(row.freshness).toBe('stale')
   })
 
-  it('shows known partial coverage in words and keeps it calm; an unknown coverage stays amber', () => {
+  it('shows known partial coverage in words, neutral and never green; an unknown coverage stays amber', () => {
     const [partial, unknown] = providerRows([provider({ coverage: 'partial' }), provider({ coverage: 'something' })])
-    // Claude Code and Codex are normally partial here: a standing condition, not an alarm.
-    expect(partial.uiState).toBe('healthy')
+    // Claude Code and Codex are normally partial here: a standing condition, not an alarm, and
+    // not confirmed-normal either, so it gets the neutral dot rather than the green one.
+    expect(partial.uiState).toBe('inactive')
     expect(partial.stateWord).toBe('Partial')
     expect(partial.coverage).toBe('partial')
     expect(unknown.coverage).toBe('unknown')
     expect(unknown.uiState).toBe('warning')
+  })
+
+  it('never gives a partial, stale, unread or no-record platform the healthy state', () => {
+    const rows = providerRows([
+      provider({ coverage: 'partial' }),
+      provider({ coverage: 'x' }),
+      provider({ state: 'stale' }),
+      provider({ state: 'unavailable', tokens: null }),
+      provider({ tokens: 0, apiEquivalentUsd: 0 }),
+      provider({ tokens: 0, apiEquivalentUsd: 0, coverage: 'partial' }),
+    ])
+    expect(rows.map(row => row.uiState)).toEqual(['inactive', 'warning', 'warning', 'unavailable', 'inactive', 'inactive'])
+    expect(rows.every(row => row.uiState !== 'healthy')).toBe(true)
   })
 
   it('maps a complete, ready provider to healthy and lets the age decide freshness', () => {

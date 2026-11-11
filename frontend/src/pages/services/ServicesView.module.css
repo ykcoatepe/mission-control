@@ -57,7 +57,12 @@
 .kind {
   display: inline-flex;
   align-items: baseline;
-  gap: var(--sp-2);
+  flex-wrap: wrap;
+  column-gap: var(--sp-2);
+  /* Break between the word and its schedule, never inside "Interval". */
+  overflow-wrap: normal;
+  word-break: normal;
+  white-space: nowrap;
 }
 
 .muted {
@@ -66,6 +71,7 @@
 
 .hint {
   display: block;
+  min-width: 200px;
   max-width: 480px;
   color: var(--text-2);
   font-size: var(--fs-small);
@@ -83,5 +89,17 @@
 
   .verdictDetail {
     padding-left: 0;
+  }
+}
+
+/* Labels, PIDs and exit codes are never broken in the middle; a narrow table scrolls sideways instead. */
+.label {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (min-width: 701px) {
+  .label {
+    white-space: nowrap;
   }
 }

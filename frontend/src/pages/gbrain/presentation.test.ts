@@ -73,6 +73,14 @@ describe('GBrain presentation model', () => {
     expect(timelineDeltaLines(legacy, catchingUp)).toEqual(['Missing embeddings 3 catching up (oldest 4m) → 3'])
   })
 
+  it('leaves the oldest age out of a history line when asked, so an age tick is not a change', () => {
+    const base = { trust: { status: 'warning' as const, score: 99 }, sourceFreshness: { status: 'healthy' as const } }
+    const at12 = { ...base, metrics: { missingEmbeddings: 4, missingEmbeddingsOverdue: 4, missingEmbeddingsOldestAgeSeconds: 720, caveats: '3' } }
+    const at15 = { ...base, metrics: { missingEmbeddings: 4, missingEmbeddingsOverdue: 4, missingEmbeddingsOldestAgeSeconds: 900, caveats: '3' } }
+    expect(timelineDeltaLines(at15, at12)).toEqual(['Missing embeddings 4 (oldest 12m) → 4 (oldest 15m)'])
+    expect(timelineDeltaLines(at15, at12, { withAge: false })).toEqual([])
+  })
+
   it('judges the embedding queue on the overdue verdict and fails closed when the count is unavailable', () => {
     const live = { fallbackStatus: 'warning' as const, hasLiveHealth: true, countersAvailable: true, stalledJobs: 0 }
     expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: 3, missingEmbeddingsOverdue: 0 })).toBe('healthy')

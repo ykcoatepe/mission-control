@@ -63,17 +63,31 @@
   gap: var(--sp-3);
 }
 
-.text {
-  margin: 0;
-  padding: var(--sp-3);
-  overflow-x: auto;
-  color: var(--text-2);
-  font-family: var(--font-mono);
-  font-size: var(--fs-small);
-  line-height: var(--lh-body);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: var(--surface-1);
+.titleRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+/* What kind of page the result is (note, code, concept): tells same-titled results apart. */
+.type {
+  flex: 0 0 auto;
+  padding: 0 var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-full);
+}
+
+.lead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.slug {
+  font-variant-ligatures: none;
 }

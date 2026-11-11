@@ -1,4 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { RefreshCcw } from 'lucide-react'
 import { fetchJson, useApi } from '../lib/hooks'
 import {
@@ -175,9 +176,27 @@ export default function Councils() {
   const decisionsApi = useApi<DecisionsPayload>('/api/councils/decisions', 12000)
   const scorecard = useApi<GovernanceScorecard>('/api/councils/governance/scorecard', 12000)
 
-  const [activeCouncil, setActiveCouncil] = useState<CouncilFilter>('ALL')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [search, setSearch] = useState('')
+  // Council, status and search live in the URL (?council=EC&status=open&q=…) so a view can be shared or reloaded.
+  const [params, setParams] = useSearchParams()
+  const councilParam = params.get('council')
+  const activeCouncil: CouncilFilter = (['ALL', ...councilKeys] as string[]).includes(councilParam ?? '')
+    ? (councilParam as CouncilFilter)
+    : 'ALL'
+  const statusFilter = params.get('status') ?? 'ALL'
+  const search = params.get('q') ?? ''
+  const setParam = (key: 'council' | 'status' | 'q', value: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === '' || value === 'ALL') next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+  const setActiveCouncil = (value: CouncilFilter) => setParam('council', value)
+  const setStatusFilter = (value: string) => setParam('status', value)
+  const setSearch = (value: string) => setParam('q', value)
   const [selected, setSelected] = useState<Decision | null>(null)
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
   const [timelineState, setTimelineState] = useState<TimelineState>('ready')
@@ -259,11 +278,15 @@ export default function Councils() {
     : null
 
   const filtersActive = activeCouncil !== 'ALL' || statusFilter !== 'ALL' || search.trim() !== ''
-  const clearFilters = () => {
-    setActiveCouncil('ALL')
-    setStatusFilter('ALL')
-    setSearch('')
-  }
+  const clearFilters = () =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const key of ['council', 'status', 'q']) next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
 
   const columns: DataTableColumn<Decision>[] = [
     {
@@ -350,19 +373,20 @@ export default function Councils() {
             <Skeleton variant="block" label="Reading governance check" />
           ) : (
             <StatRow aria-label="Governance versus real workflow, last 24 hours">
-              <Stat label="Workflow check" value={stateLabel(workflowUi)} state={workflowUi} hint={review ? 'governance vs real work' : 'no workflow review reported'} />
-              <Stat label="Real workflow" value={formatCount(review?.workflowSurfaceLive24h)} hint="events, last 24 h" />
-              <Stat label="Governance auto-ops" value={formatCount(review?.governanceEventsLive24h)} hint="events, last 24 h" />
+              <Stat label="Overall" value={stateLabel(workflowUi)} state={workflowUi} hint={review ? 'audit activity against real work' : 'no review reported'} />
+              <Stat label="Real work" value={formatCount(review?.workflowSurfaceLive24h)} hint="events, last 24 hours" />
+              <Stat label="Audit's own events" value={formatCount(review?.governanceEventsLive24h)} hint="logged automatically, last 24 hours" />
               <Stat
-                label="Silence"
+                label="Time without real work"
                 value={silenceHours === null ? null : Math.round(silenceHours)}
                 unit={silenceHours === null ? undefined : 'h'}
                 state={governanceOnly ? 'warning' : undefined}
-                hint="since last workflow event"
+                hint="since the last real-work event"
               />
-              <Stat label="Autorun attempts" value={formatCount(scorecard.data?.metrics?.delegationAutorunAttempts)} />
+              <Stat label="Automatic task attempts" value={formatCount(scorecard.data?.metrics?.delegationAutorunAttempts)} />
               <Stat
-                label="Infra failures"
+                label="Failed attempts"
+                hint="infrastructure problems"
                 value={formatCount(infraFailures)}
                 state={infraFailures !== null && infraFailures > 0 ? 'critical' : undefined}
               />
@@ -370,8 +394,8 @@ export default function Councils() {
           )}
 
           {(governanceOnly || review?.rcaTaskActive || review?.idleAdvisories?.length) ? (
-            <Notice tone={governanceOnly ? 'warning' : 'info'} title={governanceOnly ? 'Governance is running without real workflow' : undefined}>
-              {review?.rcaTaskActive ? <p className={styles.noticeLine}>Root-cause task active: <Mono>{review.rcaTaskActive}</Mono></p> : null}
+            <Notice tone={governanceOnly ? 'warning' : 'info'} title={governanceOnly ? 'Only audit activity, no real work' : undefined}>
+              {review?.rcaTaskActive ? <p className={styles.noticeLine}>Investigation task open: <Mono>{review.rcaTaskActive}</Mono></p> : null}
               {review?.idleAdvisories?.length ? (
                 <ul className={styles.advisories}>
                   {review.idleAdvisories.slice(0, 6).map((item: string) => <li key={item}>{item}</li>)}
@@ -457,7 +481,7 @@ export default function Councils() {
                 {selectedDecision.delegatedTaskState ? <Fact label="Task state">{selectedDecision.delegatedTaskState}</Fact> : null}
                 {selectedDecision.linkedTaskId ? <Fact label="Task"><Mono>{selectedDecision.linkedTaskId}</Mono></Fact> : null}
                 {selectedDecision.quorum ? (
-                  <Fact label="Quorum">
+                  <Fact label="Voters present / required">
                     <Mono>{selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</Mono>
                   </Fact>
                 ) : null}

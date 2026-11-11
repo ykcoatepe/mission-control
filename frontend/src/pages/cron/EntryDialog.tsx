@@ -11,13 +11,16 @@ import {
   buildCreatePayload,
   buildUpdatePatch,
   entryState,
+  entryStatusLabel,
   formFromEntry,
   isLinkedEntry,
   isOverridden,
   jobHref,
   scheduleValue,
+  sourceLabel,
   toInputDateTime,
 } from './scheduleLib'
+import { scheduleDisplay } from './cronSchedule'
 import styles from './EntryDialog.module.css'
 
 /** What the dialog asks the schedule view to send. The id of an update is in the URL, never in a body. */
@@ -34,7 +37,8 @@ interface EntryDialogProps {
 
 const FORM_ID = 'schedule-entry-form'
 
-const toOptions = (values: string[]) => values.map((value) => ({ value, label: value }))
+const toOptions = (values: string[], label: (value: string) => string = (value) => value) =>
+  values.map((value) => ({ value, label: label(value) }))
 
 /** Create a manual entry, or edit one. Mount it only while it is open: the form starts from `entry`. */
 export default function EntryDialog({ entry, onClose, onSave }: EntryDialogProps) {
@@ -187,30 +191,39 @@ export default function EntryDialog({ entry, onClose, onSave }: EntryDialogProps
               )}
             </Field>
           )}
-          <Field label={linked ? 'Cron schedule' : 'Cron schedule (optional)'} hint={fieldHint('schedule')}>
-            {(control) => (
-              <TextInput
-                {...control}
-                className={styles.mono}
-                value={form.schedule}
-                onChange={(event) => (linked ? editOverridable('schedule', event.target.value) : edit({ schedule: event.target.value }))}
-                placeholder="0 8 * * *"
-              />
-            )}
-          </Field>
+          {linked ? (
+            // The scheduler owns a linked entry's schedule: editing it here would not change the real job.
+            // A schedule someone overrode earlier can still be handed back.
+            <ReadOnly label="Cron schedule">
+              {scheduleDisplay(form.schedule).raw ? <Mono>{form.schedule}</Mono> : scheduleDisplay(form.schedule).text}
+              {fieldHint('schedule')}
+            </ReadOnly>
+          ) : (
+            <Field label="Cron schedule (optional)">
+              {(control) => (
+                <TextInput
+                  {...control}
+                  className={styles.mono}
+                  value={form.schedule}
+                  onChange={(event) => edit({ schedule: event.target.value })}
+                  placeholder="0 8 * * *"
+                />
+              )}
+            </Field>
+          )}
         </div>
 
         <div className={styles.triple}>
           {linked && entry ? (
             <ReadOnly label="Status">
-              {state ? <StatePill state={state} label={entry.status} /> : entry.status || '—'}
+              {state ? <StatePill state={state} label={entryStatusLabel(entry.status)} /> : entryStatusLabel(entry.status)}
             </ReadOnly>
           ) : (
             <Field label="Status">
               {(control) => (
                 <Select
                   {...control}
-                  options={toOptions(STATUS_OPTIONS)}
+                  options={toOptions(STATUS_OPTIONS, entryStatusLabel)}
                   value={form.status}
                   onChange={(event) => edit({ status: event.target.value })}
                 />
@@ -228,13 +241,13 @@ export default function EntryDialog({ entry, onClose, onSave }: EntryDialogProps
             )}
           </Field>
           {entry ? (
-            <ReadOnly label="Source">{entry.source || '—'}</ReadOnly>
+            <ReadOnly label="Source">{sourceLabel(entry.source)}</ReadOnly>
           ) : (
             <Field label="Source">
               {(control) => (
                 <Select
                   {...control}
-                  options={toOptions(CREATE_SOURCE_OPTIONS)}
+                  options={toOptions(CREATE_SOURCE_OPTIONS, sourceLabel)}
                   value={form.source}
                   onChange={(event) => edit({ source: event.target.value })}
                 />

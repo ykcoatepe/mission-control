@@ -3,7 +3,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '../../components/ui'
 import ScheduleView from './ScheduleView'
@@ -68,7 +68,12 @@ async function flush() {
   })
 }
 
-async function mount() {
+function LocationProbe() {
+  const location = useLocation()
+  return createElement('output', { 'data-testid': 'search' }, location.search)
+}
+
+async function mount(initial = '/') {
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
@@ -78,7 +83,11 @@ async function mount() {
       createElement(
         QueryClientProvider,
         { client },
-        createElement(MemoryRouter, null, createElement(ToastProvider, null, createElement(ScheduleView))),
+        createElement(
+          MemoryRouter,
+          { initialEntries: [initial] },
+          createElement(ToastProvider, null, createElement(ScheduleView), createElement(LocationProbe)),
+        ),
       ),
     ),
   )
@@ -90,6 +99,7 @@ const buttons = () => [...document.querySelectorAll('button')]
 const byText = (text: string) => buttons().find((b) => b.textContent?.includes(text)) as HTMLButtonElement | undefined
 
 afterEach(() => {
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
@@ -167,6 +177,101 @@ describe('ScheduleView', () => {
     expect(host.textContent).toContain('Schedule may be behind')
     expect(host.textContent).toContain('retained from last-good calendar data')
     expect(byText('New entry')?.disabled).toBe(false)
+    await act(async () => root.unmount())
+  })
+})
+
+describe('ScheduleView week grid', () => {
+  // Wednesday 2026-11-11, local time. The grid shows Sunday 8 to Saturday 14.
+  const at = () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(2026, 10, 11, 12, 0))
+  }
+  const entry = (over: Partial<CalendarEntry> & { id: string }): CalendarEntry => ({ ...linked, title: over.id, linkedJobId: null, source: 'cron', ...over })
+  const day = (label: string) => document.querySelector(`section[aria-label="${label}"]`) as HTMLElement
+  const titles = (label: string) => [...day(label).querySelectorAll('button')].map((b) => b.textContent ?? '')
+
+  it('puts a weekly job on its own day only', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'friday-report', schedule: '0 9 * * 5' }), entry({ id: 'sunday-review', schedule: '0 11 * * 0' })] })
+    const { root } = await mount()
+    expect(titles('Fri Nov 13').some((t) => t.includes('friday-report'))).toBe(true)
+    for (const other of ['Sun Nov 8', 'Mon Nov 9', 'Tue Nov 10', 'Wed Nov 11', 'Thu Nov 12', 'Sat Nov 14']) {
+      expect(titles(other).some((t) => t.includes('friday-report'))).toBe(false)
+    }
+    // Sunday 8 is already past: a recurring job is not drawn there, and does not move to other days.
+    expect(document.querySelectorAll('section[aria-label$="Nov 8"] button, section[aria-label$="Nov 9"] button')).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('sunday-review')
+    await act(async () => root.unmount())
+  })
+
+  it('shows a job that runs every few minutes once per day, with its run count', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'sentinel', schedule: 'every 10m' })] })
+    const { root } = await mount()
+    expect(titles('Wed Nov 11')).toHaveLength(1)
+    expect(titles('Wed Nov 11')[0]).toContain('every 10m · 144 runs')
+    expect(titles('Tue Nov 10')).toHaveLength(0)
+    await act(async () => root.unmount())
+  })
+
+  it('lists schedules it cannot read under "Schedule not understood" instead of on every day', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'heartbeat', schedule: 'every' }), entry({ id: 'fine', schedule: '0 9 * * *' })] })
+    const { root } = await mount()
+    const list = document.querySelector('section[aria-label="Schedule not understood"]') as HTMLElement
+    expect(list).not.toBeNull()
+    expect(list.textContent).toContain('heartbeat')
+    expect(list.textContent).toContain('No interval was reported')
+    expect(list.textContent).not.toContain('fine')
+    for (const label of ['Wed Nov 11', 'Thu Nov 12', 'Fri Nov 13']) expect(titles(label).some((t) => t.includes('heartbeat'))).toBe(false)
+    await act(async () => root.unmount())
+  })
+
+  it('does not show the list when every schedule is understood', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'fine', schedule: '0 9 * * *' })] })
+    const { root } = await mount()
+    expect(document.querySelector('section[aria-label="Schedule not understood"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('keeps source filter, search and range in the URL, and restores them from it', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'alpha', schedule: '0 9 * * *' }), entry({ id: 'beta', schedule: '0 10 * * *', source: 'manual' })] })
+    const { root } = await mount()
+    const search = () => document.querySelector('[data-testid="search"]')!.textContent
+    expect(search()).toBe('')
+    await act(async () => byText('Scheduler')?.click())
+    expect(search()).toBe('?source=cron')
+    await act(async () => byText('Today')?.click())
+    expect(search()).toContain('range=today')
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+
+    const again = await mount('/?source=manual&find=bet')
+    expect(titles('Wed Nov 11').map((t) => t.replace(/\d.*/, ''))).toEqual(['beta'])
+    expect((document.querySelector('input[type="search"], input[placeholder="Search by title"]') as HTMLInputElement).value).toBe('bet')
+    await act(async () => again.root.unmount())
+  })
+
+  it('ignores an unknown filter value in the URL', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'alpha', schedule: '0 9 * * *' })] })
+    const { root } = await mount('/?source=bogus&range=nonsense&week=abc')
+    expect(titles('Wed Nov 11')).toHaveLength(1)
+    await act(async () => root.unmount())
+  })
+
+  it('shows plain status words in the entry drawer', async () => {
+    at()
+    stubServer({ ...clean, entries: [entry({ id: 'alpha', schedule: '0 9 * * *', status: 'active' })] })
+    const { root } = await mount()
+    await act(async () => byText('alpha')?.click())
+    const drawer = document.querySelector('[role="dialog"]') as HTMLElement
+    expect(drawer.textContent).toContain('Active')
+    expect(drawer.textContent).not.toMatch(/\bactive\b/)
+    expect(drawer.textContent).toContain('Scheduler')
     await act(async () => root.unmount())
   })
 })

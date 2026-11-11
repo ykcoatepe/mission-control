@@ -4,6 +4,8 @@ import { Button, Drawer, Meter, Mono, Notice, Select, StatePill, Switch, TimeAgo
 import { calcSuccessRate, getCronSchedulerLabel, normalizeCronModelValue } from './lib'
 import type { CronJob, CronOverlapMarker, ModelOption } from './types'
 import { jobState } from './jobState'
+import { scheduleDisplay } from './cronSchedule'
+import { describeRunKind, isInternalKey } from './jobWords'
 import styles from './JobDrawer.module.css'
 
 interface JobDrawerProps {
@@ -50,6 +52,9 @@ export default function JobDrawer({
   const canDelete = job.actions?.delete !== false
   const canChangeModel = job.payload === 'agentTurn' && job.actions?.model !== false
   const successRate = calcSuccessRate(job.history)
+  const schedule = scheduleDisplay(job.schedule)
+  const runKind = describeRunKind(job.payload, job.target)
+  const internalKey = isInternalKey(job.description)
 
   return (
     <Drawer
@@ -104,7 +109,7 @@ export default function JobDrawer({
             </span>
           </Fact>
           <Fact label="Schedule">
-            <Mono>{job.schedule || '—'}</Mono>
+            {schedule.raw ? <Mono>{schedule.text}</Mono> : <span className={styles.note}>{schedule.text}</span>}
           </Fact>
           <Fact label="Last run">
             <TimeAgo value={job.lastRun} />
@@ -131,9 +136,14 @@ export default function JobDrawer({
               job.model || '—'
             )}
           </Fact>
-          <Fact label="Runs as">
-            <Mono>{job.payload || '—'}</Mono>
-            {job.target ? <Mono muted> · {job.target}</Mono> : null}
+          <Fact label="What it does">
+            {runKind.text ?? (runKind.unknown ? null : '—')}
+            {runKind.unknown ? (
+              <>
+                {runKind.text ? ' ' : null}
+                <Mono muted>{runKind.unknown}</Mono>
+              </>
+            ) : null}
           </Fact>
           {job.thinking ? <Fact label="Thinking">{job.thinking}</Fact> : null}
         </dl>
@@ -163,7 +173,16 @@ export default function JobDrawer({
           )}
         </section>
 
-        {job.description && (
+        {job.description && internalKey && (
+          <section className={styles.section} aria-label="Built-in job">
+            <h3 className={styles.sectionTitle}>Built-in job</h3>
+            <p className={styles.note}>
+              The scheduler runs this one itself and gives it no description. Internal name: <Mono muted>{job.description.trim()}</Mono>
+            </p>
+          </section>
+        )}
+
+        {job.description && !internalKey && (
           <section className={styles.section} aria-label="Description">
             <h3 className={styles.sectionTitle}>Description</h3>
             <p className={styles.description}>{job.description}</p>

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Eye, EyeOff } from 'lucide-react'
@@ -60,9 +60,25 @@ export default function Setup() {
   )
 }
 
+interface CatalogModel {
+  id: string
+  name?: string
+}
+
 function DetectStep({ status, onContinue }: { status: SetupStatus; onContinue: () => void }) {
+  // The catalog gives the model its readable name (as Settings shows it); without it the id is shown.
+  const catalog = useApi<CatalogModel[]>('/api/models')
+  const modelNames = useMemo<Record<string, string>>(() => {
+    const names: Record<string, string> = {}
+    if (Array.isArray(catalog.data)) {
+      for (const model of catalog.data) {
+        if (model && typeof model.id === 'string' && typeof model.name === 'string' && model.name) names[model.id] = model.name
+      }
+    }
+    return names
+  }, [catalog.data])
   const gateway = gatewayLines(status)
-  const detected = detectedLines(status)
+  const detected = detectedLines(status, modelNames)
   return (
     <>
       <Panel title="OpenClaw gateway" description="What this machine reports. Reachability is checked on the Services page.">
@@ -146,14 +162,14 @@ function ConfigureStep({ status, onBack, onSaved }: { status: SetupStatus; onBac
           </Notice>
         )}
 
-        <Field label="Dashboard name" error={name.length > 0 ? invalidName : null}>
+        <Field label="Dashboard name" hint="Required." error={name.length > 0 ? invalidName : null}>
           {(control) => (
             <TextInput
               {...control}
               data-autofocus
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Mission Control"
+              placeholder="Name this dashboard"
               maxLength={200}
             />
           )}

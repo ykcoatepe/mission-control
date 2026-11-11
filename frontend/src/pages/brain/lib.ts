@@ -1,5 +1,5 @@
 import { describeApiError, isBusyError, isUnavailableError } from '../../lib/hooks'
-import { worstState } from '../../lib/state'
+import { toUiState, worstState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
 import { timelineDeltaLines } from '../gbrain/presentation'
 import type {
@@ -46,15 +46,37 @@ const WORD_FIXES: Array<[RegExp, string]> = [
   [/\bevidence\b/gi, 'reading'],
 ]
 
+/** One word for a source whose sync is switched off, everywhere on the page. */
+const VOCABULARY: Array<[RegExp, string]> = [
+  [/\bsync(?:ing)? (?:is )?disabled\b/gi, 'sync off'],
+  [/\bexcluded by policy\b/gi, 'sync off'],
+]
+
+/** Only the shared vocabulary: backend reasons keep their own wording otherwise. */
+export function sameVocabulary(text: string): string {
+  return VOCABULARY.reduce((out, [pattern, replacement]) => out.replace(pattern, replacement), text)
+}
+
 /** Backend sentences use older words; the interface says "reading" and "note". */
 export function plainWords(text: string): string {
-  let out = text
+  let out = sameVocabulary(text)
   for (const [pattern, replacement] of WORD_FIXES) {
     out = out.replace(pattern, (match) =>
       match[0] === match[0].toUpperCase() ? replacement[0].toUpperCase() + replacement.slice(1) : replacement,
     )
   }
   return out
+}
+
+/**
+ * Capitalise the first letter of a sentence, but never re-case an identifier:
+ * "tk-omc-ain: sync off." keeps its source id exactly as the backend wrote it.
+ */
+export function startSentence(text: string): string {
+  const trimmed = text.trim()
+  const first = trimmed.split(/\s+/, 1)[0] ?? ''
+  if (!first || /[-_./:\d]/.test(first)) return trimmed
+  return `${trimmed.charAt(0).toUpperCase()}${trimmed.slice(1)}`
 }
 
 // ---- model ----
@@ -70,6 +92,11 @@ export interface BlockModel {
   sub: string
   /** Item count shown in the block title (source groups). */
   count: number | null
+  /**
+   * The state is a configuration reading, not an observed one (readers): the dot is
+   * neutral and the word is "configured". Green is kept for observed-healthy readings.
+   */
+  neutral?: boolean
 }
 
 export interface CoreModel extends BlockModel {
@@ -85,6 +112,8 @@ export interface EdgeModel {
   label: string
   /** Full description for the tooltip and the accessible name. */
   title: string
+  /** A configuration line, not an observed one: shown neutral. */
+  neutral?: boolean
 }
 
 export interface Condition {
@@ -200,7 +229,7 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
     if (group.state === 'unavailable') sub = 'not read'
     else if (group.state === 'inactive') sub = 'sync off'
     else if (bad.length > 0) sub = `${bad.length} of ${group.items.length} need attention`
-    else sub = off > 0 ? `all fresh · ${off} off` : 'all fresh'
+    else sub = off > 0 ? `all fresh · ${off} sync off` : 'all fresh'
     groups.push({ id, kind: 'group', label: group.label, state: group.state, sub, count: group.items.length })
     states[id] = group.state
 
@@ -236,7 +265,10 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
   for (const reader of syn.readers) {
     const id = readerBlockId(reader.id)
     const state = reader.state
-    readers.push({ id, kind: 'reader', label: reader.label, state, sub: readerSub(reader), count: null })
+    const sub = readerSub(reader)
+    // Configuration is all the backend can read, so a healthy reader is "configured", not "observed healthy".
+    const neutral = state === 'healthy' && sub === 'configured'
+    readers.push({ id, kind: 'reader', label: reader.label, state, sub, count: null, neutral })
     states[id] = state
     const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.label === 'configured')
     const edgeState: UiState = payloadEdge?.state ?? state
@@ -250,6 +282,7 @@ export function buildBrainModel(syn: GBrainSynoptic): BrainModel {
       state: edgeState,
       label,
       title: `${reader.label} to GBrain core: ${label}`,
+      neutral: edgeState === 'healthy' && label === 'configured',
     })
   }
 
@@ -292,6 +325,8 @@ export interface Verdict {
   text: string
   /** The payload's own reasons, most severe first. Inactive reasons are listed but never degrade the state. */
   conditions: Condition[]
+  /** What the verdict could not observe, said next to a normal verdict so it never claims more than was read. */
+  caveat: string | null
 }
 
 const KNOWN_STATES: readonly UiState[] = ['healthy', 'warning', 'critical', 'unavailable', 'inactive']
@@ -309,7 +344,7 @@ export function readPayloadVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null |
 /** The one ordering (lib/state.ts worstState, server state.js): critical, warning, unavailable, healthy, inactive. */
 const VERDICT_ORDER: Record<UiState, number> = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 }
 
-const sentence = (text: string) => text.trim().replace(/[.\s]+$/, '')
+const sentence = (text: string) => sameVocabulary(text.trim().replace(/[.\s]+$/, ''))
 
 /**
  * The page's one verdict. It is the payload's `verdict { state, reasons[] }`,
@@ -318,10 +353,16 @@ const sentence = (text: string) => text.trim().replace(/[.\s]+$/, '')
  * age: a healthy verdict on a stale reading is shown as caution, the same rule
  * the top bar applies, so the two cannot disagree.
  */
-export function deriveVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null | undefined, meta: Meta | null): Verdict {
-  if (!syn) return { state: 'unavailable', text: 'GBrain could not be read', conditions: [] }
+export function deriveVerdict(
+  syn: Pick<GBrainSynoptic, 'verdict'> & Partial<Pick<GBrainSynoptic, 'readers'>> | null | undefined,
+  meta: Meta | null,
+): Verdict {
+  if (!syn) return { state: 'unavailable', text: 'GBrain could not be read', conditions: [], caveat: null }
   const payload = readPayloadVerdict(syn)
-  if (!payload) return { state: 'unavailable', text: 'GBrain did not report a verdict', conditions: [] }
+  if (!payload) return { state: 'unavailable', text: 'GBrain did not report a verdict', conditions: [], caveat: null }
+  // Readers are read from configuration only: a normal verdict must say they were not observed.
+  const configOnly = (syn.readers ?? []).some((reader) => reader.state === 'healthy' && reader.integration?.configured === true)
+  const caveat = configOnly ? 'reader connections are configured, not observed' : null
   const conditions: Condition[] = payload.reasons
     .map((reason, index) => ({ condition: { id: reason.elementId, state: reason.state, text: sentence(reason.text) }, index }))
     .sort((a, b) => VERDICT_ORDER[a.condition.state] - VERDICT_ORDER[b.condition.state] || a.index - b.index)
@@ -331,16 +372,16 @@ export function deriveVerdict(syn: Pick<GBrainSynoptic, 'verdict'> | null | unde
   if (!first) {
     if (payload.state === 'healthy' || payload.state === 'inactive') {
       return meta?.stale
-        ? { state: 'warning', text: 'GBrain needs attention: the last reading is stale', conditions }
-        : { state: payload.state, text: 'GBrain is normal', conditions }
+        ? { state: 'warning', text: 'GBrain needs attention: the last reading is stale', conditions, caveat: null }
+        : { state: payload.state, text: 'GBrain is normal', conditions, caveat }
     }
     const generic = payload.state === 'unavailable' ? 'GBrain readings are incomplete' : 'GBrain needs attention'
-    return { state: payload.state, text: generic, conditions }
+    return { state: payload.state, text: generic, conditions, caveat: null }
   }
   const more = attention.length - 1
   const suffix = more > 0 ? ` (and ${more} more)` : ''
   const lead = payload.state === 'unavailable' ? 'GBrain readings are incomplete' : 'GBrain needs attention'
-  return { state: payload.state, text: `${lead}: ${first.text}${suffix}`, conditions }
+  return { state: payload.state, text: `${lead}: ${first.text}${suffix}`, conditions, caveat: null }
 }
 
 // ---- readings (the four stats) ----
@@ -360,12 +401,11 @@ export function deriveSourceSync(groups: SynopticSourceGroup[]): ReadingSet['sou
   const fresh = items.filter((item) => item.state === 'healthy').length
   const stale = items.filter((item) => item.state === 'warning' || item.state === 'critical').length
   const unread = items.filter((item) => item.state === 'unavailable').length
-  const excluded = items.filter((item) => item.excludedByPolicy === true).length
-  const off = items.filter((item) => item.state === 'inactive' && item.excludedByPolicy !== true).length
+  // One word for a source that is switched off, whatever the reason the backend gives.
+  const off = items.filter((item) => item.state === 'inactive').length
   const parts: string[] = []
   if (stale > 0) parts.push(`${stale} stale`)
   if (unread > 0) parts.push(`${unread} not read`)
-  if (excluded > 0) parts.push(`${excluded} excluded`)
   if (off > 0) parts.push(`${off} sync off`)
   const considered = groups.filter((group) => group.state !== 'inactive').map((group) => group.state)
   return {
@@ -437,6 +477,8 @@ export interface ElementDetail {
   id: string
   title: string
   state: UiState
+  /** The word shown with the state ("configured" for a reader that was only read from configuration). */
+  stateWord: string | null
   observedAt: string | null
   rows: DetailRow[]
   items: DetailItem[]
@@ -572,7 +614,6 @@ export function describeElement(
     for (const item of ordered) {
       const record = recordFor(ctx.sources, item.id)
       const parts: string[] = []
-      if (item.state === 'inactive') parts.push(item.excludedByPolicy === true ? 'excluded by policy' : 'sync off')
       if ((item.behind ?? 0) > 0) parts.push(`${fmtCount(item.behind)} behind`)
       if (record?.pages != null) parts.push(`${fmtCount(record.pages)} pages`)
       items.push({
@@ -593,7 +634,8 @@ export function describeElement(
         label: 'Configuration',
         value: integration?.configured === true ? 'configured' : integration?.configured === false ? 'not configured' : 'not read',
         observedAt: integration?.observedAt ?? null,
-        state: integration?.state ?? 'unavailable',
+        // Configured is not observed healthy: no state colour on this row unless the backend reports a problem.
+        state: integration?.configured === true && integration.state === 'healthy' ? undefined : (integration?.state ?? 'unavailable'),
       },
       { label: 'Read from', value: integration?.evidence || '—' },
     )
@@ -607,6 +649,7 @@ export function describeElement(
     id: elementId,
     title: edge ? `${block.label} to GBrain core` : block.label,
     state: edge ? edge.state : block.state,
+    stateWord: (edge ? edge.neutral : block.neutral) ? 'configured' : null,
     observedAt,
     rows,
     items,
@@ -632,11 +675,11 @@ export function currentNotes(
   const lines: NoteLine[] = verdict.conditions.map((condition) => ({
     id: `condition:${condition.id}`,
     state: condition.state,
-    text: `${condition.text.charAt(0).toUpperCase()}${condition.text.slice(1)}.`,
+    text: `${startSentence(condition.text)}.`,
   }))
   const note = readersNote?.trim()
   if (note) {
-    lines.push({ id: 'readers-note', state: 'unavailable', text: `${note.charAt(0).toUpperCase()}${note.slice(1)}${/[.!?]$/.test(note) ? '' : '.'}` })
+    lines.push({ id: 'readers-note', state: 'unavailable', text: `${startSentence(note)}${/[.!?]$/.test(note) ? '' : '.'}` })
   }
   const seen = new Set(lines.map((line) => line.text.toLowerCase()))
   for (const caveat of caveats) {
@@ -681,40 +724,158 @@ export function describeIncident(banner: IncidentBanner): { text: string; at: st
 
 export interface ReadingRow {
   id: string
+  /** When the newest reading in this row was recorded. */
   at: string
+  /** The state recorded at that time. It is history: the current state is the verdict, never this. */
   state: UiState
+  /** The recorded state as a word. */
+  stateWord: string
   quality: string
   headline: string
+  /** How many consecutive readings this row stands for (they differ only by an age ticking up). */
+  count: number
+  /** When the oldest of those readings was recorded; null for a single reading. */
+  since: string | null
+  /** Set on the newest row only when it disagrees with the current reading, and says how. */
+  note: string | null
+}
+
+/** The current reading the history is compared with: the verdict state and when it was read. */
+export interface CurrentReading {
+  state: UiState
+  observedAt: string | null
 }
 
 const MAX_CHANGES = 3
 
-/** A ledger entry whose optional sections are missing still reads; the missing parts are "not read". */
+const CLOCK = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+const DAY = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' })
+
+/** "12:01" in local time, with the date first when it is not the same day as `reference`. Missing input stays "—". */
+export function fmtClock(at: string | null | undefined, reference?: string | null): string {
+  const time = at ? Date.parse(at) : Number.NaN
+  if (!Number.isFinite(time)) return '—'
+  const date = new Date(time)
+  const ref = reference ? Date.parse(reference) : Number.NaN
+  const sameDay = Number.isFinite(ref) && DAY.format(date) === DAY.format(new Date(ref))
+  return sameDay || !Number.isFinite(ref) ? CLOCK.format(date) : `${DAY.format(date)}, ${CLOCK.format(date)}`
+}
+
+/**
+ * The state a ledger entry recorded. The ledger has no "unavailable" status: it records
+ * such a reading as critical with the label "GBrain unavailable", so the label is read too.
+ * An unknown or missing status is "unavailable", never healthy.
+ */
+export function ledgerState(entry: Pick<TimelineEntry, 'trust'>): UiState {
+  const state = toUiState(entry.trust?.status)
+  if (state === 'critical' && /\bunavailable\b/i.test(entry.trust?.label ?? '')) return 'unavailable'
+  return state
+}
+
+/**
+ * A ledger entry whose optional sections are missing still reads; the missing parts are "not read".
+ * The recorded state is normalised here once (see `ledgerState`), so every line speaks the same words.
+ */
 function completeEntry(entry: TimelineEntry): TimelineEntry {
+  const trust = entry.trust ?? { label: '', status: 'unavailable' as const, score: null }
   return {
     ...entry,
+    trust: { ...trust, status: ledgerState({ trust }) },
     metrics: entry.metrics ?? {},
     sourceFreshness: entry.sourceFreshness ?? { status: 'inactive' },
     warnings: entry.warnings ?? [],
   }
 }
 
-export function recentReadings(entries: readonly TimelineEntry[] | null | undefined, limit = 6): ReadingRow[] {
+const RECORDED_WORD: Record<UiState, string> = {
+  healthy: 'normal',
+  warning: 'warning',
+  critical: 'critical',
+  unavailable: 'unavailable',
+  inactive: 'inactive',
+}
+
+const SIGNATURE_KEYS = [
+  'health',
+  'embeddings',
+  'queue',
+  'caveats',
+  'bridge',
+  'missingEmbeddings',
+  'missingEmbeddingsOverdue',
+  'stalePages',
+  'stalePagesOverdue',
+  'stalePagesCatchingUp',
+] as const
+
+/** Everything an entry records except ages that grow by themselves ("oldest 12m"). Equal signatures are one row. */
+function stableSignature(entry: TimelineEntry): string {
+  const detail = entry.metrics.embeddingsDetail
+  return JSON.stringify([
+    ledgerState(entry),
+    entry.trust?.score ?? null,
+    entry.sourceFreshness.status,
+    typeof detail === 'string' ? detail.replace(/\s*\(oldest [^)]*\)/gi, '').trim() : null,
+    ...SIGNATURE_KEYS.map((key) => entry.metrics[key] ?? null),
+    entry.warnings,
+  ])
+}
+
+function recordedQuality(entry: TimelineEntry): string {
+  const health = entry.metrics.health
+  // The ledger writes "Unavailable" where the health probe could not be read: that is "not read", said once.
+  if (typeof health === 'string' && /^unavailable$/i.test(health.trim())) return 'not read'
+  if (typeof health === 'string' && health) return health
+  const score = entry.trust?.score
+  return typeof score === 'number' ? `${score}/100` : 'not read'
+}
+
+function relationNote(at: string, current: CurrentReading): string {
+  const then = Date.parse(at)
+  const now = current.observedAt ? Date.parse(current.observedAt) : Number.NaN
+  if (!Number.isFinite(then) || !Number.isFinite(now)) return 'Differs from the current reading'
+  return then < now ? 'Older than the current reading' : 'Newer than the current reading'
+}
+
+/**
+ * The history list: newest first, each row the state recorded at that time. Consecutive readings that
+ * differ only by an age ticking up are one row with a count. The newest row either agrees with the
+ * current verdict or says that it does not (and whether it is older or newer than the current reading).
+ */
+export function recentReadings(
+  entries: readonly TimelineEntry[] | null | undefined,
+  limit = 6,
+  current?: CurrentReading | null,
+): ReadingRow[] {
   if (!entries) return []
   const complete = entries.map(completeEntry)
-  return complete.slice(0, limit).map((entry, index) => {
-    const changes = timelineDeltaLines(entry, complete[index + 1])
-    const health = entry.metrics.health
-    return {
+  const signatures = complete.map(stableSignature)
+  const rows: ReadingRow[] = []
+  for (let first = 0; first < complete.length && rows.length < limit; ) {
+    let last = first
+    while (last + 1 < complete.length && signatures[last + 1] === signatures[first]) last += 1
+    const entry = complete[first]
+    const before = complete[last + 1]
+    const changes = before ? timelineDeltaLines(complete[last], before, { withAge: false }) : []
+    const state = ledgerState(entry)
+    rows.push({
       id: entry.id,
       at: entry.capturedAt,
-      state: entry.trust.status === 'inactive' ? 'inactive' : entry.trust.status,
-      quality: typeof health === 'string' && health ? health : entry.trust.score === null ? 'not read' : `${entry.trust.score}/100`,
+      state,
+      stateWord: RECORDED_WORD[state],
+      quality: recordedQuality(entry),
       headline: changes.length
         ? `${changes.slice(0, MAX_CHANGES).join(' · ')}${changes.length > MAX_CHANGES ? ` · +${changes.length - MAX_CHANGES} more` : ''}`
-        : 'No change',
-    }
-  })
+        : before ? 'Minor details changed' : 'Earliest reading shown',
+      count: last - first + 1,
+      since: last > first ? complete[last].capturedAt : null,
+      note: null,
+    })
+    first = last + 1
+  }
+  const newest = rows[0]
+  if (newest && current && newest.state !== current.state) newest.note = relationNote(newest.at, current)
+  return rows
 }
 
 // ---- knowledge search ----
@@ -769,3 +930,15 @@ export function describeLookupFailure(error: unknown, subject: 'Search' | 'This 
     message: error ? describeApiError(error, 'GBrain did not return a result.') : 'GBrain did not return a result.',
   }
 }
+
+// ---- confirmation ----
+
+/** The confirm button says what will happen in plain words. Anything not listed uses the action's own verb label. */
+const CONFIRM_LABEL: Record<string, string> = {
+  'sync-sources': 'Run sync',
+  'retry-failed-sync': 'Retry syncs',
+  'embed-stale': 'Embed chunks',
+  'embed-missing': 'Run backfill',
+}
+
+export const confirmLabel = (action: { id: string; label: string }): string => CONFIRM_LABEL[action.id] ?? action.label

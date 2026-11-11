@@ -51,6 +51,9 @@ export const CORE_H = 176
 export const QUEUE_H = 56
 export const QUEUE_GAP = 56
 const MIN_GUTTER = 96
+/** A line label is 11px mono (about 6.6px a glyph) with 4px padding either side. */
+const GLYPH = 6.6
+export const labelWidth = (chars: number) => Math.ceil(chars * GLYPH) + 8
 const ARROW_LEN = 6
 const ARROW_HALF = 4
 const NEAR_CORE = 14
@@ -137,12 +140,21 @@ export interface LayoutInput {
   readerIds: string[]
   groupIds: string[]
   queueId: string
+  /** Longest line label (characters) on the reader side and on the source side; makes the gutters wide enough to show them. */
+  labelChars?: { readers: number; sources: number }
 }
 
-export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, queueId }: LayoutInput): SynopticLayout {
+export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, queueId, labelChars }: LayoutInput): SynopticLayout {
   const width = Math.max(MIN_WIDTH, Math.round(rawWidth))
-  const coreW = clamp(Math.round(width * 0.26), 200, 280)
-  const colW = clamp(Math.floor((width - 2 * PAD - coreW - 2 * MIN_GUTTER) / 2), 140, 220)
+  const coreW = clamp(Math.round(width * 0.24), 184, 280)
+  // Room for the longest label, the first vertical run and a little air.
+  const wantReserve = (chars: number | undefined) => (chars ? labelWidth(chars) + 8 : 0)
+  const minGutter = Math.max(
+    MIN_GUTTER,
+    Math.min(wantReserve(labelChars?.readers), 160) + NEAR_CORE + 16,
+    Math.min(wantReserve(labelChars?.sources), 160) + NEAR_CORE + 16,
+  )
+  const colW = clamp(Math.floor((width - 2 * PAD - coreW - 2 * minGutter) / 2), 140, 220)
   const gutter = Math.floor((width - 2 * PAD - coreW - 2 * colW) / 2)
   const readersX = PAD
   const coreX = PAD + colW + gutter
@@ -166,7 +178,14 @@ export function computeSynopticLayout({ width: rawWidth, readerIds, groupIds, qu
   const attachTop = coreTop + 28
   const attachBottom = coreTop + CORE_H - 28
   // Labels sit above the first horizontal run, so vertical runs stay beyond the label reserve.
-  const labelReserve = clamp(Math.round(gutter * 0.7), 64, 140)
+  const labelReserve = clamp(
+    Math.max(
+      Math.round(gutter * 0.7),
+      Math.min(Math.max(wantReserve(labelChars?.readers), wantReserve(labelChars?.sources)), gutter - NEAR_CORE - 8),
+    ),
+    64,
+    160,
+  )
   const zoneWidth = Math.max(8, gutter - labelReserve - NEAR_CORE)
   const longest = Math.max(1, readerIds.length, groupIds.length)
   const step = Math.max(4, Math.floor(zoneWidth / longest))

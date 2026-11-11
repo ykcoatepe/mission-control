@@ -222,6 +222,23 @@ export function entryState(status: string): UiState | null {
   return null
 }
 
+/** A status in words a person would use: "disabled" is "Paused" here, as in the Jobs view. */
+export function entryStatusLabel(status: string | null | undefined): string {
+  const text = String(status ?? '').trim().toLowerCase()
+  if (!text) return '—'
+  if (text === 'disabled') return 'Paused'
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+/** Where an entry comes from, in plain words. The stored value stays `cron` / `manual` / `assistant`. */
+export function sourceLabel(source: string | null | undefined): string {
+  const text = String(source ?? '').trim().toLowerCase()
+  if (text === 'cron') return 'Scheduler'
+  if (text === 'manual') return 'Manual'
+  if (text === 'assistant') return 'Assistant'
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '—'
+}
+
 export function isDisabledEntry(entry: Pick<CalendarEntry, 'status'>) {
   return String(entry.status || '').toLowerCase() === 'disabled'
 }

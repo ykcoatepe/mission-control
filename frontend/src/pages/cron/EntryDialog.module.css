@@ -66,7 +66,9 @@
 
 .readOnlyValue {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--sp-1) var(--sp-2);
   min-height: var(--control-h);
   color: var(--text-2);
   font-size: var(--fs-body);

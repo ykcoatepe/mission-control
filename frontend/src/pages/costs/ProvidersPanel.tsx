@@ -1,6 +1,6 @@
 import { DataTable, EmptyState, Freshness, Panel, Skeleton, StatePill } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
-import { formatCompactTokenValue, formatPreciseCurrency, formatTokens } from './lib'
+import { formatCompactTokenValue, formatPreciseCurrency, formatTokenPhrase, NOT_READ } from './lib'
 import type { ProviderRow } from './lib'
 import styles from './ProvidersPanel.module.css'
 
@@ -12,10 +12,11 @@ export interface ProvidersPanelProps {
   pending?: boolean
 }
 
-const DASH = '—'
+const DASH = NOT_READ
 
-function money(value: number | null) {
-  return value === null ? DASH : formatPreciseCurrency(value)
+/** A platform that recorded nothing this period has no figures: every number is a dash, never 0. */
+function money(row: ProviderRow, value: number | null) {
+  return row.noRecords ? DASH : formatPreciseCurrency(value)
 }
 
 export default function ProvidersPanel({ periodName, rows, pending = false }: ProvidersPanelProps) {
@@ -43,12 +44,12 @@ export default function ProvidersPanel({ periodName, rows, pending = false }: Pr
       width: '104px',
       align: 'end',
       mono: true,
-      cell: row => (row.tokens === null
+      cell: row => (row.tokens === null || row.noRecords
         ? DASH
-        : <span title={`${formatTokens(row.tokens)} tokens`}>{formatCompactTokenValue(row.tokens)}</span>),
+        : <span title={formatTokenPhrase(row.tokens)}>{formatCompactTokenValue(row.tokens)}</span>),
     },
-    { key: 'api', header: 'API equivalent', width: '136px', align: 'end', mono: true, cell: row => money(row.apiEquivalentUsd) },
-    { key: 'billed', header: 'Billed', width: '104px', align: 'end', mono: true, cell: row => money(row.billedUsd) },
+    { key: 'api', header: 'API equivalent', width: '136px', align: 'end', mono: true, cell: row => money(row, row.apiEquivalentUsd) },
+    { key: 'billed', header: 'Billed', width: '104px', align: 'end', mono: true, cell: row => money(row, row.billedUsd) },
     {
       key: 'coverage',
       header: 'Coverage',
@@ -74,7 +75,7 @@ export default function ProvidersPanel({ periodName, rows, pending = false }: Pr
           rows={rows}
           rowKey={row => row.id}
           maxHeight="none"
-          dimmed={row => !row.read}
+          dimmed={row => !row.read || row.noRecords}
           empty={(
             <EmptyState
               title="No platform has been read yet"

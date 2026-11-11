@@ -125,4 +125,35 @@ describe('CostDriversSection', () => {
     expect(models.textContent).toContain('No model usage yet')
     expect(models.textContent).not.toContain('EC2')
   })
+
+  it('shows a dash for unknown tracked spend, a real zero only when billing recorded zero', async () => {
+    const host = await render({
+      models: [
+        { name: 'unknown-billing', rawNames: ['u'], tokens: 10, cost: null, apiEquivalentCost: 7, apiEquivalentAvailable: true, local: false, share: 0 },
+        { name: 'recorded-zero', rawNames: ['z'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, local: false, share: 0 },
+        { name: 'billed', rawNames: ['b'], tokens: 10, cost: 3.5, apiEquivalentCost: 1, apiEquivalentAvailable: true, local: false, share: 0 },
+      ],
+      modelApiEquivalentTotal: 9,
+    })
+    const tracked = Array.from(host.querySelectorAll('tbody tr')).map(row => {
+      const cells = row.querySelectorAll('td, th')
+      return cells[cells.length - 1].textContent?.trim()
+    })
+    expect(tracked).toEqual(['—', '$0.00', '$3.50'])
+  })
+
+  it('shows no share for a platform that has no tokens or could not be read, never 0.0%', async () => {
+    const host = await render({
+      platforms: [
+        source({ key: 'a', label: 'A', tokens: 900 }),
+        source({ key: 'b', label: 'B', tokens: 0 }),
+        source({ key: 'c', label: 'C', tokens: 100, status: 'unavailable' }),
+      ],
+      totalPlatformTokens: 1000,
+      tab: 'platforms',
+    })
+    const shares = Array.from(host.querySelectorAll('tbody tr')).map(row => row.querySelectorAll('td, th')[1].textContent?.trim())
+    expect(shares[0]).toContain('90.0%')
+    expect(shares.slice(1)).toEqual(['—', '—'])
+  })
 })

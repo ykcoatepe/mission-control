@@ -1,3 +1,4 @@
+import { toUiState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
 import type { Endpoint, ServiceFilter, ServiceKind, ServiceRow, ServicesData } from './types'
 
@@ -43,6 +44,13 @@ export function sortServices(rows: readonly ServiceRow[]): ServiceRow[] {
 }
 
 // ---- filtering ----
+
+const SERVICE_FILTERS: readonly ServiceFilter[] = ['all', 'down', 'keepalive', 'interval', 'one-shot']
+
+/** The filter named in the URL; anything else is "all". */
+export function parseServiceFilter(value: string | null | undefined): ServiceFilter {
+  return SERVICE_FILTERS.find((filter) => filter === value) ?? 'all'
+}
 
 export function matchesFilter(row: ServiceRow, filter: ServiceFilter): boolean {
   if (filter === 'all') return true
@@ -204,17 +212,39 @@ function joinNames(names: string[]): string {
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
 
+/** The shell's reading of the two gateways (`signals.systems`), when the page has it. */
+export type GatewaySystems = Partial<Record<'openclaw' | 'hermes', { state: string } | null | undefined>> | null | undefined
+
+const GATEWAY_NAME = { openclaw: 'OpenClaw', hermes: 'Hermes' } as const
+
+/** Gateways the shell reports as warning or critical, in words ("OpenClaw is reporting a warning"). */
+function gatewayReports(systems: GatewaySystems): Array<{ name: string; state: 'warning' | 'critical' }> {
+  if (!systems) return []
+  const reports: Array<{ name: string; state: 'warning' | 'critical' }> = []
+  for (const id of ['openclaw', 'hermes'] as const) {
+    const raw = systems[id]
+    if (!raw || typeof raw.state !== 'string') continue
+    const state = toUiState(raw.state)
+    if (state === 'warning' || state === 'critical') reports.push({ name: GATEWAY_NAME[id], state })
+  }
+  return reports
+}
+
 /**
  * The worst state in words. Down services and unreachable endpoints are red;
- * anything not read keeps the verdict grey; "All N services are running as
- * expected" is said only when every service and endpoint was actually read.
+ * anything not read keeps the verdict grey. The verdict says only what was
+ * observed: "No service is down" is not "everything is as expected", so a service
+ * without a definition file (its kind is unknown) or a gateway the shell reports
+ * as warning keeps the line amber and is named.
  */
-export function servicesVerdict(data: ServicesData | null | undefined): Verdict {
+export function servicesVerdict(data: ServicesData | null | undefined, systems?: GatewaySystems): Verdict {
   if (!data) return { state: 'unavailable', text: 'Services could not be read', detail: null }
 
   const rows = Array.isArray(data.services) ? data.services : null
   const down = rows ? rows.filter(isAbnormal).length : 0
   const unreadRows = rows ? rows.filter((row) => serviceStatus(row).state === 'unavailable').length : 0
+  const unidentified = rows ? rows.filter((row) => row.kind === null).length : 0
+  const reports = gatewayReports(systems)
 
   const endpoints = ENDPOINTS.map((entry) => ({ name: entry.name, reading: endpointReading(entry.pick(data)) }))
   const endpointsDown = endpoints.filter((e) => e.reading.state === 'critical').map((e) => e.name)
@@ -254,5 +284,25 @@ export function servicesVerdict(data: ServicesData | null | undefined): Verdict 
     }
   }
 
-  return { state: 'healthy', text: `All ${rows.length} ${plural(rows.length, 'service is', 'services are')} running as expected`, detail }
+  const caveats: string[] = []
+  if (unidentified > 0) {
+    caveats.push(
+      `${unidentified} ${plural(unidentified, 'service has', 'services have')} no definition file, so ${plural(unidentified, 'its', 'their')} kind is unknown`,
+    )
+  }
+  if (reports.length > 0) {
+    const critical = reports.filter((report) => report.state === 'critical').map((report) => report.name)
+    const warning = reports.filter((report) => report.state === 'warning').map((report) => report.name)
+    if (critical.length > 0) caveats.push(`${joinNames(critical)} ${plural(critical.length, 'is', 'are')} reporting a critical state`)
+    if (warning.length > 0) caveats.push(`${joinNames(warning)} ${plural(warning.length, 'is', 'are')} reporting a warning`)
+  }
+  if (caveats.length > 0) {
+    return {
+      state: reports.some((report) => report.state === 'critical') ? 'critical' : 'warning',
+      text: `No service is down, but ${joinNames(caveats)}`,
+      detail,
+    }
+  }
+
+  return { state: 'healthy', text: `No service is down (${rows.length} read)`, detail }
 }

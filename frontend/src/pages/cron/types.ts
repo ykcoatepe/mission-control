@@ -32,8 +32,17 @@ export interface CronJob {
   history: CronHistoryEntry[]
 }
 
+/** GET /api/cron `summary`: `active` counts every enabled job, failed ones included. */
+export interface CronSummary {
+  active?: number
+  paused?: number
+  failed?: number
+  nextRunAt?: string | null
+}
+
 export interface CronApiResponse {
   jobs?: CronJob[]
+  summary?: CronSummary
 }
 
 export interface CronModelResponse {

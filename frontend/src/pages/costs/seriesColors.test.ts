@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   SERIES_COLOR_COUNT,
   assignSeriesColors,
+  assignStableSeriesColors,
   isModelColumnKey,
   isModelMetricKey,
   seriesColorToken,
@@ -46,6 +47,39 @@ describe('assignSeriesColors', () => {
     const assignments = assignSeriesColors(Array.from({ length: 8 }, (_, i) => `m${i}`))
     expect(assignments.size).toBe(8)
     for (const color of assignments.values()) expect(color).toMatch(/^var\(--series-[1-6]\)$/)
+  })
+})
+
+describe('assignStableSeriesColors', () => {
+  it('keeps every model on one colour across Month, Day, 7 days and back', () => {
+    const month = assignStableSeriesColors(['opus', 'sonnet', 'fable', 'sol'])
+    const day = assignStableSeriesColors(['astra', 'opus', 'sonnet'], month.memory)
+    const week = assignStableSeriesColors(['sol', 'astra', 'opus'], day.memory)
+    const back = assignStableSeriesColors(['opus', 'sonnet', 'fable', 'sol'], week.memory)
+
+    for (const model of ['opus', 'sonnet']) expect(day.assignments.get(model)).toBe(month.assignments.get(model))
+    expect(week.assignments.get('sol')).toBe(month.assignments.get('sol'))
+    expect(week.assignments.get('astra')).toBe(day.assignments.get('astra'))
+    expect(Array.from(back.assignments.entries())).toEqual(Array.from(month.assignments.entries()))
+  })
+
+  it('does not hand a newcomer the colour of a model that is only absent from this view', () => {
+    const month = assignStableSeriesColors(['a', 'b', 'c'])
+    const day = assignStableSeriesColors(['d'], month.memory)
+    expect(Array.from(month.assignments.values())).not.toContain(day.assignments.get('d'))
+  })
+
+  it('still reuses a colour once every token is remembered, and never invents a literal', () => {
+    const all = Array.from({ length: 6 }, (_, i) => `m${i}`)
+    const first = assignStableSeriesColors(all)
+    const next = assignStableSeriesColors(['newcomer'], first.memory)
+    expect(next.assignments.get('newcomer')).toMatch(/^var\(--series-[1-6]\)$/)
+  })
+
+  it('keeps colours distinct between the models of one view', () => {
+    const first = assignStableSeriesColors(['a', 'b', 'c', 'd', 'e'])
+    const second = assignStableSeriesColors(['f', 'g', 'a', 'b'], first.memory)
+    expect(new Set(second.assignments.values()).size).toBe(4)
   })
 })
 

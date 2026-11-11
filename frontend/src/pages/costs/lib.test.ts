@@ -3,6 +3,7 @@ import {
   formatCurrency,
   formatPreciseCurrency,
   formatTokens,
+  formatTokenPhrase,
   formatCompactTokenValue,
   formatComparisonValue,
   parseMonthlyBudgetInput,
@@ -63,11 +64,8 @@ describe('formatCurrency', () => {
   it('formats negative values', () => {
     expect(formatCurrency(-5.75)).toBe('-$5.75')
   })
-  it('treats Infinity as 0', () => {
-    expect(formatCurrency(Infinity)).toBe('$0.00')
-  })
-  it('treats NaN as 0', () => {
-    expect(formatCurrency(NaN)).toBe('$0.00')
+  it('shows a dash, never $0.00, for a value that was not read', () => {
+    for (const missing of [Infinity, -Infinity, NaN, null, undefined]) expect(formatCurrency(missing)).toBe('—')
   })
 })
 
@@ -90,8 +88,8 @@ describe('formatPreciseCurrency', () => {
     // Math.abs(0) > 0 is false, so falls through to formatCurrency
     expect(formatPreciseCurrency(0)).toBe('$0.00')
   })
-  it('treats NaN as 0', () => {
-    expect(formatPreciseCurrency(NaN)).toBe('$0.00')
+  it('shows a dash, never $0.00, for a value that was not read', () => {
+    for (const missing of [NaN, Infinity, null, undefined]) expect(formatPreciseCurrency(missing)).toBe('—')
   })
 })
 
@@ -109,11 +107,13 @@ describe('formatTokens', () => {
   it('formats zero', () => {
     expect(formatTokens(0)).toBe('0')
   })
-  it('treats NaN as 0', () => {
-    expect(formatTokens(NaN)).toBe('0')
+  it('shows a dash, never 0, for a count that was not read', () => {
+    for (const missing of [NaN, Infinity, null, undefined]) expect(formatTokens(missing)).toBe('—')
   })
-  it('treats Infinity as 0', () => {
-    expect(formatTokens(Infinity)).toBe('0')
+  it('phrases a count without printing "— tokens" for a missing one', () => {
+    expect(formatTokenPhrase(1500)).toBe('1,500 tokens')
+    expect(formatTokenPhrase(null)).toBe('—')
+    expect(formatTokenPhrase(undefined, 'tok')).toBe('—')
   })
 })
 
@@ -132,8 +132,9 @@ describe('formatCompactTokenValue', () => {
   it('formats small numbers without suffix', () => {
     expect(formatCompactTokenValue(42)).toBe('42')
   })
-  it('treats NaN as 0', () => {
-    expect(formatCompactTokenValue(NaN)).toBe('0')
+  it('shows a dash, never 0, for a count that was not read', () => {
+    for (const missing of [NaN, null, undefined]) expect(formatCompactTokenValue(missing)).toBe('—')
+    expect(formatCompactTokenValue(0)).toBe('0')
   })
 })
 
@@ -714,14 +715,24 @@ describe('anchored CodexBar month rows', () => {
       period: 'vs December 2025',
       daily: 'vs December 2025 avg',
     })
+    // The live month is compared with the same elapsed days of the month before, and says so.
     expect(comparisonLabels('month', null, now)).toEqual({
-      period: 'vs previous month',
-      daily: 'vs previous month avg',
+      period: 'vs the same days last month',
+      daily: 'vs last month avg',
     })
     expect(comparisonLabels('month', '2026-08', now)).toEqual({
-      period: 'vs previous month',
-      daily: 'vs previous month avg',
+      period: 'vs the same days last month',
+      daily: 'vs last month avg',
     })
+    expect(comparisonLabels('month', null, now, { start: '2026-11-01', end: '2026-11-11' })).toEqual({
+      period: 'vs the first 11 days of October',
+      daily: 'vs the first 11 days of October avg',
+    })
+    expect(comparisonLabels('month', null, now, { start: '2026-11-01', end: '2026-11-01' }).period).toBe('vs 1 October')
+    // Once the elapsed days cover the whole previous month, it is simply that month.
+    expect(comparisonLabels('month', null, now, { start: '2026-12-01', end: '2026-12-31' }).period).toBe('vs November')
+    expect(comparisonLabels('month', null, now, { start: '2026-03-01', end: '2026-03-30' }).period).toBe('vs February')
+    expect(comparisonLabels('month', null, now, { start: '2026-01-01', end: '2026-01-15' }).period).toBe('vs the first 15 days of December')
     expect(comparisonLabels('7d', '2026-07', now)).toEqual({
       period: 'vs previous 7 days',
       daily: 'vs previous 7d avg',

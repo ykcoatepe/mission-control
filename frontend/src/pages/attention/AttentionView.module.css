@@ -75,6 +75,9 @@
 }
 
 .overdue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   color: var(--state-critical);
   font-weight: var(--fw-medium);
   white-space: nowrap;
@@ -83,6 +86,23 @@
 
 .muted {
   color: var(--text-3);
+}
+
+.type {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 140px;
+}
+
+.typeLabel {
+  color: var(--text-1);
+}
+
+/* Codes break only after an underscore, never in the middle of a word. */
+.code {
+  overflow-wrap: normal;
+  word-break: normal;
 }
 
 @media (max-width: 700px) {

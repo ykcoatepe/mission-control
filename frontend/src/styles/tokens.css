@@ -21,7 +21,7 @@
   /* Text */
   --text-1: #e9ebee;
   --text-2: #a7aeb8;
-  --text-3: #717a86;
+  --text-3: #8b939f;
   --text-disabled: #4a525c;
   --text-on-accent: #06222c;
 
@@ -131,34 +131,34 @@
 
   --text-1: #14171a;
   --text-2: #4b5560;
-  --text-3: #7b8591;
+  --text-3: #5b646f;
   --text-disabled: #b1b8c0;
   --text-on-accent: #ffffff;
 
-  --state-healthy: #12804a;
-  --state-warning: #a86400;
-  --state-critical: #c92a2a;
+  --state-healthy: #107242;
+  --state-warning: #905500;
+  --state-critical: #bd2828;
   --state-unavailable: #6b7480;
   --state-inactive: #98a1ab;
 
-  --state-healthy-bg: rgba(18, 128, 74, 0.09);
-  --state-warning-bg: rgba(168, 100, 0, 0.1);
-  --state-critical-bg: rgba(201, 42, 42, 0.08);
+  --state-healthy-bg: rgba(16, 114, 66, 0.09);
+  --state-warning-bg: rgba(144, 85, 0, 0.1);
+  --state-critical-bg: rgba(189, 40, 40, 0.08);
   --state-unavailable-bg: rgba(107, 116, 128, 0.1);
   --state-inactive-bg: rgba(152, 161, 171, 0.12);
 
-  --state-healthy-line: rgba(18, 128, 74, 0.3);
-  --state-warning-line: rgba(168, 100, 0, 0.32);
-  --state-critical-line: rgba(201, 42, 42, 0.32);
+  --state-healthy-line: rgba(16, 114, 66, 0.3);
+  --state-warning-line: rgba(144, 85, 0, 0.32);
+  --state-critical-line: rgba(189, 40, 40, 0.32);
   --state-unavailable-line: rgba(107, 116, 128, 0.3);
   --state-inactive-line: rgba(152, 161, 171, 0.34);
 
-  --accent: #0b7fa8;
-  --accent-hover: #096a8c;
-  --accent-bg: rgba(11, 127, 168, 0.08);
-  --accent-line: rgba(11, 127, 168, 0.34);
+  --accent: #096c8f;
+  --accent-hover: #096585;
+  --accent-bg: rgba(9, 108, 143, 0.08);
+  --accent-line: rgba(9, 108, 143, 0.34);
 
-  --series-1: #0b7fa8;
+  --series-1: #096c8f;
   --series-2: #6a57d6;
   --series-3: #c2702a;
   --series-4: #2f9a72;

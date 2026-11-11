@@ -336,7 +336,7 @@ export default function PeriodControls({
                             aria-pressed={selected}
                             aria-label={`Show ${cell.date} usage`}
                             title={cell.hasUsage
-                              ? `${cell.date} — ${formatCurrency(cell.cost)} · ${formatCompactTokenValue(cell.tokens)} tokens`
+                              ? `${cell.date} — ${cell.cost > 0 ? formatCurrency(cell.cost) : 'no priced cost'} · ${formatCompactTokenValue(cell.tokens)} tokens`
                               : pickerMonthIsActive ? `${cell.date} — no recorded usage` : cell.date}
                           >
                             {cell.dayOfMonth}

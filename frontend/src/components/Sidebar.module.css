@@ -159,7 +159,16 @@
   display: none;
 }
 
+.brand .closeButton {
+  display: none;
+  margin-left: auto;
+}
+
 @media (max-width: 899px) {
+  .brand .closeButton {
+    display: inline-flex;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;

@@ -31,7 +31,13 @@
   font-size: var(--fs-body);
 }
 
-.muted {
+.stale {
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}
+
+.actionId {
+  margin: var(--sp-3) 0 0;
   color: var(--text-3);
   font-size: var(--fs-small);
 }

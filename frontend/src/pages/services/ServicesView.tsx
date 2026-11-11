@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   DataTable,
   EmptyState,
@@ -17,7 +18,19 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
-import { filterCounts, filterServices, endpointReading, kindLabel, scheduleNote, serviceHint, serviceStatus, servicesVerdict } from './lib'
+import { SIGNALS_POLL_MS, SIGNALS_URL } from '../../lib/signals'
+import type { SignalsEnvelope } from '../../lib/signals'
+import {
+  endpointReading,
+  filterCounts,
+  filterServices,
+  kindLabel,
+  parseServiceFilter,
+  scheduleNote,
+  serviceHint,
+  serviceStatus,
+  servicesVerdict,
+} from './lib'
 import type { EndpointReading } from './lib'
 import type { Endpoint, ServiceFilter, ServiceRow, ServicesEnvelope } from './types'
 import styles from './ServicesView.module.css'
@@ -28,11 +41,12 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
   {
     key: 'label',
     header: 'Service',
-    cell: (row) => <Mono>{row.label}</Mono>,
+    cell: (row) => <Mono className={styles.label}>{row.label}</Mono>,
   },
   {
     key: 'kind',
     header: 'Kind',
+    width: '176px',
     cell: (row) => {
       const kind = kindLabel(row.kind)
       const note = scheduleNote(row)
@@ -59,7 +73,7 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
     header: 'PID',
     align: 'end',
     width: '88px',
-    cell: (row) => (row.pid === null || row.pid === undefined ? <span className={styles.muted}>—</span> : <Mono>{row.pid}</Mono>),
+    cell: (row) => (row.pid === null || row.pid === undefined ? <span className={styles.muted}>—</span> : <Mono className={styles.label}>{row.pid}</Mono>),
   },
   {
     key: 'exit',
@@ -70,7 +84,9 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
       row.lastExitCode === null || row.lastExitCode === undefined ? (
         <span className={styles.muted}>—</span>
       ) : (
-        <Mono muted={row.lastExitCode === 0}>{row.lastExitCode}</Mono>
+        <Mono muted={row.lastExitCode === 0} className={styles.label}>
+          {row.lastExitCode}
+        </Mono>
       ),
   },
   {
@@ -99,14 +115,32 @@ function ReachabilityStat({ label, endpoint }: { label: string; endpoint: Endpoi
 
 export default function ServicesView() {
   const { data: envelope, loading, error, refetch } = useApi<ServicesEnvelope>('/api/services', POLL_MS)
-  const [filter, setFilter] = useState<ServiceFilter>('all')
-  const [query, setQuery] = useState('')
+  // The shell's reading of the gateways: the verdict must not contradict the top bar.
+  const { data: signalsEnvelope } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
+  const gatewaySystems = signalsEnvelope?.data?.systems ?? null
+
+  // Filter and search live in the URL (?filter=down&q=ollama) so a view can be shared or reloaded.
+  const [params, setParams] = useSearchParams()
+  const filter = parseServiceFilter(params.get('filter'))
+  const query = params.get('q') ?? ''
+  const setQueryParam = (key: 'filter' | 'q', value: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === '' || value === 'all') next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+  const setFilter = (value: ServiceFilter) => setQueryParam('filter', value)
+  const setQuery = (value: string) => setQueryParam('q', value)
 
   const data = envelope?.data ?? null
   const rows = useMemo<ServiceRow[]>(() => (Array.isArray(data?.services) ? data.services : []), [data])
   const visible = useMemo(() => filterServices(rows, filter, query), [rows, filter, query])
   const counts = useMemo(() => filterCounts(rows), [rows])
-  const verdict = useMemo(() => servicesVerdict(data), [data])
+  const verdict = useMemo(() => servicesVerdict(data, gatewaySystems), [data, gatewaySystems])
 
   if (loading && !envelope) {
     return (
@@ -180,7 +214,7 @@ export default function ServicesView() {
           ariaLabel="Filter services"
           options={options}
           value={filter}
-          onChange={(value) => setFilter(value as ServiceFilter)}
+          onChange={(value) => setFilter(parseServiceFilter(value))}
         />
         <div className={styles.toolbarEnd}>
           {filtered && (

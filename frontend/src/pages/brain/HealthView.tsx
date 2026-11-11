@@ -14,7 +14,7 @@ import {
   type BrainModel,
   type Verdict,
 } from './lib'
-import styles from './HealthView.module.css'
+
 import type {
   GBrainSynoptic,
   HealthReading,
@@ -34,6 +34,8 @@ export interface BrainData {
   /** `null` when the ledger could not be read. */
   timeline: TimelineReading | null
   timelineStale: boolean
+  /** When the current (synoptic) reading was taken: the history is compared with it. */
+  observedAt: string | null
   capabilities: OperationCapability[] | null
 }
 
@@ -56,7 +58,7 @@ export function HealthView({
   // The notes are the verdict's own reasons. The Operations overview repeats them as caveats, from a
   // different reading, so they are not listed a second time.
   const notes = currentNotes(verdict, [], syn.readersNote)
-  const rows = recentReadings(timeline?.entries)
+  const rows = recentReadings(timeline?.entries, 6, { state: verdict.state, observedAt: data.observedAt })
 
   const runFromDetail = (action: OperationCapability) => {
     // Close the drawer first: a confirmation must not stack on a second modal.
@@ -104,14 +106,12 @@ export function HealthView({
         <Synoptic model={model} selectedId={selectedId} onSelect={setSelectedId} />
       </Panel>
 
-      <div className={styles.pair}>
-        <NotesPanel
-          notes={notes}
-          recovered={recovered}
-          onAcknowledge={() => acknowledge(recovered.map((entry) => entry.key))}
-        />
-        <MaintenancePanel capabilities={capabilities} running={running} onRun={onRun} />
-      </div>
+      <NotesPanel
+        notes={notes}
+        recovered={recovered}
+        onAcknowledge={() => acknowledge(recovered.map((entry) => entry.key))}
+      />
+      <MaintenancePanel capabilities={capabilities} running={running} onRun={onRun} />
 
       <ReadingsTimeline
         rows={rows}

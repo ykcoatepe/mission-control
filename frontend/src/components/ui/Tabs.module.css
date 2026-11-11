@@ -2,6 +2,8 @@
   display: flex;
   gap: var(--sp-1);
   overflow-x: auto;
+  /* The underline sits inside the tab, so nothing overflows vertically and no stray scrollbar appears. */
+  overflow-y: hidden;
   border-bottom: 1px solid var(--line);
 }
 
@@ -38,7 +40,7 @@
   position: absolute;
   left: var(--sp-3);
   right: var(--sp-3);
-  bottom: -1px;
+  bottom: 0;
   height: 2px;
   background: var(--accent);
 }

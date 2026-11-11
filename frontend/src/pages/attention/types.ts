@@ -67,9 +67,10 @@ export interface OpenProject {
 export interface RestrictedProject {
   id: string
   restricted: true
-  openFindings: number
-  pendingConfirmations: number
-  overdueConfirmations: number
+  /** Counts only; a count the API could not read is null (typed number | null so the page checks it). */
+  openFindings: number | null
+  pendingConfirmations: number | null
+  overdueConfirmations: number | null
   countsBasis?: string
 }
 
@@ -159,16 +160,18 @@ export type AttentionRow =
       project: string
       /** null: the API gave no rating for this count-only project. */
       severity: Severity | null
-      openFindings: number
-      pendingConfirmations: number
-      overdueConfirmations: number
+      /** null: the API did not give this count. */
+      openFindings: number | null
+      pendingConfirmations: number | null
+      overdueConfirmations: number | null
     }
 
 export interface ProjectRow {
   id: string
   restricted: boolean
   title: string | null
-  openFindings: number
+  /** null: not read. */
+  openFindings: number | null
   /** null: not read. */
   pendingConfirmations: number | null
   /** null: not read. */

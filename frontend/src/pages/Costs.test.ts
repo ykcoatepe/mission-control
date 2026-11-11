@@ -8,7 +8,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import type { Root } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { MemoryRouter } from 'react-router-dom'
+import { MemoryRouter, useLocation } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Costs from './Costs'
 
@@ -364,7 +364,7 @@ describe('Usage page: model colours', () => {
 
   const colourOf = (name: string) => legend().find(item => item.name === name)?.color
 
-  it('keeps each model on its colour across a period change, and returns freed colours to newcomers', async () => {
+  it('keeps each model on its colour in every view: Month, 7 days and back', async () => {
     routes['/api/costs?period=month'] = month
     routes['/api/costs?period=7d'] = week
     await mount()
@@ -375,8 +375,18 @@ describe('Usage page: model colours', () => {
     await click('7 days')
     expect(colourOf('beta-model')).toBe(before.beta)
     expect(colourOf('gamma-model')).toBe(before.gamma)
-    // alpha left the period: its colour is free again for the newcomer.
-    expect(colourOf('delta-model')).toBe(before.alpha)
+    // alpha is not in this period, but it still owns its colour: the newcomer must not take it,
+    // otherwise the same colour would mean a different model in the next view.
+    const delta = colourOf('delta-model')
+    expect(Object.values(before)).not.toContain(delta)
+
+    await click('Month')
+    expect(colourOf('alpha-model')).toBe(before.alpha)
+    expect(colourOf('beta-model')).toBe(before.beta)
+    expect(colourOf('gamma-model')).toBe(before.gamma)
+
+    await click('7 days')
+    expect(colourOf('delta-model')).toBe(delta)
   })
 
   it('retains the assignments while the replacement period is still loading', async () => {
@@ -393,7 +403,7 @@ describe('Usage page: model colours', () => {
     await flush(10)
 
     expect(colourOf('beta-model')).toBe(betaBefore)
-    expect(colourOf('delta-model')).toBe(alphaBefore)
+    expect(colourOf('delta-model')).not.toBe(alphaBefore)
   })
 
   it('does not let reasoning metrics reserve a model colour', async () => {
@@ -468,5 +478,177 @@ describe('Usage page: polling and calendar revalidation', () => {
     expect(count('/api/costs?period=month')).toBe(before)
     await advance(60 * 1000 + 5)
     expect(count('/api/costs?period=month')).toBe(before + 1)
+  })
+})
+
+describe('Usage page: unknown is never zero', () => {
+  const unknownBilling = ledger({
+    summary: { periodUsd: null, thisMonthUsd: null, periodTokens: 300, thisMonthTokens: 300, totalTokens: 300, periodApiEquivalentUsd: 12 },
+    byService: [
+      { name: 'Claude Code / claude-opus-x', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
+      { name: 'Claude Code / claude-opus-y', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
+      { name: 'Hermes / recorded-model', tokens: 100, cost: 2.5, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 3, apiEquivalentStatus: 'estimated' },
+      { name: 'Hermes / free-model', tokens: 50, cost: 0, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 0, apiEquivalentStatus: 'estimated' },
+    ],
+  })
+
+  function trackedSpendCells() {
+    const headers = Array.from(host!.querySelectorAll('thead th')).map(th => th.textContent?.trim())
+    const column = headers.indexOf('Tracked spend')
+    return Array.from(host!.querySelectorAll('tbody tr')).map(row => ({
+      name: row.querySelector('td, th')?.textContent?.trim() ?? '',
+      tracked: row.querySelectorAll('td, th')[column]?.textContent?.trim() ?? '',
+    }))
+  }
+
+  it('shows a dash in Tracked spend for a model whose billing is unknown, and a real $0.00 only for a recorded zero', async () => {
+    routes['/api/costs?period=month'] = unknownBilling
+    await mount()
+    const cells = trackedSpendCells()
+    expect(cells.find(row => row.name.startsWith('Claude Opus'))?.tracked).toBe('—')
+    expect(cells.find(row => row.name.includes('recorded-model'))?.tracked).toBe('$2.50')
+    expect(cells.find(row => row.name.includes('free-model'))?.tracked).toBe('$0.00')
+    // The headline already says the tracked spend is not read.
+    expect(summaryText()).toContain('Tracked spend')
+    expect(summaryText()).not.toMatch(/Tracked spend\s*\$0/)
+  })
+
+  it('one variant with unknown billing makes the grouped model unknown, not a partial sum', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      summary: { periodUsd: null, periodTokens: 200, thisMonthTokens: 200, totalTokens: 200, periodApiEquivalentUsd: 9 },
+      byService: [
+        { name: 'Claude Code / claude-opus-x', tokens: 100, cost: 4, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
+        { name: 'Claude Code / claude-opus-y', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
+      ],
+    })
+    await mount()
+    expect(trackedSpendCells()).toEqual([{ name: expect.stringContaining('Claude Opus'), tracked: '—' }])
+  })
+
+  it('shows live-session models without a spend figure', async () => {
+    routes['/api/costs?period=month'] = ledger({ source: 'sessions.fallback', summary: {}, byService: [] })
+    routes['/api/sessions'] = { sessions: [{ key: 'agent:main:main', model: 'live-session-model', totalTokens: 4000, updatedAt: '2026-08-15T11:00:00Z' }] }
+    await mount()
+    expect(trackedSpendCells().map(row => row.tracked)).toEqual(['—'])
+  })
+
+  it('a platform that recorded nothing is "No usage recorded" with dashes and no billed figure', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      providers: [
+        { id: 'codex', label: 'Codex', state: 'ready', observedAt: '2026-08-15T10:00:00Z', coverage: 'complete', tokens: 50, apiEquivalentUsd: 4, billedUsd: null, note: null },
+        { id: 'openclaw', label: 'OpenClaw', state: 'ready', observedAt: '2026-08-15T10:00:00Z', coverage: 'complete', tokens: 0, apiEquivalentUsd: 0, billedUsd: 0, note: 'billing unknown unless explicitly recorded' },
+      ],
+    })
+    await mount()
+    const rows = Array.from(host!.querySelectorAll('#usage-platforms tbody tr')).map(row => Array.from(row.querySelectorAll('td, th')).map(cell => cell.textContent?.trim() ?? ''))
+    const openclaw = rows.find(row => row[0] === 'OpenClaw')!
+    expect(openclaw[1]).toContain('No usage recorded')
+    expect(openclaw.slice(2, 5)).toEqual(['—', '—', '—'])
+  })
+})
+
+describe('Usage page: AWS billing request', () => {
+  it('does not request AWS costs while the public config says AWS is off, or before the config has loaded', async () => {
+    routes['/api/config'] = { modules: { aws: false }, aws: { enabled: false } }
+    await mount()
+    expect(calls.some(call => call.includes('/api/aws/costs'))).toBe(false)
+  })
+
+  it('requests AWS costs when the config turns the integration on', async () => {
+    routes['/api/config'] = { modules: { aws: true }, aws: { enabled: true } }
+    routes['/api/aws/costs'] = { total: 5, credits: 100, remaining: 50, daily: [], services: [] }
+    await mount()
+    expect(calls).toContain('GET /api/aws/costs')
+  })
+})
+
+describe('Usage page: the period is in the address', () => {
+  function Probe() {
+    const here = useLocation()
+    return createElement('output', { 'data-testid': 'location' }, `${here.pathname}${here.search}`)
+  }
+  const location = () => host!.querySelector('[data-testid="location"]')?.textContent
+
+  async function mountAt(path: string) {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } })
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => root!.render(createElement(MemoryRouter, { initialEntries: [path] }, createElement(QueryClientProvider, { client }, createElement(Probe), createElement(Costs)))))
+    await flush(10)
+  }
+
+  beforeEach(() => {
+    routes['/api/costs?period=7d'] = ledger({ period: { key: '7d', anchor: null } })
+    routes['/api/costs?period=day'] = ledger({ period: { key: 'day', anchor: null } })
+  })
+
+  it('writes the chosen period and month to the query and leaves the defaults out', async () => {
+    await mountAt('/usage')
+    expect(location()).toBe('/usage')
+    await click('7 days')
+    expect(location()).toBe('/usage?period=7d')
+    await click('Day')
+    expect(location()).toBe('/usage?period=day')
+    await click('Month')
+    expect(location()).toBe('/usage')
+    await click('Show July 2026')
+    expect(location()).toBe('/usage?month=2026-07')
+  })
+
+  it('opens on the period and month named in the address, and ignores a value it does not know', async () => {
+    await mountAt('/usage?period=7d')
+    expect(calls).toContain('GET /api/costs?period=7d')
+    document.body.innerHTML = ''
+    calls = []
+    await mountAt('/usage?period=bogus&month=not-a-month')
+    expect(calls).toContain('GET /api/costs?period=month')
+    expect(calls.some(call => call.includes('month=not-a-month'))).toBe(false)
+  })
+})
+
+describe('Usage page: the comparison says which days it compares', () => {
+  it('labels the live-month comparison with the elapsed days of the month before, not "previous month"', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-11' },
+      summary: {
+        periodUsd: null, periodTokens: 10, thisMonthTokens: 10, totalTokens: 10,
+        periodApiEquivalentUsd: 20, previousPeriodApiEquivalentUsd: 100, previousPeriodApiEquivalentReliability: 'estimated',
+      },
+    })
+    await mount()
+    expect(summaryText()).toContain('vs the first 11 days of July ($100.00)')
+    expect(summaryText()).not.toContain('previous month')
+  })
+})
+
+describe('Usage page: colours stay with the model across Day, 7 days and Month', () => {
+  it('a model keeps its colour when a period shows a different set of models', async () => {
+    const colourOf = (name: string) => legend().find(item => item.name === name)?.color
+    routes['/api/costs?period=month'] = ledger({
+      dailyByModel: [dayRow('2026-08-01', { 'a-model': 40, 'b-model': 30, 'c-model': 20, 'd-model': 10 })],
+    })
+    routes['/api/costs?period=day'] = ledger({
+      period: { key: 'day', anchor: null },
+      dailyByModel: [dayRow('2026-08-15', { 'e-model': 9, 'c-model': 8 })],
+    })
+    routes['/api/costs?period=7d'] = ledger({
+      period: { key: '7d', anchor: null },
+      dailyByModel: [dayRow('2026-08-14', { 'd-model': 9, 'e-model': 8, 'a-model': 7 })],
+    })
+    await mount()
+    const month = ['a', 'b', 'c', 'd'].map(name => colourOf(`${name}-model`))
+    await click('Day')
+    const day = { c: colourOf('c-model'), e: colourOf('e-model') }
+    await click('7 days')
+    const week = { a: colourOf('a-model'), d: colourOf('d-model'), e: colourOf('e-model') }
+    await click('Month')
+
+    expect(day.c).toBe(month[2])
+    expect(week.a).toBe(month[0])
+    expect(week.d).toBe(month[3])
+    expect(week.e).toBe(day.e)
+    expect(['a', 'b', 'c', 'd'].map(name => colourOf(`${name}-model`))).toEqual(month)
+    expect(month).not.toContain(day.e)
   })
 })

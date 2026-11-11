@@ -14,6 +14,8 @@ import {
 import { apiQueryOptions } from '../../lib/hooks'
 import styles from './KnowledgeView.module.css'
 import { MIN_QUERY_LENGTH, describeLookupFailure, pageUrl, searchUrl } from './lib'
+import { PageBody } from './PageBody'
+import { plainSnippet, shortenHome } from './pageMarkup'
 import type { Envelope, PageData, SearchData, SearchResult } from './types'
 
 const DEBOUNCE_MS = 300
@@ -26,7 +28,6 @@ function useDebounced(value: string, delay: number): string {
   return debounced
 }
 
-const oneLine = (text: string | null | undefined) => (text ?? '').replace(/\s+/g, ' ').trim()
 
 export function KnowledgeView() {
   const [params, setParams] = useSearchParams()
@@ -134,11 +135,14 @@ function SearchResults({
           {results.map((result) => (
             <li key={result.slug}>
               <button type="button" className={styles.result} onClick={() => onSelect(result.slug)}>
-                <span className={styles.title}>{result.title || result.slug}</span>
+                <span className={styles.titleRow}>
+                  <span className={styles.title}>{shortenHome(result.title || result.slug)}</span>
+                  {result.type && <span className={styles.type}>{result.type}</span>}
+                </span>
                 <Mono muted truncate className={styles.slug}>
-                  {result.slug}
+                  {shortenHome(result.slug)}
                 </Mono>
-                {result.snippet && <span className={styles.snippet}>{oneLine(result.snippet)}</span>}
+                {snippet(result) && <span className={styles.snippet}>{snippet(result)}</span>}
               </button>
             </li>
           ))}
@@ -147,6 +151,8 @@ function SearchResults({
     </div>
   )
 }
+
+const snippet = (result: SearchResult) => shortenHome(plainSnippet(result.snippet))
 
 function PageDrawer({ slug, onClose }: { slug: string | null; onClose: () => void }) {
   const query = useQuery({
@@ -159,8 +165,15 @@ function PageDrawer({ slug, onClose }: { slug: string | null; onClose: () => voi
       open={slug !== null}
       onClose={onClose}
       size="lg"
-      title={page?.title || slug || ''}
-      description={slug ? <Mono muted>{slug}</Mono> : undefined}
+      title={shortenHome(page?.title || slug || '')}
+      description={
+        slug ? (
+          <span className={styles.lead}>
+            {page?.type && <span className={styles.type}>{page.type}</span>}
+            <Mono muted>{shortenHome(slug)}</Mono>
+          </span>
+        ) : undefined
+      }
     >
       {query.isLoading ? (
         <Skeleton lines={8} label="Loading page" />
@@ -172,8 +185,8 @@ function PageDrawer({ slug, onClose }: { slug: string | null; onClose: () => voi
             <Notice tone="warning">This is an earlier reading of the page and may be out of date.</Notice>
           )}
           {page.truncated && <Notice tone="info">This page is long. Only the first part is shown.</Notice>}
-          {/* Plain text only: page content is never parsed as HTML. */}
-          <pre className={styles.text}>{page.content ?? ''}</pre>
+          {/* Page content is read as light markdown into React text nodes: it is never parsed as HTML. */}
+          <PageBody content={page.content ?? ''} asCode={page.type === 'code'} />
         </div>
       )}
     </Drawer>

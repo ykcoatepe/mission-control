@@ -200,7 +200,7 @@
 .edgeLabel:hover { color: var(--text-1); }
 .edgeLabel[data-state='warning'] { color: var(--state-warning); }
 .edgeLabel[data-state='critical'] { color: var(--state-critical); }
-.edgeLabel[data-state='inactive'] { color: var(--text-disabled); }
+.edgeLabel[data-state='inactive'] { color: var(--text-3); }
 .edgeLabel[data-selected] { color: var(--accent); }
 
 /* ---- legend ---- */
@@ -285,4 +285,18 @@
 
 .listLine {
   font-size: var(--fs-micro);
+}
+
+.listCore {
+  display: flex;
+  flex-basis: 100%;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  padding-left: var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.listCore > span {
+  white-space: nowrap;
 }

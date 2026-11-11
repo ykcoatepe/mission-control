@@ -241,6 +241,21 @@ describe('Brain home: maintenance actions', () => {
     await act(async () => root.unmount())
   })
 
+  it('words the confirmation plainly: sentence-case button, the id once, state and age as two facts', async () => {
+    setup()
+    const { host, render, root } = mount()
+    await render()
+    await act(async () => (host.querySelector('section[aria-labelledby="maint-change"] button') as HTMLButtonElement).click())
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(button('Run sync')).toBeDefined()
+    expect(dialog.textContent).not.toContain('Exact action')
+    expect(dialog.textContent).not.toMatch(/(unavailable|healthy|warning|critical) (fresh|stale)/i)
+    expect(dialog.textContent).toContain('Last read')
+    expect(dialog.textContent?.split('sync-sources').length).toBe(2)
+    await act(async () => button('Cancel')?.click())
+    await act(async () => root.unmount())
+  })
+
   it('confirms a Change with explicit confirmation, then stays verifying until a newer fresh reading arrives', async () => {
     setup()
     mocks.postGBrainAction.mockResolvedValue({ ok: true, action: 'sync-sources', status: 'completed', summary: 'Synced', checkedAt: 'x', refreshAfter: true })
@@ -248,7 +263,7 @@ describe('Brain home: maintenance actions', () => {
     await render()
 
     await act(async () => (host.querySelector('section[aria-labelledby="maint-change"] button') as HTMLButtonElement).click())
-    await act(async () => button('Run Sync local sources')?.click())
+    await act(async () => button('Run sync')?.click())
     expect(mocks.postGBrainAction).toHaveBeenCalledOnce()
     expect(mocks.postGBrainAction).toHaveBeenCalledWith('sync-sources', true)
     expect(host.textContent).toContain('Verifying')
@@ -277,7 +292,7 @@ describe('Brain home: maintenance actions', () => {
     await act(async () => (host.querySelector('section[aria-labelledby="maint-change"] button') as HTMLButtonElement).click())
     mocks.capabilities = [CAPABILITIES[0], { ...CAPABILITIES[1], enabled: false }, CAPABILITIES[2]]
     await render()
-    await act(async () => button('Run Sync local sources')?.click())
+    await act(async () => button('Run sync')?.click())
     expect(mocks.postGBrainAction).not.toHaveBeenCalled()
     expect(host.textContent).toContain('Action was not started')
     await act(async () => root.unmount())
@@ -291,7 +306,7 @@ describe('Brain home: maintenance actions', () => {
     const { host, render, root } = mount()
     await render()
     await act(async () => (host.querySelector('section[aria-labelledby="maint-change"] button') as HTMLButtonElement).click())
-    await act(async () => button('Run Sync local sources')?.click())
+    await act(async () => button('Run sync')?.click())
     expect(host.textContent).toContain('Cleanup is still running')
     expect(host.textContent).not.toContain('Failed')
     await act(async () => root.unmount())

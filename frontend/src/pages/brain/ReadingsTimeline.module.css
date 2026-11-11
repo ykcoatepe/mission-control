@@ -8,33 +8,58 @@
 
 .row {
   display: grid;
-  grid-template-columns: 88px 120px minmax(0, 1fr);
+  grid-template-columns: 128px 168px minmax(0, 1fr);
   align-items: baseline;
   gap: var(--sp-3);
   padding: var(--sp-2) var(--sp-4);
   border-top: 1px solid var(--line);
-  font-size: var(--fs-body);
+  font-size: var(--fs-small);
+  color: var(--text-3);
 }
 
 .row:first-child {
   border-top: 0;
 }
 
-.time {
-  color: var(--text-3);
-  font-size: var(--fs-small);
+.when {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  white-space: nowrap;
 }
 
-.quality {
+.clock {
+  color: var(--text-2);
+}
+
+.time {
+  color: var(--text-3);
+}
+
+/* Quiet by design: the recorded state is a small dot and a word in the label colour. */
+.recorded {
   display: inline-flex;
   align-items: center;
   gap: var(--sp-2);
+  color: var(--text-3);
+  white-space: nowrap;
 }
 
 .headline {
   min-width: 0;
   color: var(--text-2);
+  font-size: var(--fs-body);
   overflow-wrap: anywhere;
+}
+
+.note {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+.repeat {
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
 .none,
@@ -49,9 +74,9 @@
   border-top: 1px solid var(--line);
 }
 
-@media (max-width: 640px) {
+@media (max-width: 760px) {
   .row {
-    grid-template-columns: 1fr auto;
+    grid-template-columns: auto 1fr;
   }
 
   .headline {

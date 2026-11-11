@@ -7,10 +7,12 @@ import {
   deadlineTiming,
   errorText,
   findingAge,
+  findingLabelOrNull,
   groupFindingsByCode,
   isOverdue,
   severityLabel,
   severityState,
+  shortenHomePaths,
   sortConfirmations,
 } from './lib'
 import type { Envelope, OpenProject, ProjectDetail } from './types'
@@ -73,7 +75,12 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
             groups.map((group) => (
               <div key={group.code} className={styles.group}>
                 <div className={styles.groupHead}>
-                  <Mono>{group.code}</Mono>
+                  <span className={styles.groupName}>
+                    {findingLabelOrNull(group.code) && <span className={styles.groupLabel}>{findingLabelOrNull(group.code)}</span>}
+                    <Mono muted={findingLabelOrNull(group.code) !== null} className={styles.code}>
+                      {group.code}
+                    </Mono>
+                  </span>
                   <StatePill state={severityState(group.severity)} label={severityLabel(group.severity)} />
                   <span className={styles.muted}>{group.findings.length}</span>
                 </div>
@@ -89,7 +96,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                           {findingAge(finding.at, now)}
                         </span>
                       </div>
-                      {finding.detail && <p className={styles.detail}>{finding.detail}</p>}
+                      {finding.detail && <p className={styles.detail}>{shortenHomePaths(finding.detail)}</p>}
                     </li>
                   ))}
                 </ul>
@@ -126,7 +133,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                       {item.id && <Mono muted>{item.id}</Mono>}
                       <span className={styles.muted}>{confirmationKindLabel(item.kind)}</span>
                     </div>
-                    {item.verification && <p className={styles.detail}>{item.verification}</p>}
+                    {item.verification && <p className={styles.detail}>{shortenHomePaths(item.verification)}</p>}
                   </li>
                 )
               })}
@@ -178,7 +185,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
           {detailQuery.isLoading ? (
             <Skeleton lines={6} label="Loading status text" />
           ) : detail?.statusMarkdown ? (
-            <pre className={styles.status}>{detail.statusMarkdown}</pre>
+            <pre className={styles.status}>{shortenHomePaths(detail.statusMarkdown)}</pre>
           ) : (
             <p className={styles.muted}>
               {detail ? 'No status text is published for this project.' : 'Status text could not be read.'}

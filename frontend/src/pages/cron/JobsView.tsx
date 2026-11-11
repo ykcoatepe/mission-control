@@ -24,7 +24,6 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
-import { parseTime } from '../../lib/time'
 import { useNow } from '../../lib/useNow'
 import { normalizeCronStatus } from '../../lib/status'
 import {
@@ -45,11 +44,17 @@ import type {
   CronStatusFilter,
 } from './types'
 import { jobState } from './jobState'
+import { scheduleDisplay } from './cronSchedule'
+import { isJobOn, summarizeJobs } from './jobsSummary'
+import { oneOf, useQueryParam } from './urlState'
 import CreateJobDialog from './CreateJobDialog'
 import JobDrawer from './JobDrawer'
 import styles from './JobsView.module.css'
 
 type SchedulerFilter = 'all' | CronScheduler
+
+const STATE_FILTERS = ['all', 'active', 'disabled', 'failed', 'overlap'] as const
+const SCHEDULER_FILTERS = ['all', 'openclaw', 'hermes'] as const
 
 const stopRowClick = (event: { stopPropagation: () => void }) => event.stopPropagation()
 
@@ -64,10 +69,17 @@ export default function JobsView() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
-  const [jobSearch, setJobSearch] = useState('')
   const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const [statusFilter, setStatusFilter] = useState<CronStatusFilter>('all')
-  const [schedulerFilter, setSchedulerFilter] = useState<SchedulerFilter>('all')
+  // Filters and search live in the URL, so a reload or a shared link keeps them.
+  const [stateParam, setStateParam] = useQueryParam('state')
+  const [schedulerParam, setSchedulerParam] = useQueryParam('scheduler')
+  const [searchParam, setSearchParam] = useQueryParam('q')
+  const statusFilter: CronStatusFilter = oneOf(stateParam, STATE_FILTERS, 'all')
+  const schedulerFilter: SchedulerFilter = oneOf(schedulerParam, SCHEDULER_FILTERS, 'all')
+  const jobSearch = searchParam ?? ''
+  const setStatusFilter = (value: CronStatusFilter) => setStateParam(value === 'all' ? null : value)
+  const setSchedulerFilter = (value: SchedulerFilter) => setSchedulerParam(value === 'all' ? null : value)
+  const setJobSearch = (value: string) => setSearchParam(value.trim() === '' ? null : value)
 
   const jobs = useMemo<CronJob[]>(() => data?.jobs || [], [data?.jobs])
   const modelOptions = useMemo(
@@ -86,25 +98,7 @@ export default function JobsView() {
 
   // ---- summary ----
 
-  const summary = useMemo(() => {
-    let active = 0
-    let paused = 0
-    let failed = 0
-    let waiting = 0
-    let nextRun: { at: number; name: string } | null = null
-    for (const job of jobs) {
-      const status = normalizeCronStatus(job.status, job.enabled)
-      if (status === 'disabled') paused++
-      else if (status === 'failed') failed++
-      else if (status === 'active') active++
-      else waiting++
-      if (job.enabled) {
-        const at = parseTime(job.nextRun)
-        if (at !== null && at >= now && (!nextRun || at < nextRun.at)) nextRun = { at, name: job.name }
-      }
-    }
-    return { active, paused, failed, waiting, nextRun }
-  }, [jobs, now])
+  const summary = useMemo(() => summarizeJobs(jobs, data?.summary, now), [jobs, data?.summary, now])
 
   const schedulerCounts = useMemo(
     () => ({
@@ -130,6 +124,9 @@ export default function JobsView() {
     }
     if (statusFilter === 'overlap') {
       result = result.filter((job) => overlapState.markers.has(job.id))
+    } else if (statusFilter === 'active') {
+      // "Active" is every job switched on, which is what the summary counts too.
+      result = result.filter(isJobOn)
     } else if (statusFilter !== 'all') {
       result = result.filter((job) => normalizeCronStatus(job.status, job.enabled) === statusFilter)
     }
@@ -300,9 +297,10 @@ export default function JobsView() {
       header: 'Schedule',
       cell: (job) => {
         const overlap = overlapState.markers.get(job.id)
+        const schedule = scheduleDisplay(job.schedule)
         return (
           <div className={styles.scheduleCell}>
-            <Mono>{job.schedule || '—'}</Mono>
+            {schedule.raw ? <Mono>{schedule.text}</Mono> : <span className={styles.unknown}>{schedule.text}</span>}
             {overlap && (
               <span className={styles.overlap} title={overlap.detail}>
                 <Clock size={12} aria-hidden="true" />
@@ -410,9 +408,9 @@ export default function JobsView() {
 
   const stateOptions = [
     { value: 'all', label: 'All' },
-    { value: 'active', label: 'Active' },
-    { value: 'disabled', label: 'Paused' },
-    { value: 'failed', label: 'Failed' },
+    { value: 'active', label: 'Active', count: summary.active },
+    { value: 'disabled', label: 'Paused', count: summary.paused },
+    { value: 'failed', label: 'Failed', count: summary.failed },
     ...(overlapState.affectedJobs > 0 || statusFilter === 'overlap'
       ? [{ value: 'overlap', label: 'Sharing a slot', count: overlapState.affectedJobs }]
       : []),
@@ -424,10 +422,17 @@ export default function JobsView() {
     { value: 'hermes', label: 'Hermes', count: schedulerCounts.hermes },
   ]
 
+  const activeHint = [
+    summary.failed > 0 ? `${summary.failed} failed last run` : null,
+    summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ') || undefined
+
   return (
     <div className={styles.view}>
       <StatRow aria-label="Automations summary">
-        <Stat label="Active" value={summary.active} hint={summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : undefined} />
+        <Stat label="Active" value={summary.active} hint={activeHint} />
         <Stat label="Paused" value={summary.paused} />
         <Stat
           label="Failed"
@@ -438,7 +443,7 @@ export default function JobsView() {
         <Stat
           label="Next run"
           value={summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
-          hint={summary.nextRun?.name}
+          hint={summary.nextRun?.name ?? undefined}
         />
       </StatRow>
 

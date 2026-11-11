@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   calcSuccessRate,
-  successRateColor,
   getCronScheduler,
   getCronSchedulerLabel,
-  getCronSchedulerColor,
   isDisallowedCloudModel,
   normalizeCronModelValue,
   formatCronModelLabel,
@@ -69,15 +67,6 @@ describe('calcSuccessRate', () => {
   })
 })
 
-describe('successRateColor', () => {
-  it('maps percentage bands to colors', () => {
-    expect(successRateColor(100)).toBe('#32D74B')
-    expect(successRateColor(80)).toBe('#FFD60A')
-    expect(successRateColor(60)).toBe('#FF9500')
-    expect(successRateColor(10)).toBe('#FF453A')
-  })
-})
-
 // ---------------------------------------------------------------------------
 // scheduler helpers
 // ---------------------------------------------------------------------------
@@ -95,10 +84,6 @@ describe('scheduler helpers', () => {
     expect(getCronSchedulerLabel(undefined)).toBe('OpenClaw')
   })
 
-  it('returns the scheduler accent color', () => {
-    expect(getCronSchedulerColor({ scheduler: 'hermes' })).toBe('#64D2FF')
-    expect(getCronSchedulerColor(undefined)).toBe('#BF5AF2')
-  })
 })
 
 // ---------------------------------------------------------------------------

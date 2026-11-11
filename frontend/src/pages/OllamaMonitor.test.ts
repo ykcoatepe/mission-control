@@ -49,7 +49,23 @@ const costs = {
   meta: { updatedAt: '2026-08-15T10:00:00Z' },
 }
 
+const unmeasuredTelemetry = {
+  generatedAt: '2026-08-15T10:00:00Z',
+  mode: 'unmeasured',
+  estimated: false,
+  telemetrySource: 'unmeasured',
+  limitations: ['Per-model request counts, latency and errors are not measured by the Ollama inventory API.'],
+  windowMs: null,
+  models: [{
+    name: 'llama3:8b', requestCount: null, errorCount: null, errorRate: null, avgLatencyMs: null, p95LatencyMs: null,
+    requestsPerMinute: null, status: 'running', estimated: false,
+  }],
+}
+
 let calls: string[] = []
+let telemetryBody: unknown = telemetry
+let modelBody: unknown | null = null
+let costsBody: unknown = costs
 let estimated = true
 let root: Root | null = null
 let host: HTMLElement | null = null
@@ -59,10 +75,10 @@ function stubFetch() {
     const url = new URL(String(input), 'http://localhost')
     calls.push(`${init?.method ?? 'GET'} ${url.pathname}${url.search}`)
     const bodies: Record<string, unknown> = {
-      '/api/ollama/telemetry': telemetry,
+      '/api/ollama/telemetry': telemetryBody,
       '/api/ollama/telemetry/history': { generatedAt: telemetry.generatedAt, history: [], total: 0 },
-      '/api/ollama/telemetry/models': modelTelemetry(estimated),
-      '/api/costs': costs,
+      '/api/ollama/telemetry/models': modelBody ?? modelTelemetry(estimated),
+      '/api/costs': costsBody,
     }
     const body = bodies[url.pathname] ?? {}
     return {
@@ -89,6 +105,9 @@ const count = (path: string) => calls.filter(call => call === `GET ${path}`).len
 beforeEach(() => {
   calls = []
   estimated = true
+  telemetryBody = telemetry
+  modelBody = null
+  costsBody = costs
   stubFetch()
 })
 
@@ -104,7 +123,7 @@ describe('Local models page', () => {
   it('shows the model with its token usage for the period', async () => {
     await mount()
     expect(host!.textContent).toContain('llama3:8b')
-    expect(host!.textContent).toContain('4.20K tokens by local models')
+    expect(host!.textContent).toContain('4.20K tokens across these models')
   })
 
   it('refreshes health, history, model telemetry and token usage together on manual refresh', async () => {
@@ -155,5 +174,94 @@ describe('Local models page', () => {
     expect(calls.some(call => call.includes('/api/ollama/optimization'))).toBe(false)
     expect(host!.textContent).not.toContain('Save to apply')
     expect(host!.textContent).not.toContain('Rolling back')
+  })
+})
+
+describe('Local models page: unknown values stay unknown', () => {
+  it('explains once, under the table, why the request columns are missing when nothing is measured', async () => {
+    estimated = false
+    modelBody = unmeasuredTelemetry
+    await mount()
+    const headers = Array.from(host!.querySelectorAll('th')).map(th => th.textContent)
+    expect(headers).not.toContain('Requests/min')
+    expect(headers).not.toContain('Error rate')
+    const text = host!.textContent ?? ''
+    expect(text).toContain('Requests per minute and error rate are not shown')
+    expect(text.split('Requests per minute and error rate are not shown')).toHaveLength(2)
+    expect(text).not.toContain('Request figures are not measured per model')
+  })
+
+  it('does not print a sampling window of "0 min" when the window is not reported', async () => {
+    estimated = true
+    modelBody = { ...modelTelemetry(true), windowMs: null }
+    await mount()
+    expect(host!.textContent).not.toMatch(/last 0 min/)
+  })
+
+  it('shows no request figures in the model drawer when they are null', async () => {
+    estimated = false
+    modelBody = unmeasuredTelemetry
+    await mount()
+    const row = Array.from(host!.querySelectorAll('tbody tr')).find(tr => tr.textContent?.includes('llama3:8b')) as HTMLElement
+    await act(async () => { row.click() })
+    const drawer = document.querySelector('[role="dialog"]') as HTMLElement
+    expect(drawer.textContent).not.toContain('Requests/min')
+    expect(drawer.textContent).not.toContain('Error rate')
+    expect(drawer.textContent).not.toMatch(/Requests in window\s*0/)
+  })
+
+  it('says where the token figure comes from and counts only what the rows show', async () => {
+    costsBody = {
+      ...costs,
+      byService: [
+        { name: 'ollama/llama3:8b', tokens: 4200, sessions: 3, cost: 0, percentage: 50 },
+        { name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, percentage: 50 },
+      ],
+    }
+    await mount()
+    const text = host!.textContent ?? ''
+    expect(text).toContain('4.20K tokens across these models')
+    expect(text).toContain('45.2K more by local endpoints not in this list')
+    expect(text).not.toContain('49.4K')
+  })
+
+  it('does not claim tokens for the listed models when only other endpoints have usage', async () => {
+    costsBody = { ...costs, byService: [{ name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null }] }
+    await mount()
+    const text = host!.textContent ?? ''
+    expect(text).toContain('No token usage recorded for these models')
+    expect(text).toContain('45.2K more by local endpoints not in this list')
+    expect(text).not.toMatch(/45\.2K tokens across these models/)
+  })
+
+  it('labels the Apple GPU counter as tiler load, and uses one decimal unit for sizes', async () => {
+    telemetryBody = {
+      ...telemetry,
+      system: { ...telemetry.system, memory: { totalBytes: 137_438_953_472, freeBytes: 0, usedBytes: 93_805_674_496, usedPercent: 68 } },
+      gpu: {
+        available: true, platform: 'darwin', limited: false,
+        devices: [{
+          index: '0', name: 'Apple M4 Max', vendor: 'Apple', cores: '40', utilGpu: 0, utilMemory: 0,
+          memTotalMiB: 4555, memUsedMiB: 1217, memFreeMiB: 3338, tempC: null, powerDraw: null, powerLimit: null,
+          memUsedEstimate: false, metricSource: 'apple-ioreg', memorySource: 'apple-ioreg-unified-memory',
+        }],
+      },
+    }
+    await mount()
+    const text = host!.textContent ?? ''
+    expect(text).not.toContain('Memory pressure')
+    expect(text).toContain('Tiler load')
+    expect(text).toContain('93.8 GB of 137.4 GB')
+    expect(text).toContain('1.3 GB of 4.8 GB allocated')
+    expect(text).not.toMatch(/\bGiB\b/)
+  })
+
+  it('does not call a missing "can accept requests" flag a warning or a healthy state', async () => {
+    telemetryBody = { ...telemetry, runtime: { runningModels: 1, totalModels: null } }
+    await mount()
+    const text = host!.textContent ?? ''
+    expect(text).not.toContain('not accepting requests')
+    expect(text).not.toContain('Ollama is running normally')
+    expect(text).not.toContain('of null')
   })
 })

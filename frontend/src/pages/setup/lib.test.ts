@@ -35,14 +35,31 @@ describe('name', () => {
     expect(nameError('x'.repeat(121))).not.toBeNull()
   })
 
-  it('is suggested from the detected agent, else the default', () => {
-    expect(suggestName(null)).toBe('Mission Control')
-    expect(suggestName(status())).toBe('Mission Control')
-    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: 'Mudur' } }))).toBe('Mudur Control')
+  it('starts with the detected agent name as reported, and is empty when nothing was detected', () => {
+    expect(suggestName(null)).toBe('')
+    expect(suggestName(status())).toBe('')
+    expect(suggestName(status({ detectedConfig: null }))).toBe('')
+    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: '   ' } }))).toBe('')
+    expect(suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: 'Mudur' } }))).toBe('Mudur')
+  })
+
+  it('never makes a name up: no suffix and no default', () => {
+    for (const agent of ['Mudur', null]) {
+      const name = suggestName(status({ detectedConfig: { ...status().detectedConfig!, agentName: agent } }))
+      expect(name).not.toMatch(/Control/)
+    }
   })
 })
 
 describe('detection', () => {
+  it('shows a detected model by the catalog name, else by its id', () => {
+    const detected = status({ detectedConfig: { ...status().detectedConfig!, model: 'openai/gpt-5.6-sol' } })
+    expect(detectedLines(detected, { 'openai/gpt-5.6-sol': 'GPT-5.6-Sol' })).toEqual([{ label: 'Model', value: 'GPT-5.6-Sol' }])
+    expect(detectedLines(detected, {})).toEqual([{ label: 'Model', value: 'openai/gpt-5.6-sol' }])
+    expect(detectedLines(detected, null)).toEqual([{ label: 'Model', value: 'openai/gpt-5.6-sol' }])
+    expect(detectedLines(detected, { constructor: 'x' })).toEqual([{ label: 'Model', value: 'openai/gpt-5.6-sol' }])
+  })
+
   it('says the gateway was not checked when the server did not measure it', () => {
     const [gateway, port, token] = gatewayLines(status())
     expect(gateway).toEqual({ label: 'Gateway', value: 'Not checked here', state: 'unavailable' })

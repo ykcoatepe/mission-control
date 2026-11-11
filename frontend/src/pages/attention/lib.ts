@@ -54,6 +54,53 @@ export function isRestricted(project: LoopProject): project is RestrictedProject
   return project.restricted === true
 }
 
+// ---- words ----
+
+/**
+ * Plain words for the ledger's finding codes. Built from the codes the API
+ * actually returns (GET /api/loops, byCode and attention[].code). A code that is
+ * not listed here keeps its raw text: the page never invents a meaning.
+ */
+const FINDING_LABELS: Record<string, string> = {
+  ACK_MISSING: 'Result not acknowledged',
+  AUTHORITY_UNQUOTED: 'Approval has no quoted reason',
+  BINDING_DEAD: 'Session stopped answering',
+  CODEX_GOAL_NOT_ACTIVE: 'Codex goal is not active',
+  DEPLOYED_UNCONFIRMED: 'Deployed, not confirmed yet',
+  ESCALATED_ROUNDS: 'Escalated after repeated rounds',
+  GROKBOT_WEBHOOK_UNAVAILABLE: 'Grok bot wake-up is off',
+  GUEST_PUSH_UNSEEN: 'Message sent, not seen',
+  GUEST_SENDER_UNVERIFIED: 'Sender not verified',
+  IMPLEMENTER_SILENT: 'Implementer is silent',
+  MANAGER_SILENT: 'Manager is silent',
+  PAUSED_STALE: 'Paused for too long',
+  QUEUED_NOT_DELIVERED: 'Queued message not delivered',
+  ROUND_CAP_REACHED: 'Round limit reached',
+  STATUS_PAGE_STALE: 'Status page is out of date',
+  TEYIT_DUE: 'Confirmation due soon',
+  TEYIT_STALE: 'Confirmation overdue',
+  TEYIT_UNRESOLVED: 'Confirmation unresolved',
+}
+
+/** The plain-words label of a finding code, or null when the code is not one the page knows. */
+export function findingLabelOrNull(code: string | null | undefined): string | null {
+  if (!code) return null
+  return Object.prototype.hasOwnProperty.call(FINDING_LABELS, code) ? FINDING_LABELS[code] : null
+}
+
+/** The plain-words label of a finding code; an unknown code falls back to the raw code. */
+export function findingLabel(code: string): string {
+  return findingLabelOrNull(code) ?? code
+}
+
+/** `/Users/<name>/…` and `/home/<name>/…` become `~/…`. Other text is returned unchanged. */
+export function shortenHomePaths(text: string): string
+export function shortenHomePaths(text: string | null | undefined): string | null
+export function shortenHomePaths(text: string | null | undefined): string | null {
+  if (typeof text !== 'string') return null
+  return text.replace(/(?:\/Users|\/home)\/[^/\s]+(\/)?/g, (_match, slash?: string) => (slash ? '~/' : '~'))
+}
+
 // ---- time ----
 
 export interface Timing {
@@ -166,10 +213,11 @@ export function buildAttentionRows(data: LoopsData, now: number): AttentionRow[]
 
   for (const project of data.projects) {
     if (isRestricted(project)) {
-      const openFindings = finiteNumber(project.openFindings) ?? 0
-      const pending = finiteNumber(project.pendingConfirmations) ?? 0
-      const overdue = finiteNumber(project.overdueConfirmations) ?? 0
-      if (openFindings + pending + overdue === 0) continue
+      // A count the API did not give stays null. Only a project whose counts are all read and all zero is left out.
+      const openFindings = finiteNumber(project.openFindings)
+      const pending = finiteNumber(project.pendingConfirmations)
+      const overdue = finiteNumber(project.overdueConfirmations)
+      if (openFindings === 0 && pending === 0 && overdue === 0) continue
       rows.push({
         key: `${project.id}:restricted`,
         type: 'restricted',
@@ -197,14 +245,22 @@ export function buildAttentionRows(data: LoopsData, now: number): AttentionRow[]
   return rows.sort(compareRows)
 }
 
+export const ATTENTION_FILTERS: readonly AttentionFilter[] = ['all', 'overdue', 'pending', 'findings']
+
+/** The filter named in the URL; anything else is "all". */
+export function parseAttentionFilter(value: string | null | undefined): AttentionFilter {
+  return ATTENTION_FILTERS.find((filter) => filter === value) ?? 'all'
+}
+
 export function filterRows(rows: AttentionRow[], filter: AttentionFilter, project: string): AttentionRow[] {
   return rows.filter((row) => {
     if (project !== 'all' && row.project !== project) return false
     if (filter === 'all') return true
     if (row.type === 'restricted') {
-      if (filter === 'overdue') return row.overdueConfirmations > 0
-      if (filter === 'pending') return row.pendingConfirmations > 0
-      return row.openFindings > 0
+      // An unread count never matches a filter.
+      if (filter === 'overdue') return (row.overdueConfirmations ?? 0) > 0
+      if (filter === 'pending') return (row.pendingConfirmations ?? 0) > 0
+      return (row.openFindings ?? 0) > 0
     }
     if (filter === 'findings') return row.type === 'finding'
     if (filter === 'pending') return row.type === 'confirmation'
@@ -226,7 +282,7 @@ export function buildProjectRows(projects: LoopProject[], now: number): ProjectR
         id: project.id,
         restricted: true,
         title: null,
-        openFindings: finiteNumber(project.openFindings) ?? 0,
+        openFindings: finiteNumber(project.openFindings),
         pendingConfirmations: finiteNumber(project.pendingConfirmations),
         overdueConfirmations: finiteNumber(project.overdueConfirmations),
         participants: null,
@@ -238,7 +294,7 @@ export function buildProjectRows(projects: LoopProject[], now: number): ProjectR
       id: project.id,
       restricted: false,
       title: project.title,
-      openFindings: finiteNumber(project.openFindings?.total) ?? 0,
+      openFindings: finiteNumber(project.openFindings?.total),
       pendingConfirmations: pending ? pending.length : null,
       overdueConfirmations: pending ? pending.filter((item) => isOverdue(item, now)).length : null,
       participants: participantCount(project),
@@ -248,7 +304,7 @@ export function buildProjectRows(projects: LoopProject[], now: number): ProjectR
   return rows.sort(
     (a, b) =>
       (b.overdueConfirmations ?? -1) - (a.overdueConfirmations ?? -1) ||
-      b.openFindings - a.openFindings ||
+      (b.openFindings ?? -1) - (a.openFindings ?? -1) ||
       (b.pendingConfirmations ?? -1) - (a.pendingConfirmations ?? -1) ||
       a.id.localeCompare(b.id),
   )
@@ -269,7 +325,10 @@ export function summarize(data: LoopsData): Summary {
   let unread = 0
   for (const project of data.projects) {
     if (isRestricted(project)) {
-      if ((finiteNumber(project.openFindings) ?? 0) + (finiteNumber(project.pendingConfirmations) ?? 0) > 0) withOpen++
+      const findings = finiteNumber(project.openFindings)
+      const pending = finiteNumber(project.pendingConfirmations)
+      if (findings === null || pending === null) unread++
+      if ((findings ?? 0) + (pending ?? 0) > 0) withOpen++
       continue
     }
     if (!Array.isArray(project.pendingConfirmations)) unread++

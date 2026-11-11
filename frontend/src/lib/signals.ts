@@ -133,33 +133,76 @@ export function annunciators(signals: SignalsData | null | undefined, options: A
   })
 }
 
-// ---- attention pill ----
-
-export interface AttentionPill {
-  count: number
-  state: UiState
-  text: string
-}
+// ---- attention (one number, three places) ----
 
 /**
- * "N need attention", from the attention signal and the manager-loop overdue
- * confirmations. Null (hide the pill) at zero or when neither was read.
+ * The one definition of "needs attention": `signals.attention.count`, the items
+ * that need the operator (system warnings plus manager-loop findings rated
+ * warning or error; info is left out). The top-bar pill, the sidebar badge and
+ * the Attention page summary all show exactly this number with these words.
+ * Overdue confirmations are a sub-count, shown as secondary text and never added.
  */
-export function attentionPill(signals: SignalsData | null | undefined): AttentionPill | null {
+export interface AttentionReading {
+  /** Items that need the operator; null when the shell signal could not read it. */
+  count: number | null
+  /** Overdue confirmations (secondary); null when not read. */
+  overdue: number | null
+  state: UiState
+}
+
+export function attentionReading(signals: SignalsData | null | undefined): AttentionReading | null {
   if (!signals) return null
-  const attention = countOrNull(signals.attention?.count)
+  const count = countOrNull(signals.attention?.count)
   const overdue = countOrNull(signals.loops?.overdueConfirmations)
-  if (attention === null && overdue === null) return null
-  // Overdue confirmations are part of the attention count; never add them twice.
-  const count = Math.max(attention ?? 0, overdue ?? 0)
-  if (count === 0) return null
+  if (count === null && overdue === null) return null
   const states: UiState[] = []
   if (signals.attention?.worst) states.push(toUiState(signals.attention.worst))
   if (overdue !== null && overdue > 0) states.push('critical')
   // Something needs attention but nothing says how bad: caution, not an alarm.
   const worst = states.length > 0 ? worstState(states) : 'warning'
   const state: UiState = worst === 'healthy' || worst === 'inactive' || worst === 'unavailable' ? 'warning' : worst
-  return { count, state, text: count === 1 ? '1 needs attention' : `${count} need attention` }
+  return { count, overdue, state }
+}
+
+/** "30 need attention", "1 needs attention". */
+export function attentionWords(count: number): string {
+  return count === 1 ? '1 needs attention' : `${count} need attention`
+}
+
+/** "24 overdue" for the secondary text; null when there is none to mention. */
+export function overdueWords(overdue: number | null): string | null {
+  return overdue !== null && overdue > 0 ? `${overdue} overdue` : null
+}
+
+export interface AttentionPill {
+  count: number
+  state: UiState
+  /** The pill's words: "30 need attention". */
+  text: string
+  /** Secondary text: "24 overdue", or null. */
+  secondary: string | null
+}
+
+/**
+ * The top-bar pill. Hidden when nothing needs attention or nothing was read.
+ * Only when the attention count itself was not read but overdue confirmations
+ * were, the pill says so in its own words ("24 overdue") instead of borrowing
+ * the attention wording for a different number.
+ */
+export function attentionPill(signals: SignalsData | null | undefined): AttentionPill | null {
+  const reading = attentionReading(signals)
+  if (!reading) return null
+  if (reading.count === null) {
+    const overdue = reading.overdue ?? 0
+    return overdue > 0 ? { count: overdue, state: 'critical', text: `${overdue} overdue`, secondary: null } : null
+  }
+  if (reading.count === 0) return null
+  return {
+    count: reading.count,
+    state: reading.state,
+    text: attentionWords(reading.count),
+    secondary: overdueWords(reading.overdue),
+  }
 }
 
 // ---- sidebar badges ----
@@ -167,8 +210,10 @@ export function attentionPill(signals: SignalsData | null | undefined): Attentio
 export interface NavBadge {
   count: number
   tone: 'warning' | 'critical'
-  /** Spoken after the label: "3 failed". */
+  /** Spoken after the count: "need attention", "failed". */
   word: string
+  /** Secondary text for the tooltip, e.g. "24 overdue". */
+  secondary?: string | null
 }
 
 /** Abnormal-only counts by route path. A path with no entry shows no badge. */
@@ -179,12 +224,16 @@ export function navBadges(signals: SignalsData | null | undefined): Record<strin
   const failed = countOrNull(signals.automations?.failed)
   if (failed !== null && failed > 0) badges['/automations'] = { count: failed, tone: 'critical', word: 'failed' }
 
-  const overdue = countOrNull(signals.loops?.overdueConfirmations)
-  const open = countOrNull(signals.attention?.count)
-  if (overdue !== null && overdue > 0) {
-    badges['/attention'] = { count: overdue, tone: 'critical', word: 'overdue' }
-  } else if (open !== null && open > 0) {
-    badges['/attention'] = { count: open, tone: 'warning', word: 'open' }
+  // The same number and words as the top-bar pill.
+  const pill = attentionPill(signals)
+  if (pill) {
+    const tone = pill.state === 'critical' ? 'critical' : 'warning'
+    badges['/attention'] = {
+      count: pill.count,
+      tone,
+      word: pill.text.replace(/^\d+ /, ''),
+      secondary: pill.secondary,
+    }
   }
 
   const down = countOrNull(signals.services?.down)

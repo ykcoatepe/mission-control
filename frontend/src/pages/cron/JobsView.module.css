@@ -128,3 +128,7 @@
 .time {
   white-space: nowrap;
 }
+
+.unknown {
+  color: var(--text-3);
+}
