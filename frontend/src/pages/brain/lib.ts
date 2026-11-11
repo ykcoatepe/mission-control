@@ -107,22 +107,17 @@ export const readerBlockId = (id: string) => `reader:${id}`
 export const groupBlockId = (id: string) => `group:${id}`
 export const edgeId = (blockId: string) => `edge:${blockId}`
 
-/**
- * What a reader block shows. Only the MCP configuration can be read; a
- * connection that was never observed is "not read", not healthy.
- */
-export function readerDisplayState(reader: SynopticReader): UiState {
-  const { integration, connection } = reader
-  if (integration.state === 'critical' || integration.state === 'warning') return integration.state
-  if (integration.state !== 'healthy') return integration.state === 'inactive' ? 'inactive' : 'unavailable'
-  if (connection.state === 'healthy') return 'healthy'
-  if (connection.state === 'warning' || connection.state === 'critical') return connection.state
-  return connection.state === 'inactive' ? 'inactive' : 'unavailable'
+/** A missing measurement is never healthy: it reads as not read. */
+function stateOf(evidence: { state: UiState } | null | undefined): UiState {
+  return evidence?.state ?? 'unavailable'
 }
 
-/** A reader counts toward the verdict only when its own configuration is wrong; an unobserved connection is a note. */
-export function readerCountsTowardVerdict(reader: SynopticReader): boolean {
-  return reader.integration.state === 'warning' || reader.integration.state === 'critical' || reader.integration.configured === false
+/** Short word under a reader name. Configuration is the only thing the backend can read. */
+function readerSub(reader: SynopticReader): string {
+  const integration = reader.integration
+  if (integration?.configured === false || reader.state === 'inactive') return 'not configured'
+  if (!integration || reader.state === 'unavailable' || integration.state === 'unavailable') return 'not read'
+  return 'configured'
 }
 
 function recordFor(sources: SourcesReading | null | undefined, id: string): SourceRecord | undefined {
@@ -217,11 +212,11 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
   // ---- core ----
   const core = syn.core
   const coreMetrics: Array<[string, UiState, boolean]> = [
-    ['Quality score', core.quality.state, true],
-    ['GBrain version', core.version.state, false],
-    ['Page count', core.pages.state, false],
-    ['Chunk count', core.chunks.state, false],
-    ['Embedded chunk count', core.embedded.state, false],
+    ['Quality score', stateOf(core.quality), true],
+    ['GBrain version', stateOf(core.version), false],
+    ['Page count', stateOf(core.pages), false],
+    ['Chunk count', stateOf(core.chunks), false],
+    ['Embedded chunk count', stateOf(core.embedded), false],
   ]
   const coreProblems = coreMetrics.filter(([, state]) => state !== 'healthy' && state !== 'inactive')
   const coreState = core.state
@@ -239,18 +234,19 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     })
   }
   states[CORE_ID] = coreState
+  const version = core.version?.value ?? null
   const coreModel: CoreModel = {
     id: CORE_ID,
     kind: 'core',
     label: 'GBrain core',
     state: coreState,
-    sub: core.version.value ? `v${core.version.value}` : 'version not read',
+    sub: version ? `v${version}` : 'version not read',
     count: null,
-    version: core.version.value,
+    version,
     rows: [
-      { label: 'Pages', value: fmtCount(core.pages.value) },
-      { label: 'Chunks', value: fmtCount(core.chunks.value) },
-      { label: 'Embedded', value: fmtCount(core.embedded.value) },
+      { label: 'Pages', value: fmtCount(core.pages?.value) },
+      { label: 'Chunks', value: fmtCount(core.chunks?.value) },
+      { label: 'Embedded', value: fmtCount(core.embedded?.value) },
     ],
   }
 
@@ -276,7 +272,7 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     const active = group.items.filter((item) => item.state !== 'inactive')
     const ages = active.flatMap((item) => {
       const edge = syn.edges.find((e) => e.from === item.id && e.unit === 'seconds')
-      const value = edge?.measurement.value
+      const value = edge?.measurement?.value
       return typeof value === 'number' ? [value] : []
     })
     const behind = group.items.reduce((sum, item) => sum + (item.behind ?? 0), 0)
@@ -300,44 +296,40 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
   }
 
   // ---- readers ----
+  // The backend derives a reader's state from its integration reading alone.
   const readers: BlockModel[] = []
   for (const reader of syn.readers) {
     const id = readerBlockId(reader.id)
-    const state = readerDisplayState(reader)
-    const sub =
-      reader.integration.state === 'unavailable' ? 'not read'
-      : reader.integration.configured === false ? 'not configured'
-      : reader.connection.state === 'healthy' ? 'connected'
-      : 'not read'
-    readers.push({ id, kind: 'reader', label: reader.label, state, sub, count: null })
+    const state = reader.state
+    readers.push({ id, kind: 'reader', label: reader.label, state, sub: readerSub(reader), count: null })
     states[id] = state
-    if (readerCountsTowardVerdict(reader)) {
+    const notConfigured = reader.integration?.configured === false
+    if (state === 'warning' || state === 'critical' || state === 'unavailable' || notConfigured) {
       conditions.push({
         id,
-        state: state === 'unavailable' || state === 'inactive' ? 'warning' : state,
-        text: reader.integration.configured === false ? `${reader.label} is not configured` : `${reader.label} needs attention`,
+        state: notConfigured && (state === 'inactive' || state === 'healthy') ? 'warning' : state,
+        text: notConfigured ? `${reader.label} is not configured` : state === 'unavailable' ? `${reader.label} could not be read` : `${reader.label} needs attention`,
       })
     }
-    const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.unit === 'connection')
-    const measured = payloadEdge?.measurement.value
-    const edgeState: UiState = payloadEdge ? payloadEdge.state : 'unavailable'
+    const payloadEdge = syn.edges.find((e) => e.from === reader.id && e.label === 'configured')
+    const edgeState: UiState = payloadEdge?.state ?? state
     const label =
-      payloadEdge && measured !== null && measured !== undefined && payloadEdge.state !== 'unavailable'
-        ? `${fmtCount(measured)} ${payloadEdge.unit}`
-        : 'not read'
+      edgeState === 'unavailable' ? 'not read'
+      : edgeState === 'inactive' ? 'not configured'
+      : (payloadEdge?.label ?? 'configured')
     edges.push({
       id: edgeId(id),
       blockId: id,
-      state: label === 'not read' ? 'unavailable' : edgeState,
+      state: edgeState,
       label,
-      title: `${reader.label} to GBrain core: ${label === 'not read' ? 'connection not read' : label}`,
+      title: `${reader.label} to GBrain core: ${label}`,
     })
   }
 
   // ---- queue ----
   const queueState = queueEvidenceState(ctx.health, syn.queue)
   const q = syn.queue
-  const stalled = q.stalled.value
+  const stalled = q.stalled?.value ?? null
   const overdue = ctx.health?.metrics?.missingEmbeddingsOverdue ?? null
   states[QUEUE_ID] = queueState
   if (queueState !== 'healthy' && queueState !== 'inactive') {
@@ -352,10 +344,10 @@ export function buildBrainModel(syn: GBrainSynoptic, ctx: ModelContext = {}): Br
     kind: 'queue',
     label: 'Embedding queue',
     state: queueState,
-    sub: `${fmtCount(q.waiting.value)} waiting · ${fmtCount(q.active.value)} active · ${fmtCount(q.stalled.value)} stalled`,
+    sub: `${fmtCount(q.waiting?.value)} waiting · ${fmtCount(q.active?.value)} active · ${fmtCount(q.stalled?.value)} stalled`,
     count: null,
   }
-  const waiting = q.waiting.value
+  const waiting = q.waiting?.value
   edges.push({
     id: edgeId(QUEUE_ID),
     blockId: QUEUE_ID,
@@ -439,13 +431,13 @@ export function deriveReadings(syn: GBrainSynoptic, model: BrainModel, health: H
   const link = deriveLinkExtraction(health)
   const q = syn.queue
   return {
-    quality: { value: syn.core.quality.value, state: syn.core.quality.state },
+    quality: { value: syn.core.quality?.value ?? null, state: stateOf(syn.core.quality) },
     sourceSync: deriveSourceSync(syn.sources),
     linkExtraction: { value: link.value, unit: link.unit, state: link.state, hint: LINK_EXTRACTION_HINT },
     queue: {
-      value: q.waiting.value,
+      value: q.waiting?.value ?? null,
       state: model.states[QUEUE_ID] ?? q.state,
-      hint: `${fmtCount(q.active.value)} active · ${fmtCount(q.stalled.value)} stalled`,
+      hint: `${fmtCount(q.active?.value)} active · ${fmtCount(q.stalled?.value)} stalled`,
     },
   }
 }
@@ -522,6 +514,23 @@ export function blockIdOfElement(id: string): string {
   return id.startsWith('edge:') ? id.slice('edge:'.length) : id
 }
 
+/** A row for one measurement; a missing measurement is a dash with a "not read" state. */
+function measuredRow<T extends string | number>(
+  label: string,
+  m: { value: T | null; observedAt: string | null; state: UiState } | null | undefined,
+  format: (value: T) => string,
+  mono = true,
+): DetailRow {
+  const value = m?.value
+  return {
+    label,
+    value: value === null || value === undefined ? '—' : format(value),
+    mono,
+    observedAt: m?.observedAt ?? null,
+    state: stateOf(m),
+  }
+}
+
 /** Everything the detail panel shows for a block or a line. Null when the element does not exist. */
 export function describeElement(
   elementId: string,
@@ -547,34 +556,22 @@ export function describeElement(
     const c = syn.core
     observedAt = c.observedAt
     rows.push(
-      { label: 'Version', value: c.version.value ?? '—', mono: true, observedAt: c.version.observedAt, state: c.version.state },
-      { label: 'Pages', value: fmtCount(c.pages.value), mono: true, observedAt: c.pages.observedAt, state: c.pages.state },
-      { label: 'Chunks', value: fmtCount(c.chunks.value), mono: true, observedAt: c.chunks.observedAt, state: c.chunks.state },
-      { label: 'Embedded', value: fmtCount(c.embedded.value), mono: true, observedAt: c.embedded.observedAt, state: c.embedded.state },
-      {
-        label: 'Quality',
-        value: c.quality.value === null ? '—' : `${fmtCount(c.quality.value)}/100`,
-        mono: true,
-        observedAt: c.quality.observedAt,
-        state: c.quality.state,
-      },
+      measuredRow('Version', c.version, (v) => v, true),
+      measuredRow('Pages', c.pages, fmtCount),
+      measuredRow('Chunks', c.chunks, fmtCount),
+      measuredRow('Embedded', c.embedded, fmtCount),
+      measuredRow('Quality', c.quality, (v) => `${fmtCount(v)}/100`),
     )
-    for (const part of c.quality.components) {
-      rows.push({
-        label: COMPONENT_LABELS[part.id] ?? part.id,
-        value: part.value === null ? '—' : `${fmtCount(part.value)} points`,
-        mono: true,
-        observedAt: part.observedAt,
-        state: part.state,
-      })
+    for (const part of c.quality?.components ?? []) {
+      rows.push({ ...measuredRow(COMPONENT_LABELS[part.id] ?? part.id, part, (v) => `${fmtCount(v)} points`) })
     }
   } else if (blockId === QUEUE_ID) {
     const q = syn.queue
     observedAt = q.observedAt
     rows.push(
-      { label: 'Waiting', value: fmtCount(q.waiting.value), mono: true, observedAt: q.waiting.observedAt, state: q.waiting.state },
-      { label: 'Active', value: fmtCount(q.active.value), mono: true, observedAt: q.active.observedAt, state: q.active.state },
-      { label: 'Stalled', value: fmtCount(q.stalled.value), mono: true, observedAt: q.stalled.observedAt, state: q.stalled.state },
+      measuredRow('Waiting', q.waiting, fmtCount),
+      measuredRow('Active', q.active, fmtCount),
+      measuredRow('Stalled', q.stalled, fmtCount),
     )
     const m = ctx.health?.metrics
     const healthReading = ctx.health
@@ -588,7 +585,10 @@ export function describeElement(
     const group = syn.sources.find((g) => groupBlockId(g.id) === blockId)
     if (!group) return null
     observedAt = group.observedAt
-    const synced = group.items.filter((item) => item.state !== 'inactive').flatMap((item) => (item.lastSyncAt ? [Date.parse(item.lastSyncAt)] : [])).filter(Number.isFinite)
+    const synced = group.items
+      .filter((item) => item.state !== 'inactive')
+      .flatMap((item) => (item.lastSyncAt ? [Date.parse(item.lastSyncAt)] : []))
+      .filter(Number.isFinite)
     rows.push({ label: 'Sources', value: fmtCount(group.items.length), mono: true, observedAt: group.observedAt, state: group.state })
     if (synced.length) rows.push({ label: 'Oldest successful sync', value: '—', valueAt: new Date(Math.min(...synced)).toISOString() })
     const limit = ctx.sources?.freshness?.defaultThresholdHours
@@ -604,7 +604,7 @@ export function describeElement(
         id: item.id,
         label: item.label,
         state: item.state,
-        lastSyncAt: item.lastSyncAt,
+        lastSyncAt: item.lastSyncAt ?? null,
         note: parts.length ? parts.join(' · ') : null,
       })
     }
@@ -612,22 +612,16 @@ export function describeElement(
     const reader = syn.readers.find((r) => readerBlockId(r.id) === blockId)
     if (!reader) return null
     observedAt = reader.observedAt
+    const integration = reader.integration
     rows.push(
       {
         label: 'Configuration',
-        value: reader.integration.configured === true ? 'configured' : reader.integration.configured === false ? 'not configured' : 'not read',
-        observedAt: reader.integration.observedAt,
-        state: reader.integration.state,
+        value: integration?.configured === true ? 'configured' : integration?.configured === false ? 'not configured' : 'not read',
+        observedAt: integration?.observedAt ?? null,
+        state: integration?.state ?? 'unavailable',
       },
-      { label: 'Read from', value: reader.integration.evidence || '—' },
-      {
-        label: 'Connection',
-        value: reader.connection.state === 'unavailable' ? 'not read' : reader.connection.state,
-        observedAt: reader.connection.observedAt,
-        state: reader.connection.state,
-      },
+      { label: 'Read from', value: integration?.evidence || '—' },
     )
-    notes.push('Only the MCP configuration is read. A configured reader has not been shown to connect.')
   }
 
   if (edge) {
@@ -657,20 +651,17 @@ export interface NoteLine {
 /** Current notes: conditions first, then reading limitations. Deduplicated, plain words. */
 export function currentNotes(
   verdict: Verdict,
-  model: BrainModel | null,
   caveats: readonly string[] = [],
+  readersNote?: string | null,
 ): NoteLine[] {
   const lines: NoteLine[] = verdict.conditions.map((condition) => ({
     id: `condition:${condition.id}`,
     state: condition.state,
     text: `${condition.text.charAt(0).toUpperCase()}${condition.text.slice(1)}.`,
   }))
-  if (model && model.readers.some((reader) => reader.state === 'unavailable')) {
-    lines.push({
-      id: 'readers-not-observed',
-      state: 'unavailable',
-      text: 'Reader connections are not observed; only their MCP configuration is read.',
-    })
+  const note = readersNote?.trim()
+  if (note) {
+    lines.push({ id: 'readers-note', state: 'unavailable', text: `${note.charAt(0).toUpperCase()}${note.slice(1)}${/[.!?]$/.test(note) ? '' : '.'}` })
   }
   const seen = new Set(lines.map((line) => line.text.toLowerCase()))
   for (const caveat of caveats) {
@@ -723,10 +714,21 @@ export interface ReadingRow {
 
 const MAX_CHANGES = 3
 
+/** A ledger entry whose optional sections are missing still reads; the missing parts are "not read". */
+function completeEntry(entry: TimelineEntry): TimelineEntry {
+  return {
+    ...entry,
+    metrics: entry.metrics ?? {},
+    sourceFreshness: entry.sourceFreshness ?? { status: 'inactive' },
+    warnings: entry.warnings ?? [],
+  }
+}
+
 export function recentReadings(entries: readonly TimelineEntry[] | null | undefined, limit = 6): ReadingRow[] {
   if (!entries) return []
-  return entries.slice(0, limit).map((entry, index) => {
-    const changes = timelineDeltaLines(entry, entries[index + 1])
+  const complete = entries.map(completeEntry)
+  return complete.slice(0, limit).map((entry, index) => {
+    const changes = timelineDeltaLines(entry, complete[index + 1])
     const health = entry.metrics.health
     return {
       id: entry.id,

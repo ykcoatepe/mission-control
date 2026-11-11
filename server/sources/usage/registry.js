@@ -46,15 +46,17 @@ function createUsageRegistry({ providers = [], now = Date.now, fs, dataDir, time
                     const saved = JSON.parse(await fs.readFile(file, 'utf8'));
                     if (saved.version === 1 && saved.identity === (provider.identity || provider.id)) {
                         const value = validateObservation(saved.data, { since: saved.data.since, until: saved.data.until });
-                        if (now() - Date.parse(value.observedAt) <= 24 * 60 * 60 * 1000)
+                        if (now() - Date.parse(value.observedAt) <= 24 * 60 * 60 * 1000) {
                             restored = { ...value, since: saved.data.since, until: saved.data.until };
+                            provider.restoreScanStatus?.(saved.diagnostics);
+                        }
                     }
                 }
                 catch { /* A cache is optional; failed upstream reads remain unavailable. */ }
             }
             const snap = await refreshSource();
             if (snap.meta.ok && file && fs) {
-                const body = JSON.stringify({ version: 1, identity: provider.identity || provider.id, data: snap.data });
+                const body = JSON.stringify({ version: 1, identity: provider.identity || provider.id, data: snap.data, diagnostics: provider.scanStatus?.() });
                 persistence = persistence.catch(() => { }).then(async () => {
                     const tmp = `${file}.tmp-${process.pid}-${now()}`;
                     try {
@@ -77,6 +79,7 @@ function createUsageRegistry({ providers = [], now = Date.now, fs, dataDir, time
     }
     providers.forEach(register);
     return {
+        providerDiagnostics: id => entries.get(id)?.provider.scanStatus?.() || null,
         register, sources: () => [...entries.values()].map(x => x.source), snapshots: () => [...entries.values()].map(({ provider, source }) => ({ id: provider.id, label: provider.label, ...source.snapshot() })), window: getWindow
     };
 }

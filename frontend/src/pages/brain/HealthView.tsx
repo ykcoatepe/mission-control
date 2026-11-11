@@ -54,7 +54,7 @@ export function HealthView({
   const readings = deriveReadings(syn, model, health)
   const detail = selectedId ? describeElement(selectedId, syn, model, { sources, health }) : null
   const recovered = collapseIncidents(timeline?.incidentBanners, acknowledged)
-  const notes = currentNotes(verdict, model, data.caveats)
+  const notes = currentNotes(verdict, data.caveats, syn.readersNote)
   const rows = recentReadings(timeline?.entries)
 
   const runFromDetail = (action: OperationCapability) => {
@@ -115,7 +115,7 @@ export function HealthView({
       <ReadingsTimeline
         rows={rows}
         retained={timeline?.retainedEntryCount ?? null}
-        observedAt={timeline?.meta.observedAt ?? null}
+        observedAt={timeline?.meta?.observedAt ?? null}
         stale={data.timelineStale}
         readable={timeline !== null && timeline.entries !== null}
       />

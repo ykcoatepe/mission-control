@@ -52,12 +52,13 @@ function createGBrainOverviewService(options = {}) {
     return { ...snapshot, overview: buildFromSnapshot(snapshot) };
   }
   function buildFromSnapshot(snapshot, extra = {}) {
+    const synoptic = buildSynoptic({ probeSnapshot, live: snapshot.live, now });
     return { ...buildGBrainOverview(snapshot.live, { integrationRuntime: snapshot.integrationRuntime,
-      ...(timelineSummary ? { timelineSummary, incidentBanner: timelineSummary.incidentBanner || null, incidentBanners: timelineSummary.incidentBanners || [] } : {}), ...extra }),
-      unavailable: !snapshot.live.health?.ok || !snapshot.live.sources?.ok
-        || snapshot.live.health.meta?.stale || snapshot.live.sources.meta?.stale || false,
-      meta: snapshot.meta };
+      ...(timelineSummary ? { timelineSummary, incidentBanner: timelineSummary.incidentBanner || null, incidentBanners: timelineSummary.incidentBanners || [] } : {}),
+      ...extra, verdict: synoptic.verdict, sourcesState: synoptic.sourcesState }),
+      unavailable: synoptic.verdict.state === 'unavailable', meta: snapshot.meta };
   }
+  function overviewSnapshot() { const s = readSnapshot(); return { data: s.overview, meta: s.meta }; }
   function getOverview() { return readSnapshot().overview; }
   function integrationSnapshot() {
     const s = readSnapshot();
@@ -99,6 +100,6 @@ function createGBrainOverviewService(options = {}) {
     scheduler.register(graph, { intervalMs: 120_000, jitterMs: 1500 });
   }
   return { readSnapshot, getOverview, buildFromSnapshot, timelineService, probeSnapshot, refresh, register,
-    integrationSnapshot, synopticSnapshot, timelineSnapshot, lookups, graph, sources };
+    integrationSnapshot, synopticSnapshot, overviewSnapshot, timelineSnapshot, lookups, graph, sources };
 }
 module.exports = { createGBrainOverviewService, combineMeta };

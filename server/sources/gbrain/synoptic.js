@@ -1,7 +1,8 @@
 'use strict';
 const { deriveState, stateOf } = require('./state');
 const { number, COMPONENT_KEYS } = require('./probes');
-const { sourceFreshnessStatus } = require('../../routes/gbrain/liveProbes');
+const { classifySource } = require('./freshness');
+const { buildGBrainVerdict } = require('./verdict');
 
 /**
  * @typedef {{state: import('./state').EvidenceState, observedAt: string|null}} Evidence
@@ -37,11 +38,12 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
   core.observedAt = h.meta.observedAt;
   const groups = new Map();
   for (const s of ss.data?.sources || []) {
-    const fresh = sourceFreshnessStatus(s, s.lastSyncAt, new Date(now()).toISOString());
-    const state = stateOf(ss, { inactive: s.syncEnabled === false || s.excludedByPolicy === true,
-      critical: /critical|corrupt/i.test(s.status), warning: fresh.status === 'warning' || /error|failed|behind|dirty/i.test(s.status) });
-    const item = { id: s.id, label: s.id, state, observedAt: ss.meta.observedAt, lastSyncAt: s.lastSyncAt,
-      behind: number(s.behind), excludedByPolicy: s.excludedByPolicy ?? null };
+    const classification = classifySource(s, ss, now);
+    const item = { id: s.id, label: s.id, state: classification.state, observedAt: ss.meta.observedAt,
+      lastSyncAt: classification.freshness.lastSyncAt, behind: number(s.behind),
+      excludedByPolicy: classification.excludedByPolicy, reason: classification.reason,
+      syncTracked: classification.freshness.syncTracked, ageHours: classification.freshness.ageHours,
+      thresholdHours: classification.freshness.thresholdHours };
     const group = groupFor(s.id);
     if (!groups.has(group)) groups.set(group, []);
     groups.get(group).push(item);
@@ -74,16 +76,17 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
   for (const r of readers) edges.push({ from: r.id, to: 'gbrain', label: 'configured',
     state: r.integration.state, observedAt: r.integration.observedAt });
   const sourcesState = stateOf(ss, { critical: sources.some((s) => s.state === 'critical'),
-    warning: sources.some((s) => s.state === 'warning') });
+    warning: sources.some((s) => s.state === 'warning'),
+    inactive: sources.length > 0 && sources.every((s) => s.state === 'inactive') });
   const readersState = !runtime.data && !runtime.meta.error
     ? deriveState({ observed: true, inactive: true })
     : stateOf(runtime, { failed: Boolean(runtime.meta.error) || readers.some((r) => r.state === 'unavailable'),
       warning: readers.some((r) => r.state === 'warning'),
       inactive: readers.length === 0 || readers.every((r) => r.state === 'inactive') });
-  const states = [core.state, sourcesState, queue.state, readersState];
-  return { schemaVersion: '1', state: deriveState({ observed: true,
-    failed: states.includes('unavailable'), critical: states.includes('critical'),
-    warning: states.includes('warning') }),
+  const verdict = buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live,
+    probes: Object.fromEntries(['health', 'stats', 'jobs', 'sources', 'version', 'tools', 'features', 'providers', 'hermesProxy', 'runtime']
+      .map((name) => [name, probeSnapshot(name)])) });
+  return { schemaVersion: '1', state: verdict.state, verdict,
     core, sources, sourcesState, queue, readers, readersState,
     readersNote: 'connection telemetry is not observable locally', edges };
 }

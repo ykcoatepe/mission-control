@@ -6,6 +6,7 @@ const {
 } = require('./constants');
 const { formatCount, formatPercent, liveHealthStatus, liveSourceStatus } = require('./liveProbes');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
+const { verdictCaveats } = require('../../sources/gbrain/verdict');
 const { listGBrainActions } = require('./actionsExecutor');
 
 function statusLabelText(status) {
@@ -405,6 +406,28 @@ function buildGBrainOverview(live = {}, extra = {}) {
     },
   };
 
+  if (extra.verdict) {
+    overview.verdict = extra.verdict;
+    overview.state = extra.verdict.state;
+    overview.trust.status = extra.verdict.state;
+    overview.trust.label = extra.verdict.state === 'healthy' ? 'Operational' : `GBrain ${extra.verdict.state}`;
+    overview.caveats = verdictCaveats(extra.verdict);
+    if (extra.sourcesState) {
+      const sourceNode = overview.nodes.find((node) => node.id === 'sources');
+      const sourceIds = new Set((liveSources?.sources || []).map((s) => s.id));
+      if (sourceNode) {
+        sourceNode.status = extra.sourcesState;
+        sourceNode.risks = extra.verdict.reasons.filter((r) => r.state !== 'inactive'
+          && (sourceIds.has(r.elementId) || r.elementId === 'gbrain.sources')).map((r) => r.text);
+      }
+      overview.edges.find((edge) => edge.id === 'edge-sources-gbrain').status = extra.sourcesState;
+      overview.cockpit.freshness.status = extra.sourcesState;
+      if (extra.sourcesState === 'inactive') overview.cockpit.freshness.value = 'Not applicable';
+      if (Number.isFinite(liveSources?.freshness?.freshCount) && Number.isFinite(liveSources?.freshness?.untrackedCount)) overview.cockpit.freshness.detail = `${liveSources.freshness.freshCount} sync-tracked fresh, ${liveSources.freshness.untrackedCount} not applicable`;
+    }
+    overview.cockpit.caveats = { ...overview.cockpit.caveats, value: String(overview.caveats.length),
+      detail: overview.caveats.join(' ') || 'No active caveats', status: extra.verdict.state };
+  }
   if (extra.timelineSummary) overview.timelineSummary = extra.timelineSummary;
   if (extra.incidentBanner !== undefined) overview.incidentBanner = extra.incidentBanner;
   if (extra.incidentBanners !== undefined) overview.incidentBanners = extra.incidentBanners;

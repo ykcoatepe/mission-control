@@ -1,3 +1,4 @@
+const { isGBrainVerdict, verdictCaveats } = require('../sources/gbrain/verdict');
 const STATE_RANK = {
   critical: 5,
   warning: 4,
@@ -639,6 +640,24 @@ function adaptHermes(board, cron, generatedAt, gateway) {
 }
 
 function adaptGBrain(overview, generatedAt) {
+  // The GBrain producer owns this verdict; do not reconstruct it from score/caveats.
+  if (overview?.verdict) {
+    if (!isGBrainVerdict(overview.verdict)) return unavailableSystem('gbrain', 'GBrain', '/gbrain', generatedAt, 'GBrain verdict invalid.');
+    const { state } = overview.verdict;
+    const caveats = verdictCaveats(overview.verdict);
+    const at = observedAt(overview.meta?.observedAt || overview.trust?.lastVerifiedAt, generatedAt);
+    const proof = evidence('gbrain:trust', 'gbrain', 'trust', state, at,
+      overview.trust?.label || `GBrain ${state}`, '/api/gbrain/overview', '/gbrain');
+    return { system: { id: 'gbrain', label: 'GBrain', state, observedAt: at,
+      freshness: state === 'unavailable' ? 'unavailable' : overview.meta?.stale || overview.live?.sources?.freshness?.staleCount > 0 ? 'stale' : 'fresh',
+      caveats, metrics: { trustScore: overview.trust?.score ?? null,
+        staleSources: overview.live?.sources?.freshness?.staleCount ?? null, caveats: caveats.length },
+      evidence: [proof], detailHref: '/gbrain' },
+    attention: overview.verdict.reasons.filter((r) => ['warning', 'critical', 'unavailable'].includes(r.state)).map((r, index) => ({
+      id: `gbrain:caveat:${index}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
+      title: 'GBrain requires attention', detail: r.text, detailHref: '/gbrain', evidenceRefs: [proof.id],
+    })) };
+  }
   if (!hasGBrainProof(overview, generatedAt)) {
     return unavailableSystem(
       'gbrain',
@@ -880,6 +899,15 @@ function createOperationsSources({
   return Object.fromEntries(OPERATIONS_SOURCE_NAMES.map((name) => {
     const budget = budgets[name] || { intervalMs: 60_000, timeoutMs: 10_000 };
     const timeoutMs = sourceTimeoutMsOverrides[name] ?? budget.timeoutMs;
+    // GBrain is already a scheduled last-good source. Project its current memory
+    // instead of caching a second verdict for another 60 seconds.
+    if (name === 'gbrain' && typeof readers[name]?.snapshot === 'function') {
+      const snapshot = () => readers[name].snapshot();
+      return [name, { intervalMs: budget.intervalMs, source: {
+        id: 'operations.gbrain', snapshot, refresh: async () => snapshot(),
+        status: () => ({ id: 'operations.gbrain', ...snapshot().meta, staleAfterMs: Infinity }),
+      } }];
+    }
     return [name, {
       intervalMs: budget.intervalMs,
       source: createSource({
@@ -987,6 +1015,8 @@ function createOperationsReaders({
   hermesGatewayHealthService,
   gbrainOverviewService,
 } = {}) {
+  const gbrainReader = async () => (await gbrainOverviewService.readSnapshot()).overview;
+  if (typeof gbrainOverviewService?.overviewSnapshot === 'function') gbrainReader.snapshot = () => gbrainOverviewService.overviewSnapshot();
   return {
     status: () => statusService.getOperationsStatusResponse(),
     sessions: () => sessionsService.getOperationsSessions(25),
@@ -1007,7 +1037,7 @@ function createOperationsReaders({
     // (stale) board instead of timing the whole system out.
     hermes: () => hermesKanbanService.getBoard({ softDeadlineMs: HERMES_SOFT_DEADLINE_MS }),
     hermesGateway: () => hermesGatewayHealthService.getHealth(),
-    gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
+    gbrain: gbrainReader,
   };
 }
 

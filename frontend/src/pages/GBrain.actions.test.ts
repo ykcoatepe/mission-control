@@ -5,7 +5,7 @@ import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { health, synoptic } from './brain/fixtures'
+import { health, minimalSynoptic, synoptic } from './brain/fixtures'
 import type { OperationCapability } from './brain/types'
 
 const mocks = vi.hoisted(() => ({
@@ -110,7 +110,7 @@ afterEach(() => {
 })
 
 describe('Brain home: verdict and readings', () => {
-  it('says normal only when everything read is normal, and shows unread readers as not read', async () => {
+  it('says normal only when everything read is normal, with configured readers as quiet normal blocks', async () => {
     setup()
     const { host, render, root } = mount()
     await render()
@@ -118,7 +118,9 @@ describe('Brain home: verdict and readings', () => {
     expect(host.textContent).toContain('last probe')
     expect(host.textContent).toContain('Link extraction')
     expect(host.textContent).not.toMatch(/proof|evidence|caveat|allowlisted|R0|W1|Living Brain Map/i)
-    expect(host.querySelector('[data-syn-id="reader:hermes"]')?.getAttribute('data-state')).toBe('unavailable')
+    expect(host.querySelector('[data-syn-id="reader:hermes"]')?.getAttribute('data-state')).toBe('healthy')
+    expect(host.textContent).toContain('Connection telemetry is not observable locally.')
+    expect(host.textContent).not.toContain('Reader connections are not observed')
     await act(async () => root.unmount())
   })
 
@@ -132,6 +134,15 @@ describe('Brain home: verdict and readings', () => {
     expect(host.textContent).toContain('needs attention')
     expect(host.textContent).toContain('stale')
     expect(host.querySelector('[data-syn-id="core"]')?.textContent).toContain('—')
+    await act(async () => root.unmount())
+  })
+
+  it('renders a minimal payload without crashing and does not call it normal', async () => {
+    setup({ synoptic: { data: minimalSynoptic(), meta: meta('2026-11-11T08:00:00.000Z') } })
+    const { host, render, root } = mount()
+    await render()
+    expect(host.textContent).not.toContain('GBrain is normal')
+    expect(host.querySelector('[data-syn-id="core"]')).not.toBeNull()
     await act(async () => root.unmount())
   })
 

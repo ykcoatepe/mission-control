@@ -291,7 +291,9 @@ function isSyncTrackedSource(source) {
   const id = normalizeSourceKey(source?.source_id || source?.id || source?.name || source?.source);
   const localPath = source?.local_path || source?.localPath || source?.path || source?.repoPath || source?.repo_path || null;
   const syncEnabled = source?.sync_enabled ?? source?.syncEnabled;
-  if (syncEnabled === false) return false;
+  if (syncEnabled === false || source?.excludedByPolicy === true || source?.excluded_by_policy === true) return false;
+  const classified = source?.syncTracked ?? source?.freshness?.syncTracked;
+  if (typeof classified === 'boolean') return classified;
   if (id === 'default' && !localPath) return false;
   if (source?.federated === false && !localPath) return false;
   return true;
@@ -948,6 +950,7 @@ function normalizeSourcesPayload(payload, checkedAt) {
         chunks: typeof rawChunks === 'number' && Number.isInteger(rawChunks) && rawChunks >= 0 ? rawChunks : null,
         lastSyncAt,
         syncEnabled,
+        syncTracked: freshness.syncTracked,
         freshness,
       };
     })

@@ -31,9 +31,9 @@ export interface Measurement<T = number> extends Evidence {
 export interface SynopticSource extends Evidence {
   id: string
   label: string
-  lastSyncAt: string | null
-  behind: number | null
-  excludedByPolicy: boolean | null
+  lastSyncAt?: string | null
+  behind?: number | null
+  excludedByPolicy?: boolean | null
 }
 
 export interface SynopticSourceGroup extends Evidence {
@@ -45,11 +45,12 @@ export interface SynopticSourceGroup extends Evidence {
 export interface SynopticReader extends Evidence {
   id: string
   label: string
-  integration: Evidence & { configured: boolean | null; evidence: string }
-  connection: Evidence
+  /** Configuration evidence. Connection telemetry is not observable locally, so there is no connection object. */
+  integration?: Evidence & { configured: boolean | null; evidence: string }
 }
 
-export interface SynopticEdge extends Evidence {
+/** Source and queue lines carry a measurement. */
+export interface MeasuredEdge extends Evidence {
   from: string
   to: string
   label: string
@@ -57,29 +58,45 @@ export interface SynopticEdge extends Evidence {
   measurement: Measurement
 }
 
+/** Reader lines are configuration evidence only: no measurement and no unit. */
+export interface ReaderIntegrationEdge extends Evidence {
+  from: string
+  to: string
+  label: 'configured'
+  unit?: undefined
+  measurement?: undefined
+}
+
+export type SynopticEdge = MeasuredEdge | ReaderIntegrationEdge
+
 export interface SynopticCore extends Evidence {
-  version: Measurement<string>
-  pages: Measurement
-  chunks: Measurement
-  embedded: Measurement
-  quality: Measurement & { components: Array<Measurement & { id: string }> }
+  version?: Measurement<string>
+  pages?: Measurement
+  chunks?: Measurement
+  embedded?: Measurement
+  quality?: Measurement & { components?: Array<Measurement & { id: string }> }
 }
 
 export interface SynopticQueue extends Evidence {
-  waiting: Measurement
-  active: Measurement
-  stalled: Measurement
+  waiting?: Measurement
+  active?: Measurement
+  stalled?: Measurement
 }
 
+/**
+ * Version 1 of the contract (server/sources/gbrain/contract.d.ts). Members the
+ * page tolerates missing are optional here, so the compiler forces a guard.
+ */
 export interface GBrainSynoptic {
   schemaVersion: '1'
   state: UiState
   core: SynopticCore
   sources: SynopticSourceGroup[]
-  sourcesState: UiState
+  sourcesState?: UiState
   queue: SynopticQueue
   readers: SynopticReader[]
-  readersState: UiState
+  readersState?: UiState
+  readersNote?: string
   edges: SynopticEdge[]
 }
 

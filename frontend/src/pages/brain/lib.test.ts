@@ -17,7 +17,7 @@ import {
   readerBlockId,
   recentReadings,
 } from './lib'
-import { META, health, sources, synoptic } from './fixtures'
+import { META, health, minimalSynoptic, sources, synoptic } from './fixtures'
 import type { GBrainSynoptic, TimelineEntry } from './types'
 
 const AT = '2026-11-11T08:19:30.000Z'
@@ -71,16 +71,42 @@ describe('formatting never invents numbers', () => {
 })
 
 describe('verdict', () => {
-  it('is normal when everything read is healthy, and an unobserved reader connection is only a note', () => {
-    const model = buildBrainModel(synoptic())
+  it('is normal with a healthy configured reader, which is a quiet block with the payload line label', () => {
+    const syn = synoptic()
+    const model = buildBrainModel(syn)
     const verdict = deriveVerdict(model, META)
     expect(verdict.state).toBe('healthy')
     expect(verdict.text).toBe('GBrain is normal')
-    // ...but the reader is shown as not read, never as healthy.
-    expect(model.states[readerBlockId('hermes')]).toBe('unavailable')
-    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))?.label).toBe('not read')
-    const notes = currentNotes(verdict, model).map((n) => n.text)
-    expect(notes.join(' ')).toContain('Reader connections are not observed')
+    expect(model.states[readerBlockId('hermes')]).toBe('healthy')
+    expect(model.readers[0].sub).toBe('configured')
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ state: 'healthy', label: 'configured' })
+    expect(model.conditions).toEqual([])
+  })
+
+  it('shows the readers note once in Notes and no old workaround', () => {
+    const syn = synoptic()
+    const model = buildBrainModel(syn)
+    const notes = currentNotes(deriveVerdict(model, META), [], syn.readersNote).map((n) => n.text)
+    expect(notes).toEqual(['Connection telemetry is not observable locally.'])
+    expect(currentNotes(deriveVerdict(model, META), [], undefined)).toEqual([])
+  })
+
+  it('takes the reader state from the payload and counts readers toward the verdict', () => {
+    for (const [state, expected] of [
+      ['warning', 'GBrain needs attention: Hermes needs attention'],
+      ['critical', 'GBrain needs attention: Hermes needs attention'],
+      ['unavailable', 'GBrain readings are incomplete: Hermes could not be read'],
+    ] as const) {
+      const syn = synoptic()
+      syn.readers[0] = { ...syn.readers[0], state }
+      const model = buildBrainModel(syn)
+      expect(model.states[readerBlockId('hermes')]).toBe(state)
+      expect(deriveVerdict(model, META)).toMatchObject({ state, text: expected })
+    }
+    // Healthy integration evidence plus a failing reader state is not re-derived: the payload decides.
+    const syn = synoptic()
+    syn.readers[1] = { ...syn.readers[1], state: 'inactive', integration: { ...syn.readers[1].integration!, configured: null, state: 'inactive' } }
+    expect(deriveVerdict(buildBrainModel(syn), META).state).toBe('healthy')
   })
 
   it('names the specific condition for a stale source', () => {
@@ -131,7 +157,7 @@ describe('verdict', () => {
 
   it('counts a reader whose own configuration is wrong', () => {
     const syn = synoptic()
-    syn.readers[0] = { ...syn.readers[0], integration: { ...syn.readers[0].integration, configured: false, state: 'warning' } }
+    syn.readers[0] = { ...syn.readers[0], state: 'inactive', integration: { ...syn.readers[0].integration!, configured: false, state: 'inactive' } }
     expect(deriveVerdict(buildBrainModel(syn), META).text).toBe('GBrain needs attention: Hermes is not configured')
   })
 })
@@ -229,8 +255,11 @@ describe('element detail', () => {
     expect(describeElement('queue', syn, model)?.actionIds).toEqual(['embed-stale', 'embed-missing'])
     const reader = describeElement(readerBlockId('hermes'), syn, model)
     expect(reader?.actionIds).toEqual([])
-    expect(reader?.rows.find((r) => r.label === 'Connection')?.value).toBe('not read')
-    expect(reader?.notes.join(' ')).toContain('has not been shown to connect')
+    expect(reader?.rows.find((r) => r.label === 'Configuration')?.value).toBe('configured')
+    expect(reader?.rows.find((r) => r.label === 'Connection')).toBeUndefined()
+    expect(reader?.notes).toEqual([])
+    const line = describeElement('edge:reader:hermes', syn, model)
+    expect(line?.rows[0]).toMatchObject({ label: 'Line', value: 'configured', state: 'healthy' })
   })
 
   it('describes a line with its own reading and the actions of its block', () => {
@@ -249,6 +278,82 @@ describe('element detail', () => {
     expect(describeElement('group:nope', syn, model)).toBeNull()
     expect(describeElement('edge:nope', syn, model)).toBeNull()
     expect(describeElement('core', syn, model)?.rows.find((r) => r.label === 'Chunks')?.value).toBe('—')
+  })
+})
+
+describe('optional fields never crash the page', () => {
+  /** The same payload with every optional object removed. */
+  const stripped = (): GBrainSynoptic => {
+    const syn = synoptic()
+    return {
+      ...syn,
+      core: { state: syn.core.state, observedAt: syn.core.observedAt },
+      queue: { state: syn.queue.state, observedAt: syn.queue.observedAt },
+      readers: syn.readers.map(({ id, label, state, observedAt }) => ({ id, label, state, observedAt })),
+      sources: syn.sources.map((group) => ({
+        ...group,
+        items: group.items.map(({ id, label, state, observedAt }) => ({ id, label, state, observedAt })),
+      })),
+      edges: syn.edges.map(({ from, to, state, label, observedAt }) => ({ from, to, state, label, observedAt })) as GBrainSynoptic['edges'],
+      sourcesState: undefined,
+      readersState: undefined,
+      readersNote: undefined,
+    }
+  }
+
+  for (const [name, make] of [
+    ['a minimal payload', minimalSynoptic],
+    ['a payload without any optional object', stripped],
+  ] as const) {
+    it(`builds the model, readings, verdict, notes and every detail from ${name}`, () => {
+      const syn = make()
+      const model = buildBrainModel(syn)
+      const readings = deriveReadings(syn, model, undefined)
+      expect(readings.quality.value).toBeNull()
+      expect(readings.queue.value).toBeNull()
+      const verdict = deriveVerdict(model, META)
+      expect(['healthy', 'unavailable']).toContain(verdict.state)
+      expect(() => currentNotes(verdict, [], syn.readersNote)).not.toThrow()
+      expect(model.core.rows.map((r) => r.value)).toEqual(['—', '—', '—'])
+      expect(model.core.sub).toBe('version not read')
+      const ids = [
+        'core',
+        'queue',
+        ...model.readers.map((b) => b.id),
+        ...model.groups.map((b) => b.id),
+        ...model.edges.map((e) => e.id),
+      ]
+      for (const id of ids) {
+        const detail = describeElement(id, syn, model)
+        expect(detail, id).not.toBeNull()
+        for (const row of detail?.rows ?? []) expect(typeof row.value).toBe('string')
+      }
+      expect(describeElement('core', syn, model)?.rows.every((r) => r.value === '—')).toBe(true)
+    })
+  }
+
+  it('reads missing measurements as not read, never as normal', () => {
+    const model = buildBrainModel(minimalSynoptic())
+    expect(deriveVerdict(model, META).state).toBe('unavailable')
+    expect(model.edges.find((e) => e.blockId === 'queue')).toMatchObject({ label: 'not read', state: 'unavailable' })
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ label: 'not read', state: 'unavailable' })
+    expect(model.readers[0].sub).toBe('not read')
+  })
+
+  it('keeps null optional fields on sources and health from crashing', () => {
+    const syn = stripped()
+    expect(describeElement(groupBlockId('projects'), syn, buildBrainModel(syn), { sources: null, health: undefined })?.items).toHaveLength(2)
+    expect(deriveSourceSync(syn.sources).value).toBe('2 of 3')
+    const bare = { ok: true, meta: META }
+    expect(deriveLinkExtraction(bare)).toMatchObject({ state: 'unavailable' })
+    expect(buildBrainModel(syn, { health: bare, sources: { meta: META } }).states.queue).toBeDefined()
+    expect(describeElement('queue', syn, buildBrainModel(syn), { health: bare, sources: { meta: META } })).not.toBeNull()
+  })
+
+  it('reads timeline entries with no metrics or score', () => {
+    const bare = { id: 'x', capturedAt: AT, trust: { label: '', status: 'healthy', score: null }, metrics: {}, sourceFreshness: { status: 'healthy' }, warnings: [] } as TimelineEntry
+    expect(recentReadings([bare])[0]).toMatchObject({ quality: 'not read' })
+    expect(() => recentReadings([{ ...bare, metrics: undefined, sourceFreshness: undefined, warnings: undefined } as unknown as TimelineEntry, bare])).not.toThrow()
   })
 })
 

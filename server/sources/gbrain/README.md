@@ -45,8 +45,14 @@ configuration edges from measured source/queue edges. The reader producer is
 source holds that metadata and the synoptic composes it. Legacy Operations
 consumes its existing overview contract, not reader edges. Source sync is
 separate evidence.
-Behind and policy exclusion remain null unless explicitly reported by the
-upstream; disabled sync is inactive, and is not evidence of policy exclusion.
+Behind remains null unless explicitly reported by the upstream. `excludedByPolicy`
+now describes exclusion from freshness scoring: disabled or non-sync-tracked
+sources are inactive, excludedByPolicy=true, with reason `sync disabled` or
+`not sync-tracked`. This uses the existing isSyncTrackedSource policy, preserved
+as a boolean after local paths are discarded. Tracked sources expose ageHours
+and thresholdHours; an absent sync time is warning with reason `never synced`.
+A timestamp beyond its existing per-source threshold is warning. No threshold
+was changed and zero pages never establishes exclusion.
 
 Measured CLI latencies, sequential reads against the local ~63k-page brain on
 2026-11-11 (milliseconds): `--help` 314, tools 348, health 1914, status snapshot
@@ -109,3 +115,35 @@ action catalog/argv, stale-page/embed-lag and ledger-format tests still apply.
 Independent review was not run: parent mloop preflight for mission-control-rehaul
 / gbrain-reviewer returned NOT_INITIALIZED; no participant or project was created.
 Production activation and useful-live confirmation remain with the coordinator.
+
+## Shared operational verdict
+
+`verdict.js:buildGBrainVerdict` alone produces `{state,reasons:[{elementId,state,text}]}`.
+The synoptic state and the overview's state/trust status are that verdict state;
+overview caveats are exactly its warning/critical/unavailable reason texts.
+Inactive exclusion reasons are visible in the verdict and do not degrade health.
+Operations consumes this same verdict and caveat projection, including when a
+probe has failed and the metrics still contain a last-good value. Its GBrain
+source projects the GBrain service's current in-memory overview; it does not
+cache another verdict for 60 seconds. Signals consumes that Operations result.
+The legacy presentation helper's compatibility path remains for older callers
+without a verdict; every mounted GBrain endpoint supplies the shared verdict.
+
+A declared embed-job probe failure is an **unavailable reason**, not an omitted
+note: `embed-job-probe` / `Embed-job probe unavailable; the missing-embedding
+verdict uses embedding age only.` This exact reason and state appear in both
+contracts; it cannot silently leave Operations healthy. Failed scheduled probes
+also have unavailable reasons. Unobservable reader connection telemetry remains
+the existing readersNote and does not degrade health.
+
+Producer/consumer seam: scheduled probe snapshots -> source freshness classifier
++ shared verdict -> synoptic and overview -> Operations memory projection ->
+signals. No HTTP consumer starts a probe. Injected fixtures cover agreement for
+healthy, stale source, failed probe and excluded sources, and cover a subsequent
+failure without refreshing an Operations cache.
+
+Real-data inspection on 2026-11-11: pdfquickfix was sync-enabled, sync-tracked
+and fresh (last_sync_at 2026-11-11T09:03:40.616Z, 24h threshold); the earlier null
+timestamp was not the current observation. tk-omc-ain had sync_enabled=false,
+and was not applicable/inactive regardless of its last sync timestamp. No source
+was manually exempted and no source configuration was changed.

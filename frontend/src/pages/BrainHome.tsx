@@ -95,7 +95,7 @@ export default function BrainHome() {
           health: healthArg,
           sources: sourcesArg,
           timeline: timeline.data && timeline.data.entries !== null ? timeline.data : null,
-          timelineStale: Boolean(timeline.data?.meta.stale) || Boolean(timeline.error),
+          timelineStale: Boolean(timeline.data?.meta?.stale) || Boolean(timeline.error),
           capabilities,
           caveats: overview.data?.systems?.gbrain?.caveats ?? [],
         }

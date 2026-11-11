@@ -33,3 +33,18 @@ Only scheduled refreshes read upstreams and write `data/usage/<id>.json`.
 A successful empty scan is distinct from failure. Restored snapshots remain
 stale until observed again. If a day has not been scanned yet (including the
 first request after midnight), its totals stay unknown rather than zero.
+
+API-equivalent and token aggregates sum finite known provider figures. Unknown
+providers retain null numbers and appear in `missingProviders: [{id,label,reason}]`;
+known partial figures remain included and retain their coverage flag. An observed empty reading is
+known zero. With no known reading the aggregate is null. Billed spend remains
+unknown unless every participating bill is known. Hermes uses the same unchanged
+public rate cards (including the generic comparison tier); model estimates carry
+`apiEquivalentEstimated` and `apiEquivalentStatus` separately from billed USD.
+
+The legacy `/api/costs/codexbar` `stale` flag means an actual failed CodexBar
+invocation is being served from its last successful scan. Partial coverage,
+expired provider readings and another provider's failures do not set that flag.
+`codexbarScan` records invocation state, source and attempt/success timestamps;
+`lastGoodScanAgeMs` and `scanErrorClass` are separate. Scanner diagnostics survive
+an identity-bound cache reload; command output and error text never enter them.

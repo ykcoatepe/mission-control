@@ -4,7 +4,8 @@ export interface Evidence { state: State; observedAt: string | null }
 export interface Measurement<T = number> extends Evidence { value: T | null; unit: string }
 export interface Source extends Evidence {
   id: string; label: string; lastSyncAt: string | null;
-  behind: number | null; excludedByPolicy: boolean | null;
+  behind: number | null; excludedByPolicy: boolean; reason: string | null;
+  syncTracked: boolean; ageHours: number | null; thresholdHours: number;
 }
 export interface SourceGroup extends Evidence { id: string; label: string; items: Source[] }
 export interface Reader extends Evidence {
@@ -19,8 +20,10 @@ export interface ReaderIntegrationEdge extends Evidence {
   from: string; to: string; label: 'configured'; unit?: never; measurement?: never;
 }
 export type Edge = MeasuredEdge | ReaderIntegrationEdge;
+export interface VerdictReason { elementId: string; state: State; text: string }
+export interface Verdict { state: State; reasons: VerdictReason[] }
 export interface GBrainSynoptic {
-  schemaVersion: '1'; state: State;
+  schemaVersion: '1'; state: State; verdict: Verdict;
   core: Evidence & {
     version: Measurement<string>; pages: Measurement; chunks: Measurement; embedded: Measurement;
     quality: Measurement & { components: Array<Measurement & { id: string }> };

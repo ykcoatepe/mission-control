@@ -1,7 +1,7 @@
 'use strict';
 const path = require('node:path');
 const { readJson } = require('./command');
-const { unavailable } = require('./contract');
+const { unavailable, validateObservation } = require('./contract');
 function codexHomePath(env = process.env, home = env.MC_USER_HOME || env.HOME) { return env.MC_CODEX_HOME || path.join(home, '.codex'); }
 function fromCodexbar(raw, { since, until }, now) {
     const reports = Array.isArray(raw) ? raw : [raw];
@@ -30,22 +30,47 @@ function fromCodexbar(raw, { since, until }, now) {
 function createCodexProvider({ exec, projectRoot, home, env = {}, now = Date.now, getHermesCoverage = () => [] }) {
     const codexHome = codexHomePath(env, home);
     const timeoutMs = Number(env.MC_CODEXBAR_TIMEOUT_MS) || 120000;
+    const status = { state: 'not_run', lastAttemptAt: null, lastSuccessAt: null, errorClass: null, usageSource: null };
+    const errorClasses = ['timeout', 'output_limit', 'not_found', 'queue_timeout', 'exit_error', 'invalid_usage'];
     return {
+        scanStatus: () => ({ ...status }),
+        restoreScanStatus(saved) {
+            if (!saved || !['not_run','succeeded','failed'].includes(saved.state)
+                || ![null,'local_logs','codexbar'].includes(saved.usageSource)
+                || ![null,...errorClasses].includes(saved.errorClass)
+                || [saved.lastAttemptAt,saved.lastSuccessAt].some(t => t !== null && !Number.isFinite(Date.parse(t)))) return;
+            for (const field of Object.keys(status)) status[field] = saved[field];
+        },
         id: 'codex', label: 'Codex App and CLI', identity: codexHome, timeoutMs: timeoutMs + 95000,
         async read(bounds) {
             try {
-                return await readJson(exec, process.execPath, [path.join(projectRoot, 'scripts/openclaw-usage-summary.js'), '--provider', 'codex', '--since', bounds.since, '--until', bounds.until], {
+                const local = await readJson(exec, process.execPath, [path.join(projectRoot, 'scripts/openclaw-usage-summary.js'), '--provider', 'codex', '--since', bounds.since, '--until', bounds.until], {
                     lane: 'usage_codex', timeoutMs: 90000, key: 'usage:codex', maxOutputBytes: 20 * 1024 * 1024, env: {
                         ...env, HOME: home, MC_CODEX_HOME: codexHome, MC_USAGE_HERMES_DAYS: JSON.stringify([...new Set(getHermesCoverage())])
                     }
                 });
+                const value = validateObservation(local, bounds);
+                status.usageSource = 'local_logs';
+                return value;
             }
             catch {
                 const days = Math.min(800, Math.ceil((new Date(bounds.until) - new Date(bounds.since)) / 86400000) + 2);
-                const raw = await readJson(exec, 'codexbar', ['cost', '--format', 'json', '--provider', 'codex', '--days', String(days)], {
-                    lane: 'usage_codex', timeoutMs, key: 'usage:codexbar', maxOutputBytes: 20 * 1024 * 1024, env: { ...env, HOME: home, MC_CODEX_HOME: codexHome }
-                });
-                return fromCodexbar(raw, bounds, now);
+                status.lastAttemptAt = new Date(now()).toISOString();
+                try {
+                    const raw = await readJson(exec, 'codexbar', ['cost', '--format', 'json', '--provider', 'codex', '--days', String(days)], {
+                        lane: 'usage_codex', timeoutMs, key: 'usage:codexbar', maxOutputBytes: 20 * 1024 * 1024, env: { ...env, HOME: home, MC_CODEX_HOME: codexHome }
+                    });
+                    const value = validateObservation(fromCodexbar(raw, bounds, now), bounds);
+                    status.state = 'succeeded';
+                    status.lastSuccessAt = new Date(now()).toISOString();
+                    status.errorClass = null;
+                    status.usageSource = 'codexbar';
+                    return value;
+                } catch (error) {
+                    status.state = 'failed';
+                    status.errorClass = errorClasses.includes(error.code) ? error.code : 'exit_error';
+                    throw error;
+                }
             }
         }
     };
