@@ -19,7 +19,16 @@ function fixture(config = {}, { currentError, openclawError, openclaw = '{}' } =
       unlinkSync: (file) => files.delete(file),
     },
     configStore: { persist: (value) => writes.push(structuredClone(value)), importRaw: (value) => writes.push(JSON.parse(value)) },
-    openclawExec: async (argv) => calls.push(argv), fetchImpl: async () => ({ ok: true }),
+    openclawExec: async argv => {
+      calls.push(argv);
+      const current = JSON.parse(files.get('/fixture/.openclaw/openclaw.json'));
+      if (argv[1] === 'get') return { stdout: JSON.stringify(current.agents?.defaults || {}), stderr: '' };
+      const keys = argv[2].split('.'); let target = current;
+      for (const key of keys.slice(0, -1)) target = target[key] ||= {};
+      if (argv[1] === 'unset') delete target[keys.at(-1)]; else target[keys.at(-1)] = argv[3];
+      files.set('/fixture/.openclaw/openclaw.json', JSON.stringify(current));
+      return { stdout: '', stderr: '' };
+    }, fetchImpl: async () => ({ ok: true }),
   });
   return { service, files, writes, calls, upload(value) { files.set('/fixture/upload.json', JSON.stringify(value)); return service.importMissionControlConfig('/fixture/upload.json'); } };
 }
@@ -63,13 +72,13 @@ test('R2 validates imported document before any write or upload deletion', () =>
 test('R4 partial model routing touches only provided fields', async () => {
   const f = fixture();
   await f.service.setModelRouting({ main: 'openai/gpt-6.1-sol' });
-  assert.deepEqual(f.calls, [['config', 'set', 'agents.defaults.model.primary', 'openai/gpt-6.1-sol']]);
+  assert.deepEqual(f.calls, [['config', 'set', 'agents.defaults.model.primary', 'openai/gpt-6.1-sol'], ['config', 'get', 'agents.defaults', '--json']]);
 });
 
 test('R4 explicitly empty heartbeat clears only heartbeat', async () => {
   const f = fixture();
   await f.service.setModelRouting({ heartbeat: '' });
-  assert.deepEqual(f.calls, [['config', 'unset', 'agents.defaults.heartbeat.model']]);
+  assert.deepEqual(f.calls, [['config', 'unset', 'agents.defaults.heartbeat.model'], ['config', 'get', 'agents.defaults', '--json']]);
 });
 
 test('R4 validates every model before the first command, including unsafe later fields', async () => {

@@ -1,78 +1,130 @@
 'use strict';
 const { publishMutation } = require('./writeThrough');
+const { httpError } = require('../../core/http');
+const { redactString } = require('../../core/config');
 
-function newestRun(job, known) {
-  const floor = Date.parse(known?.lastRun);
-  if (!Number.isFinite(floor) || Date.parse(job?.lastRun) >= floor) return job;
-  return { ...job, lastRun: known.lastRun, history: known.history,
-    status: job.enabled === false ? 'disabled' : known.status };
+function freshReadingAfter(source, generation, scheduler, data, meta) {
+  const proof = data?.cron?.schedulers?.[scheduler];
+  return (!meta?.error || meta.error.code === 'scheduler_stale')
+    && (source?.readState?.().reads ?? source?.status?.().reads ?? 0) > generation && proof?.sourceSucceeded === true
+    && !proof.stale && !Object.hasOwn(proof, 'cacheAgeMs');
 }
 
-async function commitCronMutation({ source, cronService, scheduler, sourceId, operation, rawJob, patch = {} }) {
+async function publishObserved(source, cronService, scheduler, rawJobs) {
+  const generation = source?.readState?.().reads ?? source?.status?.().reads ?? 0;
+  const observedAtMs = source?.nowMs?.() ?? Date.now();
+  const at = new Date(observedAtMs).toISOString();
   const before = source?.snapshot()?.data;
-  const rows = before?.cron?.jobs || [];
-  rawJob = rawJob?.job || rawJob;
-  sourceId ||= rawJob?.id;
-  const id = sourceId ? `${scheduler}:${sourceId}` : null;
-  const matches = job => job && (job.id === id || (job.scheduler === scheduler && String(job.sourceId ?? job.id) === String(sourceId)));
-  const previous = rows.find(matches);
-  const previousRaw = before?.evidence?.jobs?.find(job => job && (job.scheduler || 'openclaw') === scheduler && String(job.sourceId ?? job.id) === String(sourceId));
-  const priorExecution = previousRaw?.state || {};
-  const reportedExecution = rawJob?.state || {};
-  const execution = typeof reportedExecution.lastRunAtMs === 'number'
-    && reportedExecution.lastRunAtMs >= (priorExecution.lastRunAtMs ?? -Infinity) ? reportedExecution : priorExecution;
-  const observed = rawJob?.id && cronService.mapCronJobForApi ? cronService.mapCronJobForApi({ ...rawJob, scheduler, sourceId }) : null;
-  const baseline = newestRun({ ...previous, ...observed }, previous);
-  const known = newestRun({ ...baseline, ...patch, id, sourceId, scheduler }, previous);
-  if (operation === 'run') known.lastRunRequestedAt = new Date().toISOString();
-  if (known.enabled === false) known.status = 'disabled';
-  else if (patch.enabled === true) known.status = cronService.normalizeCronRunStatus?.({ ...previousRaw, ...rawJob, enabled: true }) || 'idle';
-  const deleted = operation === 'delete';
-  const prefix = `cron:${id || 'unidentified-create'}:`;
-  const fact = (factPatch, key) => ({
-    key: prefix + key,
-    ...(['create', 'delete'].includes(operation) ? { removePrefix: prefix } : {}),
-    apply(data) {
-      let jobs = Array.isArray(data?.cron?.jobs) ? data.cron.jobs : rows;
-      const current = jobs.find(matches);
-      const updated = newestRun({ ...known, ...current, ...factPatch }, known);
-      if (Object.hasOwn(factPatch, 'enabled')) updated.status = factPatch.enabled ? known.status : 'disabled';
-      if (operation === 'run') updated.lastRunRequestedAt = known.lastRunRequestedAt;
-      if (deleted) jobs = jobs.filter(job => !matches(job));
-      else if (id) jobs = jobs.filter(job => !matches(job)).concat(updated);
-      let evidenceJobs = Array.isArray(data?.evidence?.jobs) ? data.evidence.jobs : before?.evidence?.jobs || [];
-      const rawMatch = job => job && (job.scheduler || 'openclaw') === scheduler && String(job.sourceId ?? job.id) === String(sourceId);
-      const rawCurrent = evidenceJobs.find(rawMatch) || previousRaw || rawJob || {};
-      const raw = { ...rawCurrent, id: sourceId, sourceId, scheduler };
-      if (operation === 'create') Object.assign(raw, rawJob);
-      if (Object.hasOwn(factPatch, 'enabled')) raw.enabled = factPatch.enabled;
-      for (const field of ['model', 'thinking']) if (Object.hasOwn(factPatch, field)) raw.payload = { ...raw.payload, [field]: factPatch[field] };
-      if (updated.lastRun && !(typeof raw.state?.lastRunAtMs === 'number' && Number.isFinite(raw.state.lastRunAtMs) && raw.state.lastRunAtMs >= Date.parse(updated.lastRun))) {
-        raw.state = { ...raw.state, lastRunAtMs: Date.parse(updated.lastRun),
-          // Paused/disabled is a presentation state, never a run outcome.
-          lastStatus: execution.lastStatus ?? execution.lastRunStatus ?? raw.state?.lastStatus };
-      }
-      if (deleted) evidenceJobs = evidenceJobs.filter(job => !rawMatch(job));
-      else if (id) evidenceJobs = evidenceJobs.filter(job => !rawMatch(job)).concat(raw);
-      const projected = source?.projectJobs ? source.projectJobs(data, jobs) : { ...data, cron: { ...data?.cron, jobs } };
-      return { ...projected, evidence: { ...data?.evidence, jobs: evidenceJobs, operationsSource: data?.evidence?.operationsSource || before?.evidence?.operationsSource } };
-    },
-    confirmed(data) {
-      const actual = data?.cron?.jobs?.find(matches);
-      if (!id) return false;
-      if (deleted) return Array.isArray(data?.cron?.jobs) && !actual;
-      if (!actual || Object.entries(factPatch).some(([field, value]) => actual[field] !== value)) return false;
-      const floor = Date.parse(known.lastRun);
-      if (Number.isFinite(floor) && !(Date.parse(actual.lastRun) >= floor)) return false;
-      if (operation === 'run' && !(Date.parse(actual.lastRun) > (Date.parse(previous?.lastRun) || 0))) return false;
-      return true;
-    },
+  rawJobs = rawJobs.map(job => {
+    if (!job._verificationMetadataOnly) return job;
+    const prior = before?.evidence?.jobs?.find(row => (row.scheduler || 'openclaw') === scheduler && String(row.sourceId ?? row.id) === String(job.sourceId ?? job.id));
+    const instructionKnown = typeof prior?.prompt === 'string' || typeof prior?.payload?.text === 'string'
+      || (typeof prior?.payload?.message === 'string' && prior.payload.message.length > 0);
+    return { ...prior, ...job, ...(prior?.sessionTarget ? { sessionTarget: prior.sessionTarget } : {}),
+      payload: { ...prior?.payload, model: job.payload?.model }, _verificationInstructionsKnown: instructionKnown };
   });
-  const mutations = ['create', 'delete'].includes(operation) ? [fact(patch, 'exists')]
-    : Object.entries(patch).map(([field, value]) => fact({ [field]: value }, field));
-  if (operation === 'run' || Number.isFinite(Date.parse(known.lastRun))) mutations.push(fact({}, 'lastRun'));
-  const snap = await publishMutation(source, mutations.length ? mutations : [fact({}, 'unknown')]);
-  return { job: deleted ? { ...known, deleted: true } : snap.data?.cron?.jobs?.find(matches) || known, meta: snap.meta };
+  const proof = { sourceSucceeded: true, provenance: `${scheduler}-write-readback`, observedAt: at };
+  const schedulers = { ...before?.cron?.schedulers, [scheduler]: proof };
+  const allCurrent = Object.values(schedulers).every(item => item.sourceSucceeded && !item.stale);
+  const mapped = rawJobs.map(job => cronService.mapCronJobForApi(job)).filter(Boolean);
+  function replaceScheduler(rows, replacement) {
+    const result = []; let inserted = false;
+    for (const row of rows) {
+      if ((row.scheduler || 'openclaw') !== scheduler) result.push(row);
+      else if (!inserted) { result.push(...replacement); inserted = true; }
+    }
+    if (!inserted) result.push(...replacement);
+    return result;
+  }
+  return publishMutation(source, {
+    key: `cron-observed:${scheduler}`, removePrefix: `cron:${scheduler}:`, observed: true,
+    meta(base) {
+      const state = source?.readState?.();
+      const proof = base.data?.cron?.schedulers?.[scheduler];
+      const ageMs = Math.max(0, (source?.nowMs?.() ?? Date.now()) - observedAtMs);
+      const laterUnavailable = (state?.reads ?? generation) > generation
+        && (base.meta?.error || !proof?.sourceSucceeded || proof.stale || Object.hasOwn(proof, 'cacheAgeMs'));
+      const stale = !allCurrent || Boolean(laterUnavailable) || ageMs > (state?.staleAfterMs ?? 90000);
+      return { ok: !stale, stale, observedAt: at, ageMs, verified: true,
+        error: laterUnavailable && base.meta?.error ? base.meta.error : stale ? { code: 'scheduler_stale', message: 'Current scheduler confirmation is unavailable' } : null };
+    },
+    apply(data) {
+      const jobs = replaceScheduler(data?.cron?.jobs || [], mapped);
+      const projected = source?.projectJobs ? source.projectJobs(data, jobs) : { ...data, cron: { ...data?.cron, jobs } };
+      return { ...projected, cron: { ...projected.cron, schedulers }, evidence: {
+        ...data?.evidence, jobs: replaceScheduler(data?.evidence?.jobs || [], rawJobs),
+        operationsSource: { ...data?.evidence?.operationsSource, sourceSucceeded: true, provenance: 'scheduler-readers', observedAt: at, schedulers },
+      } };
+    },
+    confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta),
+  }, { refresh: false });
+}
+
+async function commitCronMutation({ source, cronService, scheduler, sourceId, operation, rawJob, patch = {}, beforeRun, createJob }) {
+  const before = source?.snapshot()?.data;
+  const commandJob = rawJob?.job || rawJob;
+  sourceId ||= commandJob?.id;
+  const id = sourceId ? `${scheduler}:${sourceId}` : null;
+  const previous = before?.cron?.jobs?.find(job => job.id === id);
+  let rawJobs;
+  try {
+    if (typeof cronService.readCronJobsForVerification !== 'function') throw Object.assign(new Error('Read-back unavailable'), { code: 'upstream_read_failed' });
+    rawJobs = await cronService.readCronJobsForVerification(scheduler);
+  }
+  catch (error) {
+    if (error.code !== 'upstream_read_failed') throw error;
+    const generation = source?.status?.().reads ?? 0;
+    const job = { ...previous, id, sourceId, scheduler, verified: false };
+    const snap = await publishMutation(source, {
+      key: `cron:${id}:verification`, meta: { verified: false },
+      apply: data => ({ ...data, cron: { ...data?.cron,
+        jobs: (data?.cron?.jobs || []).map(row => row.id === id ? { ...row, verified: false } : row) } }),
+      confirmed: (data, meta) => freshReadingAfter(source, generation, scheduler, data, meta),
+    }, { refresh: false });
+    return { job, verified: false, observed: false, requested: patch, meta: { ...snap.meta, stale: true } };
+  }
+  const snap = await publishObserved(source, cronService, scheduler, rawJobs);
+  const actualRaw = rawJobs.find(job => String(job.sourceId ?? job.id) === String(sourceId));
+  const actual = actualRaw ? cronService.mapCronJobForApi(actualRaw) : null;
+  let matches = !!actual && Object.entries(patch).every(([field, value]) => actual[field] === value);
+  if (operation === 'delete') matches = !actual && !!sourceId;
+  if (operation === 'create') {
+    const schedule = actualRaw?.schedule, requested = createJob?.schedule;
+    const scheduleMatches = schedule?.kind === requested?.kind && (requested?.kind === 'cron' ? schedule.expr?.trim() === requested.expr.trim()
+      : requested?.kind === 'every' ? schedule.everyMs === requested.everyMs
+        : requested?.kind === 'at' && Date.parse(schedule.at) === Date.parse(requested.at));
+    const message = createJob?.payload?.text ?? createJob?.payload?.message;
+    const actualMessage = actualRaw?.payload?.text ?? actualRaw?.payload?.message;
+    matches = !!actual && matches && scheduleMatches && actualRaw?.payload?.kind === createJob?.payload?.kind && actualMessage === message
+      && actualRaw.sessionTarget === (createJob?.sessionTarget || 'isolated');
+  }
+  if (operation === 'run') {
+    const previousRun = beforeRun?.state?.lastRunAtMs ?? Date.parse(previous?.lastRun);
+    matches = !!actual && ((Number.isFinite(actualRaw.state?.lastRunAtMs) && actualRaw.state.lastRunAtMs > (previousRun || 0))
+      || (Number.isFinite(actualRaw.state?.runningAtMs) && actualRaw.state.runningAtMs > (beforeRun?.state?.runningAtMs || 0)));
+  }
+  const displayed = snap.data?.cron?.jobs?.find(row => row.scheduler === scheduler && String(row.sourceId) === String(sourceId));
+  const job = actual ? { ...(displayed || actual), verified: true } : { id, sourceId, scheduler, deleted: true, verified: true };
+  let error = null;
+  const invalidMetadata = actualRaw && (typeof actualRaw.enabled !== 'boolean'
+    || [actualRaw.payload?.model, actualRaw.payload?.thinking, actualRaw.model, actualRaw.provider]
+      .some(value => value != null && typeof value !== 'string')
+    || ['lastRunAtMs', 'runningAtMs', 'nextRunAtMs'].some(field => {
+      const value = actualRaw.state?.[field];
+      return value != null && (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 8.64e15);
+    }));
+  if (invalidMetadata) error = httpError(409, 'upstream_unverified', `${scheduler} reports invalid job metadata`);
+  else if (!sourceId) error = httpError(409, 'upstream_unverified', `${scheduler} did not return an identifiable job`);
+  else if (!matches) {
+    const fields = actual ? `enabled=${actual.upstreamEnabled ?? actual.enabled}, state=${actual.schedulerState || actual.status}`
+      + (scheduler === 'hermes' ? `, paused_at=${actual.pausedAt || '(unset)'}` : '')
+      + (operation === 'edit' ? `, model=${actual.model || '(unset)'}, thinking=${actual.thinking || '(unset)'}` : '')
+      + (operation === 'create' ? `, schedule=${actual.schedule || '(unknown)'}` : '')
+      + (operation === 'run' ? `, lastRun=${actual.lastRun || '(unknown)'}` : '') : 'job missing';
+    const reason = actual?.pausedReason ? `; ${actual.pausedReason}` : '';
+    error = httpError(409, 'upstream_rejected', `${scheduler} reports ${redactString(fields + reason).slice(0, 350)}; requested change was not observed`);
+  }
+  return { job, verified: !error, observed: true, meta: snap.meta, ...(error ? { verificationError: error } : {}) };
 }
 module.exports = { commitCronMutation };
 
@@ -99,7 +151,7 @@ async function publishCronDependents({ source, calendarSource, operationsSource,
       const entries = data?.entries || [];
       const existing = entries.filter(entry => entry.source === 'cron' && entry.linkedJobId === id);
       const rest = entries.filter(entry => !existing.includes(entry));
-      const derived = mutation.operation === 'delete' || !raw ? []
+      const derived = result.job?.deleted === true || !raw ? []
         : cronService.mergeCalendarEntriesWithCronJobs({ entries: existing }, [{ ...raw, id }], at).entries;
       return { ...data, entries: cronService.sortCalendarEntries(rest.concat(derived)) };
     };

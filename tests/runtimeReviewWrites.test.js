@@ -47,13 +47,13 @@ test('R1 corrupt calendar write reaches the centralized 409 error contract', asy
   } finally { await new Promise(r => server.close(r)); f.cleanup(); }
 });
 
-test('R1 Hermes read-modify-write rejects corrupt or malformed jobs without rewriting', () => {
+test('R1 Hermes mutation preflight rejects corrupt or malformed jobs without rewriting', async () => {
   const f = fixture();
   try {
     fs.mkdirSync(path.dirname(f.jobsFile), { recursive: true });
     for (const raw of ['{truncated', '{"jobs":{}}', '{"jobs":[null]}']) {
       fs.writeFileSync(f.jobsFile, raw);
-      assert.throws(() => f.service.updateHermesCronJobEnabled('one', true), { status: 409, code: 'hermes_cron_unavailable' });
+      await assert.rejects(f.service.updateHermesCronJobEnabled('one', true), { status: 409, code: 'hermes_cron_unavailable' });
       assert.equal(fs.readFileSync(f.jobsFile, 'utf8'), raw);
     }
   } finally { f.cleanup(); }

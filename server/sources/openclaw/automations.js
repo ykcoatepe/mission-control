@@ -23,6 +23,21 @@ function summarizeJobs(jobs, nowMs) {
 }
 
 function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
+  const observedRuns = new Map();
+  function preserveObservedRuns(jobs) {
+    const present = new Set(jobs.map(job => job.id));
+    for (const id of observedRuns.keys()) if (!present.has(id)) observedRuns.delete(id);
+    return jobs.map(job => {
+      job = { ...job, nextRunOverdue: job.enabled === true && Number.isFinite(Date.parse(job.nextRun)) && Date.parse(job.nextRun) < now() };
+      const known = observedRuns.get(job.id);
+      if (known && !(Date.parse(job.lastRun) >= Date.parse(known.lastRun))) {
+        return { ...job, lastRun: known.lastRun, history: known.history,
+          status: job.enabled === false ? 'disabled' : known.status === 'disabled' ? 'unknown' : known.status };
+      }
+      if (Number.isFinite(Date.parse(job.lastRun)) && (!known || Date.parse(job.lastRun) > Date.parse(known.lastRun) || job.enabled !== false)) observedRuns.set(job.id, job);
+      return job;
+    });
+  }
   const source = createSource({
     id: 'openclaw.automations', now, logger,
     ttlMs: AUTOMATIONS_REFRESH_INTERVAL_MS, timeoutMs: 60_000,
@@ -43,14 +58,15 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
     },
   });
   const snapshot = source.snapshot;
-  source.projectJobs = (data, jobs) => ({ ...data, cron: { ...data?.cron, jobs, summary: summarizeJobs(jobs, now()) } });
+  source.projectJobs = (data, jobs) => {
+    jobs = preserveObservedRuns(jobs);
+    return { ...data, cron: { ...data?.cron, jobs, summary: summarizeJobs(jobs, now()) } };
+  };
   source.snapshot = () => {
     const stored = snapshot();
     // A next-run can expire between scheduled reads, including while serving
     // last-good evidence. Project its summary against the clock without IO.
-    const snap = stored.data ? { ...stored, data: { ...stored.data, cron: {
-      ...stored.data.cron, summary: summarizeJobs(stored.data.cron.jobs, now()),
-    } } } : stored;
+    const snap = stored.data ? { ...stored, data: source.projectJobs(stored.data, stored.data.cron.jobs) } : stored;
     const proofs = Object.values(snap.data?.cron.schedulers || {});
     if (proofs.some(p => !p.sourceSucceeded || p.stale)) {
       return { ...snap, meta: { ...snap.meta, ok: false, stale: true, error: snap.meta.error || { code: 'scheduler_stale', message: 'One or more scheduler readings are unavailable or cached' } } };
@@ -60,6 +76,8 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
   const refresh = source.refresh;
   source.refresh = async () => { await refresh(); return source.snapshot(); };
   const status = source.status;
+  source.readState = status;
+  source.nowMs = now;
   source.status = () => {
     const state = status();
     const { ok, stale, error } = source.snapshot().meta;

@@ -71,12 +71,14 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
   withWriteThrough(automationSource);
   async function committed(mutation) {
     const result = await commitCronMutation({ source: automationSource, cronService, ...mutation });
-    if (afterCronWrite) {
+    if (afterCronWrite && result.observed) {
       try {
         const dependents = await afterCronWrite({ mutation, result });
         if (dependents?.some(snapshot => snapshot?.meta?.stale)) result.meta = { ...result.meta, ok: false, stale: true, error: { code: 'post_write_refresh_pending', message: 'The write succeeded; dependent readings are catching up' } };
       } catch { result.meta = { ...result.meta, ok: false, stale: true, error: { code: 'post_write_refresh_pending', message: 'The write succeeded; dependent readings are catching up' } }; }
     }
+    if (result.verificationError) throw result.verificationError;
+    delete result.observed;
     return result;
   }
   router.get('/api/cron', (req, res) => {
@@ -92,17 +94,16 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
       if (typeof enabled !== 'boolean') throw httpError(400, 'invalid_enabled', 'enabled must be a boolean');
       const ref = parseCronJobRef(id, scheduler);
       if (ref.scheduler === 'hermes') {
-        const job = cronService.updateHermesCronJobEnabled(assertSafeCronSourceId(ref.sourceId), enabled !== false);
-        const mappedJob = cronService.mapCronJobForApi(job);
-        const updated = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'toggle', rawJob: job, patch: { enabled } });
-        return res.json({ ok: true, message: `Hermes job ${enabled !== false ? 'enabled' : 'disabled'}`, ...updated });
+        await cronService.updateHermesCronJobEnabled(assertSafeCronSourceId(ref.sourceId), enabled !== false);
+        const updated = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'toggle', patch: { enabled } });
+        return res.json({ ok: true, message: updated.verified ? `Hermes job ${enabled ? 'enabled' : 'disabled'}` : 'Hermes command sent; awaiting verification', ...updated });
       }
       const sourceId = assertOpenclawCronAction(id, scheduler);
       const command = enabled ? 'enable' : 'disable';
       const { stdout, stderr } = await openclawExec(['cron', command, sourceId], 15000);
       const rawJob = parseFirstJson([stdout, stderr].filter(Boolean).join('\n'));
       const updated = await committed({ scheduler: 'openclaw', sourceId, operation: 'toggle', rawJob, patch: { enabled } });
-      return res.json({ ok: true, message: `Job ${enabled ? 'enabled' : 'disabled'}`, ...updated });
+      return res.json({ ok: true, message: updated.verified ? `Job ${enabled ? 'enabled' : 'disabled'}` : 'Toggle command sent; awaiting verification', ...updated });
     } catch (error) {
       return next(error);
     }
@@ -112,10 +113,13 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
     try {
       const { id } = req.params;
       const sourceId = assertOpenclawCronAction(id, req.body?.scheduler);
+      let beforeRun;
+      try { beforeRun = (await cronService.readCronJobsForVerification('openclaw')).find(job => String(job.sourceId ?? job.id) === sourceId); }
+      catch { throw httpError(503, 'upstream_unverified', 'OpenClaw run state could not be read before triggering the job'); }
       const { stdout, stderr } = await openclawExec(['cron', 'run', sourceId], 30000);
       const rawJob = parseFirstJson([stdout, stderr].filter(Boolean).join('\n'));
-      const updated = await committed({ scheduler: 'openclaw', sourceId, operation: 'run', rawJob });
-      return res.json({ ok: true, message: 'Job triggered successfully', ...updated });
+      const updated = await committed({ scheduler: 'openclaw', sourceId, operation: 'run', rawJob, beforeRun });
+      return res.json({ ok: true, message: updated.verified ? 'Job triggered successfully' : 'Run command sent; awaiting verification', ...updated });
     } catch (error) {
       return next(error);
     }
@@ -149,8 +153,9 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
 
       const { stdout, stderr } = await openclawExec(args, 20000);
       const parsed = cronService.parseFirstJson([stdout, stderr].filter(Boolean).join('\n')) || {};
-      const updated = await committed({ scheduler: 'openclaw', sourceId: parsed.id || parsed.job?.id, operation: 'create', rawJob: parsed });
-      return res.json({ ok: true, message: 'Job created successfully', job: parsed, entity: updated.job, meta: updated.meta });
+      const updated = await committed({ scheduler: 'openclaw', sourceId: parsed.id || parsed.job?.id, operation: 'create', rawJob: parsed, createJob: job,
+        patch: { name: job.name, enabled: job.enabled !== false, ...(job.payload.model ? { model: job.payload.model } : {}) } });
+      return res.json({ ok: true, message: updated.verified ? 'Job created successfully' : 'Create command sent; awaiting verification', job: updated.job, entity: updated.job, verified: updated.verified, meta: updated.meta });
     } catch (error) {
       return next(error);
     }
@@ -162,7 +167,7 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
       const sourceId = assertOpenclawCronAction(id, req.body?.scheduler);
       await openclawExec(['cron', 'rm', sourceId], 15000);
       const updated = await committed({ scheduler: 'openclaw', sourceId, operation: 'delete' });
-      return res.json({ ok: true, message: 'Job deleted successfully', ...updated });
+      return res.json({ ok: true, message: updated.verified ? 'Job deleted successfully' : 'Delete command sent; awaiting verification', ...updated });
     } catch (error) {
       return next(error);
     }
@@ -187,11 +192,12 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
         if (thinking) {
           throw httpError(501, 'not_implemented', 'Hermes cron thinking edits are not supported');
         }
-        const updated = cronService.updateHermesCronJobModel(assertSafeCronSourceId(ref.sourceId), normalizedModel);
-        const published = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'edit', rawJob: updated, patch: { model: cronService.mapCronJobForApi(updated).model } });
+        await cronService.updateHermesCronJobModel(assertSafeCronSourceId(ref.sourceId), normalizedModel);
+        const modelRef = cronService.splitHermesModelRef(normalizedModel);
+        const published = await committed({ scheduler: 'hermes', sourceId: ref.sourceId, operation: 'edit', patch: { model: [modelRef.provider, modelRef.model].filter(Boolean).join('/') } });
         return res.json({
           ok: true,
-          message: `Hermes cron model updated to ${normalizedModel || 'default'}`,
+          message: published.verified ? `Hermes cron model updated to ${normalizedModel || 'default'}` : 'Hermes model command sent; awaiting verification',
           ...published,
         });
       }
@@ -211,7 +217,7 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
         patch: { ...(normalizedModel ? { model: normalizedModel } : {}), ...(thinking ? { thinking } : {}) } });
       return res.json({
         ok: true,
-        message: `Model updated to ${updated.payload?.model || normalizedModel || '(unchanged)'}`,
+        message: published.verified ? `Model updated to ${published.job.model || '(unset)'}` : 'Model command sent; awaiting verification',
         ...published,
       });
     } catch (error) {

@@ -46,6 +46,10 @@ async function fixture({ lag = false, failReadAfterWrite = false, failMcAfterWri
     memoryPath: rootDir, skillsPath: rootDir, gatewayPort: 1, fetchImpl: async () => ({ ok: true }),
     openclawExec: async argv => {
       cliCalls++;
+      if (argv[1] === 'get') {
+        if (readFailure && written) throw new Error('injected upstream config read failure');
+        return { stdout: JSON.stringify(JSON.parse(fs.readFileSync(ocPath, 'utf8')).agents.defaults), stderr: '' };
+      }
       if (!lag) {
         const value = JSON.parse(fs.readFileSync(ocPath, 'utf8'));
         const parts = argv[2].split('.'); let parent = value;
@@ -106,23 +110,33 @@ test('settings HTTP import publishes the new config and budget to every immediat
 }));
 
 for (const mode of ['immediate', 'lagged', 'failed']) {
-  test(`settings HTTP model routing has read-your-writes with ${mode} post-write read`, async () => withLiveLoop(async () => {
+  test(`settings HTTP model routing is observed rather than requested with ${mode} post-write read`, async () => withLiveLoop(async () => {
     const f = await fixture({ lag: mode === 'lagged', failReadAfterWrite: mode === 'failed' });
     try {
       const saved = await f.request('POST', '/api/settings/model-routing', { main: 'provider/saved', heartbeat: '' });
-      assert.equal(saved.status, 200); assert.equal(saved.body.main, 'provider/saved'); assert.equal(saved.body.heartbeat, null);
-      assert.equal(saved.body.meta.stale, mode !== 'immediate');
+      assert.equal(saved.status, mode === 'lagged' ? 409 : 200);
+      if (mode === 'lagged') assert.equal(saved.body.error.code, 'upstream_rejected');
+      else {
+        assert.equal(saved.body.verified, mode === 'immediate');
+        assert.equal(saved.body.entity.verified, mode === 'immediate');
+        assert.equal(saved.body.meta.stale, mode === 'failed');
+      }
       const read = await f.request('GET', '/api/settings/model-routing');
-      assert.equal(read.status, 200); assert.equal(read.body.main, 'provider/saved'); assert.equal(read.body.heartbeat, null);
-      const settings = await f.request('GET', '/api/settings'); assert.equal(settings.status, 200); assert.equal(settings.body.model, 'provider/saved');
+      assert.equal(read.status, 200); assert.equal(read.body.main, mode === 'immediate' ? 'provider/saved' : 'provider/before');
+      assert.equal(read.body.heartbeat, mode === 'immediate' ? null : 'provider/heartbeat');
+      const settings = await f.request('GET', '/api/settings'); assert.equal(settings.status, 200);
+      assert.equal(settings.body.model, mode === 'immediate' ? 'provider/saved' : 'provider/before');
     } finally { await f.close(); }
   }));
-  test(`settings HTTP heartbeat has read-your-writes with ${mode} post-write read`, async () => withLiveLoop(async () => {
+  test(`settings HTTP heartbeat is observed rather than requested with ${mode} post-write read`, async () => withLiveLoop(async () => {
     const f = await fixture({ lag: mode === 'lagged', failReadAfterWrite: mode === 'failed' });
     try {
       const saved = await f.request('POST', '/api/settings/heartbeat', { interval: '17m' });
-      assert.equal(saved.status, 200); assert.equal(saved.body.interval, '17m'); assert.equal(saved.body.meta.stale, mode !== 'immediate');
-      const read = await f.request('GET', '/api/settings/heartbeat'); assert.equal(read.status, 200); assert.equal(read.body.interval, '17m');
+      assert.equal(saved.status, mode === 'lagged' ? 409 : 200);
+      if (mode === 'lagged') assert.equal(saved.body.error.code, 'upstream_rejected');
+      else { assert.equal(saved.body.verified, mode === 'immediate'); assert.equal(saved.body.meta.stale, mode === 'failed'); }
+      const read = await f.request('GET', '/api/settings/heartbeat'); assert.equal(read.status, 200);
+      assert.equal(read.body.interval, mode === 'immediate' ? '17m' : '30m');
     } finally { await f.close(); }
   }));
 }
@@ -154,9 +168,10 @@ for (const kind of ['model', 'heartbeat']) {
 }
 
 test('settings HTTP write projection retires on confirmation and preserves independent physical-file edits', async () => withLiveLoop(async () => {
-  const f = await fixture({ lag: true });
+  const f = await fixture();
   try {
-    await f.request('POST', '/api/settings/model-routing', { main: 'provider/saved' });
+    const written = await f.request('POST', '/api/settings/model-routing', { main: 'provider/saved' });
+    assert.equal(written.body.verified, true);
     const physical = JSON.parse(fs.readFileSync(f.ocPath, 'utf8'));
     physical.agents.defaults.model.primary = 'provider/saved';
     physical.agents.defaults.subagents.model.primary = 'provider/external-child';
@@ -179,16 +194,17 @@ test('settings HTTP confirmed routing does not regress when the local config tem
 }));
 
 
-test('settings HTTP a projected successful write never permits another write through a corrupt config', async () => withLiveLoop(async () => {
-  const f = await fixture({ lag: true });
+test('settings HTTP an unverified successful command never permits another write through a corrupt config', async () => withLiveLoop(async () => {
+  const f = await fixture({ failReadAfterWrite: true });
   try {
-    assert.equal((await f.request('POST', '/api/settings/model-routing', { main: 'provider/saved' })).status, 200);
+    const sent = await f.request('POST', '/api/settings/model-routing', { main: 'provider/saved' });
+    assert.equal(sent.status, 200); assert.equal(sent.body.verified, false);
     const calls = f.cliCalls();
     fs.writeFileSync(f.ocPath, '{truncated');
     const refused = await f.request('POST', '/api/settings/heartbeat', { interval: '18m' });
     assert.equal(refused.status, 503); assert.equal(f.cliCalls(), calls);
     const read = await f.request('GET', '/api/settings');
-    assert.equal(read.status, 200); assert.equal(read.body.model, 'provider/saved'); assert.equal(read.body.meta.stale, true);
+    assert.equal(read.status, 200); assert.equal(read.body.model, 'provider/before'); assert.equal(read.body.meta.stale, true);
   } finally { await f.close(); }
 }));
 

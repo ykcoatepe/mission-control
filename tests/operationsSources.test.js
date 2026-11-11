@@ -250,7 +250,7 @@ test('signals compose loops, services, automations and usage from memory', async
   // Systems are healthy: p's error finding + p's overdue confirmation +
   // argus-x by counts only (1 operator finding + 1 overdue).
   assert.deepEqual(body.data.attention, {
-    count: 4, worst: 'critical', breakdown: { systems: 0, findings: 1, overdueConfirmations: 1, restricted: 2 }, partial: false, missing: [],
+    count: 4, worst: 'critical', breakdown: { systems: 0, systemReasons: 0, findings: 1, overdueConfirmations: 1, restricted: 2 }, partial: false, missing: [],
   });
   assert.doesNotMatch(JSON.stringify(body), /argus-x/, 'signals carry no restricted project identity');
 });

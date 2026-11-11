@@ -258,6 +258,7 @@ function createApp(deps = {}) {
   scheduler.register(modelsSource, { intervalMs: MODELS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
   scheduler.register(ollamaSource, { intervalMs: 5000, jitterMs: 250 });
   // Local adapters leave other authors' mount lines untouched.
+  function createCronService(options) { return require('./services/cronData').createCronService({ ...options, runner: exec, homeDir: config.homeDir }); }
   function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource,
     afterCronWrite: details => require('./sources/openclaw/cronMutations').publishCronDependents({ ...details,
       source: automationSource, calendarSource, operationsSource: attentionArea.sources.cron, cronService }),

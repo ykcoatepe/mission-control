@@ -13,11 +13,19 @@ function withWriteThrough(source) {
   source.snapshot = () => {
     const base = snapshot();
     const data = pending.reduce((value, mutation) => mutation.apply(value), base.data);
-    return { ...base, data, meta: pending.length || refreshFailed ? {
-      ...base.meta, ok: false, stale: true,
-      ...Object.assign({}, ...pending.map(mutation => mutation.meta)),
-      error: { code: 'post_write_refresh_pending', message: 'The write succeeded; upstream confirmation is pending' },
-    } : base.meta };
+    const views = pending.map(mutation => typeof mutation.meta === 'function' ? mutation.meta(base) : mutation.meta);
+    const meta = { ...base.meta, ...Object.assign({}, ...views) };
+    const observations = views.filter((view, index) => pending[index].observed && view);
+    const unavailable = observations.find(view => view.stale || view.ok === false);
+    if (unavailable) Object.assign(meta, { ok: false, stale: true, error: unavailable.error });
+    if (observations.length) {
+      meta.ageMs = Math.max(...observations.map(view => view.ageMs || 0));
+      meta.observedAt = observations.map(view => view.observedAt).filter(Boolean).sort()[0] || meta.observedAt;
+      meta.verified = pending.every(mutation => mutation.observed);
+    }
+    if (refreshFailed || pending.some(mutation => !mutation.observed)) Object.assign(meta, { ok: false, stale: true,
+      error: { code: 'post_write_refresh_pending', message: 'The command was sent; upstream confirmation is pending' } });
+    return { ...base, data, meta };
   };
   source.refresh = async () => {
     try {
@@ -31,21 +39,21 @@ function withWriteThrough(source) {
     }
     return source.snapshot();
   };
-  source.publishMutation = async mutation => {
+  source.publishMutation = async (mutation, { refresh: shouldRefresh = true } = {}) => {
     for (const item of Array.isArray(mutation) ? mutation : [mutation]) {
       pending = pending.filter(previous => previous.key !== item.key && !(item.removePrefix && previous.key.startsWith(item.removePrefix)));
       pending.push(item);
     }
     // Use the public method so injected failures and source-specific refresh
     // wrappers are honored. Never turn a committed mutation into an HTTP error.
-    try { await source.refresh(); } catch { refreshFailed = true; }
+    if (shouldRefresh) { try { await source.refresh(); } catch { refreshFailed = true; } }
     return source.snapshot();
   };
   return source;
 }
 
-async function publishMutation(source, mutation) {
+async function publishMutation(source, mutation, options) {
   if (!source) return { data: (Array.isArray(mutation) ? mutation : [mutation]).reduce((data, item) => item.apply(data), null), meta: { ok: false, stale: true, error: { code: 'post_write_refresh_pending', message: 'The write succeeded; upstream confirmation is pending' } } };
-  return withWriteThrough(source).publishMutation(mutation);
+  return withWriteThrough(source).publishMutation(mutation, options);
 }
 module.exports = { withWriteThrough, publishMutation };

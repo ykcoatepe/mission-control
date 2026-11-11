@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { redact, publicMcView, validateMcConfig, PUBLIC_MODULE_IDS } = require('../core/config');
+const { redact, redactString, publicMcView, validateMcConfig, PUBLIC_MODULE_IDS } = require('../core/config');
 const { httpError } = require('../core/http');
 const { homeRelativePath } = require('../core/scrub');
 
@@ -164,11 +164,106 @@ function createSettingsService({
   // in a response, whichever alias of home the config uses.
   const homeRelative = (value) => (value ? homeRelativePath(value, { homeDir }) : null);
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
-  const committedOpenclawFields = new Map();
+  // Only observed values belong here: never project a requested config value.
+  const observedOpenclawFields = new Map();
   let lastOpenclawConfig = null;
   let hasOpenclawMutation = false;
   let openclawReadMeta = null;
   let committedMcText = null;
+  let pendingExternalWrite = null;
+  let externalVerified = null;
+  const externalPaths = {
+    main: 'agents.defaults.model.primary',
+    subagent: 'agents.defaults.subagents.model.primary',
+    heartbeat: 'agents.defaults.heartbeat.model',
+    interval: 'agents.defaults.heartbeat.every',
+  };
+
+  function configValue(config, field, strict = false) {
+    let value = config;
+    for (const key of field.split('.')) {
+      if (strict && value != null && (typeof value !== 'object' || Array.isArray(value))) return undefined;
+      value = value?.[key];
+    }
+    return value == null || value === '' ? null : value;
+  }
+
+  function setConfigValue(config, field, value) {
+    const keys = field.split('.'); let target = config;
+    for (const key of keys.slice(0, -1)) {
+      if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) target[key] = {};
+      target = target[key];
+    }
+    if (value === null) delete target[keys.at(-1)]; else target[keys.at(-1)] = value;
+  }
+
+  function rememberUnverified(expected, before) {
+    pendingExternalWrite = new Map(expected);
+    externalVerified = false;
+    for (const [field] of expected) observedOpenclawFields.set(field, configValue(before, field));
+  }
+
+  async function verifyExternalWrite(expected) {
+    let result;
+    try {
+      // The existing client runs this argv on the serialized OpenClaw lane.
+      // Read the parent so an intentionally unset heartbeat model is observable.
+      result = await openclawExec(['config', 'get', 'agents.defaults', '--json'], 8000);
+    } catch {
+      externalVerified = false;
+      return false;
+    }
+    let defaults;
+    try {
+      const text = String(result?.stdout || '');
+      if (text.length > 256 * 1024) throw new Error('Oversize defaults');
+      defaults = JSON.parse(text.trim());
+      if (!isPlainObject(defaults)) throw new Error('Invalid defaults');
+    } catch {
+      externalVerified = false;
+      throw httpError(409, 'upstream_unverified', 'OpenClaw returned an unreadable configuration; the change could not be verified');
+    }
+    const observed = { agents: { defaults } };
+    const values = new Map();
+    for (const field of Object.values(externalPaths)) {
+      const value = configValue(observed, field, true);
+      const valid = field === externalPaths.interval
+        ? typeof value === 'string' && /^\d+(?:ms|s|m|h|d)$/.test(value)
+        : typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(value) && redactString(value) === value;
+      if (value !== null && !valid) {
+        externalVerified = false;
+        throw httpError(409, 'upstream_unverified', 'OpenClaw returned an invalid configuration field; the change could not be verified');
+      }
+      values.set(field, value);
+    }
+    const current = structuredClone(lastOpenclawConfig || {});
+    observedOpenclawFields.clear();
+    for (const [field, value] of values) {
+      setConfigValue(current, field, value);
+      observedOpenclawFields.set(field, value);
+    }
+    lastOpenclawConfig = current;
+    pendingExternalWrite = null;
+    externalVerified = true;
+    const mismatch = [...expected].find(([field, value]) => values.get(field) !== value);
+    if (mismatch) {
+      const label = Object.keys(externalPaths).find(key => externalPaths[key] === mismatch[0]);
+      const value = values.get(mismatch[0]);
+      const safe = value === null ? 'unset' : redactString(value).slice(0, 256);
+      throw httpError(409, 'upstream_rejected', `OpenClaw reports ${label} as ${safe}; the requested change was not accepted`);
+    }
+    return true;
+  }
+
+  // Scheduler hook: reads only while a successful command lacks an upstream
+  // observation. GETs never start a CLI process.
+  async function refreshExternalWrites() {
+    if (pendingExternalWrite === null) return { verified: externalVerified !== false, pending: false };
+    try { await verifyExternalWrite(pendingExternalWrite); } catch (error) {
+      if (error.code !== 'upstream_rejected' && error.code !== 'upstream_unverified') throw error;
+    }
+    return { verified: externalVerified === true, pending: pendingExternalWrite !== null };
+  }
 
   function localMeta(error = null) {
     return { ok: !error, stale: Boolean(error), observedAt: new Date().toISOString(), ageMs: 0,
@@ -231,13 +326,13 @@ function createSettingsService({
       cfg = lastOpenclawConfig === null ? null : structuredClone(lastOpenclawConfig);
       failed = true;
     }
-    const projected = cfg == null && !committedOpenclawFields.size ? null : structuredClone(cfg || {});
-    for (const [field, expected] of committedOpenclawFields) {
+    const projected = cfg == null && !observedOpenclawFields.size ? null : structuredClone(cfg || {});
+    for (const [field, expected] of observedOpenclawFields) {
       const keys = field.split('.');
       let observed = cfg;
       for (const key of keys) observed = observed?.[key];
-      if (!failed && (expected === null ? observed == null || observed === '' : observed === expected)) {
-        committedOpenclawFields.delete(field);
+      if (!failed && pendingExternalWrite === null && (expected === null ? observed == null || observed === '' : observed === expected)) {
+        observedOpenclawFields.delete(field);
         continue;
       }
       let target = projected;
@@ -247,9 +342,9 @@ function createSettingsService({
       }
       if (expected === null) delete target[keys.at(-1)]; else target[keys.at(-1)] = expected;
     }
-    openclawReadMeta = localMeta(failed || committedOpenclawFields.size ? {
-      code: failed ? 'settings_config_unavailable' : 'settings_refresh_pending',
-      message: 'Saved values are visible; waiting for the local configuration read to confirm them',
+    openclawReadMeta = localMeta(failed || observedOpenclawFields.size || pendingExternalWrite !== null ? {
+      code: pendingExternalWrite !== null ? 'upstream_unverified' : failed ? 'settings_config_unavailable' : 'settings_refresh_pending',
+      message: pendingExternalWrite !== null ? 'The command was sent; upstream confirmation is pending' : 'Observed values are retained while the local configuration read catches up',
     } : null);
     return projected;
   }
@@ -302,6 +397,7 @@ function createSettingsService({
 
     return {
       model: defaultModel,
+      ...(hasOpenclawMutation ? { verified: externalVerified === true } : {}),
       budget: { monthly: Number.isFinite(mcConfig.budget?.monthly) && mcConfig.budget.monthly >= 0 ? mcConfig.budget.monthly : null },
       ...(hasOpenclawMutation || committedMcText !== null ? { meta: openclawReadMeta } : {}),
       gateway_port: gatewayPort ?? null,
@@ -342,6 +438,7 @@ function createSettingsService({
     const unreadable = [main, subagent, heartbeat].some((entry) => entry.source === 'unreadable');
     return {
       main: main.value, subagent: subagent.value, heartbeat: heartbeat.value,
+      ...(hasOpenclawMutation ? { verified: externalVerified === true } : {}),
       mainSource: main.source, subagentSource: subagent.source, heartbeatSource: heartbeat.source,
       meta: {
         ok: !unreadable, stale: unreadable,
@@ -372,25 +469,35 @@ function createSettingsService({
         throw httpError(400, 'invalid_model', 'Model fields must contain a valid model identifier');
       }
     }
+    let before;
     if (provided.length) {
       const cfg = readOpenclawConfigRaw();
       if (cfg) lastOpenclawConfig = structuredClone(cfg);
+      before = readOpenclawConfigSafe();
     }
     for (const field of provided) {
       const value = body[field];
       await openclawExec(value === ''
         ? ['config', 'unset', paths[field]]
         : ['config', 'set', paths[field], value], 15000);
-      committedOpenclawFields.set(paths[field], value === '' ? null : value);
       hasOpenclawMutation = true;
     }
-    if (provided.length) await reloadGatewayConfig();
-    return { status: 'saved', ...getModelRouting() };
+    let verified = true;
+    if (provided.length) {
+      const expected = new Map(provided.map(field => [paths[field], body[field] === '' ? null : body[field]]));
+      rememberUnverified(expected, before);
+      verified = await verifyExternalWrite(expected);
+      await reloadGatewayConfig();
+    }
+    const routing = getModelRouting();
+    const entity = { main: routing.main, subagent: routing.subagent, heartbeat: routing.heartbeat, verified };
+    return { status: verified ? 'saved' : 'unverified', ...routing, verified, entity };
   }
 
   function getHeartbeatSettings() {
     const cfg = readOpenclawConfigSafe();
     return { interval: cfg?.agents?.defaults?.heartbeat?.every || null,
+      ...(hasOpenclawMutation ? { verified: externalVerified === true } : {}),
       ...(hasOpenclawMutation || committedMcText !== null ? { meta: openclawReadMeta } : {}) };
   }
 
@@ -401,11 +508,15 @@ function createSettingsService({
     }
     const cfg = readOpenclawConfigRaw();
     if (cfg) lastOpenclawConfig = structuredClone(cfg);
+    const before = readOpenclawConfigSafe();
     await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', normalized], 15000);
-    committedOpenclawFields.set('agents.defaults.heartbeat.every', normalized);
     hasOpenclawMutation = true;
+    const expected = new Map([['agents.defaults.heartbeat.every', normalized]]);
+    rememberUnverified(expected, before);
+    const verified = await verifyExternalWrite(expected);
     await reloadGatewayConfig();
-    return { status: 'saved', ...getHeartbeatSettings() };
+    const heartbeat = getHeartbeatSettings();
+    return { status: verified ? 'saved' : 'unverified', ...heartbeat, verified, entity: { interval: heartbeat.interval, verified } };
   }
 
   function updateBudget(monthly) {
@@ -576,6 +687,7 @@ function createSettingsService({
     getModelRouting,
     setModelRouting,
     getHeartbeatSettings,
+    refreshExternalWrites,
     setHeartbeatInterval,
     updateBudget,
     getSetupStatus,

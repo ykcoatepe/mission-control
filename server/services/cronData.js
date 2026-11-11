@@ -298,6 +298,8 @@ function describeCronSchedule(job = {}) {
 
 function createCronService({
   openclawExec,
+  runner,
+  hermesBin,
   gatewayPort,
   gatewayToken,
   getOpenclawDefaultModelKey,
@@ -318,8 +320,14 @@ function createCronService({
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
   const maxHistoryRuns = 10;
 
+  function effectiveCronEnabled(job = {}) {
+    const state = job.schedulerState ?? (typeof job.state === 'string' ? job.state.trim() : null);
+    return (typeof job.enabled === 'boolean' ? job.enabled : job.enabled == null)
+      && !(isHermesJob(job) && (['paused', 'completed', 'error'].includes(state) || Boolean(job.paused_at)));
+  }
+
   function normalizeCronRunStatus(job = {}) {
-    if (job.enabled === false) return 'disabled';
+    if (!effectiveCronEnabled(job)) return 'disabled';
     const raw = String(job.state?.lastStatus || job.state?.lastRunStatus || '').trim().toLowerCase();
     if (['ok', 'active', 'running', 'success'].includes(raw)) return 'active';
     if (['failed', 'error', 'errored'].includes(raw)) return 'failed';
@@ -381,24 +389,32 @@ function createCronService({
     if (!job || typeof job.id !== 'string' || !job.id.trim()) return null;
     const scheduler = isHermesJob(job) ? 'hermes' : 'openclaw';
     const sourceId = getCronJobSourceId(job);
+    const enabled = effectiveCronEnabled(job);
+    const model = job.payload?.model ?? job.model ?? (scheduler === 'openclaw' ? getOpenclawDefaultModelKey() : '');
+    const nextRun = typeof job.state?.nextRunAtMs === 'number' ? dateIsoOrNull(job.state.nextRunAtMs) : null;
     return {
       id: getCronJobApiId(job),
       sourceId,
-      name: job.name || String(job.id || '').substring(0, 8) || 'Unnamed job',
+      name: typeof job.name === 'string' && job.name ? job.name : String(job.id).substring(0, 8),
       scheduler,
       schedulerLabel: scheduler === 'hermes' ? 'Hermes' : 'OpenClaw',
       ...describeCronSchedule(job),
-      status: normalizeCronRunStatus(job),
+      status: normalizeCronRunStatus({ ...job, enabled }),
       lastRun: typeof job.state?.lastRunAtMs === 'number' ? dateIsoOrNull(job.state.lastRunAtMs) : null,
-      nextRun: typeof job.state?.nextRunAtMs === 'number' ? dateIsoOrNull(job.state.nextRunAtMs) : null,
-      duration: job.state?.lastDurationMs ? `${job.state.lastDurationMs}ms` : null,
-      target: job.sessionTarget || 'main',
-      payload: job.payload?.kind || '?',
-      model: job.payload?.model || job.model || (scheduler === 'openclaw' ? getOpenclawDefaultModelKey() : '') || '',
-      thinking: job.payload?.thinking || '',
+      nextRun,
+      nextRunOverdue: enabled && nextRun !== null && Date.parse(nextRun) < now(),
+      verified: true,
+      ...(scheduler === 'hermes' ? { schedulerState: job.schedulerState ?? null, upstreamEnabled: typeof job.enabled === 'boolean' ? job.enabled : null,
+        pausedAt: dateIsoOrNull(job.paused_at),
+        pausedReason: typeof job.paused_reason === 'string' ? redactString(job.paused_reason).slice(0, 256) : null } : {}),
+      duration: Number.isFinite(job.state?.lastDurationMs) && job.state.lastDurationMs >= 0 ? `${job.state.lastDurationMs}ms` : null,
+      target: typeof job.sessionTarget === 'string' ? job.sessionTarget : 'main',
+      payload: typeof job.payload?.kind === 'string' ? job.payload.kind : '?',
+      model: typeof model === 'string' ? model : '',
+      thinking: typeof job.payload?.thinking === 'string' ? job.payload.thinking : '',
       description: [job.payload?.text, job.payload?.message, job.prompt].find(value => typeof value === 'string')?.substring(0, 120) || '',
       history: readRunHistory(sourceId, scheduler),
-      enabled: job.enabled !== false,
+      enabled,
       actions: getCronJobActions(job),
     };
   }
@@ -413,6 +429,7 @@ function createCronService({
     return {
       ...job,
       scheduler: 'hermes',
+      schedulerState: typeof job.state === 'string' ? job.state.trim() : null,
       sourceId: job.id,
       schedule: job.schedule,
       sessionTarget: job.deliver || job.sessionTarget || 'origin',
@@ -484,40 +501,61 @@ function createCronService({
     return { provider: null, model: normalized, base_url: null };
   }
 
-  function patchHermesCronJob(sourceId = '', patch = {}) {
-    let parsed;
-    let jobs;
+  function strictHermesJobs() {
     try {
-      parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
-      jobs = Array.isArray(parsed) ? parsed : parsed?.jobs;
-      if (!Array.isArray(jobs) || jobs.some(job => !job || typeof job !== 'object' || Array.isArray(job) || typeof job.id !== 'string')) throw new Error('Invalid jobs');
+      const parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
+      const jobs = Array.isArray(parsed) ? parsed : parsed?.jobs;
+      if (!Array.isArray(jobs) || jobs.some(job => !job || typeof job.id !== 'string')) throw new Error('Invalid jobs');
+      return jobs;
     } catch {
       throw httpError(409, 'hermes_cron_unavailable', 'Hermes cron data is unreadable; no changes were made');
     }
-    const index = jobs.findIndex((candidate) => String(candidate.id) === String(sourceId));
-    if (index === -1) {
-      throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
-    }
-
-    const nextJob = { ...jobs[index], ...patch };
-    const nextJobs = jobs.slice();
-    nextJobs[index] = nextJob;
-    const output = Array.isArray(parsed) ? nextJobs : { ...parsed, jobs: nextJobs };
-    writeJsonFileAtomic(hermesCronJobsFile, output, { fsImpl: fs });
-    return normalizeHermesCronJob(nextJob);
   }
 
-  function updateHermesCronJobModel(sourceId = '', modelRef = '') {
-    const next = splitHermesModelRef(modelRef);
-    return patchHermesCronJob(sourceId, {
-      provider: next.provider,
-      model: next.model,
-      base_url: next.base_url,
+  async function runHermesCron(args, { read = false } = {}) {
+    if (typeof runner?.run !== 'function') throw httpError(503, 'hermes_runner_unavailable', 'The Hermes runner is unavailable');
+    const hostBin = path.join(homeDir, '.local', 'bin', 'hermes');
+    const bin = hermesBin || process.env.HERMES_BIN || (fs.existsSync(hostBin) ? hostBin : 'hermes');
+    const result = await runner.run(bin, ['--profile', hermesProfile, 'cron', ...args], {
+      lane: 'hermes', timeoutMs: read ? 8000 : 15000, maxOutputBytes: 1024 * 1024,
+      ...(read ? { key: `hermes-cron-verification:${hermesProfile}:${randomUUID()}` } : {}),
+      env: { ...process.env, HOME: homeDir, HERMES_PROFILE: hermesProfile },
     });
+    if (!result?.ok) {
+      if (read) throw Object.assign(new Error('Hermes read-back failed'), { code: 'upstream_read_failed' });
+      throw httpError(503, 'upstream_command_failed', 'Hermes did not accept the command');
+    }
+    return result;
   }
 
-  function updateHermesCronJobEnabled(sourceId = '', enabled = true) {
-    return patchHermesCronJob(sourceId, { enabled: enabled !== false });
+  async function updateHermesCronJobModel(sourceId = '', modelRef = '') {
+    if (!strictHermesJobs().some(job => job.id === sourceId)) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
+    const next = splitHermesModelRef(modelRef);
+    return runHermesCron(['edit', sourceId, `--model=${next.model || ''}`, `--provider=${next.provider || ''}`]);
+  }
+
+  async function updateHermesCronJobEnabled(sourceId = '', enabled = true) {
+    if (!strictHermesJobs().some(job => job.id === sourceId)) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
+    return runHermesCron([enabled ? 'resume' : 'pause', sourceId]);
+  }
+
+  async function readCronJobsForVerification(scheduler) {
+    if (scheduler === 'hermes') {
+      // The installed CLI's list has --all but no JSON flag. Ask the supported
+      // reader on its lane, then inspect only metadata in its authoritative
+      // state document. Never parse/promote the human list's prompt text.
+      await runHermesCron(['list', '--all'], { read: true });
+      const fields = ['id', 'name', 'enabled', 'state', 'paused_at', 'paused_reason', 'schedule', 'schedule_display',
+        'model', 'provider', 'last_run_at', 'next_run_at', 'last_status', 'last_duration_ms'];
+      let jobs;
+      try { jobs = strictHermesJobs(); } catch { throw Object.assign(new Error('Hermes state could not be read'), { code: 'upstream_read_failed' }); }
+      return jobs.map(job => ({ ...normalizeHermesCronJob(Object.fromEntries(fields.filter(key => Object.hasOwn(job, key)).map(key => [key, job[key]]))), _verificationMetadataOnly: true }));
+    }
+    let result;
+    try { result = await openclawExec(['cron', 'list', '--json', '--all'], 8000); }
+    catch { throw Object.assign(new Error('OpenClaw read-back failed'), { code: 'upstream_read_failed' }); }
+    try { return extractJsonPayload([result.stdout, result.stderr].filter(Boolean).join('\n')).jobs.map(normalizeOpenclawCronJob); }
+    catch { throw httpError(409, 'upstream_unverified', 'OpenClaw did not return a readable cron list'); }
   }
 
 
@@ -885,7 +923,8 @@ function createCronService({
       const cronDerived = {
         title: job.name || String(job.id || 'Cron job'),
         schedule: schedule.schedule,
-        notes: job.payload?.text ?? job.payload?.message ?? '',
+        notes: job._verificationMetadataOnly && !job._verificationInstructionsKnown
+          ? previous.cronDerived?.notes ?? previous.notes ?? '' : job.payload?.text ?? job.payload?.message ?? '',
         assignee: 'Mudur',
       };
       const userOverrides = [...(previous.userOverrides || [])].filter(field => CRON_OVERRIDABLE_FIELDS.includes(field));
@@ -1041,6 +1080,8 @@ function createCronService({
     mapCronJobForApi,
     updateHermesCronJobModel,
     updateHermesCronJobEnabled,
+    readCronJobsForVerification,
+    splitHermesModelRef,
     toIsoOrNull,
     normalizeCalendarEntry,
     readCalendarDataSafe,

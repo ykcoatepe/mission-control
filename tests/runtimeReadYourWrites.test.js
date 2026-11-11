@@ -16,8 +16,17 @@ async function fixture() {
   let jobs = [{ id: 'one', name: 'One', enabled: true, schedule: { kind: 'cron', expr: '0 * * * *' }, payload: { kind: 'agentTurn', message: 'Task', model: 'old' }, state: { lastRunAtMs: Date.parse('2026-11-11T10:00:00Z'), lastStatus: 'ok' } }];
   const oldJobs = clone(jobs); const controls = { readFail: false, lag: false, refreshFail: false, reads: 0, mutations: 0, block: null, runStatus: 'ok', plainAck: false, calendarReadFail: false };
   const runner = { async run(_bin, args) {
+    if (args[0] === '--profile') {
+      const cmd = args[3], id = args[4];
+      const doc = JSON.parse(fs.readFileSync(hermesFile, 'utf8')), job = doc.jobs.find(job => job.id === id);
+      if (cmd === 'list') return controls.readFailAfterMutation && controls.mutations ? { ok: false, error: { code: 'fake_read' } } : { ok: true, stdout: 'Listed' };
+      controls.mutations++;
+      if (cmd === 'pause' || cmd === 'resume') { job.enabled = cmd === 'resume'; job.state = job.enabled ? 'scheduled' : 'paused'; }
+      if (cmd === 'edit') for (const field of ['provider', 'model']) { const flag = args.find(arg => arg.startsWith('--' + field + '=')); if (flag) job[field] = flag.slice(field.length + 3); }
+      fs.writeFileSync(hermesFile, JSON.stringify(doc)); return { ok: true, stdout: 'ok' };
+    }
     if (args[0] !== 'cron') return { ok: false, error: { code: 'fake_disabled' } };
-    if (args[1] === 'list') { controls.reads++; if (controls.block) { const block = controls.block; controls.block = null; const captured = clone(jobs); block.enter(); await block.gate; return { ok: true, stdout: JSON.stringify({ jobs: captured }) }; } return controls.readFail ? { ok: false, error: { code: 'fake_read' } } : { ok: true, stdout: JSON.stringify({ jobs: controls.lag ? oldJobs : jobs }) }; }
+    if (args[1] === 'list') { controls.reads++; if (controls.block) { const block = controls.block; controls.block = null; const captured = clone(jobs); block.enter(); await block.gate; return { ok: true, stdout: JSON.stringify({ jobs: captured }) }; } return controls.readFail || (controls.readFailAfterMutation && controls.mutations) ? { ok: false, error: { code: 'fake_read' } } : { ok: true, stdout: JSON.stringify({ jobs: controls.lag ? oldJobs : jobs }) }; }
     controls.mutations++;
     const id = args[2], item = jobs.find(job => job.id === id);
     if (args[1] === 'enable' || args[1] === 'disable') item.enabled = args[1] === 'enable';
@@ -25,11 +34,11 @@ async function fixture() {
     if (args[1] === 'run') item.state = { ...item.state, lastRunAtMs: item.state.lastRunAtMs + 60000, lastStatus: controls.runStatus };
     if (args[1] === 'rm') jobs = jobs.filter(job => job.id !== id);
     let result = item || {};
-    if (args[1] === 'add') { result = { id: 'new', name: args[args.indexOf('--name') + 1], enabled: !args.includes('--disabled'), schedule: { kind: 'cron', expr: args[args.indexOf('--cron') + 1] }, payload: { kind: 'agentTurn', message: args[args.indexOf('--message') + 1], model: 'new-model' } }; jobs.push(result); }
+    if (args[1] === 'add') { result = { id: 'new', sessionTarget: args[args.indexOf('--session') + 1], name: args[args.indexOf('--name') + 1], enabled: !args.includes('--disabled'), schedule: { kind: 'cron', expr: args[args.indexOf('--cron') + 1] }, payload: { kind: 'agentTurn', message: args[args.indexOf('--message') + 1], model: 'new-model' } }; jobs.push(result); }
     return { ok: true, stdout: controls.plainAck ? 'ok' : JSON.stringify(result), stderr: '' };
   }, killAll() {}, drain: async () => true, status: () => ({ lanes: {}, children: 0, quarantined: [] }) };
   const openclawExec = async args => { const result = await runner.run('fake', args); if (!result.ok) throw new Error('fake CLI unavailable'); return result; };
-  const cronService = createCronService({ homeDir: rootDir, calendarFile, getOpenclawDefaultModelKey: () => '', openclawExec, fetchImpl: async () => { throw new Error('No network'); } });
+  const cronService = createCronService({ runner, homeDir: rootDir, calendarFile, getOpenclawDefaultModelKey: () => '', openclawExec, fetchImpl: async () => { throw new Error('No network'); } });
   const readCalendar = cronService.readCalendarDataSafe.bind(cronService);
   cronService.readCalendarDataSafe = options => { if (controls.calendarReadFail && options?.tolerateEntries) throw new Error('fake calendar read failure'); return readCalendar(options); };
   const registered = [];
@@ -93,13 +102,13 @@ test('RYW successful calendar write survives failed post-write refresh with a vi
   assert.equal(written.body.meta.stale, true);
   const read = await f.request('GET', '/api/calendar'); assert.ok(read.body.entries.some(entry => entry.id === written.body.entry.id));
 }));
-test('RYW successful cron write survives failed refresh and lagging reads without reverting enabled state', () => run(async f => {
+test('RYW lagging observed state is rejected rather than published as committed', () => run(async f => {
   f.controls.lag = true;
-  const written = await f.request('POST', '/api/cron/openclaw:one/toggle', { enabled: false }); assert.equal(written.status, 200);
-  assert.equal(written.body.meta.stale, true); assert.equal(written.body.job.enabled, false);
-  assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one').enabled, false);
+  const written = await f.request('POST', '/api/cron/openclaw:one/toggle', { enabled: false });
+  assert.equal(written.status, 409); assert.equal(written.body.error.code, 'upstream_rejected');
+  assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one').enabled, true);
   await f.automation.refresh();
-  assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one').enabled, false);
+  assert.equal((await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one').enabled, true);
 }));
 test('RYW run-now never regresses lastRun to an older scheduler reading', () => run(async f => {
   const before = (await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one').lastRun;
@@ -111,20 +120,21 @@ test('RYW run-now never regresses lastRun to an older scheduler reading', () => 
   assert.ok(Date.parse(current.lastRun) >= Date.parse(before));
 }));
 
-test('RYW sequential edits preserve every committed field while the scheduler lags', () => run(async f => {
+test('RYW sequential rejected edits never accumulate requested fields', () => run(async f => {
   f.controls.lag = true;
   await f.request('POST', '/api/cron/openclaw:one/toggle', { enabled: false });
   await f.request('PATCH', '/api/cron/openclaw:one/model', { model: 'changed' });
   const actual = (await f.request('GET', '/api/cron')).body.jobs.find(job => job.sourceId === 'one');
-  assert.equal(actual.enabled, false); assert.equal(actual.model, 'changed');
+  assert.equal(actual.enabled, true); assert.equal(actual.model, 'old');
 }));
 
-for (const [method, url, body, matches] of cronCases) test(`RYW failed confirmation after ${method} ${url} stays 200 and remains visible`, () => run(async f => {
-  f.failRefresh(f.automation);
+for (const [method, url, body] of cronCases) test(`RYW failed verification after ${method} ${url} stays unverified and keeps observed state`, () => run(async f => {
+  const prior = (await f.request('GET', '/api/cron')).body.jobs.map(({ verified, ...job }) => job);
+  f.controls.readFailAfterMutation = true;
   const written = await f.request(method, url, body);
   assert.equal(written.status, 200); assert.equal(written.body.meta.stale, true);
-  assert.ok(written.body.job);
-  assert.ok(matches((await f.request('GET', '/api/cron')).body.jobs));
+  assert.equal(written.body.verified, false); assert.equal(written.body.job.verified, false);
+  assert.deepEqual((await f.request('GET', '/api/cron')).body.jobs.map(({ verified, ...job }) => job), prior);
 }));
 for (const action of ['patch', 'repair', 'sync-cron']) test(`RYW calendar ${action} survives failed confirmation`, () => run(async f => {
   let url = '/api/calendar/' + action, method = 'POST', body = {};
@@ -143,8 +153,8 @@ test('RYW cron mutations update derived calendar and operations snapshots too', 
   f.controls.lag = true;
   await f.request('POST', '/api/cron/openclaw:one/toggle', { enabled: false });
   const calendar = (await f.request('GET', '/api/calendar')).body;
-  assert.equal(f.operations.snapshot().data.jobs.find(job => job.sourceId === 'one').enabled, false);
-  assert.equal(calendar.entries.find(entry => entry.linkedJobId === 'openclaw:one').status, 'disabled');
+  assert.equal(f.operations.snapshot().data.jobs.find(job => job.sourceId === 'one').enabled, true);
+  assert.equal(calendar.entries.find(entry => entry.linkedJobId === 'openclaw:one').status, 'active');
 }));
 test('RYW post-write confirmation retires projections so later scheduler changes remain visible', () => run(async f => {
   f.controls.lag = true;
@@ -188,8 +198,8 @@ for (const action of ['repair', 'sync-cron']) test(`RYW a newer patch supersedes
 }));
 
 
-test('RYW pause and resume preserve a newly failed last run despite lagging list reads and plain CLI acknowledgments', () => run(async f => {
-  f.controls.lag = true; f.controls.runStatus = 'failed';
+test('RYW pause and resume preserve an observed failed last run with plain CLI acknowledgments', () => run(async f => {
+  f.controls.runStatus = 'failed';
   assert.equal((await f.request('POST', '/api/cron/openclaw:one/run', {})).status, 200);
   f.controls.plainAck = true;
   await f.request('POST', '/api/cron/openclaw:one/toggle', { enabled: false });

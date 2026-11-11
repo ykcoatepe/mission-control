@@ -16,6 +16,7 @@ function createOpenclawModelsSource({ openclawCli, parseFirstJson, prettyModelNa
     now,
     logger,
     read: async () => {
+      await settingsService?.refreshExternalWrites?.();
       let result;
       try { result = await openclawCli(['models', 'list', '--json'], 12_000); } catch {
         throw new SourceReadError('OpenClaw models could not be read', { code: 'openclaw_models_unavailable' });

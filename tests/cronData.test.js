@@ -13,7 +13,23 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
   const jobsFile = path.join(jobsDir, 'jobs.json');
   fs.writeFileSync(jobsFile, `${JSON.stringify({ jobs: initialJobs }, null, 2)}\n`, 'utf8');
 
+  const runner = { run: async (_bin, argv, options) => {
+    assert.equal(options.lane, 'hermes');
+    assert.deepEqual(argv.slice(0, 3), ['--profile', 'hmudur', 'cron']);
+    const document = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
+    const job = document.jobs.find(job => job.id === argv[4]);
+    if (argv[3] === 'pause' || argv[3] === 'resume') {
+      job.enabled = argv[3] === 'resume'; job.state = job.enabled ? 'scheduled' : 'paused';
+    }
+    if (argv[3] === 'edit') for (const field of ['model', 'provider']) {
+      const flag = argv.find(arg => arg.startsWith('--' + field + '='));
+      if (flag) job[field] = flag.slice(field.length + 3);
+    }
+    if (argv[3] !== 'list') fs.writeFileSync(jobsFile, JSON.stringify(document));
+    return { ok: true, stdout: 'ok', stderr: '' };
+  } };
   const service = createCronService({
+    runner,
     openclawExec: async () => ({ stdout: '[]', stderr: '' }),
     gatewayPort: 18789,
     gatewayToken: '',
@@ -27,7 +43,7 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
   return { service, jobsFile, homeDir };
 }
 
-(function testHermesCodexModelRefKeepsOpenAiNamespace() {
+test('testHermesCodexModelRefKeepsOpenAiNamespace via supported CLI', async () => {
   const { service, jobsFile } = makeCronServiceWithJobs([{
     id: 'job-1',
     provider: 'openai-codex',
@@ -35,15 +51,16 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
     base_url: null,
   }]);
 
-  const updated = service.updateHermesCronJobModel('job-1', 'openai-codex/gpt-5.5');
+  await service.updateHermesCronJobModel('job-1', 'openai-codex/gpt-5.5');
+  const [updated] = await service.readCronJobsForVerification('hermes');
   const persisted = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
 
   assert.equal(updated.payload.model, 'openai-codex/openai/gpt-5.5');
   assert.equal(persisted.jobs[0].provider, 'openai-codex');
   assert.equal(persisted.jobs[0].model, 'openai/gpt-5.5');
-})();
+});
 
-(function testHermesCronPatchPreservesRuntimeFields() {
+test('testHermesCronCommandsPreserveRuntimeFields', async () => {
   const { service, jobsFile } = makeCronServiceWithJobs([{
     id: 'job-1',
     enabled: true,
@@ -57,25 +74,25 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
     last_run_at: '2026-05-24T10:00:00+03:00',
   }]);
 
-  service.updateHermesCronJobEnabled('job-1', false);
+  await service.updateHermesCronJobEnabled('job-1', false);
   const persisted = JSON.parse(fs.readFileSync(jobsFile, 'utf8'));
 
   assert.equal(persisted.jobs[0].enabled, false);
   assert.equal(persisted.jobs[0].last_run_at, '2026-05-24T09:01:05+03:00');
   assert.equal(persisted.jobs[0].next_run_at, '2026-05-25T09:00:00+03:00');
   assert.equal(persisted.jobs[1].last_run_at, '2026-05-24T10:00:00+03:00');
-})();
+});
 
-(function testHermesCronPatchPreservesFilePermissions() {
+test('testHermesCronCommandsPreserveFilePermissions', async () => {
   const { service, jobsFile } = makeCronServiceWithJobs([{ id: 'job-1', enabled: true }]);
   fs.chmodSync(jobsFile, 0o600);
 
-  service.updateHermesCronJobEnabled('job-1', false);
+  await service.updateHermesCronJobEnabled('job-1', false);
 
   assert.equal(fs.statSync(jobsFile).mode & 0o777, 0o600);
-})();
+});
 
-(function testCronServiceDefaultsToConfiguredHostHome() {
+test('testCronServiceDefaultsToConfiguredHostHome without direct mutation', async () => {
   const previousHome = process.env.MC_USER_HOME;
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cron-home-'));
   const jobsDir = path.join(homeDir, '.hermes', 'profiles', 'hmudur', 'cron');
@@ -91,16 +108,23 @@ function makeCronServiceWithJobs(initialJobs, extra = {}) {
       getOpenclawDefaultModelKey: () => '',
       calendarFile: path.join(homeDir, 'calendar.json'),
       hermesProfile: 'hmudur',
+      runner: { run: async (_bin, argv, options) => {
+        assert.equal(options.env.HOME, homeDir); assert.equal(argv[3], 'pause');
+        const doc = JSON.parse(fs.readFileSync(path.join(jobsDir, 'jobs.json'), 'utf8'));
+        doc.jobs[0].enabled = false; doc.jobs[0].state = 'paused';
+        fs.writeFileSync(path.join(jobsDir, 'jobs.json'), JSON.stringify(doc));
+        return { ok: true, stdout: 'ok' };
+      } },
     });
 
-    service.updateHermesCronJobEnabled('job-1', false);
+    await service.updateHermesCronJobEnabled('job-1', false);
     const persisted = JSON.parse(fs.readFileSync(path.join(jobsDir, 'jobs.json'), 'utf8'));
     assert.equal(persisted.jobs[0].enabled, false);
   } finally {
     if (previousHome === undefined) delete process.env.MC_USER_HOME;
     else process.env.MC_USER_HOME = previousHome;
   }
-})();
+});
 
 test('testOperationsCronEvidenceTracksSchedulersIndependently', async () => {
   const { service } = makeCronServiceWithJobs([{ id: 'hermes-job', enabled: true }]);
@@ -128,6 +152,13 @@ test('testFallbackEmptyCronResultsHaveNoSyntheticObservation', async () => {
       calendarFile: path.join(homeDir, 'calendar.json'),
       homeDir,
       hermesProfile: 'hmudur',
+      runner: { run: async (_bin, argv, options) => {
+        assert.equal(options.env.HOME, homeDir); assert.equal(argv[3], 'pause');
+        const doc = JSON.parse(fs.readFileSync(path.join(jobsDir, 'jobs.json'), 'utf8'));
+        doc.jobs[0].enabled = false; doc.jobs[0].state = 'paused';
+        fs.writeFileSync(path.join(jobsDir, 'jobs.json'), JSON.stringify(doc));
+        return { ok: true, stdout: 'ok' };
+      } },
     });
     const result = await service.fetchCronJobsForOperations();
 
