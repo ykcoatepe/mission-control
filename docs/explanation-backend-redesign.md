@@ -80,18 +80,40 @@ Rules:
 
 ## Navigation after the redesign
 
+Decided with the operator on 2026-11-11.
+
 | Group | Item | Path | Source |
 | --- | --- | --- | --- |
-| — | Brain (home) | `/` | GBrain health first; "Knowledge" view = search and pages |
-| Operate | Attention | `/attention` | manager loops: findings and pending confirmations |
-| Operate | Work | `/work` | Hermes board |
+| — | Brain (home) | `/` | GBrain health synoptic; views: Health, Knowledge (search and pages), Graph (3D link graph, built last) |
+| Operate | Attention | `/attention` | manager loops: findings and pending confirmations; blocked Hermes tasks |
 | Operate | Automations | `/automations` | Hermes and OpenClaw schedules |
-| Operate | Sessions | `/sessions` | all hosts |
-| Know | Usage | `/usage` | |
-| Run | Services | `/services` | new |
-| Run | Agents | `/systems` | |
+| Know | Usage | `/usage` | every platform, through the provider registry |
+| Run | Services | `/services` | launchd services, cron ticker, gateways |
 | Run | Local models | `/ollama` | |
 | Utility | Settings, Audit | | |
+
+Removed from navigation because the operator does not use them: Work, Sessions,
+Agents (with Team structure and Desks), the assistant chat, Workshop, and the
+Diagnostics tabs. Their old paths redirect to `/`. Their write endpoints
+(session send, task execute, agent create, model switch from side pages) are to
+be listed and removed after the operator confirms the list.
+
+## Usage providers
+
+Usage counts tokens on every platform the operator uses. Each platform is one
+provider module under `server/sources/usage/providers/` implementing:
+
+```
+{ id, label, read({ since, until }) → { days: [{ date, model, inputTokens,
+  outputTokens, cacheReadTokens, cacheWriteTokens, billedUsd | null }],
+  observedAt, coverage: 'complete' | 'partial', note } }
+```
+
+A registry lists the providers; adding a platform is adding a file. Initial
+providers: Claude Code, Codex (app and CLI), Hermes (all models it records,
+including local ones), OpenClaw, Grok (if its local data records tokens). A
+provider that cannot be read is reported as not read, never as zero, and the
+total is marked partial.
 
 ## Order of work
 
