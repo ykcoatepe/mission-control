@@ -63,7 +63,9 @@ function testUpdateBudgetRejectsNegativeValues() {
 function testUnknownFieldsAndCoreStore() {
   const { service, configStore } = makeService();
   assert.equal(service.getSettingsPayload().model, null);
-  assert.deepEqual(service.getModelRouting(), { main: null, subagent: null, heartbeat: null });
+  const { meta, ...routing } = service.getModelRouting();
+  assert.deepEqual(routing, { main: null, subagent: null, heartbeat: null, mainSource: 'unreadable', subagentSource: 'unreadable', heartbeatSource: 'unreadable' });
+  assert.equal(meta.ok, false);
   assert.deepEqual(service.getHeartbeatSettings(), { interval: null });
   service.updateBudget(10);
   assert.equal(configStore.status().writes, 1);

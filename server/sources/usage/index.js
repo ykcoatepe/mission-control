@@ -28,7 +28,7 @@ function price(row, providerId) {
     });
 }
 function totals(rows, providerId) {
-    return { tokens: rows.reduce((s, r) => s + rowTokens(r), 0), apiEquivalentUsd: rows.length ? knownSum(rows.map(r => price(r, providerId).usd)) : 0, billedUsd: nullableSum(rows.map(r => r.billedUsd)) };
+    return { tokens: rows.reduce((s, r) => s + rowTokens(r), 0), apiEquivalentUsd: rows.length ? knownSum(rows.map(r => price(r, providerId).usd)) : 0, billedUsd: rows.length ? nullableSum(rows.map(r => r.billedUsd)) : null };
 }
 function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, dataDir, projectRoot = path.resolve(__dirname, '../../..'), home = process.env.MC_USER_HOME || process.env.HOME, env = process.env, budget = {}, scheduler, logger = null } = {}) {
     let ownedExec;
@@ -56,6 +56,12 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
     }
     function hasCoverage(snap, keys) { return !!snap.data && snap.data.since <= keys[0] && snap.data.until >= keys.at(-1); }
     function selectedRows(snap, keys) { const set = new Set(keys); return (snap.data?.days || []).filter(d => set.has(d.date)); }
+    function coverageReason(snap, keys) {
+        if (!snap.data || !keys.some(key => key >= snap.data.since && key <= snap.data.until)) return 'unread';
+        if (snap.meta.error && snap.meta.error.code !== 'cached_usage') return 'scan_failed';
+        if (snap.data.unresolvedOverlaps?.some(overlap => keys.includes(overlap.date))) return 'unresolved_overlap';
+        return snap.data.coverage === 'partial' || !hasCoverage(snap, keys) ? 'standing_gaps' : 'none';
+    }
     function providerWindow(snap, keys) {
         const observedKeys = keys.filter(date => snap.data && date >= snap.data.since && date <= snap.data.until);
         const observed = observedKeys.length > 0;
@@ -66,16 +72,17 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const reason = !snap.data ? 'usage_unavailable' : !observed ? 'window_not_observed' : snap.data.unresolvedOverlaps?.some(o=>keys.includes(o.date)) ? 'ownership_overlap_unresolved'
             : value.apiEquivalentUsd === null ? 'api_equivalent_unavailable'
             : omittedPrices ? 'partially_priced_usage' : null;
-        return { ...value, observed, rows, reason,
+        return { ...value, observed, rows, reason, billingKnown: value.billedUsd !== null, hasRecords: rows.length > 0,
             partial: !!reason || incompleteCoverage || snap.meta.stale || !snap.meta.ok || rows.some(row => price(row, snap.id).status === 'partial') };
     }
     function aggregateWindow(snaps, keys) {
         const readings = snaps.map(snap => ({ snap, value: providerWindow(snap, keys) }));
+        const billedUsd = readings.length ? nullableSum(readings.map(r => r.value.billedUsd)) : null;
         return {
             tokens: knownSum(readings.map(r => r.value.tokens)),
             apiEquivalentUsd: knownSum(readings.map(r => r.value.apiEquivalentUsd)),
             // Billed spend retains its stricter contract: an incomplete bill is unknown.
-            billedUsd: readings.length ? nullableSum(readings.map(r => r.value.billedUsd)) : null,
+            billedUsd, billingKnown: billedUsd !== null, hasRecords: readings.some(r => r.value.hasRecords),
             missingProviders: readings.filter(r => r.value.reason).map(({snap,value}) => ({id:snap.id,label:snap.label,reason:value.reason})),
             partial: !readings.length || readings.some(r => r.value.partial),
         };
@@ -89,7 +96,8 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const providers = snaps.map(s => {
             const window = providerWindow(s, range.keys);
             const { tokens, apiEquivalentUsd, billedUsd } = window;
-            const t = { tokens, apiEquivalentUsd, billedUsd };
+            const t = { tokens, apiEquivalentUsd, billedUsd, billingKnown: window.billingKnown, hasRecords: window.hasRecords,
+                coverageReason: coverageReason(s, range.keys), skippedLines: s.data?.skippedLines ?? null, oversizedLines: s.data?.oversizedLines ?? null };
             return {
                 id: s.id, label: s.label, state: !window.observed ? 'unavailable' : s.meta.stale || !s.meta.ok || !hasCoverage(s, range.keys) ? 'stale' : 'ready', observedAt: s.data?.observedAt || null, coverage: hasCoverage(s, range.keys) && !s.data.unresolvedOverlaps?.some(o=>range.keys.includes(o.date)) ? s.data.coverage : 'partial', ...t, note: window.observed && s.data?.unresolvedOverlaps?.length && !s.data.unresolvedOverlaps.some(o=>range.keys.includes(o.date)) && s.data.coverage==='complete' ? 'Ownership reconciled for this window' : s.data?.note || 'Usage has not been observed'
             };
@@ -115,6 +123,7 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
                 const p = modelRows.map(row => price(row, s.id));
                 const svc = {
                     name: `${s.label} / ${model}`, tokens: t.tokens, cost: t.billedUsd,
+                    isLocal: modelRows.every(row => row.isLocal === true) ? true : modelRows.every(row => row.isLocal === false) ? false : null,
                     input: modelRows.reduce((sum, r) => sum + r.inputTokens, 0),
                     output: modelRows.reduce((sum, r) => sum + r.outputTokens, 0),
                     cacheRead: modelRows.reduce((sum, r) => sum + r.cacheReadTokens, 0),
@@ -154,7 +163,9 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const pricingPartial = available.some(s => selectedRows(s, range.keys).some(r => price(r, s.id).status === 'partial' || price(r, s.id).usd === null));
         return {
             source: 'combined.agent_usage', serverMonth: today.slice(0, 7), period: {
-                key: period, anchor: range.anchor, start: range.keys[0], end: range.keys.at(-1)
+                key: period, anchor: range.anchor, start: range.keys[0], end: range.keys.at(-1),
+                previousStart: range.previousKeys[0], previousEnd: range.previousKeys.at(-1),
+                previousIsPartial: previousT.partial || (period === 'month' && range.previousKeys.at(-1) !== localDate(new Date(Number(range.previousKeys[0].slice(0, 4)), Number(range.previousKeys[0].slice(5, 7)), 0)))
             }, daily, dailyByModel, modelKeys: services.map(s => s.name), byService: services, agents, providers, partial: m.partial || aggregate.partial || pricingPartial, missingProviders: aggregate.missingProviders, apiEquivalentUsd: aggregate.apiEquivalentUsd, billedUsd: billed, costReliability: billed === null ? 'partial_unknown' : 'normalized', apiEquivalentReliability: aggregate.apiEquivalentUsd === null ? 'unavailable' : pricingPartial || m.partial || aggregate.partial ? 'partial' : 'estimated', summary: {
                 periodTokens: aggregate.tokens, periodUsd: billed, periodApiEquivalentUsd: aggregate.apiEquivalentUsd, previousPeriodUsd: previousT.billedUsd, previousPeriodApiEquivalentUsd: previousT.apiEquivalentUsd, previousPeriodApiEquivalentReliability: previousT.apiEquivalentUsd === null ? 'unavailable' : previousT.partial ? 'partial' : 'estimated', todayTokens: todayT.tokens, todayUsd: todayT.billedUsd, yesterdayUsd: yesterdayT.billedUsd, thisWeekTokens: weekT.tokens, thisWeekUsd: weekT.billedUsd, thisMonthTokens: monthT.tokens, thisMonthUsd: monthT.billedUsd, totalTokens: aggregate.tokens, totalUsd: billed, budget: currentBudget, note: m.stale ? 'Partial usage; unavailable providers are not counted' : 'Observed provider usage; API equivalent is an estimate'
             }, budget: currentBudget, meta: {
@@ -189,7 +200,8 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         const pricingPartial = available.some(s => selectedRows(s, monthKeys).some(r => price(r, s.id).status === 'partial' || price(r, s.id).usd === null));
         return { data: available.length ? {
                 today: metric('day'), week: metric('7d'), month, budget: { monthly: currentBudget.monthly ?? null, usedPct: currentBudget.monthly > 0 && month.billedUsd !== null ? month.billedUsd / currentBudget.monthly * 100 : null }, providers: snaps.map(s => ({
-                    id: s.id, label: s.label, state: !providerWindow(s, monthKeys).observed ? 'unavailable' : s.meta.stale || !s.meta.ok || !hasCoverage(s, monthKeys) ? 'stale' : 'ready', monthTokens: providerWindow(s, monthKeys).tokens
+                    id: s.id, label: s.label, state: !providerWindow(s, monthKeys).observed ? 'unavailable' : s.meta.stale || !s.meta.ok || !hasCoverage(s, monthKeys) ? 'stale' : 'ready', monthTokens: providerWindow(s, monthKeys).tokens,
+                    billingKnown: providerWindow(s, monthKeys).billingKnown, hasRecords: providerWindow(s, monthKeys).hasRecords
                 })), missingProviders: month.missingProviders, partial: m.partial || month.partial || pricingPartial
             } : null, meta: available.length ? m : { ...m, missingProviders: month.missingProviders } };
     }

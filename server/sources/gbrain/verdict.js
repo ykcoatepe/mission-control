@@ -52,7 +52,9 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   if (!['healthy', 'inactive'].includes(queue.state)) add('queue', queue.state,
     queue.state === 'unavailable' ? 'Queue reading unavailable.' : 'Queue requires attention.');
   for (const r of readers) if (r.state !== 'healthy') add(r.id, r.state,
-    r.state === 'inactive' ? `${r.label}: integration not configured.` : `${r.label}: integration ${r.state}.`);
+    r.state === 'inactive' ? r.observation === 'configured'
+      ? `${r.label}: configured; connection telemetry is not observable locally.`
+      : `${r.label}: integration not configured.` : `${r.label}: integration ${r.state}.`);
   if (readersState === 'unavailable' && !readers.length) add('readers', readersState, 'Reader integration reading unavailable.');
   // Inactive reasons are listed but never degrade the verdict.
   return { state: worstState(['healthy', ...reasons.map((r) => r.state).filter((state) => state !== 'inactive')]), reasons };

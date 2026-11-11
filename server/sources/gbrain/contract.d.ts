@@ -10,6 +10,8 @@ export interface Source extends Evidence {
 export interface SourceGroup extends Evidence { id: string; label: string; items: Source[] }
 export interface Reader extends Evidence {
   id: string; label: string;
+  /** Config reads cannot prove an observed connection. 'observed' is reserved for real telemetry. */
+  observation: 'configured' | 'observed' | 'not_configured' | 'unreadable';
   integration: Evidence & { configured: boolean | null; evidence: string };
 }
 export interface MeasuredEdge extends Evidence {

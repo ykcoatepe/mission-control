@@ -43,7 +43,9 @@ function buildGBrainRouter(options = {}) {
           meta: probe.meta,
         });
       }
-      const reading = name === 'health' ? (await overviewService.readSnapshot()).live.health : { ...probe.data, meta: probe.meta };
+      const reading = name === 'health' ? (await overviewService.readSnapshot()).live.health
+        : name === 'sources' && typeof overviewService.sourcesSnapshot === 'function' ? overviewService.sourcesSnapshot().data
+        : { ...probe.data, meta: probe.meta };
       return res.json({ ...reading, meta: reading.meta || probe.meta });
     });
   }

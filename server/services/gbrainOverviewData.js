@@ -5,7 +5,8 @@ const { createGBrainSources, REFRESH_INTERVAL_MS } = require('../sources/gbrain/
 const { buildGBrainOverview } = require('../routes/gbrain/overview');
 const { buildGBrainIntegrationHealth } = require('../routes/gbrain/integrationHealth');
 const { buildSynoptic } = require('../sources/gbrain/synoptic');
-const { sourceFreshnessStatus, summarizeSourceFreshness } = require('../routes/gbrain/liveProbes');
+const { summarizeSourceFreshness } = require('../routes/gbrain/liveProbes');
+const { classifySource } = require('../sources/gbrain/freshness');
 const { createLookups } = require('../sources/gbrain/lookups');
 const { createGraphCache } = require('../sources/gbrain/graph');
 
@@ -44,7 +45,11 @@ function createGBrainOverviewService(options = {}) {
     }
     if (live.sources.ok && Array.isArray(live.sources.sources)) {
       const at = new Date(now()).toISOString();
-      live.sources = { ...live.sources, sources: live.sources.sources.map((s) => ({ ...s, freshness: sourceFreshnessStatus(s, s.lastSyncAt, at) })) };
+      live.sources = { ...live.sources, sources: live.sources.sources.map((s) => {
+        const classified = classifySource(s, probeSnapshot('sources'), now);
+        return { ...s, freshness: classified.freshness,
+          excludedByPolicy: classified.excludedByPolicy, reason: classified.reason };
+      }) };
       live.sources.freshness = summarizeSourceFreshness(live.sources.sources, at);
     }
     const runtime = probeSnapshot('runtime');
@@ -64,6 +69,10 @@ function createGBrainOverviewService(options = {}) {
       unavailable: synoptic.verdict.state === 'unavailable', meta: snapshot.meta };
   }
   function overviewSnapshot() { const s = readSnapshot(); return { data: s.overview, meta: s.meta }; }
+  function sourcesSnapshot() {
+    const s = readSnapshot();
+    return { data: s.live.sources, meta: probeSnapshot('sources').meta };
+  }
   function getOverview() { return readSnapshot().overview; }
   function integrationSnapshot() {
     const s = readSnapshot();
@@ -89,7 +98,7 @@ function createGBrainOverviewService(options = {}) {
         while (index < pending.length) await pending[index++].refresh();
       }));
       // Sole ledger writer: only the scheduler/explicit refresh reaches here.
-      // The ledger's change/heartbeat, retention, fingerprint and lock rules stay intact.
+      // Material changes only; retention, fingerprint and lock rules stay intact.
       try {
         if (probeSnapshot('health').data || probeSnapshot('sources').data) {
           const result = await timelineService.captureOverview(getOverview());
@@ -109,6 +118,6 @@ function createGBrainOverviewService(options = {}) {
     scheduler.register(graph, { intervalMs: 120_000, jitterMs: 1500 });
   }
   return { actionExec: options.exec, readSnapshot, getOverview, buildFromSnapshot, timelineService, probeSnapshot, refresh, register,
-    integrationSnapshot, synopticSnapshot, overviewSnapshot, timelineSnapshot, lookups, graph, sources };
+    integrationSnapshot, synopticSnapshot, overviewSnapshot, sourcesSnapshot, timelineSnapshot, lookups, graph, sources };
 }
 module.exports = { createGBrainOverviewService, combineMeta };

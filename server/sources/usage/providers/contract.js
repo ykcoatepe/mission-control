@@ -25,7 +25,8 @@ function validateObservation(value, { since, until }) {
             || typeof row.model !== 'string' || !row.model || COUNTS.some(k => !Number.isSafeInteger(row[k]) || row[k] < 0)
             || (row.billedUsd !== null && (!Number.isFinite(row.billedUsd) || row.billedUsd < 0)))
             throw unavailable('invalid_usage');
-        return Object.fromEntries(['date', 'model', ...COUNTS, 'billedUsd'].map(k => [k, row[k]]));
+        if (row.isLocal !== undefined && row.isLocal !== null && typeof row.isLocal !== 'boolean') throw unavailable('invalid_usage');
+        return { ...Object.fromEntries(['date', 'model', ...COUNTS, 'billedUsd'].map(k => [k, row[k]])), isLocal: row.isLocal ?? null };
     });
     const days = validateRows(value.days);
     const ownership = (value.ownership || []).map(row => {
@@ -52,9 +53,14 @@ function validateObservation(value, { since, until }) {
     if (value.coverageReasons && (!Array.isArray(value.coverageReasons) || value.coverageReasons.some(reason => !['ownership_pending','producer_partial','scan_truncated','malformed_records','unknown_tokens'].includes(reason)))) throw unavailable('invalid_usage');
     const coverageReasons = [...new Set(value.coverageReasons || (value.coverage==='partial'?['producer_partial']:[]))];
     if (ownership.length && !coverageReasons.includes('ownership_pending')) coverageReasons.push('ownership_pending');
+    for (const field of ['skippedLines', 'oversizedLines']) {
+        if (value[field] !== undefined && value[field] !== null && (!Number.isSafeInteger(value[field]) || value[field] < 0)) throw unavailable('invalid_usage');
+    }
+    if (value.skippedLines != null && value.oversizedLines > value.skippedLines) throw unavailable('invalid_usage');
 
     return {
-        days, ownership, sessions, coverageReasons, observedAt: value.observedAt, coverage: coverageReasons.length ? 'partial' : value.coverage, note: value.note.slice(0, 500)
+        days, ownership, sessions, coverageReasons, skippedLines: value.skippedLines ?? null, oversizedLines: value.oversizedLines ?? null,
+        observedAt: value.observedAt, coverage: coverageReasons.length ? 'partial' : value.coverage, note: value.note.slice(0, 500)
     };
 }
 module.exports = { COUNTS, validDay, unavailable, validateObservation };

@@ -16,7 +16,7 @@ function buildSettingsRouter({ settingsService, projectRoot }) {
   });
   const read = (fn) => asyncHandler(async (req, res) => {
     const payload = await fn(req);
-    return res.json({ ...payload, meta: localConfigMeta() });
+    return res.json({ ...payload, meta: payload.meta || localConfigMeta() });
   });
   router.post('/api/settings/budget', asyncHandler((req, res) => res.json(settingsService.updateBudget(req.body?.monthly))));
   router.get('/api/config', read(() => settingsService.getPublicConfig()));

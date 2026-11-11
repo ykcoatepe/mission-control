@@ -5,7 +5,7 @@ const { redactString } = require('../core/config');
 
 const CALENDAR_EDITABLE_FIELDS = Object.freeze(['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes']);
 const CRON_OVERRIDABLE_FIELDS = Object.freeze(['title', 'schedule', 'assignee', 'notes']);
-const CRON_OWNED_FIELDS = Object.freeze(['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs']);
+const CRON_OWNED_FIELDS = Object.freeze(['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs', 'scheduleKind', 'everyMs']);
 const STATUS_VALUES = Object.freeze(['scheduled', 'active', 'running', 'done', 'failed', 'disabled', 'cancelled', 'idle']);
 const SOURCE_VALUES = Object.freeze(['cron', 'manual', 'assistant']);
 
@@ -15,7 +15,9 @@ const SOURCE_VALUES = Object.freeze(['cron', 'manual', 'assistant']);
 const ENTRY_SCHEMA = Object.freeze({
   id: { type: 'string', min: 1, max: 256 },
   title: { type: 'string', min: 1, max: 256 },
-  schedule: { type: 'string', max: 1024 },
+  schedule: { type: 'string', nullable: true, max: 1024 },
+  scheduleKind: { type: 'enum', values: ['interval', 'interval_unknown', 'cron', 'at', 'unknown', 'manual'] },
+  everyMs: { type: 'number', nullable: true, integer: true, minExclusive: 0 },
   startsAt: { type: 'date', nullable: true, max: 64 },
   status: { type: 'enum', values: STATUS_VALUES },
   assignee: { type: 'string', max: 256 },
@@ -42,7 +44,8 @@ function validField(value, rule) {
     case 'string': return typeof value === 'string' && value.length <= rule.max && !value.includes('\0') && (!rule.min || value.trim().length >= rule.min);
     case 'date': return typeof value === 'string' && value.length <= rule.max && Number.isFinite(Date.parse(value));
     case 'enum': return typeof value === 'string' && rule.values.includes(value);
-    case 'number': return typeof value === 'number' && Number.isFinite(value);
+    case 'number': return typeof value === 'number' && Number.isFinite(value)
+      && (!rule.integer || Number.isSafeInteger(value)) && (rule.minExclusive === undefined || value > rule.minExclusive);
     case 'overrides': return Array.isArray(value) && value.length <= CALENDAR_EDITABLE_FIELDS.length + CRON_OWNED_FIELDS.length
       && value.every(field => CALENDAR_EDITABLE_FIELDS.includes(field) || CRON_OWNED_FIELDS.includes(field));
     case 'derived': return plainObject(value) && Reflect.ownKeys(value).every(field => typeof field === 'string'

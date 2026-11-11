@@ -14,7 +14,7 @@ The producer matrix is health (`call get_health`), source sync inventory
 readiness, Hermes proxy health and whitelisted local integration metadata.
 Consumers are the six legacy dashboard endpoints, the Operations
 `readSnapshot().overview` contract, and the new synoptic. A scheduler refresh
-captures timeline changes/heartbeats using the existing JSONL ledger and then
+captures material timeline changes using the existing JSONL ledger and then
 refreshes its memory source; GET never captures or reads that file.
 
 `contract.d.ts` defines the v1 synoptic envelope. Legacy payloads retain their
@@ -31,14 +31,19 @@ aggregate and best-effort rather than attributable per reader; raw session or
 transcript bodies are not used. The synoptic therefore omits lastCallAt and
 callCount and the entire reader connection object. A top-level `readersNote`
 says `connection telemetry is not observable locally`. Unobservable telemetry
-has no effect on reader state or the aggregate synoptic state. Reader state is
-the integration reading's state: fresh, configured integration is healthy;
-not configured is inactive; a failed integration read is unavailable (including
+does not turn configuration evidence into an observed healthy reader. Each
+reader adds `observation: configured | observed | not_configured | unreadable`.
+The current producer supplies configuration only; `observed` is reserved for a
+future real connection/call telemetry source and is never inferred from a config
+read. Configured-but-unobserved and not-configured readers are inactive; a failed
+integration read is unavailable (including
 when the source retains a previously configured last-good value). Stale
-integration evidence remains warning. An unavailable reading means a read was
+integration evidence retains warning in `integration.state`, while the reader
+stays inactive without call/connection telemetry. `readersState` uses the shared
+core ordering over reader states. An unavailable reading means a read was
 attempted and failed, not that a telemetry source does not exist.
 
-Reader edges carry integration state, the label `configured`, and its observed
+Reader edges carry reader state, the label `configured`, and the configuration's observed
 at time, with no measurement or unit. The edge contract distinguishes these
 configuration edges from measured source/queue edges. The reader producer is
 `readReaders` (the four whitelisted local configuration files); the runtime
@@ -209,3 +214,62 @@ covers the reported short secrets and prose, complete-name boundaries, multiline
 JSON, page/search outputs and more than 15 negative controls. These counters were
 observed failing before repair. No core/frontend file or action definition was
 changed in this round.
+
+## Browser QA contract follow-up (2026-11-11)
+
+Producer matrix and consumer sweep:
+
+- Scheduled `getOverview().verdict` → timeline capture → JSONL read → memory
+  timeline source → `/api/gbrain/timeline`. New entries add `verdict` with
+  `{state, reasons: [{elementId, state, text}]}` and `trust.status` preserves its
+  real shared state, including unavailable. Older critical entries labelled
+  `GBrain unavailable` are exposed as unavailable on read, without rewriting the
+  ledger. A new entry's verdict takes priority over any legacy label.
+- Timeline fingerprints include states, counts/score and verdict reasons;
+  ticking oldest-embedding age, embedding detail, trust/proof labels, provenance
+  text and capture time are presentation, not changes. Raw age/detail fields
+  remain in stored entries. Identical refreshes never append, including after
+  the former one-hour heartbeat interval. Existing historical heartbeats remain
+  readable with their stored acknowledgement keys. Fingerprints are recomputed
+  for duplicate comparison so old algorithms do not force repeated appends.
+- The four whitelisted local reader configurations → runtime source → synoptic
+  reader/integration/edge fields → single verdict → overview → Operations →
+  Signals. `readers[].observation` is the sole new synoptic field. Integration
+  evidence keeps its existing shape. Config-only inactive reasons do not become
+  caveats or warning attention. Operations' Hermes/OpenClaw chips continue to use
+  their independent status/session/gateway/Kanban/scheduler readers; Signals
+  transports those chips. No telemetry, count or connection object is invented.
+- Source freshness policy → `freshness.js:classifySource` → both the legacy
+  `/sources` reading and synoptic items. Legacy `sources[].reason` is additive;
+  `sources[].excludedByPolicy` is now the same boolean policy result as synoptic
+  (sync disabled means true). Existing status and freshness fields stay present.
+
+Embedding investigation used the real CLI via the core runner, with numeric
+field/key whitelisting only. `stats --source __all__ --json` took 547 ms and
+reported page_count=58633, chunk_count=419371, embedded_count=418459 (delta 912).
+`call --source __all__ get_health` took 1107 ms and reported missing_embeddings=0.
+The complete stats keys were page_count, chunk_count, embedded_count, link_count,
+tag_count, timeline_entry_count, pages_by_type. Health reported coverage/missing
+counts and embedding_column, but no not-embeddable/eligibility/exclusion count.
+The non-atomic readings do not establish the meaning of their difference.
+No `core.notEmbeddable` or equivalent field was added or inferred by subtraction.
+The QA fixture retains the reported 916-versus-4 discrepancy and proves it cannot
+become a fabricated count.
+
+`tests/gbrainBrowserQa.test.js` exercises this producer/consumer seam with injected
+readers, including legacy-byte preservation, all shared states, an age-only
+sequence beyond an hour, material count/state/reason changes, configuration-only
+and unreadable readers, GET source-policy agreement and independent system chips.
+QA1–QA4 counter-examples were observed failing before repair; QA5 is investigation
+plus a passing no-fabrication guard, because the requested field is not reported.
+
+Scoped useful-live check: a separate area server on port 3401 refreshed real
+GBrain sources through the core runner, with a disposable timeline ledger. GET
+synoptic/sources/overview/timeline took 16.79/2.18/1.27/0.58 ms respectively, caused
+zero CLI calls, agreed on source policy and the captured single verdict, and
+reported all four locally configured readers as configured/inactive. The server
+was stopped and its scratch ledger removed; the existing 3399 server was not
+changed. Final sandbox gate: 648/648 root tests; 132/132 GBrain tests. Ten QA tests
+were added; eight fix counter-examples were observed RED before GREEN, while the
+investigation guard and consumer seam were additional passing checks. This is
+scoped live API evidence, not deployment or frontend-rendering confirmation.

@@ -208,6 +208,26 @@ function parseCronTableOutput(output) {
   return jobs;
 }
 
+// OpenClaw's JSON interval is { kind: 'every', everyMs, anchorMs }.
+// Keep its measured cadence; the kind name alone is not a schedule.
+function describeCronSchedule(job = {}) {
+  const raw = job.schedule;
+  const kind = typeof raw?.kind === 'string' ? raw.kind.toLowerCase() : null;
+  if (kind === 'every' || kind === 'interval' || raw === 'every') {
+    const everyMs = raw?.everyMs;
+    if (!Number.isSafeInteger(everyMs) || everyMs <= 0) return { schedule: null, scheduleKind: 'interval_unknown', everyMs: null };
+    const units = [[86400000, 'd'], [3600000, 'h'], [60000, 'm'], [1000, 's'], [1, 'ms']];
+    const [size, suffix] = units.find(([size]) => everyMs % size === 0);
+    return { schedule: `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs };
+  }
+  const expression = raw?.expr || raw?.display || job.schedule_display || (typeof raw === 'string' ? raw : null);
+  if (typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
+    return { schedule: expression, scheduleKind: kind === 'at' ? 'at' : 'cron', everyMs: null };
+  }
+  if (kind === 'at' && typeof raw.at === 'string' && Number.isFinite(Date.parse(raw.at))) return { schedule: raw.at, scheduleKind: 'at', everyMs: null };
+  return { schedule: null, scheduleKind: 'unknown', everyMs: null };
+}
+
 function createCronService({
   openclawExec,
   gatewayPort,
@@ -298,7 +318,7 @@ function createCronService({
       name: job.name || String(job.id || '').substring(0, 8) || 'Unnamed job',
       scheduler,
       schedulerLabel: scheduler === 'hermes' ? 'Hermes' : 'OpenClaw',
-      schedule: job.schedule?.expr || job.schedule?.display || job.schedule_display || job.schedule?.kind || '?',
+      ...describeCronSchedule(job),
       status: normalizeCronRunStatus(job),
       lastRun: job.state?.lastRunAtMs ? new Date(job.state.lastRunAtMs).toISOString() : null,
       nextRun: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
@@ -328,6 +348,7 @@ function createCronService({
       scheduler: 'hermes',
       sourceId: job.id,
       schedule: {
+        ...job.schedule,
         kind: job.schedule?.kind || 'cron',
         expr: job.schedule?.expr || job.schedule_display || job.schedule?.display || '?',
         display: job.schedule_display || job.schedule?.display || job.schedule?.expr || '?',
@@ -630,7 +651,9 @@ function createCronService({
     return {
       id: String(entry.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       title: String(entry.title || 'Untitled').trim() || 'Untitled',
-      schedule: String(entry.schedule || ''),
+      schedule: entry.schedule === null ? null : (entry.schedule || ''),
+      scheduleKind: entry.scheduleKind || (entry.source === 'cron' ? 'unknown' : 'manual'),
+      everyMs: entry.everyMs ?? null,
       startsAt: toIsoOrNull(entry.startsAt),
       status: String(entry.status || 'scheduled'),
       assignee: String(entry.assignee || 'Mudur'),
@@ -644,7 +667,7 @@ function createCronService({
       userOverrides: Array.isArray(entry.userOverrides)
         ? [...new Set(entry.userOverrides.filter(field => (entry.source === 'cron' ? CRON_OVERRIDABLE_FIELDS : CALENDAR_EDITABLE_FIELDS).includes(field)))] : [],
       cronDerived: entry.source === 'cron' && entry.cronDerived && typeof entry.cronDerived === 'object'
-        ? Object.fromEntries(CRON_OVERRIDABLE_FIELDS.filter(field => typeof entry.cronDerived[field] === 'string')
+        ? Object.fromEntries(CRON_OVERRIDABLE_FIELDS.filter(field => Object.hasOwn(entry.cronDerived, field))
           .map(field => [field, entry.cronDerived[field]])) : null,
     };
   }
@@ -744,9 +767,10 @@ function createCronService({
 
     const syncedCronEntries = cronJobs.map((job) => {
       const previous = existingCronEntries.get(String(job.id)) || {};
+      const schedule = describeCronSchedule(job);
       const cronDerived = {
         title: job.name || String(job.id || 'Cron job'),
-        schedule: job.schedule?.expr || job.schedule?.display || job.schedule?.kind || '',
+        schedule: schedule.schedule,
         notes: job.payload?.text ?? job.payload?.message ?? '',
         assignee: 'Mudur',
       };
@@ -757,6 +781,8 @@ function createCronService({
       const derived = {
         ...previous,
         ...cronDerived,
+        scheduleKind: schedule.scheduleKind,
+        everyMs: schedule.everyMs,
         id: previous.id || `cron-${job.id}`,
         startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
         status: normalizeCronRunStatus(job),
@@ -823,6 +849,8 @@ function createCronService({
       lastSyncedAt: nowIso,
       userOverrides: [],
       cronDerived: null,
+      scheduleKind: 'manual',
+      everyMs: null,
     }, nowIso);
 
     const next = writeCalendarDataSafe({
@@ -856,7 +884,7 @@ function createCronService({
       if (!Object.hasOwn(existing.cronDerived || {}, field) && existing.userOverrides.includes(field)) {
         throw httpError(409, 'calendar_override_unavailable', 'Sync cron before clearing a legacy override');
       }
-      patch[field] = existing.cronDerived?.[field] ?? existing[field];
+      patch[field] = Object.hasOwn(existing.cronDerived || {}, field) ? existing.cronDerived[field] : existing[field];
     }
     const candidate = normalizeCalendarEntry({ ...existing, ...patch }, nowIso);
     const changedFields = editedFields.filter(field => candidate[field] !== existing[field]);

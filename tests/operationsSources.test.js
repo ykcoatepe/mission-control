@@ -205,7 +205,7 @@ test('signals: nothing observed yields nulls and unavailable systems, never zero
   });
   assert.equal(status, 200);
   assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage']);
-  assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null });
+  assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null, reason: 'GBrain overview could not be read.', detailHref: '/gbrain' });
   assert.equal(body.data.automations, null);
   assert.equal(body.data.loops, null);
   assert.equal(body.data.services, null);
@@ -220,11 +220,11 @@ test('signals compose loops, services, automations and usage from memory', async
   const loops = {
     observedAt: generatedAt,
     projects: [
-      { id: 'argus-x', restricted: true, openFindings: 2, pendingConfirmations: 1, overdueConfirmations: 1, countsBasis: 'mloop-check' },
+      { id: 'argus-x', restricted: true, openFindings: 2, pendingConfirmations: 1, overdueConfirmations: 1, operatorFindings: 1, worstSeverity: 'warning', countsBasis: 'mloop-check' },
       {
         id: 'p', restricted: false, title: 'p', outcome: null, openFindings: { total: 1, bySeverity: { error: 1, warning: 0, info: 0 }, byCode: { X: 1 } },
         pendingConfirmations: [{ unit: 'u', verification: 'v', deadline: '2026-07-09T00:00:00Z', overdue: true }], participants: [], lastActivityAt: null, errors: [],
-        findings: [], statusMarkdown: '',
+        findings: [{ code: 'X', severity: 'error', subject: 's', detail: 'd', summary: 'd' }], statusMarkdown: '',
       },
     ],
     attention: [
@@ -242,13 +242,16 @@ test('signals compose loops, services, automations and usage from memory', async
     usageSummary: () => ({ todayUsd: 3.5, budgetUsedPct: 41 }),
     now: () => T0,
   });
-  assert.deepEqual(body.data.systems.hermes, { state: 'healthy', observedAt: generatedAt });
+  assert.deepEqual(body.data.systems.hermes, { state: 'healthy', observedAt: generatedAt, reason: null, detailHref: '/work' });
   assert.deepEqual(body.data.loops, { openFindings: 3, overdueConfirmations: 2 });
   assert.deepEqual(body.data.services, { down: 3 });
   assert.deepEqual(body.data.automations, { failed: 1, nextRunAt: '2026-07-10T12:30:00.000Z' });
   assert.deepEqual(body.data.usage, { todayUsd: 3.5, budgetUsedPct: 41 });
-  // Systems are healthy, so attention is the loop items minus info.
-  assert.deepEqual(body.data.attention, { count: 2, worst: 'critical' });
+  // Systems are healthy: p's error finding + p's overdue confirmation +
+  // argus-x by counts only (1 operator finding + 1 overdue).
+  assert.deepEqual(body.data.attention, {
+    count: 4, worst: 'critical', breakdown: { systems: 0, findings: 1, overdueConfirmations: 1, restricted: 2 },
+  });
   assert.doesNotMatch(JSON.stringify(body), /argus-x/, 'signals carry no restricted project identity');
 });
 

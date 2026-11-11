@@ -15,6 +15,10 @@ function summarizeJobs(jobs, nowMs) {
     // not evidence of a failed last run.
     failed: enabled.filter(job => ['failed', 'error', 'errored'].includes(String(job.status || '').trim().toLowerCase())).length,
     nextRunAt: nextRuns[0] || null,
+    definitions: {
+      active: 'Counts every enabled job, including enabled jobs whose last run failed.',
+      failed: 'Enabled jobs whose last run failed; a subset of active, not a separate population.',
+    },
   };
 }
 

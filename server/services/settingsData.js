@@ -234,11 +234,39 @@ function createSettingsService({
   }
 
   function getModelRouting() {
-    const cfg = readOpenclawConfigSafe();
-    const main = cfg?.agents?.defaults?.model?.primary || null;
-    const subagent = cfg?.agents?.defaults?.subagents?.model?.primary || null;
-    const heartbeat = cfg?.agents?.defaults?.heartbeat?.model || null;
-    return { main, subagent, heartbeat };
+    let cfg = null;
+    try { cfg = readOpenclawConfigSafe(); } catch { /* Read failures stay visible below. */ }
+    const observed = cfg !== null;
+    const field = (keys) => {
+      if (!observed) return { value: null, source: 'unreadable' };
+      let value = cfg;
+      for (const key of keys) {
+        if (value == null) return { value: null, source: 'unset' };
+        if (typeof value !== 'object' || Array.isArray(value)) return { value: null, source: 'unreadable' };
+        value = Object.hasOwn(value, key) ? value[key] : undefined;
+      }
+      if (value == null || (typeof value === 'string' && !value.trim())) return { value: null, source: 'unset' };
+      return typeof value === 'string'
+        ? { value, source: 'set' }
+        : { value: null, source: 'unreadable' };
+    };
+    const main = field(['agents', 'defaults', 'model', 'primary']);
+    const subagent = field(['agents', 'defaults', 'subagents', 'model', 'primary']);
+    const heartbeat = field(['agents', 'defaults', 'heartbeat', 'model']);
+    const unreadable = [main, subagent, heartbeat].some((entry) => entry.source === 'unreadable');
+    return {
+      main: main.value, subagent: subagent.value, heartbeat: heartbeat.value,
+      mainSource: main.source, subagentSource: subagent.source, heartbeatSource: heartbeat.source,
+      meta: {
+        ok: !unreadable, stale: unreadable,
+        observedAt: observed ? new Date().toISOString() : null,
+        ageMs: observed ? 0 : null, latencyMs: null, source: 'settings.local-config',
+        error: unreadable ? {
+          code: observed ? 'invalid_model_routing' : 'settings_config_unavailable',
+          message: observed ? 'Some model routing fields could not be read' : 'OpenClaw configuration could not be read',
+        } : null,
+      },
+    };
   }
 
   async function setModelRouting(body = {}) {
@@ -303,7 +331,9 @@ function createSettingsService({
       needsSetup = currentConfig === defaultConfig;
     }
 
+    const publicName = getPublicConfig().name;
     const detectedConfig = {
+      dashboardName: typeof mcConfig.name === 'string' && mcConfig.name.trim() && typeof publicName === 'string' ? publicName : null,
       model: null,
       channels: null,
       agentName: null,

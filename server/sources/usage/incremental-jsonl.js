@@ -226,7 +226,7 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
     const persistent = !!cacheDir;let listing;
     const scratch = [];
     const temp = () => { const p = path.join(cacheDir, `run-${process.pid}-${crypto.randomBytes(8).toString('hex')}.jsonl`); scratch.push(p); return p; };
-    let old = { version: 1, format, files: {} }, index = { version: 1, format, files: {} }, partial = false;
+    let old = { version: 1, format, files: {} }, index = { version: 1, format, files: {} }, partial = false, skippedLines = 0, oversizedLines = 0;
     const memory = new Map(), cacheFiles = [], createdCanonical=new Set();let budget,committed=false;
     if (persistent) {
         await fs.promises.mkdir(cacheDir, { recursive: true });
@@ -255,6 +255,9 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             let previous = saved;
             if (previous && (!Number.isSafeInteger(previous.size) || previous.size < 0 || !Number.isSafeInteger(previous.offset) || previous.offset < 0 || previous.offset > previous.size || !Number.isFinite(previous.mtimeMs) || !Number.isSafeInteger(previous.count) || previous.count < 0 || !/^[a-f0-9]{64}$/.test(previous.digest || '')))
                 previous = null;
+            // Older manifests lack diagnostics: rescan once, then retain exact
+            // counters through unchanged files and byte-offset append refreshes.
+            if (previous && ['skippedLines', 'oversizedLines', 'permanentSkippedLines', 'permanentOversizedLines'].some(k => !Number.isSafeInteger(previous[k]) || previous[k] < 0)) previous = null;
             if (persistent && previous) {
                 const target = path.join(cacheDir, previous.cache || 'invalid');
                 if (!/^[a-f0-9]{64}\.jsonl$/.test(previous.cache || '') || !await validateCache(fs, target, previous))
@@ -264,11 +267,13 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             if (unchanged) {
                 index.files[key] = previous;
                 partial ||= previous.partial;
+                skippedLines += previous.skippedLines; oversizedLines += previous.oversizedLines;
                 cacheFiles.push(path.join(cacheDir, previous.cache));
                 continue;
             }
             const append = previous && stat.size > previous.size && previous.ino === stat.ino && previous.offset <= previous.size && previous.anchor === await anchor(fs, file, previous.offset) && previous.head === await anchor(fs, file, Math.min(previous.size, 256));
             let state = context(file, append ? previous.context : null), offset = append ? previous.offset : 0, filePartial = append ? previous.permanentPartial : false, tailPartial = false;
+            let fileSkipped = append ? previous.permanentSkippedLines : 0, fileOversized = append ? previous.permanentOversizedLines : 0, tailSkipped = 0, tailOversized = 0;
             const runs = append ? [path.join(cacheDir, previous.cache)] : [], batch = [];
             async function flush() { if (!batch.length)
                 return; batch.sort((a, b) => a.id.localeCompare(b.id)); const target = temp(); await writeRecords(fs, target, batch, budget); runs.push(target); batch.length = 0; }
@@ -276,8 +281,10 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             for await (const line of lines(fs, file, { start: offset, end: Number.isFinite(stat.size) ? stat.size - 1 : undefined })) {
                 if (line.text === null) {
                     filePartial = true;
-                    if (line.terminated)
+                    if (line.terminated) {
+                        fileSkipped++; fileOversized++;
                         offset = line.nextOffset;
+                    } else { tailSkipped++; tailOversized++; }
                     continue;
                 }
                 if (!line.text.trim()) {
@@ -291,15 +298,21 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
                     object = JSON.parse(line.text);
                 }
                 catch {
-                    if (line.terminated)
+                    if (line.terminated) {
                         filePartial = true;
-                    else
+                        fileSkipped++;
+                    } else {
                         tailPartial = true;
+                        tailSkipped++;
+                    }
                     if (line.terminated)
                         offset = line.nextOffset;
                     continue;
                 }
+                const beforeSkipped = state.skippedLines ?? 0;
                 const row = normalize(object, state, { file, offset: line.offset, mtimeMs: stat.mtimeMs });
+                const normalizationSkips = (state.skippedLines ?? 0) - beforeSkipped;
+                if (line.terminated) fileSkipped += normalizationSkips; else tailSkipped += normalizationSkips;
                 if (row) {
                     if (!validRecord(row))
                         throw Error('Invalid normalized usage counts');
@@ -324,6 +337,7 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             }
             filePartial ||= !!state.partial;
             partial ||= filePartial || tailPartial;
+            skippedLines += fileSkipped + tailSkipped; oversizedLines += fileOversized + tailOversized;
             if (persistent) {
                 await flush();
                 const inputs = await collapse(runs), target = temp();
@@ -332,7 +346,8 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
                 await budget.rename(target,path.join(cacheDir,cache));
                 if(!oldReferences.has(cache))createdCanonical.add(path.join(cacheDir,cache));
                 const entry = {
-                    size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino, offset, anchor: await anchor(fs, file, offset), head: await anchor(fs, file, Math.min(stat.size, 256)), context: checkpoint, cache, ...summary, partial: filePartial || tailPartial, permanentPartial: filePartial
+                    size: stat.size, mtimeMs: stat.mtimeMs, ino: stat.ino, offset, anchor: await anchor(fs, file, offset), head: await anchor(fs, file, Math.min(stat.size, 256)), context: checkpoint, cache, ...summary, partial: filePartial || tailPartial, permanentPartial: filePartial,
+                    skippedLines: fileSkipped + tailSkipped, oversizedLines: fileOversized + tailOversized, permanentSkippedLines: fileSkipped, permanentOversizedLines: fileOversized
                 };
                 index.files[key] = entry;
                 cacheFiles.push(path.join(cacheDir, cache));
@@ -353,7 +368,7 @@ async function scanIncremental({ root, cacheDir, fs = fsDefault, since, until, n
             for (const row of memory.values())
                 if (row.date >= since && row.date <= until)
                     consume(row);
-        return { partial, files: listing.files.length };
+        return { partial, files: listing.files.length, skippedLines, oversizedLines };
     }
     finally {
         if (persistent) {

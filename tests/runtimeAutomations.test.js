@@ -36,7 +36,10 @@ test('automation source keeps last good with typed stale failure; never invents 
   assert.equal(source.snapshot().data, null);
   await source.refresh();
   const first = source.snapshot();
-  assert.deepEqual(first.data.cron.summary, { active: 1, paused: 0, failed: 1, nextRunAt: '2026-11-12T00:00:00Z' });
+  assert.deepEqual(first.data.cron.summary, { active: 1, paused: 0, failed: 1, nextRunAt: '2026-11-12T00:00:00Z', definitions: {
+    active: 'Counts every enabled job, including enabled jobs whose last run failed.',
+    failed: 'Enabled jobs whose last run failed; a subset of active, not a separate population.',
+  } });
   f.fail();
   await source.refresh();
   const after = source.snapshot();

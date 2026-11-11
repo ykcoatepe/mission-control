@@ -11,6 +11,7 @@ function groupedDays(rows) { const grouped = new Map(); for (const row of rows) 
         for (const k of COUNTS)
             previous[k] += row[k];
         previous.billedUsd = previous.billedUsd === null || row.billedUsd === null ? null : previous.billedUsd + row.billedUsd;
+        previous.isLocal = previous.isLocal === row.isLocal ? row.isLocal : null;
     }
 } return [...grouped.values()]; }
 function ownerBank(owner) {

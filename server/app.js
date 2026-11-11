@@ -342,7 +342,7 @@ function createApp(deps = {}) {
     const sibling = (read) => {
       try { return read(); } catch { return null; }
     };
-    app.use(buildLoopsRouter({ loopsSource }));
+    app.use(buildLoopsRouter({ loopsSource, operationsOverviewService: overviewService }));
     app.use(buildServicesRouter({ launchdSource, reachabilitySource }));
     app.use(buildSignalsRouter({
       operationsOverviewService: overviewService,

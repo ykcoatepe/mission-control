@@ -95,6 +95,61 @@ test('source single-flights background probes and uses async argv runner for ior
   assert.equal(f.source.snapshot().data.gpu.devices[0].memTotalMiB, 2);
 });
 
+test('Apple GPU tiler and allocated memory stay distinct from device use and hardware totals across probes', async () => {
+  const samples = [
+    { device: 13, renderer: 19, tiler: 71, allocatedMiB: 8, usedMiB: 2 },
+    { device: 29, renderer: 37, tiler: 83, allocatedMiB: 16, usedMiB: 6 },
+  ];
+  let index = 0;
+  const f = fixture({ platform: 'darwin', runner: { async run() {
+    const sample = samples[index++];
+    return { ok: true, stdout: [
+      `"Device Utilization %" = ${sample.device}`,
+      `"Renderer Utilization %" = ${sample.renderer}`,
+      `"Tiler Utilization %" = ${sample.tiler}`,
+      `"Alloc system memory" = ${sample.allocatedMiB * 1024 * 1024}`,
+      `"In use system memory" = ${sample.usedMiB * 1024 * 1024}`,
+    ].join('\n') };
+  } } });
+
+  for (const sample of samples) {
+    await f.source.refresh();
+    const device = f.source.snapshot().data.gpu.devices[0];
+    assert.equal(device.utilGpu, sample.device);
+    assert.equal(device.tilerUtilPercent, sample.tiler);
+    assert.notEqual(device.tilerUtilPercent, device.utilGpu);
+    assert.equal(device.memAllocatedMiB, sample.allocatedMiB);
+    assert.equal(device.memUsedMiB, sample.usedMiB);
+    assert.equal(device.memHardwareTotalMiB, null, 'ioreg allocation does not measure hardware capacity');
+    assert.equal(device.memFreeMiB, null, 'allocated minus used is not hardware free memory');
+    assert.equal(device.utilMemory, sample.tiler, 'retain the deprecated alias');
+    assert.equal(device.memTotalMiB, sample.allocatedMiB, 'retain the deprecated alias');
+    assert.equal(device.metricSource, 'apple-ioreg');
+    assert.match(device.metricSourceNote, /allocated.*not.*hardware total/i);
+    assert.equal(device.deprecatedAliases.utilMemory.replacement, 'tilerUtilPercent');
+    assert.match(device.deprecatedAliases.utilMemory.note, /tiler/i);
+    assert.equal(device.deprecatedAliases.memTotalMiB.replacement, 'memAllocatedMiB');
+    assert.match(device.deprecatedAliases.memTotalMiB.note, /not.*hardware total/i);
+    assert.match(device.deprecatedAliases.memFreeMiB.note, /not measured/i);
+  }
+  assert.equal(index, 2);
+  assert.deepEqual(f.source.history().map((point) => point.gpuUtilPercent), [13, 29]);
+  assert.deepEqual(f.source.history().map((point) => point.gpuMemoryPercent), [null, null], 'allocation changes must not create hardware usage percentages');
+});
+
+test('Apple GPU absent tiler and allocation readings remain null', async () => {
+  const f = fixture({ platform: 'darwin', runner: { async run() {
+    return { ok: true, stdout: '"Device Utilization %" = 7' };
+  } } });
+  await f.source.refresh();
+  const device = f.source.snapshot().data.gpu.devices[0];
+  assert.equal(device.utilGpu, 7);
+  for (const field of ['tilerUtilPercent', 'utilMemory', 'memAllocatedMiB', 'memTotalMiB', 'memUsedMiB', 'memHardwareTotalMiB', 'memFreeMiB']) {
+    assert.equal(device[field], null, `${field} is unknown rather than zero or inferred`);
+  }
+  assert.equal(f.source.history()[0].gpuMemoryPercent, null);
+});
+
 test('malformed inventory is unknown, never an authoritative empty list', async () => {
   const source = createOllamaSource({ platform: 'linux', fetchImpl: async () => ({ ok: true, json: async () => ({}) }) });
   await source.refresh();

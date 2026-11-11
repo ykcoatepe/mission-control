@@ -73,7 +73,8 @@ async function readCodexLogs({ since, until }, { fs = fsDefault, home = process.
     const ownership = [...owned.values()].map(row => ({ owner: 'hermes', ...row }));
     const coverageReasons = [...(scan.partial ? ['producer_partial'] : []), ...(ownership.length ? ['ownership_pending'] : [])];
     return {
-        days: [...days.values()].map(({ latestUsageAt, ...row }) => row), ownership, coverageReasons, observedAt: new Date(now()).toISOString(), coverage: coverageReasons.length ? 'partial' : 'complete', note: scan.partial ? 'Codex incremental scan incomplete; totals may be understated' : ownership.length ? 'Hermes-owned counts retained for composition-time ownership resolution' : 'Local Codex App and CLI usage records; billing unknown unless recorded'
+        days: [...days.values()].map(({ latestUsageAt, ...row }) => row), ownership, coverageReasons, skippedLines: scan.skippedLines, oversizedLines: scan.oversizedLines,
+        observedAt: new Date(now()).toISOString(), coverage: coverageReasons.length ? 'partial' : 'complete', note: scan.partial ? 'Codex incremental scan incomplete; totals may be understated' : ownership.length ? 'Hermes-owned counts retained for composition-time ownership resolution' : 'Local Codex App and CLI usage records; billing unknown unless recorded'
     };
 }
 module.exports = { readCodexLogs };

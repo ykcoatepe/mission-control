@@ -23,35 +23,41 @@ const os = require('os');
 const path = require('path');
 const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
+const { scrubText } = require('../../core/scrub');
+const { CONFIRMATION_CODES, OVERDUE_CODES, isOperatorFinding, needsOperator } = require('./attention');
 
 const MLOOP_SOURCE_ID = 'mloop.loops';
 const MLOOP_REFRESH_INTERVAL_MS = 60_000;
 const RESTRICTED_PATTERN = /argus/i;
 const PROJECT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const SEVERITY_RANK = { error: 3, warning: 2, info: 1 };
-// Findings that stand for a pending live confirmation (counted for restricted
-// projects, where the TEYİT ledger itself is never read).
-const CONFIRMATION_CODES = new Set([
-  'TEYIT_DUE', 'TEYIT_STALE', 'TEYIT_UNRESOLVED', 'DEPLOYED_UNCONFIRMED', 'ACCEPTED_NOT_LIVE',
-]);
-// TEYIT_STALE = deadline passed (aggregated rows carry `count`).
-const OVERDUE_CODES = new Set(['TEYIT_STALE']);
 const PARTICIPANT_DEAD_CODES = new Set(['BINDING_DEAD', 'MANAGER_SILENT']);
 const MAX_TEXT = 300;
 const MAX_STATUS_CHARS = 16_000;
+// A finding's full detail is kept (hard cap only against a runaway row); the
+// bounded `summary` is what a list shows.
+const MAX_DETAIL = 4_000;
+const MAX_SUMMARY = 160;
 
 function isRestrictedText(value) {
   return typeof value === 'string' && RESTRICTED_PATTERN.test(value);
 }
 
+// Credentials and home paths through the one sanitizer (server/core/scrub.js).
 function cleanText(value, max = MAX_TEXT) {
   if (typeof value !== 'string') return null;
-  const cleaned = value
-    .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/g, '[redacted]')
-    .replace(/\b(token|secret|password|api[_-]?key)(\s*[=:]\s*)[^\s,;]+/gi, '$1$2[redacted]')
-    .replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
+  const cleaned = scrubText(value);
   return cleaned.length > max ? `${cleaned.slice(0, max - 1)}…` : cleaned;
+}
+
+// First line, cut at a word boundary to at most MAX_SUMMARY characters.
+function summaryOf(text) {
+  if (typeof text !== 'string') return null;
+  const line = text.split('\n')[0].trim();
+  if (line.length <= MAX_SUMMARY) return line;
+  const cut = line.slice(0, MAX_SUMMARY - 1);
+  const space = cut.lastIndexOf(' ');
+  return `${(space > MAX_SUMMARY / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
 function isoOrNull(value) {
@@ -96,6 +102,22 @@ function findingCount(row) {
   return Number.isInteger(row?.count) && row.count > 0 ? row.count : 1;
 }
 
+function emptyRestrictedCounts() {
+  return { openFindings: 0, pendingConfirmations: 0, overdue: 0, operatorFindings: 0, worst: null, operatorWorst: null };
+}
+
+// Counts only: a restricted row's subject and detail never reach here.
+function addRestrictedRow(counts, { code, severity, count }) {
+  counts.openFindings += 1;
+  if (CONFIRMATION_CODES.has(code)) counts.pendingConfirmations += findingCount({ count });
+  if (OVERDUE_CODES.has(code)) counts.overdue += findingCount({ count });
+  if (isOperatorFinding({ code, severity })) counts.operatorFindings += 1;
+  if (!counts.worst || SEVERITY_RANK[severity] > SEVERITY_RANK[counts.worst]) counts.worst = severity;
+  if (severity !== 'info' && (!counts.operatorWorst || SEVERITY_RANK[severity] > SEVERITY_RANK[counts.operatorWorst])) {
+    counts.operatorWorst = severity;
+  }
+}
+
 function emptyCounts() {
   return { total: 0, bySeverity: { error: 0, warning: 0, info: 0 }, byCode: {} };
 }
@@ -111,20 +133,19 @@ function groupFindings(rows) {
     if (!project || !PROJECT_ID_PATTERN.test(project)) continue;
     const severity = SEVERITY_RANK[row.severity] ? row.severity : 'warning';
     if (isRestrictedText(project)) {
-      const counts = restricted.get(project) || { openFindings: 0, pendingConfirmations: 0, overdue: 0, worst: null };
-      counts.openFindings += 1;
-      if (CONFIRMATION_CODES.has(row.code)) counts.pendingConfirmations += findingCount(row);
-      if (OVERDUE_CODES.has(row.code)) counts.overdue += findingCount(row);
-      if (!counts.worst || SEVERITY_RANK[severity] > SEVERITY_RANK[counts.worst]) counts.worst = severity;
+      const counts = restricted.get(project) || emptyRestrictedCounts();
+      addRestrictedRow(counts, { code: row.code, severity, count: row.count });
       restricted.set(project, counts);
       continue;
     }
     const list = open.get(project) || [];
+    const detail = cleanText(row.detail, MAX_DETAIL);
     list.push({
       code: typeof row.code === 'string' ? row.code.slice(0, 64) : 'UNKNOWN',
       subject: cleanText(row.subject, 160),
       severity,
-      detail: cleanText(row.detail, MAX_TEXT),
+      detail,
+      summary: summaryOf(detail),
       at: isoOrNull(row.ts),
       ...(Number.isInteger(row.count) ? { count: row.count } : {}),
     });
@@ -211,6 +232,8 @@ function restrictedProject(id, counts = {}) {
     openFindings: counts.openFindings || 0,
     pendingConfirmations: counts.pendingConfirmations || 0,
     overdueConfirmations: counts.overdue || 0,
+    operatorFindings: counts.operatorFindings || 0,
+    worstSeverity: counts.operatorWorst || null,
     countsBasis: 'mloop-check',
   };
 }
@@ -229,6 +252,7 @@ function rankAttention(projects, restrictedCounts) {
         code: finding.code,
         subject: finding.subject,
         detail: finding.detail,
+        summary: finding.summary,
         at: finding.at,
         ...(finding.count != null ? { count: finding.count } : {}),
       });
@@ -339,13 +363,9 @@ function createMloopReader({
       if (isRestrictedText(id)) return restrictedProject(id, restricted.get(id));
       const project = await readProject(id, open.get(id) || []);
       if (project.restrictedByTitle) {
-        const findings = open.get(id) || [];
-        const counts = {
-          openFindings: findings.length,
-          pendingConfirmations: findings.filter((f) => CONFIRMATION_CODES.has(f.code)).reduce((n, f) => n + (f.count || 1), 0),
-          overdue: findings.filter((f) => OVERDUE_CODES.has(f.code)).reduce((n, f) => n + (f.count || 1), 0),
-          worst: findings.reduce((w, f) => (!w || SEVERITY_RANK[f.severity] > SEVERITY_RANK[w] ? f.severity : w), null),
-        };
+        const counts = emptyRestrictedCounts();
+        for (const finding of open.get(id) || []) addRestrictedRow(counts, finding);
+        open.delete(id);
         restricted.set(id, counts);
         return restrictedProject(id, counts);
       }
@@ -395,7 +415,9 @@ function projectSummary(project) {
   };
 }
 
-function loopsView(data) {
+// systemsAttention: the Operations overview's attention items (null when not
+// supplied); used only for totals.needsOperator, shared with /api/signals.
+function loopsView(data, { systemsAttention = null } = {}) {
   if (!data) return null;
   const projects = data.projects.map(projectSummary);
   const totals = { projects: projects.length, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 };
@@ -410,6 +432,7 @@ function loopsView(data) {
       totals.overdueConfirmations += project.pendingConfirmations?.filter((item) => item.overdue).length || 0;
     }
   }
+  totals.needsOperator = needsOperator({ systemsAttention, loops: data });
   return { observedAt: data.observedAt, totals, projects, attention: data.attention };
 }
 

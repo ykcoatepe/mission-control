@@ -32,15 +32,39 @@ async function readGpu({ runner, platform }) {
   try { result = await runner.run('ioreg', ['-r', '-d', '1', '-w', '0', '-c', 'IOAccelerator'], { lane: 'default', key: 'ollama.gpu', timeoutMs: 1500, queueTimeoutMs: 1500, maxOutputBytes: 4 * 1024 * 1024 }); } catch { return { ...missing, limitation: 'GPU telemetry could not be read' }; }
   if (!result.ok || !result.stdout?.trim()) return { ...missing, limitation: 'GPU telemetry could not be read' };
   const raw = result.stdout;
-  const total = parseIoregNumber(raw, 'Alloc system memory');
+  const allocated = parseIoregNumber(raw, 'Alloc system memory');
   const used = parseIoregNumber(raw, 'In use system memory');
   const cores = parseIoregNumber(raw, 'gpu-core-count');
   const mib = (n) => n === null ? null : Math.round(n / (1024 * 1024));
   const utilDevice = parseIoregNumber(raw, 'Device Utilization %');
   const utilRenderer = parseIoregNumber(raw, 'Renderer Utilization %');
   const utilTiler = parseIoregNumber(raw, 'Tiler Utilization %');
-  if ([total, used, cores, utilDevice, utilRenderer, utilTiler].every((n) => n === null)) return { ...missing, limitation: 'GPU metrics were not present in the probe output' };
-  return { available: true, platform, limited: false, limitation: null, devices: [{ index: '0', name: raw.match(/"model"\s*=\s*"([^"]+)"/)?.[1] ?? null, vendor: 'Apple', cores: cores === null ? null : String(cores), utilGpu: utilDevice ?? utilRenderer, utilMemory: utilTiler, memTotalMiB: mib(total), memUsedMiB: mib(used), memFreeMiB: total === null || used === null ? null : mib(Math.max(0, total - used)), tempC: null, powerDraw: null, powerLimit: null, memUsedEstimate: false, metricSource: 'apple-ioreg', memorySource: 'apple-ioreg-unified-memory' }] };
+  if ([allocated, used, cores, utilDevice, utilRenderer, utilTiler].every((n) => n === null)) return { ...missing, limitation: 'GPU metrics were not present in the probe output' };
+  return {
+    available: true, platform, limited: false, limitation: null,
+    devices: [{
+      index: '0', name: raw.match(/"model"\s*=\s*"([^"]+)"/)?.[1] ?? null,
+      vendor: 'Apple', cores: cores === null ? null : String(cores),
+      utilGpu: utilDevice ?? utilRenderer,
+      tilerUtilPercent: utilTiler,
+      memAllocatedMiB: mib(allocated),
+      memUsedMiB: mib(used),
+      // IOAccelerator reports allocation and use, not hardware capacity or free memory.
+      memHardwareTotalMiB: null,
+      memFreeMiB: null,
+      utilMemory: utilTiler,
+      memTotalMiB: mib(allocated),
+      deprecatedAliases: {
+        utilMemory: { replacement: 'tilerUtilPercent', note: 'Apple tiler utilization, not memory utilization.' },
+        memTotalMiB: { replacement: 'memAllocatedMiB', note: 'Allocated system memory, not hardware total memory.' },
+        memFreeMiB: { replacement: null, note: 'Hardware free memory is not measured by this probe.' },
+      },
+      tempC: null, powerDraw: null, powerLimit: null, memUsedEstimate: false,
+      metricSource: 'apple-ioreg',
+      metricSourceNote: 'Utilization comes from Apple device/renderer and tiler counters. Alloc system memory is allocated unified memory, not hardware total memory; hardware capacity and free memory are not measured.',
+      memorySource: 'apple-ioreg-unified-memory',
+    }],
+  };
 }
 function createOllamaSource({ runner, mcConfig = {}, fetchImpl = global.fetch, osImpl = os, platform = process.platform, now = Date.now, logger } = {}) {
   let history = [];
@@ -97,7 +121,7 @@ function createOllamaSource({ runner, mcConfig = {}, fetchImpl = global.fetch, o
     const checks = Object.fromEntries([['ps', ps], ['tags', tags], ['version', version]].map(([key, result]) => [key, { ok: result.ok, error: result.error }]));
     const payload = { generatedAt, healthScore, alerts, server: { baseUrl: cfg.baseUrl, status, enabled: true, host: cfg.host, port: cfg.port, latencyMs, version: typeof version.payload?.version === 'string' ? version.payload.version : null, checks, error: null }, runtime: { runningModels: running.size, totalModels: models.length, canAcceptRequests: true }, models, optimization: { enabled: cfg.optimization.enabled, current: cfg.optimization, recommendation, applyCommands: getApplyCommands(recommendation), platform }, system, gpu };
     const device = gpu.devices[0];
-    history.push({ generatedAt, healthScore, status, latencyMs, memoryUsedPercent: usedPercent, cpuUsagePercent: cpuPercent, gpuUtilPercent: device?.utilGpu ?? null, gpuMemoryPercent: device?.memTotalMiB > 0 && device.memUsedMiB !== null ? device.memUsedMiB / device.memTotalMiB * 100 : null, runningModels: running.size, totalModels: models.length, alerts });
+    history.push({ generatedAt, healthScore, status, latencyMs, memoryUsedPercent: usedPercent, cpuUsagePercent: cpuPercent, gpuUtilPercent: device?.utilGpu ?? null, gpuMemoryPercent: null, runningModels: running.size, totalModels: models.length, alerts });
     history = history.filter((item) => Date.parse(item.generatedAt) >= now() - 86400000).slice(-17280);
     return payload;
   }

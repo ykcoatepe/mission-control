@@ -143,7 +143,8 @@ test('Argus counter-example: restricted projects expose counts only and are neve
   const view = loopsView(data);
   const argus = view.projects.find((p) => p.id === 'argus-live');
   assert.deepEqual(argus, {
-    id: 'argus-live', restricted: true, openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3, countsBasis: 'mloop-check',
+    id: 'argus-live', restricted: true, openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3,
+    operatorFindings: 2, worstSeverity: 'error', countsBasis: 'mloop-check',
   });
   const disguised = view.projects.find((p) => p.id === 'disguised');
   assert.equal(disguised.restricted, true);
@@ -239,4 +240,38 @@ test('GET /api/loops never runs mloop', async () => {
     await fetch(`${base}/api/loops/gbrain-maint`);
   });
   assert.equal(exec.calls.length, before);
+});
+
+test('status markdown and finding text go through the shared scrubber; detail is full, summary is bounded', async () => {
+  const longDetail = `open at twice its deadline window: ${'keep or kill this confirmation; '.repeat(20)}see /var/root/notes and %2FUsers%2Falice%2Fprivate`;
+  const exec = {
+    calls: [],
+    async run(file, args) {
+      if (args[0] === 'check') {
+        return ok([{ project: 'gbrain-maint', code: 'TEYIT_KEEP_KILL', subject: 'r10', severity: 'warning', detail: longDetail, ts: '2026-11-10T00:00:00Z' }]);
+      }
+      const command = args[3];
+      if (command === 'status') {
+        return ok(JSON.stringify('# gbrain-maint\nOutcome: ok\n- evidence: /System/Volumes/Data/Users/alice/gbr/k8.md\n- C:\\Users\\alice\\x\n- /var/root/.ssh/id\n'));
+      }
+      return ok([]);
+    },
+  };
+  const { source } = makeSource({ exec, fsImpl: fakeFs({ dirs: ['gbrain-maint'] }) });
+  await source.refresh();
+  const data = source.snapshot().data;
+  const detail = loopDetailView(data, 'gbrain-maint');
+  assert.doesNotMatch(detail.statusMarkdown, /alice|\/var\/root/i);
+  assert.match(detail.statusMarkdown, /evidence: ~\/gbr\/k8\.md/);
+  const [item] = loopsView(data).attention;
+  for (const text of [item.detail, detail.findings[0].detail]) {
+    assert.doesNotMatch(text, /alice|\/var\/root|%2FUsers/i);
+    assert.doesNotMatch(text, /…$/, 'detail is not cut with an ellipsis');
+    assert.match(text, /see ~\/notes and ~\/private$/);
+  }
+  assert.ok(item.detail.length > 300);
+  assert.equal(typeof item.summary, 'string');
+  assert.ok(item.summary.length <= 160, `summary is ${item.summary.length} chars`);
+  assert.ok(item.detail.startsWith(item.summary.replace(/…$/, '')));
+  assert.equal(detail.findings[0].summary, item.summary);
 });

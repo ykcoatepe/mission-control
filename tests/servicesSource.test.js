@@ -225,3 +225,28 @@ test('GET /api/services composes both sources from memory and spawns nothing', a
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test('a service without a readable definition says so; the summary is computed server-side', async () => {
+  const exec = fakeExec();
+  const source = launchdSource(exec);
+  await source.refresh();
+  const { data } = source.snapshot();
+  const unknown = data.services.find((s) => s.label === 'ai.openclaw.mission-control');
+  assert.equal(unknown.kind, null);
+  assert.equal(unknown.identified, false);
+  assert.ok(data.services.filter((s) => s.label !== 'ai.openclaw.mission-control').every((s) => s.identified === true));
+  // down includes failed launchd services; unidentified = no readable plist.
+  assert.deepEqual(data.summary, { total: 5, running: 2, idle: 1, down: 2, unidentified: 1 });
+
+  const app = express();
+  const reachability = { snapshot: () => ({ data: null, meta: { ok: false, stale: true, observedAt: null, ageMs: null, error: null, latencyMs: null, source: 'r' } }) };
+  app.use(buildServicesRouter({ launchdSource: source, reachabilitySource: reachability }));
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const body = await (await fetch(`http://127.0.0.1:${server.address().port}/api/services`)).json();
+    assert.deepEqual(body.data.summary, { total: 5, running: 2, idle: 1, down: 2, unidentified: 1 });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

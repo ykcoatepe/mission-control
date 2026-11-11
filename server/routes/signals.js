@@ -6,8 +6,10 @@
 // observed is null, never zero.
 //
 // data: {
-//   systems:     { gbrain|hermes|openclaw: { state, observedAt } } | null
-//   attention:   { count, worst }                 systems + manager loops (info excluded)
+//   systems:     { gbrain|hermes|openclaw: { state, observedAt, reason, detailHref } } | null
+//   attention:   { count, worst, breakdown: { systems, findings, overdueConfirmations, restricted } }
+//                the one needs-the-operator number (sources/mloop/attention.js),
+//                equal to /api/loops totals.needsOperator
 //   automations: { failed, nextRunAt } | null
 //   loops:       { openFindings, overdueConfirmations } | null
 //   services:    { down } | null                  launchd down/failed + unreachable endpoints
@@ -17,10 +19,12 @@
 const express = require('express');
 const { asyncHandler, sendEnvelope } = require('../core/http');
 const { composeMeta } = require('../services/operationsOverview');
-const { worstState } = require('../core/state');
+const { scrubText } = require('../core/scrub');
 const { loopsView } = require('../sources/mloop');
+const { needsOperator } = require('../sources/mloop/attention');
 
-const LOOP_SEVERITY = { error: 'critical', warning: 'warning' };
+const SYSTEM_LABELS = Object.freeze({ gbrain: 'GBrain', hermes: 'Hermes', openclaw: 'OpenClaw' });
+const MAX_REASON = 200;
 
 function finiteOrNull(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -35,25 +39,41 @@ function snapshotOf(getter) {
   }
 }
 
+// Why a system is not healthy: its first caveat, else the first attention
+// item for it, else a plain sentence from the state. Scrubbed, one line.
+function systemReason(id, system, attention) {
+  if (!system || system.state === 'healthy') return null;
+  const caveat = Array.isArray(system.caveats) ? system.caveats.find((item) => typeof item === 'string' && item.trim()) : null;
+  const item = (attention || []).find((entry) => entry?.system === id && typeof entry.title === 'string');
+  const label = SYSTEM_LABELS[id] || id;
+  const text = caveat || item?.title
+    || (system.state === 'unavailable' ? `${label} evidence is unavailable.` : `${label} is ${system.state}.`);
+  const line = scrubText(String(text).split('\n')[0].trim());
+  return line.length > MAX_REASON ? `${line.slice(0, MAX_REASON - 1)}…` : line;
+}
+
 function systemsSignal(overview) {
   if (!overview?.systems) return null;
   const out = {};
   for (const id of ['gbrain', 'hermes', 'openclaw']) {
     const system = overview.systems[id];
-    out[id] = system ? { state: system.state, observedAt: system.observedAt ?? null } : null;
+    out[id] = system
+      ? {
+        state: system.state,
+        observedAt: system.observedAt ?? null,
+        reason: systemReason(id, system, overview.attention),
+        detailHref: typeof system.detailHref === 'string' ? system.detailHref : null,
+      }
+      : null;
   }
   return out;
 }
 
-function attentionSignal(overview, loops) {
-  const severities = [];
-  for (const item of overview?.attention || []) severities.push(item.severity);
-  for (const item of loops?.attention || []) {
-    if (LOOP_SEVERITY[item.severity]) severities.push(LOOP_SEVERITY[item.severity]);
-  }
-  if (!overview && !loops) return null;
-  const worst = worstState(severities, { empty: null });
-  return { count: severities.length, worst };
+function attentionSignal(overview, loopsData) {
+  return needsOperator({
+    systemsAttention: Array.isArray(overview?.attention) ? overview.attention : null,
+    loops: loopsData,
+  });
 }
 
 // Prefer the automations source's summary; otherwise derive it from the
@@ -152,7 +172,7 @@ function buildSignalsRouter({
       data: {
         generatedAt: new Date(now()).toISOString(),
         systems: systemsSignal(overview),
-        attention: attentionSignal(overview, loopsData),
+        attention: attentionSignal(overview, loops.data),
         automations: automationsSignal(automations, operationsCron),
         loops: loopsData
           ? { openFindings: loopsData.totals.openFindings, overdueConfirmations: loopsData.totals.overdueConfirmations }

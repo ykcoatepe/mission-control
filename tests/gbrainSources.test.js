@@ -169,7 +169,8 @@ test('synoptic whitelists per-reader config, omits unobservable counts, propagat
   await service.refresh(); let syn = service.synopticSnapshot();
   assert.equal(syn.data.core.pages.value, 12); assert.equal(syn.data.readers[0].integration.state, 'healthy');
   assert.equal(Object.hasOwn(syn.data.readers[0], 'connection'), false);
-  assert.equal(syn.data.readers[0].state, 'healthy');
+  assert.equal(syn.data.readers[0].state, 'inactive');
+  assert.equal(syn.data.readers[0].observation, 'configured');
   assert.doesNotMatch(JSON.stringify(syn), /private|callCount|lastCallAt/);
   failed = true; await service.refresh(); syn = service.synopticSnapshot();
   assert.equal(syn.data.core.quality.value, 100); assert.equal(syn.data.core.quality.state, 'unavailable');
@@ -292,11 +293,12 @@ test('unobservable connection telemetry never degrades configured readers or the
   }));
   readers.push({ id: 'disabled', label: 'Disabled', configured: false, observed: true, evidence: 'local configuration' });
   const s = readerSynopticFixture(readers);
-  assert.equal(s.state, 'healthy'); assert.equal(s.readersState, 'healthy');
+  assert.equal(s.state, 'healthy'); assert.equal(s.readersState, 'inactive');
   assert.equal(s.readersNote, 'connection telemetry is not observable locally');
   for (const reader of s.readers) {
-    assert.equal(reader.state, reader.integration.configured ? 'healthy' : 'inactive');
-    assert.equal(reader.state, reader.integration.state);
+    assert.equal(reader.state, 'inactive');
+    assert.equal(reader.observation, reader.integration.configured ? 'configured' : 'not_configured');
+    assert.equal(reader.integration.state, reader.integration.configured ? 'healthy' : 'inactive');
     assert.equal(Object.hasOwn(reader, 'connection'), false);
     const edge = s.edges.find((e) => e.from === reader.id);
     assert.equal(edge.state, reader.state); assert.equal(edge.label, 'configured');

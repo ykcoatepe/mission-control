@@ -11,6 +11,7 @@ async function readClaudeLogs({ since, until }, { fs = fsDefault, home = process
                 return null;
             if (!Number.isFinite(Date.parse(row.timestamp))) {
                 state.partial = true;
+                state.skippedLines = (state.skippedLines ?? 0) + 1;
                 return null;
             }
             const message = row.message, usage = message.usage, model = message.model || 'unknown';
@@ -31,7 +32,8 @@ async function readClaudeLogs({ since, until }, { fs = fsDefault, home = process
         },
     });
     return {
-        days: [...days.values()].filter(d => d.inputTokens || d.outputTokens || d.cacheReadTokens || d.cacheWriteTokens), observedAt: new Date(now()).toISOString(), coverage: scan.partial ? 'partial' : 'complete', coverageReasons: scan.partial ? ['producer_partial'] : [],
+        days: [...days.values()].filter(d => d.inputTokens || d.outputTokens || d.cacheReadTokens || d.cacheWriteTokens), skippedLines: scan.skippedLines, oversizedLines: scan.oversizedLines,
+        observedAt: new Date(now()).toISOString(), coverage: scan.partial ? 'partial' : 'complete', coverageReasons: scan.partial ? ['producer_partial'] : [],
         note: scan.partial ? 'Claude incremental log scan incomplete; totals may be understated' : 'Local Claude Code requests deduplicated to earliest observed day; billing USD is not recorded'
     };
 }

@@ -163,6 +163,8 @@ function createLaunchdReader({
         pid: row.pid,
         lastExitCode: row.lastExitCode,
         state: deriveState({ ...row, kind }),
+        // false: no readable plist, so the kind (and a keepalive "down") is unknown.
+        identified: kind !== null,
         runAtLoad: keys ? keys.RunAtLoad === true : null,
         intervalSeconds: keys && Number.isInteger(keys.StartInterval) ? keys.StartInterval : null,
         calendar: keys ? keys.StartCalendarInterval !== undefined : null,
@@ -171,7 +173,15 @@ function createLaunchdReader({
     }
     const counts = { total: services.length, running: 0, idle: 0, down: 0, failed: 0 };
     for (const service of services) counts[service.state] += 1;
-    return { services, counts };
+    // The page verdict reads this; down includes failed launchd jobs.
+    const summary = {
+      total: services.length,
+      running: counts.running,
+      idle: counts.idle,
+      down: counts.down + counts.failed,
+      unidentified: services.filter((service) => !service.identified).length,
+    };
+    return { services, counts, summary };
   }
 
   return { read };

@@ -13,6 +13,7 @@ function servicesView(launchd, reachability) {
   return {
     services: launchd ? launchd.services : null,
     counts: launchd ? launchd.counts : null,
+    summary: launchd ? launchd.summary ?? null : null,
     gateways: reachability ? reachability.gateways : null,
     ollama: reachability ? reachability.ollama : null,
   };

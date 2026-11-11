@@ -4,17 +4,21 @@
 // from the scheduled mloop source. No request runs mloop or reads the ledger.
 
 const express = require('express');
-const { httpError, sendEnvelope } = require('../core/http');
+const { asyncHandler, httpError, sendEnvelope } = require('../core/http');
 const { loopsView, loopDetailView, PROJECT_ID_PATTERN } = require('../sources/mloop');
 
-function buildLoopsRouter({ loopsSource } = {}) {
+// operationsOverviewService (memory-only) supplies the system attention items
+// for totals.needsOperator, the same number /api/signals reports.
+function buildLoopsRouter({ loopsSource, operationsOverviewService = null } = {}) {
   if (typeof loopsSource?.snapshot !== 'function') throw new TypeError('buildLoopsRouter: loopsSource required');
   const router = express.Router();
 
-  router.get('/api/loops', (req, res) => {
+  router.get('/api/loops', asyncHandler(async (req, res) => {
     const snapshot = loopsSource.snapshot();
-    return sendEnvelope(res, { data: loopsView(snapshot.data), meta: snapshot.meta });
-  });
+    const overview = operationsOverviewService ? await operationsOverviewService.getOverview() : null;
+    const systemsAttention = Array.isArray(overview?.attention) ? overview.attention : null;
+    return sendEnvelope(res, { data: loopsView(snapshot.data, { systemsAttention }), meta: snapshot.meta });
+  }));
 
   router.get('/api/loops/:project', (req, res) => {
     const id = String(req.params.project || '');

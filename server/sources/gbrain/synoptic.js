@@ -3,6 +3,7 @@ const { deriveState, stateOf } = require('./state');
 const { number, COMPONENT_KEYS } = require('./probes');
 const { classifySource } = require('./freshness');
 const { buildGBrainVerdict } = require('./verdict');
+const { worstState } = require('../../core/state');
 
 /**
  * @typedef {{state: import('./state').EvidenceState, observedAt: string|null}} Evidence
@@ -65,7 +66,12 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
       state: stateOf(runtime, { observed: r.observed === true && typeof r.configured === 'boolean',
         inactive: r.configured === false }),
       observedAt: runtime.meta.observedAt, evidence: r.evidence };
-    return { id: r.id, label: r.label, state: integration.state,
+    // r.observed means the configuration file was read, never that a query ran.
+    // No local reader currently supplies connection or call telemetry.
+    const observation = integration.state === 'unavailable' ? 'unreadable'
+      : r.configured === false ? 'not_configured' : 'configured';
+    return { id: r.id, label: r.label, observation,
+      state: deriveState({ observed: true, failed: observation === 'unreadable', inactive: true }),
       observedAt: integration.observedAt, integration };
   });
   const edges = [];
@@ -80,15 +86,11 @@ function buildSynoptic({ probeSnapshot, live, now = Date.now }) {
   }
   edge('queue', 'gbrain', 'embedding jobs waiting', queue.waiting, queue.state);
   for (const r of readers) edges.push({ from: r.id, to: 'gbrain', label: 'configured',
-    state: r.integration.state, observedAt: r.integration.observedAt });
+    state: r.state, observedAt: r.integration.observedAt });
   const sourcesState = stateOf(ss, { critical: sources.some((s) => s.state === 'critical'),
     warning: sources.some((s) => s.state === 'warning'),
     inactive: sources.length > 0 && sources.every((s) => s.state === 'inactive') });
-  const readersState = !runtime.data && !runtime.meta.error
-    ? deriveState({ observed: true, inactive: true })
-    : stateOf(runtime, { failed: Boolean(runtime.meta.error) || readers.some((r) => r.state === 'unavailable'),
-      warning: readers.some((r) => r.state === 'warning'),
-      inactive: readers.length === 0 || readers.every((r) => r.state === 'inactive') });
+  const readersState = worstState([...(runtime.meta.error ? ['unavailable'] : []), ...readers.map((r) => r.state)], { empty: 'inactive' });
   const verdict = buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live,
     probes: Object.fromEntries(['health', 'stats', 'jobs', 'sources', 'version', 'tools', 'features', 'providers', 'hermesProxy', 'runtime', 'timeline']
       .map((name) => [name, probeSnapshot(name)])) });
