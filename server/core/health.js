@@ -38,17 +38,23 @@ function createEventLoopMonitor({ resolutionMs = 20 } = {}) {
   return { start, stop, read, readAndReset };
 }
 
-function buildHealthPayload({ now = Date.now, startedAtMs, loop, scheduler, exec, config, guard }) {
+function buildHealthPayload({ now = Date.now, startedAtMs, loop, scheduler, exec, usageExec = null, config, guard }) {
   const nowMs = now();
+  const execStatus = exec ? exec.status() : null;
+  // A quarantined lane (a command whose exit could not be verified) is a
+  // degraded service, not a healthy one.
+  const usageExecStatus = usageExec?.status?.() || null;
+  const degraded = Boolean(execStatus?.quarantined?.length || usageExecStatus?.quarantined?.length);
   return {
-    ok: true,
-    status: 'ok',
+    ok: !degraded,
+    status: degraded ? 'degraded' : 'ok',
     service: 'mission-control',
     generatedAt: new Date(nowMs).toISOString(),
     uptimeMs: startedAtMs == null ? null : nowMs - startedAtMs,
     eventLoop: loop ? loop.readAndReset() : null,
     scheduler: scheduler ? scheduler.status() : null,
-    exec: exec ? exec.status() : null,
+    exec: execStatus,
+    usageExec: usageExecStatus,
     config: config
       ? {
         source: config.load?.source || null,

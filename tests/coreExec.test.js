@@ -287,8 +287,9 @@ test('counter-example: shutdown kills a SIGTERM-ignoring child and drain() confi
   assert.equal(pidAlive(pid), false);
 });
 
-test('a child that cannot be verified dead after SIGKILL still releases the lane', async () => {
-  // Fake child: ignores every signal and never calls back.
+test('counter-example: a child that cannot be verified dead after SIGKILL quarantines the lane', async () => {
+  // Fake child: ignores every signal and never calls back. (Review round 2:
+  // this used to release the lane and report children:0.)
   const kills = [];
   const exec = createExec({
     killGraceMs: 30,
@@ -299,6 +300,232 @@ test('a child that cannot be verified dead after SIGKILL still releases the lane
   assert.equal(result.ok, false);
   assert.equal(result.timedOut, true);
   assert.equal(result.error.code, 'kill_unverified');
+  const status = exec.status();
+  assert.equal(status.lanes.openclaw.running, 1, 'the slot is still held');
+  assert.equal(status.lanes.openclaw.quarantined, true);
+  assert.deepEqual(status.quarantined, ['openclaw']);
+  assert.equal(status.children, 1, 'tracking is retained');
+  assert.equal(await exec.drain(60), false);
+});
+
+// --- review round 2: process groups, verified release, quarantine -----------
+const { buildHealthPayload } = require('../server/core/health');
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function killQuietly(pid) {
+  try {
+    process.kill(pid, 'SIGKILL');
+  } catch {}
+}
+
+async function waitFor(predicate, ms = 3000) {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await sleep(20);
+  }
+  return predicate();
+}
+
+// A real child that starts a grandchild, records both pids, then runs
+// `afterSpawn`. The grandchild runs `grandBody` and lives 30 s unless killed.
+function treeChild({ grandBody = '', grandStdio = 'inherit', grandDetached = false, afterSpawn = 'setInterval(() => {}, 1000);', childPrelude = '' } = {}) {
+  const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'mc-exec-tree-')), 'pids');
+  const grand = `${grandBody};setTimeout(() => {}, 30000);`;
+  const script = `${childPrelude}
+    const g = require('child_process').spawn(process.execPath, ['-e', ${JSON.stringify(grand)}], { stdio: ${JSON.stringify(grandStdio)}, detached: ${grandDetached} });
+    g.unref();
+    require('fs').writeFileSync(${JSON.stringify(pidFile)}, process.pid + ' ' + g.pid);
+    ${afterSpawn}`;
+  return { args: ['-e', script], pidFile };
+}
+
+async function waitForPids(file) {
+  for (let i = 0; i < 150 && !fs.existsSync(file); i += 1) await sleep(20);
+  const [child, grand] = fs.readFileSync(file, 'utf8').split(' ').map(Number);
+  return { child, grand };
+}
+
+const IGNORE_TERM = "process.on('SIGTERM', () => {})";
+
+for (const grandStdio of ['inherit', 'ignore']) {
+  test(`counter-example: a grandchild (stdio ${grandStdio}) is killed with its group on timeout before the lane is released`, async (t) => {
+    const exec = createExec({ killGraceMs: 150 });
+    const tree = treeChild({ grandStdio });
+    const pending = exec.run(process.execPath, tree.args, { lane: 'openclaw', timeoutMs: 400 });
+    const pids = await waitForPids(tree.pidFile);
+    t.after(() => killQuietly(pids.grand));
+    const result = await pending;
+    assert.equal(result.error.code, 'timeout');
+    assert.equal(pidAlive(pids.child), false);
+    assert.equal(pidAlive(pids.grand), false, 'the grandchild must be dead when the call settles');
+    assert.equal(exec.status().children, 0);
+    assert.equal(exec.status().lanes.openclaw.running, 0);
+  });
+}
+
+test('counter-example: a child that exits while its grandchild lives keeps the lane until the group is gone', async (t) => {
+  const exec = createExec({ killGraceMs: 150 });
+  const tree = treeChild({ afterSpawn: 'process.stdout.write("early"); process.exit(0);' });
+  const first = exec.run(process.execPath, tree.args, { lane: 'openclaw', timeoutMs: 700 });
+  const pids = await waitForPids(tree.pidFile);
+  t.after(() => killQuietly(pids.grand));
+  assert.equal(await waitFor(() => !pidAlive(pids.child)), true, 'the direct child exits on its own');
+  let nextStarted = false;
+  const marker = path.join(path.dirname(tree.pidFile), 'next-started');
+  const second = exec.run(process.execPath, ['-e', `require('fs').writeFileSync(${JSON.stringify(marker)}, '1')`], { lane: 'openclaw' })
+    .then((r) => { nextStarted = true; return r; });
+  await sleep(200);
+  assert.equal(pidAlive(pids.grand), true, 'precondition: the grandchild is still running');
+  assert.equal(fs.existsSync(marker), false, 'the next lane command started while the grandchild was alive');
+  assert.equal(nextStarted, false);
+  assert.equal(exec.status().children, 1);
+  assert.equal(exec.status().lanes.openclaw.running, 1);
+  assert.equal(await exec.drain(50), false, 'drain() must not report clean');
+  const result = await first;
+  assert.equal(result.ok, false);
+  assert.equal(result.timedOut, true, 'the tree outlived the timeout');
+  assert.equal(result.stdout, 'early');
+  assert.equal(pidAlive(pids.grand), false);
+  assert.equal((await second).ok, true);
+  assert.equal(fs.existsSync(marker), true);
+});
+
+test('counter-example: shutdown after the direct child exited still kills the surviving grandchild', async (t) => {
+  const exec = createExec({ killGraceMs: 150 });
+  const tree = treeChild({ grandBody: IGNORE_TERM, afterSpawn: 'setTimeout(() => process.exit(0), 150);' });
+  const pending = exec.run(process.execPath, tree.args, { lane: 'openclaw', timeoutMs: 60_000 });
+  const pids = await waitForPids(tree.pidFile);
+  t.after(() => killQuietly(pids.grand));
+  assert.equal(await waitFor(() => !pidAlive(pids.child)), true);
+  assert.equal(exec.status().children, 1, 'still tracked after the direct child exited');
+  assert.equal(exec.killAll(), 1);
+  assert.equal(await exec.drain(50), false, 'TERM is ignored: not clean yet');
+  assert.equal(await exec.drain(3000), true);
+  assert.equal(pidAlive(pids.grand), false);
+  assert.equal((await pending).error.code, 'shutdown');
+});
+
+test('counter-example: a whole tree that ignores SIGTERM is SIGKILLed as a group', async (t) => {
+  const exec = createExec({ killGraceMs: 150 });
+  const tree = treeChild({ childPrelude: `${IGNORE_TERM};`, grandBody: IGNORE_TERM });
+  const pending = exec.run(process.execPath, tree.args, { lane: 'openclaw', timeoutMs: 400 });
+  const pids = await waitForPids(tree.pidFile);
+  t.after(() => { killQuietly(pids.child); killQuietly(pids.grand); });
+  const started = Date.now();
+  const result = await pending;
+  assert.equal(result.error.code, 'timeout');
+  assert.ok(Date.now() - started < 3000, 'bounded escalation');
+  assert.equal(pidAlive(pids.child), false);
+  assert.equal(pidAlive(pids.grand), false);
+  assert.equal(exec.status().children, 0);
+});
+
+test('the lane is released only after the group verifier says the group is gone', async () => {
+  const seen = [];
+  let allow = false;
+  let releasedEarly = false;
+  const exec = createExec({
+    killGraceMs: 2000,
+    verifyGroupGone: (pgid) => {
+      seen.push(pgid);
+      try {
+        process.kill(-pgid, 0);
+        return false;
+      } catch (error) {
+        return allow && error.code === 'ESRCH';
+      }
+    },
+  });
+  const child = trappingChild('process.exit(0);');
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 60_000 });
+  const pid = await waitForFile(child.pidFile);
+  process.kill(pid, 'SIGTERM');
+  assert.equal(await waitFor(() => !pidAlive(pid)), true);
+  await sleep(150);
+  releasedEarly = exec.status().lanes.openclaw.running !== 1 || exec.status().children !== 1;
+  assert.equal(releasedEarly, false, 'released before the verifier agreed');
+  allow = true;
+  const result = await pending;
+  assert.equal(result.ok, true);
   assert.equal(exec.status().lanes.openclaw.running, 0);
   assert.equal(exec.status().children, 0);
+  assert.ok(seen.length > 1 && seen.every((pgid) => pgid === pid), 'verifier is asked about the command\'s own process group');
+});
+
+test('counter-example: an unverifiable exit quarantines the lane; calls fail fast; health shows it; recovery needs verification', async (t) => {
+  let verifiable = false;
+  let stuckPid = null;
+  const realGone = (pgid) => {
+    try {
+      process.kill(-pgid, 0);
+      return false;
+    } catch (error) {
+      return error.code === 'ESRCH';
+    }
+  };
+  const exec = createExec({
+    killGraceMs: 80,
+    quarantineRecheckMs: 40,
+    // Verification is impossible for the stuck command only.
+    verifyGroupGone: (pgid) => (pgid === stuckPid ? verifiable : true) && realGone(pgid),
+  });
+  const child = trappingChild('/* ignore */');
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 150 });
+  const queued = exec.run(process.execPath, ['-e', '1'], { lane: 'openclaw' });
+  const pid = await waitForFile(child.pidFile);
+  stuckPid = pid;
+  t.after(() => killQuietly(pid));
+  const result = await pending;
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'kill_unverified');
+  assert.equal((await queued).error.code, 'lane_quarantined', 'a queued call must not start');
+
+  const status = exec.status();
+  assert.equal(status.children, 1, 'tracking retained');
+  assert.equal(status.lanes.openclaw.quarantined, true);
+  assert.deepEqual(status.quarantined, ['openclaw']);
+  assert.equal(await exec.drain(60), false, 'drain() reports false while quarantined');
+
+  const started = Date.now();
+  const refused = await exec.run(process.execPath, ['-e', '1'], { lane: 'openclaw' });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.error.code, 'lane_quarantined');
+  assert.ok(Date.now() - started < 100, 'fails fast');
+  assert.equal((await exec.run(process.execPath, ['-e', '1'], { lane: 'gbrain' })).ok, true, 'other lanes keep working');
+
+  const health = buildHealthPayload({ exec });
+  assert.equal(health.ok, false);
+  assert.equal(health.status, 'degraded');
+  assert.deepEqual(health.exec.quarantined, ['openclaw']);
+
+  verifiable = true;
+  assert.equal(await waitFor(() => exec.status().quarantined.length === 0), true, 'released once the group is verified gone');
+  assert.equal(exec.status().children, 0);
+  assert.equal((await exec.run(process.execPath, ['-e', '1'], { lane: 'openclaw' })).ok, true);
+  assert.equal(buildHealthPayload({ exec }).ok, true);
+});
+
+test('pipes held open outside the process group cannot keep the result pending', async (t) => {
+  const exec = createExec({ killGraceMs: 150 });
+  // The grandchild starts its own session (escapes the group) and inherits
+  // stdout/stderr, so the pipes never close.
+  const tree = treeChild({ grandDetached: true, afterSpawn: 'process.stdout.write("done"); process.exit(0);' });
+  const started = Date.now();
+  const pending = exec.run(process.execPath, tree.args, { lane: 'openclaw', timeoutMs: 20_000 });
+  const pids = await waitForPids(tree.pidFile);
+  t.after(() => killQuietly(pids.grand));
+  const result = await pending;
+  assert.ok(Date.now() - started < 3000, 'did not wait for the pipes');
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, 'done');
+  assert.equal(exec.status().lanes.openclaw.running, 0);
+});
+
+test('a healthy runner reports no quarantine', () => {
+  const exec = createExec();
+  assert.deepEqual(exec.status().quarantined, []);
+  assert.equal(exec.status().lanes.openclaw.quarantined, false);
+  assert.equal(buildHealthPayload({ exec }).ok, true);
 });

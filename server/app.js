@@ -355,12 +355,14 @@ function createApp(deps = {}) {
   const OPS_EVENTS_PATH = path.join(projectRoot, 'data/ops-events.json');
 
   // --- routes ------------------------------------------------------------
+  let usageExec = null;
   const healthPayload = () => buildHealthPayload({
     now,
     startedAtMs,
     loop,
     scheduler,
     exec,
+    usageExec,
     config,
     guard,
   });
@@ -408,6 +410,13 @@ function createApp(deps = {}) {
   });
   const killUsageAndCore = exec.killAll.bind(exec);
   exec.killAll = () => { usageService.dispose?.(); killUsageAndCore(); };
+  // The usage area may own a second runner: shutdown waits for it and
+  // /api/health reports its quarantine too.
+  usageExec = usageService.ownedExec || null;
+  if (usageExec) {
+    const drainCore = exec.drain.bind(exec);
+    exec.drain = async (timeoutMs) => (await Promise.all([drainCore(timeoutMs), usageExec.drain(timeoutMs)])).every(Boolean);
+  }
   app.use(buildCostsRouter({ usageService, now }));
   // end usage area
 

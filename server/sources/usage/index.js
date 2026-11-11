@@ -219,7 +219,9 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         };
     }
     return {
-        registry, costs, months, summary, codexbar, refresh: () => Promise.all(registry.sources().map(s => s.refresh())), dispose: () => ownedExec?.killAll()
+        registry, costs, months, summary, codexbar, refresh: () => Promise.all(registry.sources().map(s => s.refresh())), dispose: () => ownedExec?.killAll(),
+        // The runner this service created for itself (null when one was injected), so shutdown and health can see it.
+        ownedExec: ownedExec || null
     };
 }
 module.exports = { createUsageService, LANES, totals };
