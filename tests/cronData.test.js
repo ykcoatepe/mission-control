@@ -5,7 +5,7 @@ const path = require('node:path');
 
 const { createCronService } = require('../server/services/cronData');
 
-function makeCronServiceWithJobs(initialJobs) {
+function makeCronServiceWithJobs(initialJobs, extra = {}) {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cron-data-'));
   const jobsDir = path.join(homeDir, '.hermes', 'profiles', 'hmudur', 'cron');
   fs.mkdirSync(jobsDir, { recursive: true });
@@ -20,6 +20,7 @@ function makeCronServiceWithJobs(initialJobs) {
     calendarFile: path.join(homeDir, 'calendar.json'),
     homeDir,
     hermesProfile: 'hmudur',
+    ...extra,
   });
 
   return { service, jobsFile, homeDir };
@@ -148,3 +149,85 @@ function makeCronServiceWithJobs(initialJobs) {
 });
 
 console.log('cronData tests passed');
+
+function fakeClock() {
+  let t = Date.parse('2026-11-11T06:00:00.000Z');
+  return { now: () => t, advance: (ms) => { t += ms; } };
+}
+
+(async function testHermesCronFailureWithRecentCacheStaysFresh() {
+  const clock = fakeClock();
+  const { service, jobsFile } = makeCronServiceWithJobs([{ id: 'h1', enabled: true }], { now: clock.now });
+  const first = await service.fetchCronJobsForOperations();
+  assert.equal(first.operationsSource.schedulers.hermes.sourceSucceeded, true);
+
+  fs.writeFileSync(jobsFile, 'not json', 'utf8');
+  clock.advance(17_000);
+  const second = await service.fetchCronJobsForOperations();
+  const hermes = second.operationsSource.schedulers.hermes;
+  assert.equal(hermes.sourceSucceeded, true);
+  assert.equal(hermes.stale, undefined);
+  assert.equal(hermes.cacheAgeMs, 17_000);
+  assert.equal(second.jobs.filter((job) => job.scheduler === 'hermes').length, 1);
+
+  clock.advance(6 * 60_000);
+  const third = await service.fetchCronJobsForOperations();
+  assert.equal(third.operationsSource.schedulers.hermes.sourceSucceeded, true);
+  assert.equal(third.operationsSource.schedulers.hermes.stale, true);
+  assert.ok(third.operationsSource.schedulers.hermes.staleAgeMs > 5 * 60_000);
+
+  clock.advance(5 * 60_000);
+  const fourth = await service.fetchCronJobsForOperations();
+  assert.equal(fourth.operationsSource.schedulers.hermes.sourceSucceeded, false);
+  assert.equal(fourth.operationsSource.schedulers.hermes.observedAt, null);
+  assert.equal(fourth.jobs.filter((job) => job.scheduler === 'hermes').length, 0);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+
+(async function testHermesCronFailureWithoutCacheIsUnavailable() {
+  const { service, jobsFile } = makeCronServiceWithJobs([{ id: 'h1' }]);
+  fs.writeFileSync(jobsFile, 'not json', 'utf8');
+  const result = await service.fetchCronJobsForOperations();
+  assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, false);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+
+(async function testSlowOpenclawProbeNeverStarvesHermesCronEvidence() {
+  const { service } = makeCronServiceWithJobs([{ id: 'h1', enabled: true }], {
+    openclawExec: () => new Promise(() => {}),
+    operationsSoftDeadlineMs: 30,
+  });
+  const started = Date.now();
+  const result = await service.fetchCronJobsForOperations();
+  assert.ok(Date.now() - started < 2000, 'must return near the soft deadline');
+  assert.equal(result.operationsSource.schedulers.hermes.sourceSucceeded, true);
+  assert.equal(result.operationsSource.schedulers.openclaw.sourceSucceeded, false);
+  assert.equal(result.operationsSource.schedulers.openclaw.observedAt, null);
+})().catch((error) => { console.error(error); process.exitCode = 1; });
+
+(async function testSlowOpenclawProbeServesCachedEvidenceAndSharesTheRefresh() {
+  const clock = fakeClock();
+  let hang = false;
+  let calls = 0;
+  const { service } = makeCronServiceWithJobs([{ id: 'h1', enabled: true }], {
+    now: clock.now,
+    operationsSoftDeadlineMs: 30,
+    openclawExec: () => {
+      calls += 1;
+      if (hang) return new Promise(() => {});
+      return Promise.resolve({ stdout: JSON.stringify([{ id: 'o1' }]), stderr: '' });
+    },
+  });
+  await service.fetchCronJobsForOperations();
+  hang = true;
+  clock.advance(20_000);
+  const before = calls;
+  const [a, b] = await Promise.all([
+    service.fetchCronJobsForOperations(),
+    service.fetchCronJobsForOperations(),
+  ]);
+  for (const result of [a, b]) {
+    assert.equal(result.operationsSource.schedulers.openclaw.sourceSucceeded, true);
+    assert.equal(result.operationsSource.schedulers.openclaw.cacheAgeMs, 20_000);
+    assert.equal(result.jobs.filter((job) => job.scheduler === 'openclaw').length, 1);
+  }
+  assert.equal(calls - before, 1, 'concurrent callers share one in-flight probe');
+})().catch((error) => { console.error(error); process.exitCode = 1; });

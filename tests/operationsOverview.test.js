@@ -925,3 +925,16 @@ test('operations reader set exposes a hermesGateway reader and the service passe
   });
   assert.equal((await service.getOverview()).systems.hermes.state, 'critical');
 });
+
+test('a stale Hermes cron proof keeps Hermes healthy but marks scheduling stale', () => {
+  const input = healthyInput();
+  input.cron.operationsSource.schedulers.hermes = {
+    ...input.cron.operationsSource.schedulers.hermes, stale: true, staleAgeMs: 400_000,
+  };
+  const overview = buildOperationsOverview(input, { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'healthy');
+  assert.equal(overview.systems.hermes.freshness, 'stale');
+  assert.ok(overview.systems.hermes.caveats.some((item) => /scheduling.*stale/i.test(item)));
+  assert.equal(overview.systems.hermes.metrics.cronJobs, 1);
+});

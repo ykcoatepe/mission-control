@@ -579,6 +579,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
   // Scheduling
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'hermes');
   const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'hermes', generatedAt);
+  const cronStale = !cronUnavailable && getSchedulerProof(cron, 'hermes')?.stale === true;
   if (cronUnavailable) {
     states.push('warning');
     hermesEvidence.push(evidence(
@@ -599,9 +600,10 @@ function adaptHermes(board, cron, generatedAt, gateway) {
   } else {
     hermesEvidence.push(evidence(
       'hermes:cron', 'hermes', 'scheduling', 'healthy', cronAt,
-      `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs`,
+      `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
       '/api/cron', '/automations',
     ));
+    if (cronStale) caveats.push('Hermes scheduling evidence is stale.');
   }
 
   // blocked tasks warn through attention only (state stays as before)
@@ -610,7 +612,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     : (!gatewayProven || !kanbanProven || cronUnavailable || gateway?.status === 'stale')
       ? 'warning'
       : 'healthy';
-  const freshness = kanbanStale || !kanbanProven ? 'stale' : 'fresh';
+  const freshness = kanbanStale || cronStale || !kanbanProven ? 'stale' : 'fresh';
   return {
     system: {
       id: 'hermes',
