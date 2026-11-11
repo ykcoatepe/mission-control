@@ -802,43 +802,6 @@ function createCronService({
     return { ok: true, entry: updated, entries: next.entries };
   }
 
-  function upsertTaskCalendarEntry(task = {}, options = {}) {
-    const schedule = String(options.schedule || task.schedule || '').trim();
-    const startsAt = toIsoOrNull(options.startsAt || task.scheduleAt || task.startsAt);
-    if (!schedule && !startsAt) return null;
-
-    const current = readCalendarDataSafe();
-    const existing = current.entries.find((entry) => entry.linkedTaskId === task.id && entry.source !== 'cron');
-    const nowIso = new Date().toISOString();
-    const entry = normalizeCalendarEntry({
-      ...existing,
-      id: existing?.id || `task-${task.id}`,
-      title: task.title || existing?.title || 'Task',
-      schedule: schedule || existing?.schedule || '',
-      startsAt: startsAt || existing?.startsAt || null,
-      status: options.calendarStatus || task.calendarStatus || existing?.status || 'scheduled',
-      assignee: task.assignee || existing?.assignee || 'Mudur',
-      source: existing?.source || task.source || 'assistant',
-      linkedTaskId: task.id,
-      linkedJobId: task.linkedJobId || existing?.linkedJobId || null,
-      notes: task.description || existing?.notes || '',
-      createdAt: existing?.createdAt || nowIso,
-      updatedAt: nowIso,
-      lastSyncedAt: nowIso,
-    }, nowIso);
-
-    const nextEntries = current.entries.filter((item) => item.id !== entry.id);
-    nextEntries.push(entry);
-    writeCalendarDataSafe({
-      ...current,
-      entries: nextEntries,
-      updatedAt: nowIso,
-      lastCronSyncAt: current.lastCronSyncAt,
-    });
-
-    return entry;
-  }
-
   return {
     parseFirstJson,
     fetchCronJobsLive,
@@ -855,7 +818,6 @@ function createCronService({
     syncCalendarWithCronEvidence,
     createCalendarEntry,
     updateCalendarEntry,
-    upsertTaskCalendarEntry,
   };
 }
 

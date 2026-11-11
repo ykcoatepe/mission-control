@@ -134,7 +134,6 @@ function buildCouncilsRouter({
   runtimeSnapshotTtl,
   decisionLogPath,
   opsEventsPath,
-  agentRegistryPath,
   readJsonFileSafe,
   writeJsonFileAtomic,
 }) {
@@ -270,12 +269,6 @@ function buildCouncilsRouter({
       .map(normalizeDecisionRecord)
       .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0).getTime() - new Date(left.updatedAt || left.createdAt || 0).getTime());
     return res.json({ decisions });
-  });
-
-  router.get('/api/councils/agents', (req, res) => {
-    const registry = readJsonFileSafe(agentRegistryPath, {});
-    const agents = Array.isArray(registry?.agents) ? registry.agents : (Array.isArray(registry) ? registry : []);
-    return res.json({ agents });
   });
 
   router.get('/api/councils/governance/scorecard', (req, res) => {

@@ -72,20 +72,10 @@ function start({ rootDir = path.join(__dirname, '..'), logger = console } = {}) 
     setTimeout(async () => {
       const base = `http://127.0.0.1:${address?.port ?? port}`;
       try {
-        const response = await fetch(`${base}/api/activity`);
-        if (response.ok) logger.log('[Startup] Pre-warmed activity cache');
-      } catch {}
-      try {
         const response = await fetch(`${base}/api/costs`);
         if (response.ok) logger.log('[Startup] Pre-warmed costs cache');
       } catch {}
     }, 3000).unref();
-
-    try {
-      await runtime.recoverTasks();
-    } catch (error) {
-      logger.error('[Startup recovery]', error.message);
-    }
   });
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));

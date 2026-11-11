@@ -10,7 +10,7 @@ and confirmation policy are understood.
 ```text
 React/Vite browser application
           |
-          | same-origin JSON, SSE, and file responses
+          | same-origin JSON and file responses
           v
 Express app factory (`server/app.js`)
   |       |          |          |           |
@@ -42,10 +42,12 @@ freshness, provenance, caveats, attention items, and evidence separate. It
 derives the worst relevant condition instead of averaging three systems into a
 false global green.
 
-Explore (`/gbrain`) and the other source pages are detailed workbenches. They
-retain source-specific data and controls that would overload Brain. This is why
-hidden pages can remain directly reachable even when they are not primary
-navigation destinations.
+Knowledge (`/gbrain`) and the other source pages (Attention, Automations,
+Usage, Services, Local models) are detailed views. They retain source-specific
+data and controls that would overload Brain. This is why hidden pages can
+remain directly reachable even when they are not primary navigation
+destinations. Screens that were removed (Work, Sessions, Systems, Workshop,
+Office, Team, Diagnostics and their sub-tabs) redirect to Brain.
 
 ## Data acquisition and failure behavior
 
@@ -72,17 +74,13 @@ Not every visible action has the same risk model:
 
 - GBrain exposes exactly eight allowlisted actions. R0 diagnostics/previews run
   directly; W1 maintenance requires scoped confirmation; W2 is not rendered.
-- Hermes Kanban accepts named actions and validates values before passing
-  argument arrays to the CLI.
+- Hermes Kanban is read-only: only `GET /api/hermes-kanban` remains.
 - Hermes cron jobs can be toggled and have their model changed, but cannot be
   run or deleted from Mission Control.
 - Governance is archive-only by default; mutations require an explicit
   environment opt-in.
-- Task execution is broader: it launches OpenClaw work in the configured
-  workspace. Treat execute controls as real agent dispatch, not as a read-only
-  preview.
-- Hiding a session removes it from Mission Control's list; it does not close the
-  underlying OpenClaw session.
+- Cron create, run, and delete, calendar writes, and settings import are real
+  mutations of OpenClaw or local state. Treat them as such, not as previews.
 
 Navigation and module flags are presentation controls. They are never part of
 the authorization model.

@@ -64,24 +64,6 @@ function normalizeAssignee(row) {
   };
 }
 
-function normalizeDetail(payload) {
-  const task = normalizeTask(payload.task || {});
-  const events = Array.isArray(payload.events) ? payload.events.map((event) => ({
-    ...event,
-    createdAt: normalizeEpoch(event.created_at),
-  })) : [];
-  const comments = Array.isArray(payload.comments) ? payload.comments.map((comment) => ({
-    ...comment,
-    createdAt: normalizeEpoch(comment.created_at),
-  })) : [];
-  const runs = Array.isArray(payload.runs) ? payload.runs.map((run) => ({
-    ...run,
-    startedAt: normalizeEpoch(run.started_at),
-    endedAt: normalizeEpoch(run.ended_at),
-  })) : [];
-  return { ...payload, task, events, comments, runs };
-}
-
 function buildHermesEnv(profile, processEnv) {
   const hostHome = processEnv.MC_USER_HOME || processEnv.HOME || os.homedir();
   return {
@@ -89,23 +71,6 @@ function buildHermesEnv(profile, processEnv) {
     HOME: hostHome,
     HERMES_PROFILE: profile,
   };
-}
-
-function assertNoFlagPrefix(value, label) {
-  const text = String(value || '');
-  if (text.startsWith('-')) {
-    const error = new Error(`${label} cannot start with "-"`);
-    error.statusCode = 400;
-    throw error;
-  }
-  return text;
-}
-
-function actionValidationError(message) {
-  const error = new Error(message);
-  error.statusCode = 400;
-  error.responseBody = { error: message };
-  return error;
 }
 
 function createHermesKanbanService({
@@ -241,60 +206,7 @@ function createHermesKanbanService({
     }
   }
 
-  async function getTaskDetail(taskId) {
-    const payload = await hermes(['show', taskId, '--json'], { json: true });
-    return { ok: true, profile, ...normalizeDetail(payload || {}) };
-  }
-
-  async function runAction(payload = {}) {
-    const action = String(payload.action || '').trim();
-    const taskId = String(payload.taskId || '').trim();
-    const args = [];
-
-    if (action === 'create') {
-      const title = assertNoFlagPrefix(String(payload.title || '').trim(), 'title');
-      if (!title) throw actionValidationError('title required');
-      args.push('create', title);
-      if (payload.body) args.push('--body', String(payload.body));
-      if (payload.assignee) args.push('--assignee', assertNoFlagPrefix(payload.assignee, 'assignee'));
-      if (payload.workspace) args.push('--workspace', assertNoFlagPrefix(payload.workspace, 'workspace'));
-      if (payload.tenant) args.push('--tenant', assertNoFlagPrefix(payload.tenant, 'tenant'));
-      if (Number.isFinite(Number(payload.priority))) args.push('--priority', String(Math.trunc(Number(payload.priority))));
-      if (payload.triage) args.push('--triage');
-      if (Array.isArray(payload.skills)) {
-        payload.skills.filter(Boolean).forEach((skill) => args.push('--skill', assertNoFlagPrefix(skill, 'skill')));
-      }
-      args.push('--created-by', 'mission-control', '--json');
-    } else {
-      if (!taskId) throw actionValidationError('taskId required');
-      const safeTaskId = assertNoFlagPrefix(taskId, 'taskId');
-      if (action === 'assign') {
-        if (!payload.assignee) throw actionValidationError('assignee required');
-        args.push('assign', safeTaskId, assertNoFlagPrefix(payload.assignee, 'assignee'));
-      } else if (action === 'comment') {
-        if (!payload.text) throw actionValidationError('text required');
-        args.push('comment', '--author', 'mission-control', safeTaskId, String(payload.text));
-      } else if (action === 'block') {
-        args.push('block', safeTaskId, String(payload.reason || 'Blocked from Mission Control'));
-      } else if (action === 'unblock') {
-        args.push('unblock', safeTaskId);
-      } else if (action === 'archive') {
-        args.push('archive', safeTaskId);
-      } else if (action === 'dispatch') {
-        args.push('dispatch', '--max', '1', '--json');
-      } else {
-        throw actionValidationError(`Unsupported action: ${action}`);
-      }
-    }
-
-    const result = await hermes(args, {
-      json: action === 'create' || action === 'dispatch',
-      timeout: action === 'dispatch' ? 30000 : 15000,
-    });
-    return { ok: true, action, result };
-  }
-
-  return { profile, getBoard, getTaskDetail, runAction };
+  return { profile, getBoard };
 }
 
 module.exports = { STATUSES, createHermesKanbanService };

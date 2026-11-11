@@ -196,15 +196,9 @@ list is `unavailable`). `toUiState` also accepts the legacy health colours
 
 ### Legacy adapters
 
-`GlassCard`, `StatusBadge`, `PageHeader`, `StatCard`, `PageTransition`,
-`LoadingSpinner` and `ui/EmptyState` keep their old props but are now thin and
-flat. Do not use them in new code; replace them when a page is migrated.
-
-- `GlassCard`: a plain bordered div (no motion; `hover`/`delay` ignored).
-- `StatusBadge`: `StatePill` through `toUiState` (unknown words show as "unavailable").
-- `PageHeader`: publishes its `title` to the top bar and renders only the subtitle.
-- `StatCard`: a `Stat` in a flat card (`icon`, `color`, `delay` ignored).
-- `PageTransition`: renders its children, no animation.
+`PageTransition` keeps its old props but is a thin pass-through (it renders its
+children, no animation). Only the Setup page still imports it. Do not use it in
+new code; replace it when Setup is migrated.
 
 ## 5. Shell
 
@@ -246,18 +240,19 @@ Navigation (order is pinned by `appRoutes.test.ts`):
 
 | Group | Label | Path | Notes |
 | --- | --- | --- | --- |
-| none | Brain | `/` | home; absorbs Knowledge later |
-| Operate | Attention | `/attention` | placeholder until built |
+| none | Brain | `/` | home; Knowledge is a view of it (`?view=knowledge`) |
+| Operate | Attention | `/attention` | |
 | Operate | Automations | `/automations` | Calendar as the "Schedule" view |
 | Know | Usage | `/usage` | |
-| Run | Services | `/services` | placeholder until built |
+| Run | Services | `/services` | |
 | Run | Local models | `/ollama` | |
 | Utility | Settings | `/settings` | |
 | Utility | Audit | `/councils` | |
 
-`/gbrain` and `/calendar` stay routed with `nav: false`. Work, Sessions, Agents
-and the hidden pages (`/work`, `/sessions`, `/systems`, `/workshop`, `/office`,
-`/team`, `/diagnostics`) and their legacy aliases redirect to `/`.
+`/gbrain` and `/calendar` stay routed with `nav: false`. The removed screens
+(`/work`, `/sessions`, `/systems`, `/workshop`, `/office`, `/team`,
+`/diagnostics`, `/kanban`, `/conversations`, `/agents`, `/memory`, `/scout`,
+`/aws`, `/skills`) redirect to `/`.
 
 Old URLs keep working through redirects. Route `section` is `'operate' | 'know' | 'run'`
 (Brain has none); `description` is a plain-words subtitle used only by the
@@ -283,13 +278,11 @@ restyling them.
 
 | Page | Question | First viewport |
 | --- | --- | --- |
-| Overview | Does anything need me? | Headline sentence; ranked attention list with an action per row; one strip of system tiles (GBrain, Hermes, OpenClaw, Automations, Usage, Local models); "Next up" and "Recent activity". No map. Maintenance actions are on Knowledge. |
-| Work | What is running, what is stuck? | Summary strip (running, blocked, ready, done today); board columns with compact cards; task detail in a drawer. Blocked first. |
+| Brain | Is the brain healthy and does anything need me? | One verdict line with a Run check button; views Health and Knowledge (`?view=`). Health: the system synoptic, maintenance actions (Check and Change groups, Change asks first) and readings. Knowledge: knowledge search and the page reader. |
+| Attention | What is waiting for you? | Summary strip (projects with open items, open findings, pending confirmations, overdue confirmations); filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
 | Automations | Did my jobs run, what runs next? | Summary strip (active, paused, failed, next run); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid. |
-| Sessions | Who is talking, where? | Session list (left) and transcript (right); one composer; state per session. |
-| Knowledge | Can I trust the brain right now? | One verdict line; four readings in one `StatRow` (quality, sync, link extraction, last probe); notes list; "Maintenance" panel with Check and Change groups; sources table. Views: Health, Memory files, Documents. |
 | Usage | What did I spend, am I on track? | One figure for the period with budget meter and projection; daily chart; drivers table (model/agent/source tabs). Estimate vs billed is explained once, in a note. |
-| Agents | Which agents exist and are they alive? | Summary strip (live, idle, offline); roster table; agent detail drawer. Views: Roster, Structure, Desks, Skills. |
+| Services | Is everything that should be running, running? | Reachability strip (OpenClaw gateway, Hermes gateway, Ollama); filter chips and search; launchd services table. |
 | Local models | Is Ollama OK? | Verdict line; `StatRow` (health, memory, GPU, loaded); models table with expandable detail. |
 | Audit | What was decided? | Archive notice (one line); decisions table with search and filters; decision drawer. |
 | Settings | — | Sections as panels: Models, Heartbeat, Budget, Appearance (theme), Connection, Backup. Real values only; a failed read shows `ErrorState`. |
@@ -302,7 +295,7 @@ A redesign changes presentation, hierarchy and words. It does not change:
 - the GBrain action contract: Check actions run directly, Change actions always
   go through the confirmation dialog, and the UI stays in "verifying" until a
   newer fresh reading arrives;
-- redaction and sanitising (`utils/sanitize.ts`);
+- redaction of secrets and home paths in API payloads;
 - route paths and redirects;
 - pure logic in `pages/*/lib.ts` and its tests.
 

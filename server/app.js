@@ -17,7 +17,7 @@
 //               notionActivity) so tests never reach a real CLI
 //
 // app.locals.runtime carries the core objects: { config, configStore, exec,
-// scheduler, sources, guard, start(), dispose(), setBoundPort(), recoverTasks() }.
+// scheduler, sources, guard, start(), dispose(), setBoundPort() }.
 
 const express = require('express');
 const fs = require('fs');
@@ -58,28 +58,19 @@ const {
   STATUS_REFRESH_INTERVAL_MS,
 } = require('./sources/openclaw/status');
 const { GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS } = require('./routes/gbrain/constants');
-const { buildAgentsRouter } = require('./routes/agents');
 const { buildAwsRouter } = require('./routes/aws');
 const { buildCalendarRouter } = require('./routes/calendar');
-const { buildChatRouter } = require('./routes/chat');
 const { buildCostsRouter } = require('./routes/costs');
 const { buildCouncilsRouter } = require('./routes/councils');
 const { buildCronRouter } = require('./routes/cron');
-const { buildDocsRouter } = require('./routes/docs');
 const { buildGBrainRouter, listGBrainActions } = require('./routes/gbrain');
 const { buildHermesKanbanRouter } = require('./routes/hermesKanban');
-const { buildMemoryRouter } = require('./routes/memory');
 const { buildModelsRouter } = require('./routes/models');
 const { buildOllamaRouter } = require('./routes/ollama');
 const { buildOperationsRouter } = require('./routes/operations');
-const { buildOpsRouter } = require('./routes/ops');
-const { buildQuickRouter } = require('./routes/quick');
-const { buildScoutRouter } = require('./routes/scout');
 const { buildSessionsRouter } = require('./routes/sessions');
 const { buildSettingsRouter } = require('./routes/settings');
-const { buildSkillsRouter } = require('./routes/skills');
 const { buildStatusRouter } = require('./routes/status');
-const { buildTasksRouter, recoverTasksOnStartup } = require('./routes/tasks');
 
 function prettyModelName(modelKey) {
   if (!modelKey) return '—';
@@ -112,7 +103,6 @@ function createApp(deps = {}) {
   const OPENCLAW_CONFIG_PATH = config.paths.openclawConfig;
   const GATEWAY_PORT = config.gateway.port;
   const GATEWAY_TOKEN = config.gateway.token;
-  const WORKSPACE_PATH = config.workspacePath;
   const SKILLS_PATH = config.skillsPath;
   const MEMORY_PATH = config.memoryPath;
   const OPENCLAW_BIN = config.openclawBin;
@@ -129,12 +119,10 @@ function createApp(deps = {}) {
     }
   }
 
-  const persistMcConfig = () => configStore.persist(mcConfig);
-
   // Every OpenClaw CLI call runs on the serialized `openclaw` lane.
   const openclawExec = createOpenclawExec({ runner: exec, bin: OPENCLAW_BIN, configPath: OPENCLAW_CONFIG_PATH });
   const openclawCli = createOpenclawCli({ runner: exec, bin: OPENCLAW_BIN, configPath: OPENCLAW_CONFIG_PATH });
-  // Shell runner kept only for the disabled AWS module (slated for removal).
+  // Shell runner for the AWS cost read (GET /api/aws/costs).
   const execPromise = util.promisify(childProcess.exec);
 
   const fetchSessions = createFetchSessions({
@@ -249,31 +237,23 @@ function createApp(deps = {}) {
   // --- runtime area: scheduled sources and additive router wiring --------
   const { createAutomationSource, AUTOMATIONS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/automations');
   const { createOpenclawModelsSource, MODELS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/models');
-  const { createOpenclawSkillsSource, SKILLS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/skills');
   const { createOllamaSource } = require('./sources/ollama/telemetry');
   const automationSource = deps.sources?.automations || createAutomationSource({ cronService, now, logger });
   const modelsSource = deps.sources?.models || createOpenclawModelsSource({ openclawCli, parseFirstJson, prettyModelName, settingsService, now, logger });
-  const skillsSource = deps.sources?.skills || createOpenclawSkillsSource({ openclawCli, parseFirstJson, settingsService, now, logger });
   const ollamaSource = deps.sources?.ollama || createOllamaSource({ runner: exec, mcConfig, fetchImpl, now, logger });
   scheduler.register(automationSource, { intervalMs: AUTOMATIONS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
   scheduler.register(modelsSource, { intervalMs: MODELS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
-  scheduler.register(skillsSource, { intervalMs: SKILLS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
   scheduler.register(ollamaSource, { intervalMs: 5000, jitterMs: 250 });
   // Local adapters leave other authors' mount lines untouched.
   function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource }); }
   function buildCalendarRouter(options) { return require('./routes/calendar').buildCalendarRouter({ ...options, automationSource }); }
   function buildModelsRouter(options) { return require('./routes/models').buildModelsRouter({ ...options, modelsSource }); }
-  function buildSkillsRouter(options) { return require('./routes/skills').buildSkillsRouter({ ...options, skillsSource }); }
   function buildOllamaRouter(options) { return require('./routes/ollama').buildOllamaRouter({ ...options, ollamaSource }); }
   // --- end runtime area --------------------------------------------------
 
   const sessionsService = createSessionsService({
     fetchSessions,
     hiddenSessionsPath: path.join(projectRoot, 'hidden-sessions.json'),
-    openclawConfigPath: OPENCLAW_CONFIG_PATH,
-    gatewayPort: GATEWAY_PORT,
-    gatewayToken: GATEWAY_TOKEN,
-    fetchImpl,
     now,
   });
   // The visible-sessions list is a scheduled source; GET /api/sessions only
@@ -371,10 +351,8 @@ function createApp(deps = {}) {
     return require('./routes/operations').buildOperationsRouter({ ...options, operationsOverviewService: attentionArea.overviewService });
   }
   // --- end attention area -------------------------------------------------
-  const TASKS_FILE = path.join(projectRoot, 'tasks.json');
   const DECISION_LOG_PATH = path.join(projectRoot, 'data/decision-log.json');
   const OPS_EVENTS_PATH = path.join(projectRoot, 'data/ops-events.json');
-  const AGENT_REGISTRY_PATH = path.join(projectRoot, 'data/agent-registry.json');
 
   // --- routes ------------------------------------------------------------
   const healthPayload = () => buildHealthPayload({
@@ -397,7 +375,6 @@ function createApp(deps = {}) {
 
   app.use(buildGBrainRouter({ projectRoot, mcConfig, gbrainOverviewService }));
   app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
-  app.use(buildChatRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN, openclawBin: OPENCLAW_BIN }));
   app.use(buildOperationsRouter({ operationsOverviewService }));
   app.use(buildStatusRouter({ statusService, statusSource }));
   app.use(buildCronRouter({
@@ -408,36 +385,16 @@ function createApp(deps = {}) {
     openclawExec: (...args) => openclawExec(...args),
   }));
   app.use(buildCalendarRouter({ calendarService: cronService, cronCacheTtl: CRON_CACHE_TTL }));
-  app.use(buildTasksRouter({
-    projectRoot,
-    cronService,
-    openclawExec,
-    openclawBin: OPENCLAW_BIN,
-    workspacePath: WORKSPACE_PATH,
-    gatewayToken: GATEWAY_TOKEN,
-  }));
-  app.use(buildScoutRouter({ projectRoot }));
-  app.use(buildAgentsRouter({
-    openclawExec,
-    fetchSessions,
-    readJsonFileSafe,
-    writeJsonFileAtomic,
-    TASKS_FILE,
-    mcConfig,
-    workspacePath: WORKSPACE_PATH,
-    persistMcConfig,
-    missionControlConfigPath: MC_CONFIG_PATH,
-  }));
-  app.use(buildSkillsRouter({ openclawExec, parseFirstJson, settingsService }));
+  // Standalone cron search page (public/cron-search.html), reads /api/cron.
+  app.get('/cron-search', (req, res) => res.sendFile(path.join(config.paths.publicDir, 'cron-search.html')));
   app.use(buildAwsRouter({
     exec: execPromise,
     AWS_ACCESS_KEY_ID: config.aws.accessKeyId,
     AWS_SECRET_ACCESS_KEY: config.aws.secretAccessKey,
     AWS_REGION: config.aws.region,
     mcConfig,
-    s3Bucket: config.aws.bucket,
   }));
-  app.use(buildModelsRouter({ openclawExec, parseFirstJson, prettyModelName, settingsService }));
+  app.use(buildModelsRouter({}));
   // usage area: isolated provider lanes, scheduler reads, and pure legacy routes.
   const usageService = services.usageService || require('./sources/usage').createUsageService({
     exec: deps.exec,
@@ -456,31 +413,15 @@ function createApp(deps = {}) {
 
   app.use(buildSessionsRouter({ sessionsService }));
   app.use(buildSettingsRouter({ settingsService, projectRoot }));
-  app.use(buildDocsRouter({ projectRoot }));
-  app.use(buildMemoryRouter({ memoryPath: MEMORY_PATH, workspacePath: WORKSPACE_PATH }));
-  app.use(buildQuickRouter({ gatewayPort: GATEWAY_PORT, gatewayToken: GATEWAY_TOKEN }));
-  app.use(buildOllamaRouter({
-    exec: execPromise,
-    openclawExec,
-    mcConfig,
-    missionControlConfigPath: MC_CONFIG_PATH,
-    persistMcConfig,
-  }));
+  app.use(buildOllamaRouter({}));
   app.use(buildCouncilsRouter({
     readRuntimeSnapshot,
     writeRuntimeSnapshot,
     runtimeSnapshotTtl: RUNTIME_SNAPSHOT_TTL,
     decisionLogPath: DECISION_LOG_PATH,
     opsEventsPath: OPS_EVENTS_PATH,
-    agentRegistryPath: AGENT_REGISTRY_PATH,
     readJsonFileSafe,
     writeJsonFileAtomic,
-  }));
-  app.use(buildOpsRouter({
-    readJsonFileSafe,
-    writeJsonFileAtomic,
-    opsEventsPath: OPS_EVENTS_PATH,
-    gatewayPort: GATEWAY_PORT,
   }));
 
   // Unknown /api/* is a JSON 404, never the SPA shell or an HTML page.
@@ -513,16 +454,6 @@ function createApp(deps = {}) {
     },
     start() {
       scheduler.start();
-    },
-    async recoverTasks() {
-      await recoverTasksOnStartup({
-        projectRoot,
-        cronService,
-        openclawExec,
-        openclawBin: OPENCLAW_BIN,
-        workspacePath: WORKSPACE_PATH,
-        gatewayToken: GATEWAY_TOKEN,
-      });
     },
     // Stop timers, kill children. Idempotent.
     dispose() {

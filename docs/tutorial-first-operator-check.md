@@ -52,18 +52,18 @@ Select an attention item, then open its evidence drawer. Compare:
 
 Use the source destination rather than guessing from the aggregate:
 
-- Hermes work: `http://127.0.0.1:3333/work`
+- manager loops: `http://127.0.0.1:3333/attention`
 - OpenClaw/Hermes schedules: `http://127.0.0.1:3333/automations`
 - GBrain detail: `http://127.0.0.1:3333/gbrain`
-- sessions: `http://127.0.0.1:3333/sessions`
+- services: `http://127.0.0.1:3333/services`
 - usage: `http://127.0.0.1:3333/usage`
-- agent/runtime inventory: `http://127.0.0.1:3333/systems`
+- local models: `http://127.0.0.1:3333/ollama`
 
 The specialized page carries more source-specific context than Brain.
 
 ## 3. Learn the safe action model
 
-Brain and Explore expose the same eight allowlisted GBrain actions. Try an R0
+Brain and Knowledge (`/gbrain`) expose the same eight allowlisted GBrain actions. Try an R0
 diagnostic such as **Run System Check** (`doctor-fast`) or a preview action.
 R0 runs without a confirmation dialog because it does not repair data.
 
@@ -77,9 +77,9 @@ fresh GBrain evidence.
 
 ## 4. Check work, automation, and usage ownership
 
-Open `/work`. The Hermes board uses `triage`, `todo`, `ready`, `running`,
-`blocked`, and `done` columns. If Hermes is unavailable, the page should keep an
-explicit empty/error state instead of failing the whole app.
+Open `/attention`. The page lists what is waiting for you across the manager
+loops. If the loops cannot be read, the page should keep an explicit error
+state instead of failing the whole app.
 
 Open `/automations`. Each job identifies its scheduler. OpenClaw jobs support
 the full set of configured controls. Hermes jobs can be toggled and have their
@@ -94,14 +94,14 @@ unpriced routing aliases report the comparison as not applicable or unavailable.
 
 ## 5. Recognize secondary surfaces
 
-Settings and Governance Archive are utility destinations. `/workshop`,
-`/calendar`, `/office`, `/team`, `/setup`, and `/diagnostics` are
-reachable directly but intentionally absent from primary navigation. A module
-flag may hide a navigation item or Diagnostics tab; it does not block the URL.
-Ollama Runtime is a primary System destination at `/ollama`.
+Settings and Audit are utility destinations. `/gbrain`, `/calendar`, and
+`/setup` are reachable directly but intentionally absent from primary
+navigation. A module flag may hide a navigation item; it does not block the
+URL.
 
-Old bookmarks continue to redirect, including `/kanban`, `/cron`,
-`/conversations`, `/costs`, and `/agents`.
+Old bookmarks continue to redirect: `/cron` and `/costs` go to their renamed
+pages, and the removed screens (`/work`, `/workshop`, `/kanban`, `/sessions`,
+`/conversations`, `/agents`, `/diagnostics` and others) go to Brain.
 
 ## What you verified
 

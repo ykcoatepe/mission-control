@@ -102,36 +102,6 @@ test('malformed inventory is unknown, never an authoritative empty list', async 
   assert.equal(source.snapshot().meta.error.code, 'ollama_invalid_payload');
 });
 
-test('optimization persists only through ConfigStore and reports pending verification without probes', async () => {
-  const mcConfig = {};
-  const f = fixture({ mcConfig });
-  let writes = 0;
-  await withServer(buildOllamaRouter({ ollamaSource: f.source, mcConfig, persistMcConfig: async () => { writes += 1; } }), async (base) => {
-    const response = await fetch(`${base}/api/ollama/optimization`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'apply', confirm: true, profile: { strategy: 'performance' } }) });
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).verification.pending, true);
-    assert.equal(writes, 1); assert.equal(f.calls(), 0);
-    assert.equal(mcConfig.ollama.optimization.strategy, 'performance');
-  });
-  await withServer(buildOllamaRouter({ ollamaSource: f.source, mcConfig }), async (base) => {
-    const response = await fetch(`${base}/api/ollama/optimization`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true }) });
-    assert.equal(response.status, 503);
-    assert.equal((await response.json()).error.code, 'config_store_unavailable');
-  });
-});
-
-test('failed ConfigStore persistence restores the prior in-memory config', async () => {
-  const mcConfig = { ollama: { host: 'localhost', optimization: { strategy: 'balanced' } } };
-  const previous = mcConfig.ollama;
-  const f = fixture({ mcConfig });
-  await withServer(buildOllamaRouter({ ollamaSource: f.source, mcConfig, persistMcConfig: () => { throw new Error('private path must not leak'); } }), async (base) => {
-    const response = await fetch(`${base}/api/ollama/optimization`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirm: true, profile: { strategy: 'performance' } }) });
-    assert.equal(response.status, 500);
-    assert.deepEqual(await response.json(), { error: { code: 'internal_error', message: 'Internal server error' } });
-    assert.strictEqual(mcConfig.ollama, previous);
-  });
-});
-
 test('Ollama source only exports whitelisted scalar model metadata', async () => {
   const source = createOllamaSource({ platform: 'linux', fetchImpl: async (url) => ({ ok: true, json: async () => url.endsWith('/api/version') ? { version: '1.2.3', token: 'private' } : { models: [{ name: 'qwen', transcript: 'private', details: { family: { transcript: 'private' } } }] } }) });
   await source.refresh();

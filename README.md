@@ -5,27 +5,25 @@ machine. It brings OpenClaw, Hermes, GBrain, Ollama, Claude Code, CodexBar, and
 supporting local services into one evidence-first interface at
 `http://127.0.0.1:3333`.
 
-The current product is organized around eight operator destinations:
+The current product is organized around six primary destinations:
 
 | Destination | Route | What it answers |
 | --- | --- | --- |
-| Brain | `/` | What needs attention across GBrain, Hermes, and OpenClaw? |
-| Work | `/work` | What is queued, running, blocked, or ready in Hermes? |
+| Brain | `/` | Is the brain healthy, and does anything need me? |
+| Attention | `/attention` | What is waiting for me across the manager loops? |
 | Automations | `/automations` | Which OpenClaw and Hermes jobs are scheduled or failing? |
-| Sessions | `/sessions` | Which conversations and handoffs are active? |
-| Explore | `/gbrain` | What is the detailed GBrain health, source, queue, and evidence state? |
 | Usage | `/usage` | What are OpenClaw, Hermes, Claude Code, and CodexBar using or costing? |
-| Systems | `/systems` | Which agents, sessions, models, and runtimes are present? |
-| Ollama Runtime | `/ollama` | Is Ollama online, which models are available or running, and what resources are in use? |
+| Services | `/services` | Is everything that should be running, running? |
+| Local models | `/ollama` | Is Ollama online, which models are available or running, and what resources are in use? |
 
-Settings and the governance archive are utility destinations. Calendar,
-Workshop, Digital Office, Team Structure, Setup, and Diagnostics remain
-directly reachable without appearing in primary navigation.
+Settings and the Audit archive of past decisions are utility destinations.
+Knowledge (`/gbrain`), Calendar, and Setup remain directly reachable without
+appearing in primary navigation. Screens that were removed redirect to Brain.
 
 ## Quick start
 
 Requirements: Node.js 20.19+ in the Node 20 line, or Node.js 22.12+. OpenClaw,
-Hermes, GBrain, Ollama, CodexBar, AWS, Notion, and Brave Search are optional
+Hermes, GBrain, Ollama, CodexBar, AWS, and Notion are optional
 integrations; unavailable sources render as explicit empty, stale, warning, or
 unavailable states.
 
@@ -45,7 +43,7 @@ changing `MISSION_CONTROL_HOST` unless you add an appropriate trusted access
 boundary.
 
 Local configuration and runtime data are intentionally gitignored, including
-`mc-config.json`, `data/`, `documents/`, `tasks.json`, logs, generated frontend
+`mc-config.json`, `data/`, `documents/`, logs, generated frontend
 assets, and installed dependencies. Never commit tokens, local transcripts, or
 personal runtime data.
 
@@ -87,8 +85,8 @@ mission-control/
 └── docs/                     # Diataxis documentation and design history
 ```
 
-Stack: Express 5, React 19, TypeScript 5.9, Vite 7, TanStack Query, Framer
-Motion, Recharts, Vitest, and Node's built-in test runner. Styling uses global
+Stack: Express 5, React 19, TypeScript 5.9, Vite 7, TanStack Query,
+Recharts, Vitest, and Node's built-in test runner. Styling uses global
 design tokens plus CSS Modules; there is no utility CSS framework.
 
 ## Validation

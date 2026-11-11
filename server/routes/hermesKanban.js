@@ -22,22 +22,6 @@ function buildHermesKanbanRouter({ mcConfig, hermesKanbanService } = {}) {
     }
   });
 
-  router.get('/api/hermes-kanban/tasks/:taskId', async (req, res) => {
-    try {
-      res.json(await service.getTaskDetail(req.params.taskId));
-    } catch (error) {
-      res.status(500).json({ ok: false, error: error.message, taskId: req.params.taskId });
-    }
-  });
-
-  router.post('/api/hermes-kanban/actions', async (req, res) => {
-    try {
-      res.json(await service.runAction(req.body || {}));
-    } catch (error) {
-      res.status(error.statusCode || 500).json(error.responseBody || { ok: false, error: error.message });
-    }
-  });
-
   return router;
 }
 

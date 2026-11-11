@@ -104,18 +104,6 @@ function createSettingsService({
     };
   }
 
-  async function setDefaultModel(model) {
-    const normalized = typeof model === 'string' ? model.trim() : '';
-    if (!normalized) {
-      throw httpError(400, 'invalid_model', 'model required');
-    }
-
-    await openclawExec(['config', 'set', 'agents.defaults.model.primary', normalized], 15000);
-    await openclawExec(['config', 'set', 'agents.defaults.model.default', normalized], 15000);
-    await reloadGatewayConfig();
-    return { ok: true, model: normalized, message: `Model switched to ${normalized}` };
-  }
-
   function getModelRouting() {
     const cfg = readOpenclawConfigSafe();
     const main = cfg?.agents?.defaults?.model?.primary || null;
@@ -257,7 +245,6 @@ function createSettingsService({
   return {
     getPublicConfig,
     getSettingsPayload,
-    setDefaultModel,
     getModelRouting,
     setModelRouting,
     getHeartbeatSettings,
@@ -267,8 +254,6 @@ function createSettingsService({
     updateSetup,
     getMissionControlConfigPath,
     importMissionControlConfig,
-    readOpenclawConfigSafe,
-    reloadGatewayConfig,
   };
 }
 

@@ -10,31 +10,22 @@ families, and action boundaries. `frontend/src/appRoutes.tsx` and
 
 | Label | Page title | Route | Module | Data owner |
 | --- | --- | --- | --- | --- |
-| Brain | Shared Brain | `/` | `dashboard` | Operations overview + GBrain actions |
-| Work | Hermes Kanban | `/work` | `workshop` | Hermes Kanban |
-| Automations | Cron Jobs | `/automations` | `cron` | OpenClaw + Hermes cron |
-| Sessions | Conversations | `/sessions` | `chat` | OpenClaw sessions/chat |
-| Explore | GBrain | `/gbrain` | `gbrain` | GBrain runtime and timeline |
-| Usage | Cost Tracker | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
-| Systems | Agent Hub | `/systems` | `agents` | agents, sessions, models |
-| Ollama Runtime | Ollama Runtime | `/ollama` | `ollamaMonitor` | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
-
-The title differences for Sessions/Conversations, Usage/Cost Tracker, and
-Systems/Agent Hub are intentional: navigation names describe the operator
-destination while the page retains its established product title.
+| Brain | Brain | `/` | `dashboard` | Operations overview + GBrain synoptic and actions |
+| Attention | Attention | `/attention` | `attention` | Manager loops (`/api/loops`) |
+| Automations | Automations | `/automations` | `cron` | OpenClaw + Hermes cron, calendar |
+| Usage | Usage | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
+| Services | Services | `/services` | `services` | launchd services and endpoint reachability |
+| Local models | Local models | `/ollama` | `ollamaMonitor` | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
 
 ### Utility and direct routes
 
 | Route | Visibility | Purpose |
 | --- | --- | --- |
-| `/settings` | utility navigation | Setup, routing, heartbeat, budget, import/export |
-| `/councils` | utility navigation | Governance archive and open-approval alarm |
+| `/settings` | utility navigation | Model routing, heartbeat, appearance, budget, import/export |
+| `/councils` | utility navigation (label: Audit) | Governance archive of past decisions and their votes |
 | `/setup` | direct | First-run configuration |
-| `/workshop` | direct | Local/OpenClaw task board and execution |
+| `/gbrain` | direct | Knowledge: is the brain healthy and in sync |
 | `/calendar` | direct | Schedule and local calendar entries |
-| `/office` | direct | Digital Office telemetry and triage |
-| `/team` | direct | Team structure and bootstrap suggestions |
-| `/diagnostics` | direct | Memory, Docs, Scout, AWS, and Skills tabs |
 
 Direct routes are mounted even when omitted from navigation. Module flags are
 presentation controls, not authorization.
@@ -43,15 +34,9 @@ presentation controls, not authorization.
 
 | Old route | Current target |
 | --- | --- |
-| `/kanban` | `/work` |
 | `/cron` | `/automations` |
-| `/conversations` | `/sessions` |
 | `/costs` | `/usage` |
-| `/agents` | `/systems` |
-| `/memory` | `/diagnostics?tab=memory` |
-| `/scout` | `/diagnostics?tab=scout` |
-| `/aws` | `/diagnostics?tab=aws` |
-| `/skills` | `/diagnostics?tab=skills` |
+| `/work`, `/sessions`, `/systems`, `/workshop`, `/office`, `/team`, `/diagnostics`, `/kanban`, `/conversations`, `/agents`, `/memory`, `/scout`, `/aws`, `/skills` | `/` (the screens were removed) |
 
 ## Core read models
 
@@ -86,6 +71,10 @@ still surface a caveat or stale evidence.
 | GET | `/api/gbrain/actions` | Allowlisted action catalog |
 | POST | `/api/gbrain/actions` | Execute one allowlisted action |
 | GET | `/api/gbrain/timeline?limit=N` | Most recent evidence entries, bounded by `limit` |
+| GET | `/api/gbrain/synoptic` | System synoptic read model for Brain |
+| GET | `/api/gbrain/search?q=` | Knowledge search |
+| GET | `/api/gbrain/pages/:slug` | One page |
+| GET | `/api/gbrain/graph` | Link graph around a page |
 
 The health reader first uses the supported call interface and job statistics,
 with `gbrain health --json` as a compatibility fallback.
@@ -112,51 +101,50 @@ after newer, fresh evidence is observed.
 The tables below group the public application API. Endpoint path parameters use
 `:name` notation.
 
-### Work, automations, and sessions
+### Signals, loops, and services
 
 | Family | Endpoints | Notes |
 | --- | --- | --- |
-| Hermes Kanban | `GET /api/hermes-kanban`, `GET /api/hermes-kanban/tasks/:taskId`, `POST /api/hermes-kanban/actions` | Named actions and flag-safe argument validation |
+| Signals | `GET /api/signals` | Small fixed contract the shell polls; composed from memory, an unobserved part is `null` |
+| Loops | `GET /api/loops`, `GET /api/loops/:project` | Manager-loop ledger from the scheduled mloop source |
+| Services | `GET /api/services` | launchd services plus gateway and Ollama reachability; read-only |
+| Hermes Kanban | `GET /api/hermes-kanban` | Read-only board; no write routes remain |
+
+### Automations
+
+| Family | Endpoints | Notes |
+| --- | --- | --- |
 | Cron | `GET /api/cron`, `POST /api/cron/create`, `POST /api/cron/:id/toggle`, `POST /api/cron/:id/run`, `PATCH /api/cron/:id/model`, `DELETE /api/cron/:id` | Hermes jobs cannot run/delete; toggle/model are allowed |
 | Calendar | `GET /api/calendar`, `POST /api/calendar`, `PATCH /api/calendar/:id`, `POST /api/calendar/sync-cron` | Combines schedule data with local entries |
-| Tasks | `GET /api/activity`, `GET /api/tasks`, `GET /api/tasks/board`, `GET /api/tasks/:taskId`, `POST /api/tasks`, `POST /api/tasks/add`, `POST /api/tasks/assistant`, `PATCH /api/tasks/:taskId`, `DELETE /api/tasks/:taskId`, `POST /api/tasks/:taskId/execute` | Execute dispatches real OpenClaw work; list/board may reconcile and persist state |
-| Sessions | `GET /api/sessions`, `GET /api/sessions/:sessionKey/history`, `POST /api/sessions/:sessionKey/send`, `DELETE /api/sessions/:key/close` | `close` hides locally; it does not terminate OpenClaw |
-| Chat | `POST /api/chat` | Gateway/SSE proxy with abort handling |
+| Cron search | `GET /cron-search` | Standalone page (`public/cron-search.html`) that reads `/api/cron` |
 
-### Usage, systems, and models
+### Usage, status, sessions, and models
 
 | Family | Endpoints | Notes |
 | --- | --- | --- |
-| Status | `GET /api/status` | Dashboard/runtime status snapshot |
-| Usage | `GET /api/costs?period=7d`, `GET /api/costs/codexbar` | Periods are normalized; metadata reports source readiness, stale state, and refresh state |
-| Agents | `GET /api/agents`, `POST /api/agents/create`, `POST /api/agents/:agentId/model` | Registry, live sessions, custom agents, model override |
-| Team/Office | `GET /api/team/structure`, `POST /api/team/structure/bootstrap`, `GET /api/office/telemetry` | Bootstrap produces suggested structure; office is live telemetry |
-| Models | `GET /api/models`, `GET /api/model`, `POST /api/model` | Catalog and OpenClaw default model |
-| Ollama | `GET /api/ollama/telemetry`, `GET /api/ollama/telemetry/history`, `GET /api/ollama/telemetry/models`, `POST /api/ollama/optimization` | Local model and memory telemetry |
+| Status | `GET /api/status` | OpenClaw status snapshot; `scripts/restart_safe.sh` uses it as a fallback health probe |
+| Usage | `GET /api/costs?period=7d`, `GET /api/costs/codexbar`, `GET /api/costs/months`, `GET /api/usage/summary` | Periods are normalized; metadata reports source readiness, stale state, and refresh state |
+| Sessions | `GET /api/sessions` | Read-only list of visible OpenClaw sessions, used by Usage |
+| AWS | `GET /api/aws/costs` | Read by Usage while the AWS module is enabled; answers a disabled payload otherwise |
+| Models | `GET /api/models` | Catalog read by Settings and the automation create dialog |
+| Ollama | `GET /api/ollama/telemetry`, `GET /api/ollama/telemetry/history`, `GET /api/ollama/telemetry/models` | Local model and memory telemetry; read-only |
 
 Usage merges included/local consumption and estimated spend from multiple
 sources. `meta.openclawStatus`, `meta.hermesStatus`, `meta.claudeCodeStatus`,
 `meta.stale`, and `meta.refreshing` explain source reliability. A stale cached
 source is not equivalent to zero usage.
 
-### Settings and diagnostics
+### Settings
 
 | Family | Endpoints | Notes |
 | --- | --- | --- |
 | Settings | `GET /api/config`, `GET|POST /api/setup`, `GET /api/settings`, `POST /api/settings/budget`, `GET|POST /api/settings/model-routing`, `GET|POST /api/settings/heartbeat`, `GET /api/settings/export`, `POST /api/settings/import` | Public config strips known gateway/Notion/Scout secrets; import accepts one config file |
-| Memory | `GET /api/memory` | Local memory projection |
-| Docs | `GET /api/docs`, `POST /api/docs/upload`, `GET /cron-search` | Upload limit is 20 files; settings imports and document uploads have separate temporary paths |
-| Skills | `GET /api/skills`, `POST /api/skills/:name/toggle`, `POST /api/skills/:name/install`, `POST /api/skills/:name/uninstall` | Install/uninstall currently acknowledge but do not implement package changes |
-| Scout | `GET /api/scout`, `GET /api/scout/status`, `POST /api/scout/scan`, `POST /api/scout/deploy`, `POST /api/scout/dismiss` | Optional Brave Search-backed workflow |
-| AWS | `GET /api/aws/services`, `GET /api/aws/bedrock-models`, `POST /api/aws/generate-image`, `GET /api/aws/image/:id`, `GET /api/aws/gallery`, `GET /api/aws/s3-image/:key`, `GET /api/aws/costs` | Optional Bedrock/S3 integration |
 
-### Governance and operator actions
+### Governance
 
 | Family | Endpoints | Notes |
 | --- | --- | --- |
-| Councils | `GET /api/councils/summary`, `GET /api/councils/decisions`, `GET /api/councils/agents`, `GET /api/councils/governance/scorecard`, `GET /api/councils/decisions/:decisionId/timeline`, `POST /api/councils/decisions/:decisionId/action` | Action returns `410` unless explicitly enabled |
-| Ops | `GET /api/ops/events` | Local event history (read-only) |
-| Quick | `POST /api/heartbeat/run`, `POST /api/quick/emails`, `POST /api/quick/schedule` | OpenClaw gateway actions |
+| Councils | `GET /api/councils/summary`, `GET /api/councils/decisions`, `GET /api/councils/governance/scorecard`, `GET /api/councils/decisions/:decisionId/timeline`, `POST /api/councils/decisions/:decisionId/action` | Action returns `410` unless explicitly enabled |
 
 ## Request boundary
 

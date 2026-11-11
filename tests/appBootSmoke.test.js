@@ -7,11 +7,10 @@
 // Known GET writers left for their area units (not in the sweep below):
 //   GET /api/cron                         runtime snapshot data/runtime/cron.json
 //   GET /api/calendar                     calendar sync writes calendar-entries.json
-//   GET /api/tasks, /api/tasks/board      task reconcile rewrites tasks.json
 //   GET /api/councils/summary, /governance/scorecard   runtime snapshots
 //   GET /api/gbrain/timeline              timeline ledger
 // Routes that spawn their own CLIs (costs, ollama, gbrain probes, hermes
-// kanban, agents roster) are also outside this sweep.
+// kanban) are also outside this sweep.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,8 +31,6 @@ process.env.HERMES_BIN = path.join(EMPTY_BIN, 'hermes');
 
 fs.writeFileSync(path.join(ROOT, 'mc-config.json'), JSON.stringify({ name: 'Boot Test', gateway: { port: 1, token: '' }, modules: {} }, null, 2));
 fs.writeFileSync(path.join(ROOT, 'package.json'), JSON.stringify({ name: 'mc-boot', version: '0.0.0-test' }));
-fs.mkdirSync(path.join(ROOT, 'docs'));
-fs.writeFileSync(path.join(ROOT, 'docs', 'readme.md'), '# test doc\n');
 
 // Any direct child-process use (bypassing the core runner) is a failure.
 const directSpawns = [];
@@ -65,34 +62,23 @@ const EXPECTED_ROUTES = [
   'GET /api/health', 'GET /healthz',
   'GET /api/gbrain/overview', 'GET /api/gbrain/health', 'GET /api/gbrain/sources', 'GET /api/gbrain/version',
   'GET /api/gbrain/integration-health', 'GET /api/gbrain/actions', 'POST /api/gbrain/actions', 'GET /api/gbrain/timeline',
-  'GET /api/hermes-kanban', 'GET /api/hermes-kanban/tasks/:taskId', 'POST /api/hermes-kanban/actions',
-  'POST /api/chat',
+  'GET /api/hermes-kanban',
   'GET /api/operations/overview',
   'GET /api/status',
   'GET /api/cron', 'POST /api/cron/:id/toggle', 'POST /api/cron/:id/run', 'POST /api/cron/create', 'DELETE /api/cron/:id',
   'PATCH /api/cron/:id/model',
   'GET /api/calendar', 'POST /api/calendar/sync-cron', 'POST /api/calendar', 'PATCH /api/calendar/:id',
-  'GET /api/activity', 'GET /api/tasks', 'GET /api/tasks/board', 'GET /api/tasks/:taskId', 'POST /api/tasks', 'POST /api/tasks/add',
-  'POST /api/tasks/assistant', 'PATCH /api/tasks/:taskId', 'DELETE /api/tasks/:taskId', 'POST /api/tasks/:taskId/execute',
-  'GET /api/scout', 'POST /api/scout/deploy', 'POST /api/scout/dismiss', 'POST /api/scout/scan', 'GET /api/scout/status',
-  'GET /api/agents', 'POST /api/agents/create', 'GET /api/team/structure', 'POST /api/team/structure/bootstrap',
-  'GET /api/office/telemetry', 'POST /api/agents/:agentId/model',
-  'GET /api/skills', 'POST /api/skills/:name/toggle', 'POST /api/skills/:name/install', 'POST /api/skills/:name/uninstall',
-  'GET /api/aws/services', 'GET /api/aws/bedrock-models', 'POST /api/aws/generate-image', 'GET /api/aws/image/:id',
-  'GET /api/aws/gallery', 'GET /^\\/api\\/aws\\/s3-image\\/(.+)$/', 'GET /api/aws/costs',
-  'GET /api/models', 'GET /api/model', 'POST /api/model',
+  'GET /cron-search',
+  'GET /api/aws/costs',
+  'GET /api/models',
   'GET /api/costs', 'GET /api/costs/codexbar', 'GET /api/costs/months',
-  'GET /api/sessions', 'GET /api/sessions/:sessionKey/history', 'POST /api/sessions/:sessionKey/send', 'DELETE /api/sessions/:key/close',
+  'GET /api/sessions',
   'POST /api/settings/budget', 'GET /api/config', 'GET /api/setup', 'POST /api/setup', 'GET /api/settings',
   'GET /api/settings/model-routing', 'POST /api/settings/model-routing', 'GET /api/settings/heartbeat', 'POST /api/settings/heartbeat',
   'GET /api/settings/export', 'POST /api/settings/import',
-  'GET /api/docs', 'POST /api/docs/upload', 'GET /cron-search',
-  'GET /api/memory',
-  'POST /api/heartbeat/run', 'POST /api/quick/emails', 'POST /api/quick/schedule',
-  'GET /api/ollama/telemetry', 'GET /api/ollama/telemetry/history', 'GET /api/ollama/telemetry/models', 'POST /api/ollama/optimization',
-  'GET /api/councils/summary', 'GET /api/councils/decisions', 'GET /api/councils/agents', 'GET /api/councils/governance/scorecard',
+  'GET /api/ollama/telemetry', 'GET /api/ollama/telemetry/history', 'GET /api/ollama/telemetry/models',
+  'GET /api/councils/summary', 'GET /api/councils/decisions', 'GET /api/councils/governance/scorecard',
   'GET /api/councils/decisions/:decisionId/timeline', 'POST /api/councils/decisions/:decisionId/action',
-  'GET /api/ops/events',
   'GET /^\\/(?!api(?:\\/|$)).*/',
 ];
 
@@ -107,11 +93,7 @@ const PURE_GET_SWEEP = [
   '/api/setup',
   '/api/settings/model-routing',
   '/api/settings/heartbeat',
-  '/api/memory',
-  '/api/docs',
-  '/api/ops/events',
   '/api/models',
-  '/api/skills',
   '/api/gbrain/actions',
   '/api/nope',
 ];
@@ -278,10 +260,10 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
 
   try {
     // Building the app writes nothing except the empty multer upload
-    // directories (docs and settings import), as before.
+    // directory of the settings import, as before.
     const afterBoot = { root: treeState(ROOT), home: treeState(HOME) };
     const bootCreated = Object.keys(afterBoot.root).filter((key) => !(key in before.root)).map((key) => path.relative(ROOT, key));
-    assert.deepEqual(bootCreated.sort(), ['documents', 'documents/.tmp', 'documents/.tmp-settings']);
+    assert.deepEqual(bootCreated.sort(), ['documents', 'documents/.tmp-settings']);
     assert.deepEqual(afterBoot.home, before.home);
     for (const key of Object.keys(before.root)) assert.equal(afterBoot.root[key], before.root[key], `boot changed ${key}`);
     before.root = afterBoot.root;
@@ -319,10 +301,10 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
     assert.equal(health.service, 'mission-control');
     assert.ok('meanMs' in health.eventLoop);
     // --- runtime area: source registration and extended pure-GET sweep ----
-    const runtimeSourceIds = ['openclaw.status', 'openclaw.automations', 'openclaw.models', 'openclaw.skills', 'ollama.telemetry'];
+    const runtimeSourceIds = ['openclaw.status', 'openclaw.automations', 'openclaw.models', 'ollama.telemetry'];
     assert.deepEqual(health.scheduler.jobs.map((job) => job.id).filter(id => runtimeSourceIds.includes(id)), runtimeSourceIds);
     const runtimeGetBefore = { root: treeState(ROOT), home: treeState(HOME), exec: execCalls.length, network: networkCalls.length };
-    for (const urlPath of ['/api/cron', '/api/calendar', '/api/model', '/api/settings/export', '/api/ollama/telemetry', '/api/ollama/telemetry/history', '/api/ollama/telemetry/models']) {
+    for (const urlPath of ['/api/cron', '/api/calendar', '/api/models', '/api/settings/export', '/api/ollama/telemetry', '/api/ollama/telemetry/history', '/api/ollama/telemetry/models']) {
       const response = await request(port, { urlPath });
       assert.ok([200, 503].includes(response.status), `${urlPath} uses a typed unavailable response`);
     }
@@ -386,21 +368,21 @@ test('boot smoke: mutating requests are audited; report-only guard passes them',
   const { port } = server.address();
   app.locals.runtime.setBoundPort(port);
   try {
-    const evil = await request(port, { method: 'POST', urlPath: '/api/quick/emails', headers: { Origin: `http://localhost:${port}.evil.com` } });
+    const evil = await request(port, { method: 'POST', urlPath: '/api/nope/audit', headers: { Origin: `http://localhost:${port}.evil.com` } });
     assert.equal(evil.status, 403);
     assert.equal(evil.json.error.code, 'forbidden_origin');
 
-    const reported = await request(port, { method: 'POST', urlPath: '/api/quick/emails', headers: { Origin: `http://localhost:${port}` } });
-    assert.equal(reported.status, 200, 'report-only mode keeps the current frontend working');
+    const reported = await request(port, { method: 'POST', urlPath: '/api/nope/audit', headers: { Origin: `http://localhost:${port}` } });
+    assert.equal(reported.status, 404, 'report-only mode lets the request through to routing');
 
     const badHost = await request(port, { urlPath: '/api/health', headers: { Host: 'evil.com' } });
     assert.equal(badHost.status, 403);
 
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const entries = app.locals.runtime.auditLog.readEntries().filter((e) => e.path === '/api/quick/emails');
+    const entries = app.locals.runtime.auditLog.readEntries().filter((e) => e.path === '/api/nope/audit');
     assert.deepEqual(entries.map((e) => [e.method, e.path, e.status, e.writeHeader]), [
-      ['POST', '/api/quick/emails', 403, false],
-      ['POST', '/api/quick/emails', 200, false],
+      ['POST', '/api/nope/audit', 403, false],
+      ['POST', '/api/nope/audit', 404, false],
     ]);
     assert.equal(app.locals.runtime.guard.status().counters.writeReported, 1);
   } finally {

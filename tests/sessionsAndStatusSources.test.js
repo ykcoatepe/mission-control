@@ -38,10 +38,7 @@ function makeSessions(fetchSessions, extra = {}) {
   return createSessionsService({
     fetchSessions,
     hiddenSessionsPath: path.join(dir, 'hidden-sessions.json'),
-    openclawConfigPath: path.join(dir, 'openclaw.json'),
     homeDir: dir,
-    gatewayPort: 1,
-    gatewayToken: '',
     ...extra,
   });
 }
@@ -80,10 +77,11 @@ test('with no good read yet, the file fallback is served and labelled as not ok'
   assert.equal(list.meta.source, 'openclaw.sessions.file-fallback');
 });
 
-test('a hidden session disappears from the held list immediately', async () => {
-  const service = makeSessions(async () => ok([{ key: 'a' }, { key: 'b' }]));
+test('a session listed in hidden-sessions.json is left out of the held list', async () => {
+  const hiddenSessionsPath = path.join(tempDir('mc-hidden-'), 'hidden-sessions.json');
+  fs.writeFileSync(hiddenSessionsPath, JSON.stringify(['a']));
+  const service = makeSessions(async () => ok([{ key: 'a' }, { key: 'b' }]), { hiddenSessionsPath });
   await service.visibleSessionsSource.refresh();
-  service.hideSession('a');
   const list = await service.listVisibleSessions(25);
   assert.deepEqual(list.sessions.map((s) => s.key), ['b']);
 });

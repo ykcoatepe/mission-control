@@ -94,9 +94,12 @@ Decided with the operator on 2026-11-11.
 
 Removed from navigation because the operator does not use them: Work, Sessions,
 Agents (with Team structure and Desks), the assistant chat, Workshop, and the
-Diagnostics tabs. Their old paths redirect to `/`. Their write endpoints
-(session send, task execute, agent create, model switch from side pages) are to
-be listed and removed after the operator confirms the list.
+Diagnostics tabs. Their old paths redirect to `/`. Their screens, API routes
+(tasks, agents, team, office, chat, session send/history/close, skills, scout,
+docs, memory, quick actions, Hermes Kanban writes, Ollama optimization, model
+switch) and the services used only by them have been removed. `GET /api/status`,
+`GET /api/sessions`, `GET /api/aws/costs` and `GET /api/models` remain because
+Usage, Settings and the automation dialog read them.
 
 ## Usage providers
 
