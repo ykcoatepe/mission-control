@@ -1,0 +1,96 @@
+// @vitest-environment jsdom
+
+import { act, createElement } from 'react'
+import { createRoot } from 'react-dom/client'
+import { afterEach, describe, expect, it } from 'vitest'
+import UsageSummary from './UsageSummary'
+import type { UsageSummaryProps } from './UsageSummary'
+
+globalThis.IS_REACT_ACT_ENVIRONMENT = true
+
+const base: UsageSummaryProps = {
+  mode: 'api-equivalent',
+  periodName: 'This month',
+  periodCost: 50,
+  previousPeriodCost: 40,
+  trend: { direction: 'up', percentage: 25, label: null } as UsageSummaryProps['trend'],
+  compareLabel: 'vs previous month',
+  dailyPace: 2,
+  projection: 60,
+  completePeriod: false,
+  trackedSpend: 12,
+  trackedNote: null,
+  periodTokens: 1234,
+  reliability: 'estimated',
+  sourceIssues: [],
+  sourceIssueTone: 'info',
+}
+
+async function render(props: Partial<UsageSummaryProps> = {}) {
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  await act(async () => createRoot(host).render(createElement(UsageSummary, { ...base, ...props })))
+  return host
+}
+
+afterEach(() => {
+  document.body.innerHTML = ''
+})
+
+describe('UsageSummary', () => {
+  it('keeps the API-equivalent estimate and tracked billing as separate figures', async () => {
+    const host = await render()
+    const text = host.textContent ?? ''
+    expect(text).toContain('This month · API equivalent')
+    expect(text).toContain('$50.00')
+    expect(text).toMatch(/Tracked spend\$12\.00/)
+  })
+
+  it('says billing coverage is unavailable instead of showing tracked spend as zero', async () => {
+    const host = await render({ trackedSpend: null })
+    expect(host.textContent).toMatch(/Tracked spend.*not read/)
+    expect(host.textContent).toContain('Billing coverage not available')
+    expect(host.textContent).not.toMatch(/Tracked spend\$0\.00/)
+  })
+
+  it('labels a partial estimate as an estimate, not an invoice', async () => {
+    const host = await render({ reliability: 'partial' })
+    expect(host.textContent).toContain('Partial estimate, not an invoice')
+  })
+
+  it('shows an unavailable estimate as a missing value with a warning, never as zero spend', async () => {
+    const host = await render({ reliability: 'unavailable', periodCost: null, previousPeriodCost: null, dailyPace: null, projection: null })
+    const text = host.textContent ?? ''
+    expect(text).toContain('Estimate unavailable')
+    expect(text).not.toMatch(/\$\s?0\.00/)
+    expect(text).toMatch(/This month · API equivalent.*not read/)
+  })
+
+  it('distinguishes local-only usage and an empty period from a priced zero', async () => {
+    expect((await render({ reliability: 'not_applicable' })).textContent).toContain('No public price to compare')
+    document.body.innerHTML = ''
+    expect((await render({ reliability: 'no_usage' })).textContent).toContain('No usage recorded')
+  })
+
+  it('reports a finished period as a total, with no projection', async () => {
+    expect((await render()).textContent).toContain('Projection')
+    document.body.innerHTML = ''
+    expect((await render({ completePeriod: true })).textContent).not.toContain('Projection')
+  })
+
+  it('shows billed spend without an estimate notice when the source is live billing', async () => {
+    const host = await render({ mode: 'tracked' })
+    expect(host.textContent).toContain('This month · billed')
+    expect(host.textContent).not.toContain('Estimate, not an invoice')
+    expect(host.textContent).not.toMatch(/Tracked spend\$/)
+  })
+
+  it('surfaces source problems and in-flight refreshes', async () => {
+    const warning = await render({ sourceIssues: ['Hermes could not be read, so totals may be low.'], sourceIssueTone: 'warning' })
+    expect(warning.textContent).toContain('Some usage may be missing')
+    expect(warning.textContent).toContain('Hermes could not be read')
+    document.body.innerHTML = ''
+    const info = await render({ sourceIssues: ['Still refreshing; figures may change.'], sourceIssueTone: 'info' })
+    expect(info.textContent).toContain('Refreshing')
+  })
+})

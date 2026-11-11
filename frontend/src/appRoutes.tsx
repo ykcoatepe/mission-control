@@ -78,28 +78,30 @@ export interface AppRouteDefinition {
   icon?: LucideIcon
   nav?: boolean
   navPlacement?: 'primary' | 'utility'
-  section?: 'core' | 'intelligence' | 'system' | 'operate' | 'audit'
+  /** Sidebar group. Routes without a section (Overview) sit above the groups, unlabelled. */
+  section?: 'operate' | 'know' | 'run'
+  /** Plain-words subtitle, shown in the command palette. */
   description?: string
 }
 
 export const appRoutes: AppRouteDefinition[] = [
   { path: '/setup', label: 'Setup', module: 'settings', component: Setup, nav: false },
-  { path: '/', label: 'Brain', module: 'dashboard', component: BrainHome, icon: BrainCircuit, navPlacement: 'primary', section: 'core', description: 'Shared evidence' },
-  { path: '/work', label: 'Work', module: 'workshop', component: HermesKanban, icon: Kanban, navPlacement: 'primary', section: 'core', description: 'Hermes work · Phase 1' },
-  { path: '/automations', label: 'Automations', module: 'cron', component: Cron, icon: Clock, navPlacement: 'primary', section: 'core', description: 'Cron list · Phase 1' },
-  { path: '/sessions', label: 'Sessions', module: 'chat', component: Chat, icon: MessageCircle, navPlacement: 'primary', section: 'core', description: 'OpenClaw sessions' },
-  { path: '/gbrain', label: 'Explore', module: 'gbrain', component: GBrain, icon: Search, navPlacement: 'primary', section: 'intelligence', description: 'Memory and sources' },
-  { path: '/usage', label: 'Usage', module: 'costs', component: Costs, icon: DollarSign, navPlacement: 'primary', section: 'intelligence', description: 'Spend and model mix' },
-  { path: '/systems', label: 'Systems', module: 'agents', component: Agents, icon: Network, navPlacement: 'primary', section: 'system', description: 'Agents · Phase 1' },
-  { path: '/ollama', label: 'Ollama Runtime', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, navPlacement: 'primary', section: 'system', description: 'Runtime and model telemetry' },
-  { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings, navPlacement: 'utility' },
-  { path: '/councils', label: 'Audit', module: 'councils', component: Councils, icon: Landmark, navPlacement: 'utility' },
+  { path: '/', label: 'Overview', module: 'dashboard', component: BrainHome, icon: BrainCircuit, navPlacement: 'primary', description: 'Does anything need you?' },
+  { path: '/work', label: 'Work', module: 'workshop', component: HermesKanban, icon: Kanban, navPlacement: 'primary', section: 'operate', description: 'What is running and what is stuck' },
+  { path: '/automations', label: 'Automations', module: 'cron', component: Cron, icon: Clock, navPlacement: 'primary', section: 'operate', description: 'Scheduled jobs and their last runs' },
+  { path: '/sessions', label: 'Sessions', module: 'chat', component: Chat, icon: MessageCircle, navPlacement: 'primary', section: 'operate', description: 'Conversations with your agents' },
+  { path: '/gbrain', label: 'Knowledge', module: 'gbrain', component: GBrain, icon: Search, navPlacement: 'primary', section: 'know', description: 'Is the brain healthy and in sync' },
+  { path: '/usage', label: 'Usage', module: 'costs', component: Costs, icon: DollarSign, navPlacement: 'primary', section: 'know', description: 'What you spent and on what' },
+  { path: '/systems', label: 'Agents', module: 'agents', component: Agents, icon: Network, navPlacement: 'primary', section: 'run', description: 'Which agents exist and are alive' },
+  { path: '/ollama', label: 'Local models', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, navPlacement: 'primary', section: 'run', description: 'Ollama health and loaded models' },
+  { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings, navPlacement: 'utility', description: 'Models, budget and appearance' },
+  { path: '/councils', label: 'Audit', module: 'councils', component: Councils, icon: Landmark, navPlacement: 'utility', description: 'Past decisions and their votes' },
   // Phase 2 source pages remain directly reachable without crowding primary navigation.
   { path: '/workshop', label: 'Workshop', module: 'workshop', component: Workshop, icon: Hammer, nav: false, section: 'operate', description: 'Tasks' },
-  { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, nav: false, section: 'intelligence', description: 'Schedule' },
-  { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2, nav: false, section: 'operate', description: 'Live desks' },
-  { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, nav: false, section: 'system', description: 'Agent map' },
-  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', anyModule: ['docs', 'scout', 'aws', 'skills'], component: Diagnostics, icon: Wrench, nav: false, section: 'system', description: 'Memory, docs, scout, AWS' },
+  { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, nav: false, section: 'operate', description: 'Schedule' },
+  { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2, nav: false, section: 'run', description: 'Live desks' },
+  { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, nav: false, section: 'run', description: 'Agent map' },
+  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', anyModule: ['docs', 'scout', 'aws', 'skills'], component: Diagnostics, icon: Wrench, nav: false, section: 'know', description: 'Memory files, documents and skills' },
   // Phase 1 compatibility redirects keep existing bookmarks one-to-one.
   { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectKanban, nav: false },
   { path: '/cron', label: 'Cron Jobs', module: 'cron', component: RedirectCron, nav: false },

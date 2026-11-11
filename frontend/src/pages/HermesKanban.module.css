@@ -1,966 +1,375 @@
-/* ── Page layout ─────────────────────────────────────────────── */
+.legacyLink {
+  color: var(--accent);
+  font-size: var(--fs-small);
+}
 
-.page {
-  max-width: 1440px;
-  margin: 0 auto;
+.legacyLink:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.legacyLink:focus-visible {
+  outline: none;
+  border-radius: var(--r-sm);
+  box-shadow: var(--focus-ring);
+}
+
+.loading {
   display: flex;
   flex-direction: column;
+  gap: var(--sp-4);
 }
 
-.pageMobile {
-  gap: 14px;
+.slowHint {
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
-.pageDesktop {
-  gap: 22px;
-}
+/* Filters */
 
-/* ── Header row ──────────────────────────────────────────────── */
-
-.headerRow {
+.toolbar {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.headerRowMobile {
-  align-items: stretch;
-  flex-direction: column;
-}
-
-.headerRowDesktop {
   align-items: center;
-  flex-direction: row;
-}
-
-.headerSubtitle {
-  margin-top: 4px;
-}
-
-.headerBtnGroup {
-  display: flex;
-  gap: 8px;
   flex-wrap: wrap;
+  gap: var(--sp-3);
 }
 
-.refreshBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.78);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
+.search {
+  flex: 1 1 240px;
+  max-width: 360px;
 }
 
-.dispatchBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(191, 90, 242, 0.25);
-  background: rgba(191, 90, 242, 0.12);
-  color: #BF5AF2;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
+.assignee {
+  flex: 0 0 180px;
 }
 
-.newCardBtn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 16px;
-  border-radius: 10px;
-  border: none;
-  background: #007AFF;
-  color: #fff;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-/* ── Loading / error states ──────────────────────────────────── */
-
-.loadingWrap {
-  padding: 22px;
+.toolbarEnd {
   display: flex;
   align-items: center;
-  gap: 10px;
-  color: rgba(255, 255, 255, 0.7);
+  gap: var(--sp-3);
+  margin-left: auto;
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
-.spinnerIcon {
-  animation: spin 1s linear infinite;
-  color: #007AFF;
+.matchCount {
+  font-variant-numeric: tabular-nums;
 }
 
-.errorPanel {
-  padding: 18px;
-  border-left: 3px solid #FF453A;
-}
+/* Board */
 
-.errorTitle {
+.board {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  color: #FF453A;
-  font-weight: 800;
-  font-size: 13px;
-}
-
-.errorDesc {
-  margin: 8px 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.errorHint {
-  margin: 8px 0 0;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.42);
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-/* ── Stats panel ─────────────────────────────────────────────── */
-
-.statsPanel {
-  padding: 16px;
-  display: grid;
-  gap: 12px;
-  align-items: stretch;
-}
-
-.statsPanelMobile {
-  grid-template-columns: 1fr;
-}
-
-.statsPanelDesktop {
-  grid-template-columns: minmax(220px, 1.2fr) repeat(5, minmax(110px, 1fr));
-}
-
-.nextActionCol {
-  border-left: 3px solid #64D2FF;
-  padding-left: 12px;
-}
-
-.nextActionLabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: rgba(255, 255, 255, 0.48);
-  font-size: 10px;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.nextActionValue {
-  margin-top: 8px;
-  font-size: 18px;
-  line-height: 1.2;
-  font-weight: 850;
-  color: rgba(255, 255, 255, 0.94);
-}
-
-.nextActionRefreshed {
-  margin-top: 6px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.42);
-}
-
-.statItem {
-  padding: 12px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.statItemLabel {
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.46);
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.statItemValueLarge {
-  margin-top: 8px;
-  font-size: 24px;
-  font-weight: 850;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.statItemValueSmall {
-  margin-top: 8px;
-  font-size: 15px;
-  font-weight: 850;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ── Filter bar ──────────────────────────────────────────────── */
-
-.filterBar {
-  padding: 12px;
-  display: grid;
-  gap: 10px;
-  align-items: center;
-}
-
-.filterBarMobile {
-  grid-template-columns: 1fr;
-}
-
-.filterBarDesktop {
-  grid-template-columns: minmax(220px, 1fr) auto auto;
-}
-
-.searchLabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0 10px;
-  min-height: 38px;
-}
-
-.searchIcon {
-  color: rgba(255, 255, 255, 0.42);
-  flex-shrink: 0;
-}
-
-.searchInput {
-  width: 100%;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
-}
-
-.assigneeLabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.04);
-  padding: 0 10px;
-  min-height: 38px;
-}
-
-.assigneeIcon {
-  color: rgba(255, 255, 255, 0.42);
-  flex-shrink: 0;
-}
-
-.assigneeSelect {
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
-}
-
-.assigneeSelectMobile {
-  min-width: 100%;
-}
-
-.assigneeSelectDesktop {
-  min-width: 150px;
-}
-
-.modeRow {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.modeRowMobile {
-  justify-content: stretch;
-}
-
-.modeRowDesktop {
-  justify-content: flex-end;
-}
-
-.modeIcon {
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.modeBtnActive {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(0, 122, 255, 0.18);
-  color: #64D2FF;
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  text-transform: capitalize;
-}
-
-.modeBtnInactive {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.62);
-  font-size: 12px;
-  font-weight: 800;
-  cursor: pointer;
-  text-transform: capitalize;
-}
-
-.modeBtnMobile {
-  flex: 1;
-}
-
-.filterResults {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.clearFiltersBtn {
-  border: 0;
-  background: transparent;
-  color: #64D2FF;
-  cursor: pointer;
-  font-size: 11px;
-  font-weight: 800;
-}
-
-/* ── Kanban board grid ───────────────────────────────────────── */
-
-.boardGrid {
-  display: grid;
-  gap: 14px;
-  align-items: start;
-}
-
-.boardGridMobile {
-  grid-template-columns: 1fr;
-}
-
-.boardGridDesktop {
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  align-items: flex-start;
 }
 
 .column {
+  flex: 1 1 260px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
   min-width: 0;
+  padding: var(--sp-3);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.columnIdle {
+  flex: 0 0 160px;
+}
+
+.columnAlarm {
+  background: var(--state-warning-bg);
+  border-color: var(--state-warning-line);
+}
+
+.columnAlarm .columnTitle,
+.columnAlarm .columnCount {
+  color: var(--state-warning);
 }
 
 .columnHeader {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 4px;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-1);
 }
 
 .columnTitle {
-  margin: 0;
-  font-size: 13px;
-  font-weight: 800;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
 }
 
 .columnCount {
-  font-size: 10px;
-  border-radius: 999px;
-  padding: 2px 7px;
-  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
 .columnCards {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-2);
+  max-height: 640px;
+  overflow-y: auto;
 }
 
 .columnEmpty {
-  padding: 18px;
-  border-radius: 10px;
-  border: 1px dashed rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.32);
-  font-size: 12px;
-  text-align: center;
+  padding: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
-/* ── Task card ───────────────────────────────────────────────── */
+/* Cards */
 
-.taskCard {
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
   width: 100%;
-  padding: 14px;
+  min-width: 0;
+  padding: var(--sp-3);
   text-align: left;
-  cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition: border-color var(--dur-fast) var(--ease);
 }
 
-.taskCardTop {
+.card:hover {
+  border-color: var(--line-strong);
+}
+
+.card:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.cardTitle {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
-  gap: 10px;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 
-.taskCardTitle {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.35;
-  font-weight: 750;
-  color: rgba(255, 255, 255, 0.92);
+.cardTitle > :first-child {
+  flex: none;
+  margin-top: var(--sp-1);
 }
 
-.taskCardPriorityBadge {
-  flex-shrink: 0;
-  font-size: 10px;
-  border-radius: 999px;
-  padding: 3px 7px;
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.taskCardBody {
-  margin: 8px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-  color: rgba(255, 255, 255, 0.48);
+.cardTitleText {
+  min-width: 0;
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
 
-.taskCardTags {
+.cardMeta {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.taskCardAssignee {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.6);
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 999px;
-  padding: 3px 7px;
-}
-
-.taskCardWorkspace {
-  font-size: 10px;
-  color: #64D2FF;
-  background: rgba(100, 210, 255, 0.1);
-  border-radius: 999px;
-  padding: 3px 7px;
-}
-
-.taskCardPid {
-  font-size: 10px;
-  color: #BF5AF2;
-  background: rgba(191, 90, 242, 0.1);
-  border-radius: 999px;
-  padding: 3px 7px;
-}
-
-.taskCardMeta {
-  display: flex;
+  align-items: baseline;
   justify-content: space-between;
-  gap: 10px;
-  margin-top: 12px;
-  font-size: 10px;
-  color: rgba(255, 255, 255, 0.34);
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
-/* ── Task detail drawer ──────────────────────────────────────── */
-
-.drawerOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.55);
-  display: flex;
-  justify-content: flex-end;
-}
-
-.drawer {
-  height: 100%;
-  overflow-y: auto;
-  background: rgba(20, 20, 22, 0.98);
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.drawerMobile {
-  width: 100%;
-  padding: 18px;
-}
-
-.drawerDesktop {
-  width: 560px;
-  padding: 24px;
-}
-
-.drawerHeader {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.drawerTaskId {
-  margin: 0;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.42);
-}
-
-.drawerTaskTitle {
-  margin: 5px 0 0;
-  font-size: 18px;
-  line-height: 1.25;
-  color: rgba(255, 255, 255, 0.94);
-}
-
-.drawerCloseBtn {
-  width: 34px;
-  height: 34px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-}
-
-.detailLoadingWrap {
-  padding: 16px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  color: rgba(255, 255, 255, 0.65);
-}
-
-.detailLoadingIcon {
-  animation: spin 1s linear infinite;
-}
-
-.detailPanel {
-  padding: 16px;
-}
-
-.detailBadgeRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.detailBadge {
-  font-size: 11px;
-  font-weight: 800;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 999px;
-  padding: 5px 9px;
-}
-
-.detailBody {
-  margin: 14px 0 0;
-  white-space: pre-wrap;
-  font-size: 13px;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.72);
-}
-
-.detailMeta {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.45);
-}
-
-.detailMetaWorkspace {
-  grid-column: 1 / -1;
+.cardAssignee {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* ── Operator actions panel ──────────────────────────────────── */
+.cardAge {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
 
-.actionsPanel {
-  padding: 16px;
+/* Drawer */
+
+.detail {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-5);
 }
 
-.actionsPanelTitle {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  font-weight: 850;
-}
-
-.assignRow {
-  display: flex;
-  gap: 8px;
-}
-
-.assignInput {
-  flex: 1;
-  min-width: 0;
-  padding: 9px 11px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.assignBtnActive {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: none;
-  background: #007AFF;
-  color: #fff;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.assignBtnDisabled {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  font-weight: 800;
-  cursor: not-allowed;
-}
-
-.commentTextarea {
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
-  resize: vertical;
-}
-
-.commentBtnActive {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(100, 210, 255, 0.25);
-  background: rgba(100, 210, 255, 0.1);
-  color: #64D2FF;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.commentBtnDisabled {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  padding: 10px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(100, 210, 255, 0.25);
-  background: rgba(100, 210, 255, 0.1);
-  color: #64D2FF;
-  font-weight: 800;
-  cursor: not-allowed;
-}
-
-.blockRow {
-  display: flex;
-  gap: 8px;
-}
-
-.blockInput {
-  flex: 1;
-  min-width: 0;
-  padding: 9px 11px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.blockBtn {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 69, 58, 0.26);
-  background: rgba(255, 69, 58, 0.1);
-  color: #FF453A;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.actionBtnRow {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.unblockBtn {
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(50, 215, 75, 0.25);
-  background: rgba(50, 215, 75, 0.1);
-  color: #32D74B;
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.archiveBtn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
-  font-weight: 800;
-  cursor: pointer;
-}
-
-.actionPending {
-  margin: 0;
-  font-size: 11px;
-  color: #007AFF;
-}
-
-/* ── Runs panel ──────────────────────────────────────────────── */
-
-.runsPanel {
-  padding: 16px;
-}
-
-.runsPanelTitle {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  font-weight: 850;
-}
-
-.runsList {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.runItem {
-  padding: 10px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.runItemHeader {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.74);
-  font-weight: 800;
-}
-
-.runItemSummary {
-  margin: 6px 0 0;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.runItemSummaryOk {
-  color: rgba(255, 255, 255, 0.55);
-}
-
-.runItemSummaryErr {
-  color: #FF9F0A;
-}
-
-.runsEmpty {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.35);
-}
-
-/* ── Events panel ────────────────────────────────────────────── */
-
-.eventsPanel {
-  padding: 16px;
-}
-
-.eventsPanelTitle {
-  margin: 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.7);
-  font-weight: 850;
-}
-
-.eventsList {
-  margin-top: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.eventRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.58);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-  padding-bottom: 7px;
-}
-
-.eventTimestamp {
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.eventsEmpty {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.35);
-}
-
-/* ── Create card modal ───────────────────────────────────────── */
-
-.createOverlay {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.58);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 18px;
-}
-
-.createModal {
-  width: 100%;
-  max-width: 560px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(24, 24, 26, 0.98);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.createModalHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.createModalTitle {
-  margin: 0;
-  font-size: 17px;
-  color: rgba(255, 255, 255, 0.94);
-}
-
-.createModalCloseBtn {
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.05);
-  color: rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-}
-
-.createInput {
-  padding: 11px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.createTextarea {
-  padding: 11px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.9);
-  resize: vertical;
-}
-
-.createFieldGrid {
+.facts {
   display: grid;
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3) var(--sp-4);
+  margin: 0;
 }
 
-.createFieldGridMobile {
-  grid-template-columns: 1fr;
+.fact {
+  min-width: 0;
 }
 
-.createFieldGridDesktop {
-  grid-template-columns: 1fr 1fr;
+.fact dt {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
 }
 
-.createTriageLabel {
+.fact dd {
+  margin: var(--sp-1) 0 0;
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  overflow-wrap: anywhere;
+}
+
+.path {
+  font-size: var(--fs-small);
+}
+
+.body {
+  color: var(--text-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.section {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.66);
+  flex-direction: column;
+  gap: var(--sp-3);
 }
 
-.createBtnActive {
-  padding: 12px;
-  border-radius: 10px;
-  border: none;
-  background: #007AFF;
-  color: #fff;
-  font-size: 13px;
-  font-weight: 850;
-  cursor: pointer;
+.sectionTitle {
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+  color: var(--text-1);
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
 }
 
-.createBtnDisabled {
-  padding: 12px;
-  border-radius: 10px;
-  border: none;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  font-size: 13px;
-  font-weight: 850;
-  cursor: not-allowed;
+.inline {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--sp-2);
+}
+
+.grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.archiveRow {
+  padding-top: var(--sp-2);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.listItem {
+  padding: var(--sp-2) 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+}
+
+.listItem:last-child {
+  border-bottom: 0;
+}
+
+.listRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.runSummary,
+.runError {
+  margin-top: var(--sp-1);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.runSummary {
+  color: var(--text-3);
+}
+
+.runError {
+  color: var(--state-critical);
+}
+
+/* Form controls (no shared textarea in the kit) */
+
+.textarea {
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  resize: vertical;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.textarea::placeholder {
+  color: var(--text-3);
+}
+
+.textarea:hover {
+  border-color: var(--text-3);
+}
+
+.textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-ring);
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-4);
+}
+
+@media (max-width: 700px) {
+  .search,
+  .assignee {
+    flex: 1 1 100%;
+    max-width: none;
+  }
+
+  .toolbarEnd {
+    margin-left: 0;
+  }
+
+  .formGrid,
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inline {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }

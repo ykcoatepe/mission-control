@@ -1,0 +1,38 @@
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.bar {
+  display: block;
+  width: 100%;
+  height: var(--sp-3);
+  background: var(--surface-2);
+  border-radius: var(--r-sm);
+  animation: skeleton-pulse 1.6s var(--ease) infinite;
+}
+
+@keyframes skeleton-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.block {
+  height: 96px;
+  border-radius: var(--r-lg);
+}
+
+.blockLg {
+  height: 240px;
+}
+
+/* The last of several lines is shorter, like a paragraph end. */
+.stack .bar:last-child:not(:first-child):not(.block) {
+  width: 60%;
+}

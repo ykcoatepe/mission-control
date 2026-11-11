@@ -181,7 +181,6 @@ export interface AggregatedBreakdownItem {
   apiEquivalentAvailable: boolean
   share: number
   local: boolean
-  color: string
 }
 
 export interface ChartTooltipPayloadItem {

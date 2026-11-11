@@ -1,35 +1,25 @@
-import { motion, useReducedMotion } from 'framer-motion'
 import type { ReactNode } from 'react'
-import { useIsMobile } from '../lib/useIsMobile'
+import { cx } from './ui/cx'
+import styles from './GlassCard.module.css'
 
 interface Props {
   children: ReactNode
   className?: string
+  /** @deprecated No hover movement in the flat design; accepted for compatibility. */
   hover?: boolean
+  /** @deprecated No entrance animation; accepted for compatibility. */
   delay?: number
   noPad?: boolean
   overflowVisible?: boolean
 }
 
-export default function GlassCard({ children, className = '', hover = true, delay = 0, noPad = false, overflowVisible = false }: Props) {
-  const isMobile = useIsMobile()
-  const reduceMotion = useReducedMotion()
-  
+/**
+ * Legacy adapter: a flat bordered surface. New code uses `Panel` from `components/ui`.
+ */
+export default function GlassCard({ children, className = '', noPad = false, overflowVisible = false }: Props) {
   return (
-    <motion.div
-      initial={reduceMotion ? false : { opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={reduceMotion ? { duration: 0 } : { duration: 0.4, delay, ease: [0.4, 0, 0.2, 1] }}
-      whileHover={hover && !isMobile && !reduceMotion ? {
-        y: -2,
-        transition: { duration: 0.15, ease: [0.4, 0, 0.2, 1] }
-      } : undefined}
-      className={`macos-panel ${className}`}
-      style={{ overflow: overflowVisible ? 'visible' : 'hidden' }}
-    >
-      <div style={noPad ? undefined : { padding: isMobile ? 16 : 24 }}>
-        {children}
-      </div>
-    </motion.div>
+    <div className={cx(styles.card, overflowVisible && styles.visible, className)}>
+      <div className={noPad ? undefined : styles.pad}>{children}</div>
+    </div>
   )
 }

@@ -65,10 +65,23 @@ describe('navigation hierarchy', () => {
     ])
 
     expect(primarySidebarRoutes.find((route) => route.path === '/ollama')).toMatchObject({
-      label: 'Ollama Runtime',
-      section: 'system',
-      description: 'Runtime and model telemetry',
+      label: 'Local models',
+      section: 'run',
+      description: 'Ollama health and loaded models',
     })
+  })
+
+  it('labels and groups the primary destinations per the design reference', () => {
+    expect(primarySidebarRoutes.map((route) => [route.label, route.section])).toEqual([
+      ['Overview', undefined],
+      ['Work', 'operate'],
+      ['Automations', 'operate'],
+      ['Sessions', 'operate'],
+      ['Knowledge', 'know'],
+      ['Usage', 'know'],
+      ['Agents', 'run'],
+      ['Local models', 'run'],
+    ])
   })
 
   it('keeps settings and governance in utility navigation', () => {

@@ -1,0 +1,41 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+}
+
+.progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.progressLine {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+}
+
+.progressLabel {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--sp-2);
+}
+
+.form > :first-child {
+  min-width: 0;
+}

@@ -1,0 +1,210 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  height: var(--topbar-h);
+  padding: 0 var(--sp-6);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.menu {
+  display: none;
+}
+
+.title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.annunciators {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  list-style: none;
+}
+
+.annunciator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.annunciator:hover {
+  background: var(--surface-2);
+}
+
+.annunciator:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.annDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--r-full);
+  background: var(--text-disabled);
+}
+
+.annWord {
+  font-weight: var(--fw-regular);
+}
+
+/* Healthy is dim: a dim dot and a dim label. */
+.annunciator[data-state='reading'] .annDot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+/* Anything else is lit in its state colour, with the state word. */
+.annunciator[data-state='warning'],
+.annunciator[data-state='critical'],
+.annunciator[data-state='unavailable'],
+.annunciator[data-state='inactive'] {
+  color: var(--text-1);
+}
+
+.annunciator[data-state='warning'] .annDot { background: var(--state-warning); }
+.annunciator[data-state='critical'] .annDot { background: var(--state-critical); }
+.annunciator[data-state='inactive'] .annDot { background: var(--state-inactive); }
+.annunciator[data-state='unavailable'] .annDot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--state-unavailable);
+}
+
+.annunciator[data-state='warning'] .annWord { color: var(--state-warning); }
+.annunciator[data-state='critical'] .annWord { color: var(--state-critical); }
+.annunciator[data-state='unavailable'] .annWord,
+.annunciator[data-state='inactive'] .annWord { color: var(--text-3); }
+
+.attention {
+  border-radius: var(--r-full);
+}
+
+.attention:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.palette {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}
+
+.palette:hover {
+  border-color: var(--text-3);
+  color: var(--text-2);
+}
+
+.palette:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.paletteText {
+  min-width: 96px;
+  text-align: start;
+}
+
+.age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.spinning svg {
+  animation: topbar-spin 800ms linear infinite;
+}
+
+@keyframes topbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (max-width: 1199px) {
+  .annName,
+  .annWord,
+  .ageText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .annunciator {
+    padding: 0 var(--sp-2);
+  }
+}
+
+@media (max-width: 899px) {
+  .menu {
+    display: inline-flex;
+  }
+
+  .bar {
+    padding: 0 var(--sp-3);
+    gap: var(--sp-2);
+  }
+
+  .title {
+    font-size: var(--fs-h3);
+  }
+}
+
+@media (max-width: 699px) {
+  .theme,
+  .paletteText {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .palette {
+    width: var(--control-h);
+    justify-content: center;
+    padding: 0;
+  }
+
+  .palette kbd {
+    display: none;
+  }
+
+  .annunciator {
+    padding: 0 var(--sp-1);
+  }
+}

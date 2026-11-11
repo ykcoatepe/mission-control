@@ -1,24 +1,19 @@
 import type { ReactNode } from 'react'
+import { usePublishPageTitle } from './pageTitleContext'
 import styles from './PageHeader.module.css'
 
 interface PageHeaderProps {
-  icon: ReactNode
+  /** @deprecated Icons are not shown in the flat design; accepted for compatibility. */
+  icon?: ReactNode
   title: string
   subtitle: string
 }
 
 /**
- * Page-level header: icon + h1 (text-title) + subtitle (text-body).
- * Every page hand-rolls this same layout; this component standardises it.
+ * Legacy adapter. The title is published to the top bar (shown once) and only the
+ * subtitle renders in the page. New pages use `Page`.
  */
-export default function PageHeader({ icon, title, subtitle }: PageHeaderProps) {
-  return (
-    <div>
-      <h1 className={`text-title ${styles.header}`}>
-        {icon}
-        {title}
-      </h1>
-      <p className={`text-body ${styles.subtitle}`}>{subtitle}</p>
-    </div>
-  )
+export default function PageHeader({ title, subtitle }: PageHeaderProps) {
+  usePublishPageTitle(title)
+  return subtitle ? <p className={styles.subtitle}>{subtitle}</p> : null
 }

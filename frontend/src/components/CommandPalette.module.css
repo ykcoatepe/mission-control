@@ -1,0 +1,153 @@
+.root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-palette);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 12vh var(--sp-4) var(--sp-4);
+}
+
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--scrim);
+}
+
+.panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(640px, 100%);
+  max-height: min(560px, 100%);
+  overflow: hidden;
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+}
+
+.panel:focus {
+  outline: none;
+}
+
+.inputRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+}
+
+.inputIcon {
+  position: absolute;
+  left: var(--sp-4);
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.input {
+  width: 100%;
+  height: 48px;
+  padding: 0 var(--sp-4) 0 var(--sp-12);
+  background: transparent;
+  color: var(--text-1);
+  font-size: var(--fs-h3);
+}
+
+.input::placeholder {
+  color: var(--text-3);
+}
+
+.input:focus-visible {
+  outline: none;
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-2);
+}
+
+.none {
+  padding: var(--sp-6) var(--sp-3);
+  color: var(--text-3);
+  text-align: center;
+}
+
+.sectionTitle {
+  padding: var(--sp-2) var(--sp-3) var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+}
+
+.option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 36px;
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.optionActive {
+  background: var(--accent-bg);
+  color: var(--text-1);
+}
+
+.optionIcon {
+  flex: 0 0 14px;
+  width: 14px;
+  color: var(--text-3);
+}
+
+.optionActive .optionIcon {
+  color: var(--accent);
+}
+
+.optionLabel {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: var(--fw-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.optionSubtitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.enter {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-3);
+}
+
+.footer {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--line);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+@media (max-width: 699px) {
+  .footer {
+    display: none;
+  }
+
+  .root {
+    padding-top: var(--sp-6);
+  }
+}

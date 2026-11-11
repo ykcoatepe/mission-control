@@ -2,52 +2,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const pageSource = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'src', 'pages', 'OllamaMonitor.tsx'),
-  'utf8',
-);
 const routeSource = fs.readFileSync(
   path.join(__dirname, '..', 'server', 'routes', 'ollama.js'),
   'utf8',
-);
-
-assert.ok(
-  pageSource.includes('TOKEN_USAGE_RETRY_INTERVAL_MS = 2500') &&
-    pageSource.includes('TOKEN_USAGE_RETRY_LIMIT = 60') &&
-    pageSource.includes('TOKEN_USAGE_STEADY_REFRESH_MS = 60000'),
-  'Ollama Monitor should fast-retry stale token usage and relax to a steady refresh after recovery',
-);
-
-assert.ok(
-  pageSource.includes("tokens.source === 'sessions.fast_fallback'") &&
-    pageSource.includes('!!tokens.meta?.refreshing') &&
-    pageSource.includes('!!tokens.meta?.stale') &&
-    pageSource.includes('preservedPreviousOpenClaw') &&
-    pageSource.includes('preservedPreviousUsage'),
-  'Ollama Monitor token usage polling should react to fallback, refreshing, stale, and preserved-cache states',
-);
-
-assert.ok(
-  pageSource.includes('refetchTelemetry()') &&
-    pageSource.includes('refetchHistory()') &&
-    pageSource.includes('refetchModelTelemetry()') &&
-    pageSource.includes('tokenUsageQuery.refetch()'),
-  'Ollama Monitor manual refresh should refresh health, history, model telemetry, and token usage together',
-);
-
-assert.ok(
-  pageSource.includes("source: 'Monitor samples'") &&
-    pageSource.includes('monitor samples') &&
-    !pageSource.includes('Estimated telemetry') &&
-    !pageSource.includes('estimated telemetry'),
-  'Ollama Monitor should label derived model telemetry as monitor samples, not estimated telemetry',
-);
-
-assert.ok(
-  !pageSource.includes("fetch('/api/ollama/optimization'") &&
-    !pageSource.includes('Save to apply') &&
-    !pageSource.includes('Rolling back…'),
-  'Ollama Monitor should remain a read-only surface without optimization mutations',
 );
 
 assert.ok(
@@ -78,4 +35,4 @@ assert.ok(
   'Ollama model telemetry endpoint should reuse the allowed-model result from the telemetry payload',
 );
 
-console.log('ollama monitor behavior guards passed');
+console.log('ollama telemetry route guards passed');

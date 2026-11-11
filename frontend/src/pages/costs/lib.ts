@@ -144,6 +144,68 @@ export function assignedModelColor(assignments: ReadonlyMap<string, string>, mod
   return assignments.get(key) || hashColor(key)
 }
 
+/** Number of chart series colours the design system defines (`--series-1..6`). */
+export const SERIES_COLOR_COUNT = 6
+
+export function seriesColorToken(slot: number): string {
+  return `var(--series-${(slot % SERIES_COLOR_COUNT) + 1})`
+}
+
+/**
+ * Pooled model -> series-token assignment. A model keeps its colour for as long
+ * as it stays active (across period changes and while replacement data loads);
+ * colours of models that dropped out return to the pool and go to newcomers.
+ * `slots` limits the pool (e.g. 5 when the sixth token is reserved for the
+ * "Other models" bucket). Keys are case-insensitive, like `assignModelColors`.
+ */
+export function assignSeriesColors(
+  activeModels: string[],
+  previousAssignments: ReadonlyMap<string, string> = new Map(),
+  slots: number = SERIES_COLOR_COUNT,
+): Map<string, string> {
+  const pool = Array.from({ length: Math.max(1, Math.min(slots, SERIES_COLOR_COUNT)) }, (_, slot) => seriesColorToken(slot))
+  const activeKeys = Array.from(new Set(activeModels.map(modelColorKey).filter(Boolean)))
+  const assignments = new Map<string, string>()
+  const reserved = new Set<string>()
+
+  activeKeys.forEach(key => {
+    const previous = previousAssignments.get(key)
+    if (previous && pool.includes(previous) && !reserved.has(previous)) {
+      assignments.set(key, previous)
+      reserved.add(previous)
+    }
+  })
+
+  let overflow = 0
+  activeKeys.forEach(key => {
+    if (assignments.has(key)) return
+    const free = pool.find(color => !reserved.has(color))
+    if (free) {
+      assignments.set(key, free)
+      reserved.add(free)
+    } else {
+      // More active models than tokens: reuse deterministically instead of inventing a colour.
+      assignments.set(key, pool[overflow % pool.length])
+      overflow += 1
+    }
+  })
+
+  return assignments
+}
+
+const MODEL_METRIC_SUFFIX = /_(tokens|input|output|reasoning|cacheRead|cacheWrite|costSource|apiEquivalentUsd|apiEquivalentStatus)$/
+const DAILY_TOTAL_KEYS = new Set(['date', 'models', 'totalCost', 'apiEquivalentCost', 'totalTokens'])
+
+/** True for a per-model metric column such as `gpt_reasoning` — never a model of its own. */
+export function isModelMetricKey(key: string): boolean {
+  return MODEL_METRIC_SUFFIX.test(key)
+}
+
+/** True when a `dailyByModel` column names a model (not a total or a per-model metric). */
+export function isModelColumnKey(key: string): boolean {
+  return !DAILY_TOTAL_KEYS.has(key) && !isModelMetricKey(key)
+}
+
 export function hashColor(str: string): string {
   let hash = 0
   for (let i = 0; i < str.length; i++) {

@@ -1,59 +1,14 @@
-:root {
-  /* macOS System Colors */
-  --system-bg: #1c1c1e;
-  --system-bg-secondary: #2c2c2e;
-  --system-bg-tertiary: #3a3a3c;
-  --system-separator: rgba(255, 255, 255, 0.1);
+@import './styles/tokens.css';
 
-  /* macOS Window Chrome */
-  --window-bg: rgba(30, 30, 32, 0.85);
-  --window-border: rgba(255, 255, 255, 0.12);
-  --window-shadow: 0 22px 70px 4px rgba(0, 0, 0, 0.56);
+/*
+ * Global layer: reset, base typography, and the small set of shared classes.
+ * Design rules live in docs/reference-design-system.md.
+ *
+ * The "legacy aliases" block at the bottom keeps not-yet-migrated pages on the
+ * new palette. New code must use the tokens from styles/tokens.css and the
+ * components in components/ui, never the legacy names.
+ */
 
-  /* macOS Sidebar */
-  --sidebar-bg: rgba(40, 40, 42, 0.72);
-  --sidebar-border: rgba(255, 255, 255, 0.08);
-
-  /* Text Hierarchy */
-  --text-primary: rgba(255, 255, 255, 0.92);
-  --text-secondary: rgba(255, 255, 255, 0.65);
-  --text-tertiary: rgba(255, 255, 255, 0.45);
-  --text-quaternary: rgba(255, 255, 255, 0.25);
-
-  /* System Accent Colors */
-  --system-blue: #007AFF;
-  --system-green: #32D74B;
-  --system-orange: #FF9500;
-  --system-red: #FF453A;
-  --system-purple: #BF5AF2;
-  --system-yellow: #FFD60A;
-  --system-gray: #8E8E93;
-
-  /* Control Styles */
-  --control-bg: rgba(255, 255, 255, 0.1);
-  --control-bg-hover: rgba(255, 255, 255, 0.15);
-  --control-border: rgba(255, 255, 255, 0.15);
-
-  /* Vibrancy */
-  --vibrancy-blur: 80px;
-  --vibrancy-saturation: 180%;
-
-  /* Quiet Observatory */
-  --obs-bg: #081018;
-  --obs-sidebar: #0d1721;
-  --obs-panel: #101b26;
-  --obs-elevated: #111d29;
-  --obs-border: #263a4c;
-  --obs-border-strong: #356080;
-  --obs-blue: #58b5f5;
-  --state-healthy: #39d982;
-  --state-warning: #ffbd59;
-  --state-critical: #ff6969;
-  --state-unavailable: #8291a0;
-}
-
-/* Base reset — covers what Tailwind preflight used to provide: zero default
-   borders, inherited typography on form controls, transparent buttons. */
 *,
 *::before,
 *::after {
@@ -75,367 +30,83 @@ textarea {
 button {
   background-color: transparent;
   background-image: none;
-}
-
-html, body, #root {
-  height: 100vh;
-  min-height: 100vh;
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  overflow: hidden;
-  background: #0b0f14;
-  color: var(--text-primary);
-}
-
-/* Keyboard focus ring — keeps tab navigation visible on the dark theme
-   without affecting mouse interactions. */
-:focus-visible {
-  outline: 2px solid rgba(10, 132, 255, 0.8);
-  outline-offset: 2px;
-}
-
-/* Mission Control desktop: quiet, high-contrast, built for long operator sessions. */
-.macos-desktop {
-  position: relative;
-  background:
-    linear-gradient(135deg, #0b0f14 0%, #111820 36%, #0d1117 100%);
-  min-height: 100vh;
-}
-
-.macos-desktop::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(90deg, rgba(10, 132, 255, 0.04), transparent 28%),
-    linear-gradient(180deg, rgba(50, 215, 75, 0.035), transparent 32%),
-    repeating-linear-gradient(90deg, rgba(255,255,255,0.018) 0 1px, transparent 1px 72px);
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.75;
-}
-
-.macos-desktop::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, rgba(255,255,255,0.03), transparent 28%),
-    rgba(255, 255, 255, 0.012);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  pointer-events: none;
-  z-index: 0;
-  opacity: 0.9;
-}
-
-/* macOS Window */
-.macos-window {
-  background: var(--window-bg);
-  backdrop-filter: blur(var(--vibrancy-blur)) saturate(var(--vibrancy-saturation));
-  -webkit-backdrop-filter: blur(var(--vibrancy-blur)) saturate(var(--vibrancy-saturation));
-  border: 1px solid var(--window-border);
-  border-radius: 10px;
-  box-shadow: var(--window-shadow);
-  overflow: hidden;
-}
-
-/* macOS Panel - Frosted glass panels with inner glow */
-.macos-panel {
-  position: relative;
-  z-index: 1;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.032)),
-    rgba(12, 16, 22, 0.82);
-  backdrop-filter: blur(34px) saturate(150%);
-  -webkit-backdrop-filter: blur(34px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-top-color: rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  box-shadow:
-    0 14px 46px rgba(0, 0, 0, 0.28),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  transform: translate3d(0, 0, 0);
-  transform-origin: center;
-  will-change: border-color;
-  transition:
-    border-color 260ms cubic-bezier(0.16, 1, 0.3, 1),
-    background 260ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-
-.macos-panel:hover {
-  border-color: rgba(255, 255, 255, 0.16);
-}
-
-/* Prevent nested glass panels from double-growing when a child card is hovered. */
-.macos-panel:has(.macos-panel:hover) {
-  transform: translate3d(0, 0, 0);
-  z-index: 1;
-}
-
-/* Councils has dense audit text; geometric transforms make glyphs look blurry there. */
-.councils-page .macos-panel:hover,
-.councils-page .macos-panel:has(.macos-panel:hover) {
-  transform: none;
-}
-
-.councils-page .macos-panel:hover {
-  z-index: 20;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .macos-panel,
-  .macos-panel:hover,
-  .macos-panel:has(.macos-panel:hover) {
-    transform: none;
-    transition: border-color 120ms ease, box-shadow 120ms ease;
-  }
-}
-
-.macos-sidebar {
-  position: relative;
-  z-index: 1;
-  border-right: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-/* macOS List Item */
-.macos-list-item {
-  position: relative;
-  padding: 10px 14px;
-  border-radius: 8px;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-  cursor: default;
-  user-select: none;
-}
-
-.macos-list-item:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: var(--text-primary);
-}
-
-.macos-list-item.active {
-  background: rgba(0, 122, 255, 0.25);
-  backdrop-filter: blur(20px);
-  color: white;
-  border: 1px solid rgba(0, 122, 255, 0.3);
-  box-shadow: 0 0 20px rgba(0, 122, 255, 0.3),
-              inset 0 1px 0 rgba(255, 255, 255, 0.1);
-}
-
-/* macOS Button */
-.macos-button {
-  padding: 5px 12px;
-  background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.15s ease;
-  cursor: default;
-  user-select: none;
-}
-
-.macos-button:hover {
-  background: rgba(255, 255, 255, 0.15);
-}
-
-.macos-button:active {
-  background: rgba(255, 255, 255, 0.08);
-}
-
-.macos-button-primary {
-  background: var(--system-blue);
-  border-color: var(--system-blue);
-  color: white;
-}
-
-.macos-button-primary:hover {
-  background: #0071F0;
-  border-color: #0071F0;
-}
-
-/* macOS Control (generic control element) */
-.macos-control {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 8px;
-  color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
-  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
 }
 
-.macos-control:hover {
-  background: rgba(255, 255, 255, 0.12);
-  border-color: rgba(255, 255, 255, 0.15);
+button:disabled {
+  cursor: not-allowed;
 }
 
-/* macOS Input */
-.macos-input {
-  padding: 6px 10px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  color: var(--text-primary);
-  font-size: 13px;
-  transition: all 0.15s ease;
+a {
+  color: inherit;
+  text-decoration: none;
 }
 
-.macos-input:focus {
-  outline: none;
-  background: rgba(0, 0, 0, 0.35);
-  border-color: var(--system-blue);
-  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2);
-}
-
-.macos-input::placeholder {
-  color: var(--text-tertiary);
-}
-
-/* Status Dots */
-.status-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
-
-.status-dot-green {
-  background: var(--system-green);
-  box-shadow: 0 0 4px var(--system-green);
-}
-
-.status-dot-orange {
-  background: var(--system-orange);
-  box-shadow: 0 0 4px var(--system-orange);
-}
-
-.status-dot-red {
-  background: var(--system-red);
-  box-shadow: 0 0 4px var(--system-red);
-}
-
-/* macOS Badge */
-.macos-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.macos-badge-blue {
-  background: rgba(0, 122, 255, 0.2);
-  color: #4DA3FF;
-}
-
-.macos-badge-green {
-  background: rgba(50, 215, 75, 0.2);
-  color: #32D74B;
-}
-
-.macos-badge-orange {
-  background: rgba(255, 149, 0, 0.2);
-  color: #FF9500;
-}
-
-.macos-badge-red {
-  background: rgba(255, 69, 58, 0.2);
-  color: #FF453A;
-}
-
-/* Typography */
-.text-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.text-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--text-primary);
-  letter-spacing: -0.5px;
-}
-
-.text-heading {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.text-body {
-  font-size: 13px;
-  font-weight: 400;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.text-caption {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-tertiary);
-}
-
-/* macOS Table */
-.macos-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.macos-table th {
-  padding: 8px 12px;
-  text-align: left;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  border-bottom: 1px solid var(--system-separator);
-}
-
-.macos-table td {
-  padding: 12px;
-  font-size: 13px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-}
-
-.macos-table tr:hover td {
-  background: rgba(255, 255, 255, 0.02);
-}
-
-/* Progress Bar */
-.macos-progress {
-  height: 4px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 2px;
-  overflow: hidden;
-}
-
-.macos-progress-fill {
+html,
+body,
+#root {
   height: 100%;
-  background: var(--system-blue);
-  border-radius: 2px;
-  transition: width 0.3s ease;
+  min-height: 100vh;
+  overflow-x: hidden;
+  max-width: 100vw;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-1);
+}
+
+::selection {
+  background: var(--accent-bg);
+  color: var(--text-1);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+code,
+kbd,
+pre,
+samp,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  font-variant-numeric: tabular-nums;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Scrollbar */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
 }
 
 ::-webkit-scrollbar-track {
@@ -443,144 +114,19 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--r-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.3);
+  background: var(--text-3);
+  border: 3px solid transparent;
+  background-clip: padding-box;
 }
 
-/* Animations */
-@keyframes subtle-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.7; }
-}
-
-.animate-subtle-pulse {
-  animation: subtle-pulse 2s ease-in-out infinite;
-}
-
-/* Utility Classes */
-.hover-lift {
-  transition: transform 0.15s ease;
-}
-
-.hover-lift:hover {
-  transform: translateY(-2px);
-}
-
-/* Stat Cards with tabular numbers */
-.stat-card {
-  padding: 20px;
-  text-align: center;
-}
-
-.stat-value {
-  font-size: 32px;
-  font-weight: 600;
-  color: var(--text-primary);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  letter-spacing: -0.5px;
-}
-
-.stat-label {
-  font-size: 11px;
-  font-weight: 500;
-  text-transform: uppercase;
-  color: var(--text-tertiary);
-  margin-top: 4px;
-  letter-spacing: 0.5px;
-}
-
-.divider-h {
-  height: 1px;
-  background: var(--system-separator);
-}
-
-.divider-v {
-  width: 1px;
-  background: var(--system-separator);
-}
-
-/* Recharts Tooltip Override */
-.recharts-tooltip-wrapper {
-  outline: none !important;
-}
-
-.recharts-default-tooltip {
-  background: rgba(30, 30, 32, 0.95) !important;
-  backdrop-filter: blur(20px) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  border-radius: 6px !important;
-  padding: 8px 12px !important;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3) !important;
-}
-
-.recharts-tooltip-label {
-  color: var(--text-tertiary) !important;
-  font-size: 11px !important;
-  margin-bottom: 4px !important;
-}
-
-.recharts-tooltip-item {
-  color: var(--text-primary) !important;
-  font-size: 12px !important;
-}
-
-/* Page Transitions */
-@keyframes pageEnter {
-  from {
-    opacity: 0;
-    transform: translateY(20px) scale(0.98);
-    filter: blur(4px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-}
-
-@keyframes pageExit {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-    filter: blur(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-20px) scale(0.98);
-    filter: blur(4px);
-  }
-}
-
-.page-transition-enter {
-  animation: pageEnter 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-.page-transition-exit {
-  animation: pageExit 0.3s cubic-bezier(0.4, 0, 0.2, 1) forwards;
-}
-
-/* Remove old glass morphism styles */
-.liquid-glass,
-.liquid-glass-static,
-.glass-tooltip,
-.gradient-mesh-bg,
-.nav-glass,
-.sidebar-glass,
-.pill-badge,
-.glass-input,
-.glass-button,
-.glass-progress,
-.glass-row,
-.glass-dropzone,
-.glass-bubble-left,
-.glass-bubble-right {
-  /* Reset - will be replaced with macOS styles */
-}
+/* Shared keyframes */
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
@@ -591,136 +137,242 @@ body {
   100% { background-position: -220% 0; }
 }
 
-/* ============================================
-   MOBILE RESPONSIVE — THOROUGH OVERHAUL
-   ============================================ */
-
-/* Prevent horizontal scroll globally */
-html, body, #root {
-  overflow-x: hidden;
-  max-width: 100vw;
-}
-
-@media (max-width: 768px) {
-  /* Kill ALL horizontal overflow */
-  .macos-desktop {
-    padding-left: 0 !important;
-    overflow-x: hidden !important;
-    max-width: 100vw !important;
-  }
-
-  .macos-desktop > main {
-    max-width: 100vw !important;
-    overflow-x: hidden !important;
-  }
-
-  /* Sidebar: slide-in drawer */
-  .macos-sidebar {
-    position: fixed !important;
-    left: 0 !important;
-    top: 0 !important;
-    z-index: 200 !important;
-    width: 280px !important;
-    height: 100vh !important;
-    height: 100dvh !important;
-    transform: translateX(-100%) !important;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
-    visibility: hidden !important;
-    pointer-events: none !important;
-    will-change: transform !important;
-  }
-
-  .macos-sidebar.open {
-    transform: translateX(0) !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-  }
-
-  /* Dark overlay behind sidebar */
-  .sidebar-overlay {
-    display: none;
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    backdrop-filter: blur(4px);
-    -webkit-backdrop-filter: blur(4px);
-    z-index: 199;
-    opacity: 0;
-    transition: opacity 0.3s ease;
-  }
-
-  .sidebar-overlay.open {
-    display: block;
-    opacity: 1;
-  }
-
-  /* Hamburger menu button */
-  .mobile-menu-btn {
-    display: flex !important;
-  }
-
-  /* Disable hover-scale on panels (annoying on touch) */
-  .macos-panel:hover {
-    transform: none !important;
-  }
-
-  /* Smaller border-radius on glass panels on mobile */
-  .macos-panel {
-    border-radius: 12px !important;
-  }
-
-  /* Make tables scrollable instead of overflowing page */
-  .macos-table {
-    display: block;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  /* Bigger touch targets for list items */
-  .macos-list-item {
-    padding: 12px 16px !important;
-    min-height: 44px !important;
-  }
-
-  /* Titles smaller on mobile */
-  .text-title {
-    font-size: 18px !important;
-  }
-
-  .text-heading {
-    font-size: 14px !important;
-  }
-
-  /* Badges slightly larger for readability */
-  .macos-badge {
-    padding: 4px 10px !important;
-    font-size: 11px !important;
-  }
-}
-
-/* Small phones (<480px) — extra tight */
-@media (max-width: 480px) {
-  .macos-sidebar {
-    width: 260px !important;
-  }
-
-  .text-title {
-    font-size: 16px !important;
-  }
-}
-
-/* Desktop: hide hamburger */
-@media (min-width: 769px) {
-  .mobile-menu-btn {
-    display: none !important;
-  }
-
-  .sidebar-overlay {
-    display: none !important;
-  }
-}
-
 @keyframes pulse {
   0%, 80%, 100% { opacity: 0.3; transform: scale(0.8); }
   40% { opacity: 1; transform: scale(1); }
+}
+
+@keyframes subtle-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.animate-subtle-pulse {
+  animation: subtle-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Recharts tooltip */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+
+.recharts-default-tooltip {
+  background: var(--surface-3) !important;
+  border: 1px solid var(--line-strong) !important;
+  border-radius: var(--r-md) !important;
+  padding: 8px 12px !important;
+  box-shadow: none !important;
+}
+
+.recharts-tooltip-label {
+  color: var(--text-3) !important;
+  font-size: var(--fs-micro) !important;
+  margin-bottom: 4px !important;
+}
+
+.recharts-tooltip-item {
+  color: var(--text-1) !important;
+  font-size: var(--fs-small) !important;
+}
+
+/* ==========================================================================
+   Legacy aliases — remove each one when its last consumer is migrated.
+   ========================================================================== */
+
+:root {
+  --system-bg: var(--bg);
+  --system-bg-secondary: var(--surface-1);
+  --system-bg-tertiary: var(--surface-2);
+  --system-separator: var(--line);
+  --window-bg: var(--surface-1);
+  --window-border: var(--line);
+  --window-shadow: none;
+  --text-primary: var(--text-1);
+  --text-secondary: var(--text-2);
+  --text-tertiary: var(--text-3);
+  --text-quaternary: var(--text-disabled);
+  --system-blue: var(--accent);
+  --system-green: var(--state-healthy);
+  --system-orange: var(--state-warning);
+  --system-red: var(--state-critical);
+  --system-yellow: var(--state-warning);
+  --system-purple: var(--series-2);
+  --system-gray: var(--state-unavailable);
+  --vibrancy-blur: 0px;
+  --vibrancy-saturation: 100%;
+
+  --obs-bg: var(--bg);
+  --obs-sidebar: var(--surface-1);
+  --obs-panel: var(--surface-1);
+  --obs-panel-raised: var(--surface-2);
+  --obs-elevated: var(--surface-2);
+  --obs-node: var(--surface-2);
+  --obs-border: var(--line);
+  --obs-border-soft: var(--line);
+  --obs-border-strong: var(--line-strong);
+  --obs-blue: var(--accent);
+  --obs-text: var(--text-1);
+  --obs-text-muted: var(--text-2);
+  --obs-text-subtle: var(--text-3);
+  --obs-focus-border: var(--accent);
+  --obs-focus-ring: var(--accent-bg);
+  --obs-domain: var(--text-3);
+  --obs-connection: var(--line-strong);
+  --state-warning-text: var(--state-warning);
+}
+
+.macos-desktop {
+  position: relative;
+  background: var(--bg);
+  min-height: 100vh;
+}
+
+.macos-panel {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+}
+
+.macos-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  min-height: var(--control-h);
+  padding: 0 var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+  user-select: none;
+}
+
+.macos-button:hover {
+  background: var(--surface-3);
+}
+
+.macos-button-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--text-on-accent);
+}
+
+.macos-button-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.macos-input {
+  min-height: var(--control-h);
+  padding: 0 var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  transition: border-color var(--dur-fast) var(--ease);
+}
+
+.macos-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.macos-input::placeholder {
+  color: var(--text-3);
+}
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--state-unavailable);
+}
+
+.status-dot-green { background: var(--state-healthy); }
+.status-dot-orange { background: var(--state-warning); }
+.status-dot-red { background: var(--state-critical); }
+
+.macos-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+}
+
+.macos-badge-blue {
+  background: var(--accent-bg);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+
+.macos-badge-green {
+  background: var(--state-healthy-bg);
+  border-color: var(--state-healthy-line);
+  color: var(--state-healthy);
+}
+
+.macos-badge-orange {
+  background: var(--state-warning-bg);
+  border-color: var(--state-warning-line);
+  color: var(--state-warning);
+}
+
+.macos-badge-red {
+  background: var(--state-critical-bg);
+  border-color: var(--state-critical-line);
+  color: var(--state-critical);
+}
+
+.text-label {
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  color: var(--text-3);
+  letter-spacing: 0.02em;
+}
+
+.text-title {
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  color: var(--text-1);
+  letter-spacing: -0.01em;
+  line-height: var(--lh-tight);
+}
+
+.text-body {
+  font-size: var(--fs-body);
+  color: var(--text-2);
+  line-height: var(--lh-body);
+}
+
+.text-caption {
+  font-size: var(--fs-micro);
+  color: var(--text-3);
+}
+
+@media (max-width: 768px) {
+  .text-title {
+    font-size: 18px;
+  }
 }

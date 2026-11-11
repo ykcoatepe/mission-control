@@ -1,10 +1,5 @@
-.header {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin: 0;
-}
-
 .subtitle {
-  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  max-width: 72ch;
 }

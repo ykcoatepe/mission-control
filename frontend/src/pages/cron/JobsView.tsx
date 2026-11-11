@@ -1,0 +1,617 @@
+import { useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { useMutation } from '@tanstack/react-query'
+import { Clock, Play, Plus, Trash2 } from 'lucide-react'
+import {
+  Button,
+  DataTable,
+  Dialog,
+  EmptyState,
+  ErrorState,
+  FilterChips,
+  IconButton,
+  Mono,
+  Notice,
+  Panel,
+  SearchInput,
+  Skeleton,
+  StatePill,
+  Stat,
+  StatRow,
+  Switch,
+  TimeAgo,
+  useToast,
+} from '../../components/ui'
+import type { DataTableColumn } from '../../components/ui'
+import { useApi } from '../../lib/hooks'
+import { parseTime } from '../../lib/time'
+import { useNow } from '../../lib/useNow'
+import { normalizeCronStatus } from '../../lib/status'
+import {
+  buildCronModelOptions,
+  buildCronOverlapMarkers,
+  cronFetch,
+  errorMessage,
+  getCronScheduler,
+  getCronSchedulerLabel,
+  normalizeCronModelValue,
+} from './lib'
+import type {
+  CreateCronJobPayload,
+  CronApiResponse,
+  CronJob,
+  CronModelResponse,
+  CronScheduler,
+  CronStatusFilter,
+} from './types'
+import { jobState } from './jobState'
+import CreateJobDialog from './CreateJobDialog'
+import JobDrawer from './JobDrawer'
+import styles from './JobsView.module.css'
+
+type SchedulerFilter = 'all' | CronScheduler
+
+const stopRowClick = (event: { stopPropagation: () => void }) => event.stopPropagation()
+
+const STATE_RANK = { critical: 0, healthy: 1, unavailable: 1, inactive: 2, warning: 1 } as const
+
+export default function JobsView() {
+  const { data, loading, error, refetch } = useApi<CronApiResponse>('/api/cron', 30000)
+  const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
+  const toast = useToast()
+  const now = useNow()
+  const [params, setParams] = useSearchParams()
+  const [showCreate, setShowCreate] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
+  const [runTarget, setRunTarget] = useState<CronJob | null>(null)
+  const [jobSearch, setJobSearch] = useState('')
+  const [pendingAction, setPendingAction] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<CronStatusFilter>('all')
+  const [schedulerFilter, setSchedulerFilter] = useState<SchedulerFilter>('all')
+
+  const jobs = useMemo<CronJob[]>(() => data?.jobs || [], [data?.jobs])
+  const modelOptions = useMemo(
+    () => buildCronModelOptions(Array.isArray(modelsData) ? modelsData : [], jobs),
+    [modelsData, jobs],
+  )
+  const modelLabelByValue = useMemo(
+    () => new Map(modelOptions.map((option) => [option.value, option.label])),
+    [modelOptions],
+  )
+  const displayModel = (model?: string) => {
+    const normalized = normalizeCronModelValue(model) || ''
+    return modelLabelByValue.get(normalized) || normalized || 'Default'
+  }
+  const overlapState = useMemo(() => buildCronOverlapMarkers(jobs), [jobs])
+
+  // ---- summary ----
+
+  const summary = useMemo(() => {
+    let active = 0
+    let paused = 0
+    let failed = 0
+    let waiting = 0
+    let nextRun: { at: number; name: string } | null = null
+    for (const job of jobs) {
+      const status = normalizeCronStatus(job.status, job.enabled)
+      if (status === 'disabled') paused++
+      else if (status === 'failed') failed++
+      else if (status === 'active') active++
+      else waiting++
+      if (job.enabled) {
+        const at = parseTime(job.nextRun)
+        if (at !== null && at >= now && (!nextRun || at < nextRun.at)) nextRun = { at, name: job.name }
+      }
+    }
+    return { active, paused, failed, waiting, nextRun }
+  }, [jobs, now])
+
+  const schedulerCounts = useMemo(
+    () => ({
+      all: jobs.length,
+      openclaw: jobs.filter((job) => getCronScheduler(job) === 'openclaw').length,
+      hermes: jobs.filter((job) => getCronScheduler(job) === 'hermes').length,
+    }),
+    [jobs],
+  )
+
+  // ---- filtering ----
+
+  const filteredJobs = useMemo(() => {
+    const query = jobSearch.trim().toLowerCase()
+    let result = jobs
+    if (schedulerFilter !== 'all') result = result.filter((job) => getCronScheduler(job) === schedulerFilter)
+    if (query) {
+      result = result.filter((job) =>
+        [job.name, job.id, job.sourceId, job.description, getCronSchedulerLabel(job)].some((value) =>
+          String(value || '').toLowerCase().includes(query),
+        ),
+      )
+    }
+    if (statusFilter === 'overlap') {
+      result = result.filter((job) => overlapState.markers.has(job.id))
+    } else if (statusFilter !== 'all') {
+      result = result.filter((job) => normalizeCronStatus(job.status, job.enabled) === statusFilter)
+    }
+    return [...result].sort((left, right) => {
+      // Failed first, paused last, then by scheduler and name.
+      const rank = STATE_RANK[jobState(left).state] - STATE_RANK[jobState(right).state]
+      if (rank !== 0) return rank
+      const order = { openclaw: 0, hermes: 1 } as const
+      const schedulerOrder = order[getCronScheduler(left)] - order[getCronScheduler(right)]
+      if (schedulerOrder !== 0) return schedulerOrder
+      return String(left.name || '').localeCompare(String(right.name || ''))
+    })
+  }, [jobs, jobSearch, overlapState, schedulerFilter, statusFilter])
+
+  const hasActiveFilters = statusFilter !== 'all' || schedulerFilter !== 'all' || jobSearch.trim() !== ''
+
+  const clearFilters = () => {
+    setStatusFilter('all')
+    setSchedulerFilter('all')
+    setJobSearch('')
+  }
+
+  // ---- selected job (?job=<id>) ----
+
+  const jobParam = params.get('job')
+  const selectedJob = useMemo(
+    () => (jobParam ? jobs.find((job) => job.id === jobParam || job.sourceId === jobParam) ?? null : null),
+    [jobParam, jobs],
+  )
+
+  const setJobParam = (id: string | null) => {
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (id) next.set('job', id)
+        else next.delete('job')
+        return next
+      },
+      { replace: true },
+    )
+  }
+
+  // ---- write mutations ----
+
+  const toggleMutation = useMutation({
+    mutationFn: (job: CronJob) =>
+      cronFetch(`/api/cron/${job.id}/toggle`, {
+        method: 'POST',
+        body: JSON.stringify({ enabled: !job.enabled, scheduler: getCronScheduler(job) }),
+      }),
+  })
+
+  const runMutation = useMutation({
+    mutationFn: (job: CronJob) =>
+      cronFetch(`/api/cron/${job.id}/run`, {
+        method: 'POST',
+        body: JSON.stringify({ scheduler: getCronScheduler(job) }),
+      }),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: (job: CronJob) =>
+      cronFetch(`/api/cron/${job.id}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ scheduler: getCronScheduler(job) }),
+      }),
+  })
+
+  const createMutation = useMutation({
+    mutationFn: (job: CreateCronJobPayload) =>
+      cronFetch('/api/cron/create', {
+        method: 'POST',
+        body: JSON.stringify({ job }),
+      }),
+  })
+
+  const modelMutation = useMutation({
+    mutationFn: ({ job, model }: { job: CronJob; model: string }) =>
+      cronFetch(`/api/cron/${job.id}/model`, {
+        method: 'PATCH',
+        body: JSON.stringify({ model, scheduler: getCronScheduler(job) }),
+      }),
+  })
+
+  const handleToggle = async (job: CronJob) => {
+    if (job.actions?.toggle === false) return
+    setPendingAction(`toggle-${job.id}`)
+    try {
+      await toggleMutation.mutateAsync(job)
+      refetch()
+    } catch (err) {
+      toast.show('error', `Failed to toggle "${job.name}": ${errorMessage(err)}`)
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const requestRun = (job: CronJob) => {
+    if (job.actions?.run === false) return
+    setRunTarget(job)
+  }
+
+  const confirmRun = async () => {
+    const job = runTarget
+    if (!job) return
+    setPendingAction(`run-${job.id}`)
+    try {
+      await runMutation.mutateAsync(job)
+      toast.show('success', `"${job.name}" triggered`)
+      setTimeout(refetch, 1500)
+    } catch (err) {
+      toast.show('error', `Run failed: ${errorMessage(err)}`)
+    } finally {
+      setRunTarget(null)
+      setPendingAction(null)
+    }
+  }
+
+  const requestDelete = (job: CronJob) => {
+    if (job.actions?.delete === false) return
+    setDeleteTarget(job)
+  }
+
+  const confirmDelete = async () => {
+    const job = deleteTarget
+    if (!job) return
+    setPendingAction(`delete-${job.id}`)
+    try {
+      await deleteMutation.mutateAsync(job)
+      toast.show('success', `"${job.name}" deleted`)
+      if (selectedJob?.id === job.id) setJobParam(null)
+      refetch()
+    } catch (err) {
+      toast.show('error', `Delete failed: ${errorMessage(err)}`)
+    } finally {
+      setDeleteTarget(null)
+      setPendingAction(null)
+    }
+  }
+
+  const handleCreateJob = async (job: CreateCronJobPayload) => {
+    try {
+      await createMutation.mutateAsync(job)
+      toast.show('success', `"${job.name}" created`)
+      refetch()
+    } catch (err) {
+      toast.show('error', `Create failed: ${errorMessage(err)}`)
+      throw err
+    }
+  }
+
+  const handleModelChange = async (job: CronJob, model: string) => {
+    if (job.actions?.model === false) return
+    setPendingAction(`model-${job.id}`)
+    try {
+      await modelMutation.mutateAsync({ job, model })
+      toast.show('success', `"${job.name}" model set to ${model || 'default'}`)
+      refetch()
+    } catch (err) {
+      toast.show('error', `Model update failed: ${errorMessage(err)}`)
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  // ---- table ----
+
+  const columns: DataTableColumn<CronJob>[] = [
+    {
+      key: 'name',
+      header: 'Name',
+      cell: (job) => (
+        <div className={styles.nameCell}>
+          <span className={styles.name}>{job.name}</span>
+          <span className={styles.meta}>
+            {getCronSchedulerLabel(job)} · <Mono muted>{job.sourceId || job.id}</Mono>
+          </span>
+        </div>
+      ),
+    },
+    {
+      key: 'schedule',
+      header: 'Schedule',
+      cell: (job) => {
+        const overlap = overlapState.markers.get(job.id)
+        return (
+          <div className={styles.scheduleCell}>
+            <Mono>{job.schedule || '—'}</Mono>
+            {overlap && (
+              <span className={styles.overlap} title={overlap.detail}>
+                <Clock size={12} aria-hidden="true" />
+                {overlap.count} share this slot
+              </span>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      key: 'state',
+      header: 'State',
+      cell: (job) => {
+        const state = jobState(job)
+        return (
+          <div className={styles.stateCell} onClick={stopRowClick} onKeyDown={stopRowClick}>
+            {job.actions?.toggle !== false && (
+              <Switch
+                checked={job.enabled}
+                onChange={() => handleToggle(job)}
+                disabled={pendingAction === `toggle-${job.id}`}
+                aria-label={`${job.name} enabled`}
+              />
+            )}
+            <StatePill state={state.state} label={state.label} />
+          </div>
+        )
+      },
+    },
+    {
+      key: 'last',
+      header: 'Last run',
+      cell: (job) => <TimeAgo className={styles.time} value={job.lastRun} />,
+    },
+    {
+      key: 'next',
+      header: 'Next run',
+      cell: (job) => (job.enabled ? <TimeAgo className={styles.time} value={job.nextRun} /> : '—'),
+    },
+    {
+      key: 'model',
+      header: 'Model',
+      hideOnMobile: true,
+      cell: (job) =>
+        job.payload === 'agentTurn' ? (
+          <span className={styles.model} title={displayModel(job.model)}>
+            {displayModel(job.model)}
+          </span>
+        ) : (
+          <span className={styles.model}>{job.model || '—'}</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: <span className="visually-hidden">Actions</span>,
+      mobileLabel: 'Actions',
+      align: 'end',
+      width: '136px',
+      cell: (job) => {
+        const canRun = job.actions?.run !== false
+        const canDelete = job.actions?.delete !== false
+        if (!canRun && !canDelete) return null
+        return (
+          <div className={styles.rowActions} onClick={stopRowClick} onKeyDown={stopRowClick}>
+            {canRun && (
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<Play size={12} />}
+                loading={pendingAction === `run-${job.id}`}
+                onClick={() => requestRun(job)}
+                aria-label={`Run ${job.name} now`}
+              >
+                Run now
+              </Button>
+            )}
+            {canDelete && (
+              <IconButton
+                size="sm"
+                label={`Delete ${job.name}`}
+                icon={<Trash2 size={14} />}
+                disabled={pendingAction === `delete-${job.id}`}
+                onClick={() => requestDelete(job)}
+              />
+            )}
+          </div>
+        )
+      },
+    },
+  ]
+
+  if (loading && !data) {
+    return (
+      <div className={styles.view}>
+        <Skeleton variant="block" label="Loading automations" />
+        <Skeleton lines={8} label="Loading jobs" />
+      </div>
+    )
+  }
+
+  if (error && !data) {
+    return <ErrorState title="Automations could not be read" message={error} onRetry={refetch} />
+  }
+
+  const stateOptions = [
+    { value: 'all', label: 'All' },
+    { value: 'active', label: 'Active' },
+    { value: 'disabled', label: 'Paused' },
+    { value: 'failed', label: 'Failed' },
+    ...(overlapState.affectedJobs > 0 || statusFilter === 'overlap'
+      ? [{ value: 'overlap', label: 'Sharing a slot', count: overlapState.affectedJobs }]
+      : []),
+  ]
+
+  const schedulerOptions = [
+    { value: 'all', label: 'All schedulers' },
+    { value: 'openclaw', label: 'OpenClaw', count: schedulerCounts.openclaw },
+    { value: 'hermes', label: 'Hermes', count: schedulerCounts.hermes },
+  ]
+
+  return (
+    <div className={styles.view}>
+      <StatRow aria-label="Automations summary">
+        <Stat label="Active" value={summary.active} hint={summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : undefined} />
+        <Stat label="Paused" value={summary.paused} />
+        <Stat
+          label="Failed"
+          value={summary.failed}
+          state={summary.failed > 0 ? 'critical' : undefined}
+          hint={summary.failed > 0 ? 'Last run failed' : undefined}
+        />
+        <Stat
+          label="Next run"
+          value={summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
+          hint={summary.nextRun?.name}
+        />
+      </StatRow>
+
+      <div className={styles.toolbar}>
+        <FilterChips
+          ariaLabel="Filter by state"
+          options={stateOptions}
+          value={statusFilter}
+          onChange={(value) => setStatusFilter(value as CronStatusFilter)}
+        />
+        <span className={styles.divider} aria-hidden="true" />
+        <FilterChips
+          ariaLabel="Filter by scheduler"
+          options={schedulerOptions}
+          value={schedulerFilter}
+          onChange={(value) => setSchedulerFilter(value as SchedulerFilter)}
+        />
+        <div className={styles.toolbarEnd}>
+          {filteredJobs.length !== jobs.length && (
+            <span className={styles.count} aria-live="polite">
+              Showing {filteredJobs.length} of {jobs.length}
+            </span>
+          )}
+          <SearchInput
+            className={styles.search}
+            value={jobSearch}
+            onChange={setJobSearch}
+            label="Search jobs"
+            placeholder="Search jobs"
+          />
+          <Button variant="primary" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
+            Create automation
+          </Button>
+        </div>
+      </div>
+
+      {jobParam && !selectedJob && (
+        <Notice
+          tone="info"
+          action={
+            <Button size="sm" variant="ghost" onClick={() => setJobParam(null)}>
+              Dismiss
+            </Button>
+          }
+        >
+          No automation with id {jobParam} was found.
+        </Notice>
+      )}
+
+      <Panel padding="none">
+        <DataTable
+          className={styles.table}
+          caption="Automations"
+          columns={columns}
+          rows={filteredJobs}
+          rowKey={(job) => job.id}
+          onRowClick={(job) => setJobParam(job.id)}
+          selectedKey={selectedJob?.id ?? null}
+          dimmed={(job) => !job.enabled || normalizeCronStatus(job.status, job.enabled) === 'disabled'}
+          empty={
+            <EmptyState
+              icon={<Clock size={20} />}
+              title={jobs.length === 0 ? 'No automations yet' : 'No jobs match'}
+              description={
+                jobs.length === 0
+                  ? 'Create a scheduled job and it will appear here.'
+                  : 'No jobs match the current search and filters.'
+              }
+              action={
+                jobs.length === 0 ? (
+                  <Button variant="primary" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
+                    Create automation
+                  </Button>
+                ) : hasActiveFilters ? (
+                  <Button onClick={clearFilters}>Clear filters</Button>
+                ) : undefined
+              }
+            />
+          }
+        />
+      </Panel>
+
+      <JobDrawer
+        job={selectedJob}
+        open={Boolean(selectedJob) && !runTarget && !deleteTarget}
+        onClose={() => setJobParam(null)}
+        overlapMarker={selectedJob ? overlapState.markers.get(selectedJob.id) : undefined}
+        modelOptions={modelOptions}
+        displayModel={displayModel}
+        pendingAction={pendingAction}
+        onToggle={handleToggle}
+        onRun={requestRun}
+        onDelete={requestDelete}
+        onModelChange={handleModelChange}
+      />
+
+      <CreateJobDialog
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        onSubmit={handleCreateJob}
+        modelOptions={modelOptions}
+      />
+
+      <Dialog
+        open={deleteTarget !== null}
+        onClose={() => {
+          if (!pendingAction?.startsWith('delete-')) setDeleteTarget(null)
+        }}
+        role="alertdialog"
+        title="Delete automation?"
+        description={
+          deleteTarget
+            ? `"${deleteTarget.name}" will be removed from ${getCronSchedulerLabel(deleteTarget)}. This cannot be undone.`
+            : undefined
+        }
+        actions={
+          <>
+            <Button
+              data-autofocus
+              onClick={() => setDeleteTarget(null)}
+              disabled={pendingAction === `delete-${deleteTarget?.id}`}
+            >
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete} loading={pendingAction === `delete-${deleteTarget?.id}`}>
+              Delete
+            </Button>
+          </>
+        }
+      />
+
+      <Dialog
+        open={runTarget !== null}
+        onClose={() => {
+          if (!pendingAction?.startsWith('run-')) setRunTarget(null)
+        }}
+        role="alertdialog"
+        title="Run automation now?"
+        description={
+          runTarget
+            ? `"${runTarget.name}" will be queued for an immediate ${getCronSchedulerLabel(runTarget)} run. The normal schedule stays unchanged.`
+            : undefined
+        }
+        actions={
+          <>
+            <Button
+              data-autofocus
+              onClick={() => setRunTarget(null)}
+              disabled={pendingAction === `run-${runTarget?.id}`}
+            >
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={confirmRun} loading={pendingAction === `run-${runTarget?.id}`}>
+              Run now
+            </Button>
+          </>
+        }
+      />
+    </div>
+  )
+}

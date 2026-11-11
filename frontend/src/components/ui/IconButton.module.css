@@ -1,0 +1,58 @@
+.button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: var(--control-h);
+  height: var(--control-h);
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
+}
+
+.button:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.button[aria-pressed='true'] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.button:disabled {
+  color: var(--text-disabled);
+}
+
+.secondary {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.sm {
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+}
+
+.badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 var(--sp-1);
+  border-radius: var(--r-full);
+  background: var(--state-warning);
+  color: var(--text-on-accent);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-semibold);
+  line-height: 16px;
+  text-align: center;
+}

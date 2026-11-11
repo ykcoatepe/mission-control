@@ -1,63 +1,24 @@
+import { toUiState } from '../lib/state'
+import { StatePill } from './ui/StatePill'
+
 interface Props {
   status: 'active' | 'idle' | 'paused' | 'failed' | 'ok' | 'error' | 'off' | string
+  /** @deprecated Size is fixed in the flat design. */
   size?: 'sm' | 'md'
+  /** @deprecated No pulsing in the flat design. */
   pulse?: boolean
   label?: string
 }
 
-const statusConfig: Record<string, { badge: string; dotClass: string; dotColor?: string }> = {
-  active: {
-    badge: 'macos-badge-green',
-    dotClass: 'status-dot status-dot-green',
-  },
-  ok: {
-    badge: 'macos-badge-green',
-    dotClass: 'status-dot status-dot-green',
-  },
-  idle: {
-    badge: 'macos-badge-blue',
-    dotClass: 'status-dot',
-    dotColor: '#007AFF',
-  },
-  paused: {
-    badge: 'macos-badge-orange',
-    dotClass: 'status-dot status-dot-orange',
-  },
-  disabled: {
-    badge: 'macos-badge',
-    dotClass: 'status-dot',
-    dotColor: '#8E8E93',
-  },
-  failed: {
-    badge: 'macos-badge-red',
-    dotClass: 'status-dot status-dot-red',
-  },
-  error: {
-    badge: 'macos-badge-red',
-    dotClass: 'status-dot status-dot-red',
-  },
-  off: {
-    badge: 'macos-badge',
-    dotClass: 'status-dot',
-    dotColor: '#8E8E93',
-  },
+/**
+ * Legacy adapter over `StatePill`. Unknown status words render as "unavailable",
+ * never as a neutral "off" look. New code uses `StatePill` + `toUiState`.
+ */
+export default function StatusBadge({ status, label }: Props) {
+  const state = toUiState(status)
+  return <StatePill state={state} label={label ? capitalize(label) : undefined} />
 }
 
-export default function StatusBadge({ status, size = 'sm', pulse = false, label }: Props) {
-  const config = statusConfig[status.toLowerCase()] || statusConfig.off
-  const dotPx = size === 'sm' ? 6 : 8
-
-  return (
-    <span className={`macos-badge ${config.badge}`}>
-      <span
-        className={`${config.dotClass} ${pulse ? 'animate-subtle-pulse' : ''}`}
-        style={{
-          width: dotPx,
-          height: dotPx,
-          ...(config.dotColor ? { background: config.dotColor, boxShadow: `0 0 4px ${config.dotColor}` } : {}),
-        }}
-      />
-      <span style={{ textTransform: 'capitalize' }}>{label || status}</span>
-    </span>
-  )
+function capitalize(text: string) {
+  return text.charAt(0).toUpperCase() + text.slice(1)
 }

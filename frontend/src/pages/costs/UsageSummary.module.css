@@ -1,0 +1,18 @@
+/* The headline reading takes two columns of the strip and a larger figure. */
+.headline {
+  grid-column: span 2;
+}
+
+.headlineValue {
+  font-size: var(--fs-h1);
+}
+
+/* The kit's strip paints unused grid cells in the divider colour when it wraps:
+   fill the strip with the surface colour and draw the dividers on the cells. */
+.strip > [role='group'] {
+  background: var(--surface-1);
+}
+
+.strip > [role='group'] > * {
+  box-shadow: inset 0 0 0 0.5px var(--line);
+}

@@ -1,17 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, createElement, type ReactNode } from 'react'
+import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import DailySpendSection from './DailySpendSection'
 import type { ChartDataRow, ChartSeriesItem } from './types'
 
-vi.mock('../../components/GlassCard', () => ({
-  default: ({ children }: { children: ReactNode }) => createElement('div', null, children),
-}))
-
 const localSeries: ChartSeriesItem[] = [
-  { model: 'ollama/llama3', key: 'm0', color: '#8E8E93', totalCost: 0, totalTokens: 9000 },
+  { model: 'ollama/llama3', key: 'm0', color: 'var(--series-6)', totalCost: 0, totalTokens: 9000 },
 ]
 
 const localOnlyRows = [
@@ -20,11 +16,9 @@ const localOnlyRows = [
 ] as unknown as ChartDataRow[]
 
 const baseProps = {
-  m: false,
   chartData: localOnlyRows,
   chartSeries: localSeries,
   hasChartBars: false,
-  useMobileDailyChart: false,
   activeChartDate: '2026-08-02',
   setActiveChartDate: () => {},
   chartDayCount: 2,
@@ -35,8 +29,6 @@ const baseProps = {
   hasSessionEstimateChart: false,
   sessionEstimateData: [],
   totalTokens: 9000,
-  tokenBasedCost: null,
-  blendedCostBreakdown: [],
   apiEquivalentReliability: 'not_applicable',
 }
 

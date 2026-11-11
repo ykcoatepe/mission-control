@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
-import { Bot, Loader2, MessageCircle, Minimize2, Send, User, X } from 'lucide-react'
+import { Bot, Loader2, MessageCircle, Send, User, X } from 'lucide-react'
 import { useChat } from '../hooks/useChat'
 import { markdownToHtml, sanitizeHtml } from '../utils/sanitize'
-import { useIsMobile } from '../lib/useIsMobile'
+import { cx } from './ui/cx'
 import styles from './ChatWidget.module.css'
 
 type ChatWidgetProps = {
@@ -11,7 +10,6 @@ type ChatWidgetProps = {
 }
 
 export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
-  const m = useIsMobile()
   const [open, setOpen] = useState(false)
   const [unread, setUnread] = useState(0)
   const openRef = useRef(open)
@@ -50,57 +48,50 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
 
   return (
     <>
-      <AnimatePresence>
-        {!open && !hideLauncher && (
-          <motion.button
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            onClick={() => {
-              setUnread(0)
-              setOpen(true)
-            }}
-            className={`${styles.floatingButton} ${
-              m ? styles.floatingButtonMobile : styles.floatingButtonDesktop
-            }`}
-          >
-            <MessageCircle size={m ? 22 : 24} />
-            {unread > 0 && (
-              <div className={styles.unreadBadge}>{unread > 9 ? '9+' : unread}</div>
-            )}
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {!open && !hideLauncher && (
+        <button
+          type="button"
+          aria-label={unread > 0 ? `Open assistant, ${unread} unread` : 'Open assistant'}
+          onClick={() => {
+            setUnread(0)
+            setOpen(true)
+          }}
+          className={styles.floatingButton}
+        >
+          <MessageCircle size={22} aria-hidden="true" />
+          {unread > 0 && <span className={styles.unreadBadge}>{unread > 9 ? '9+' : unread}</span>}
+        </button>
+      )}
 
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            initial={m ? { y: '100%' } : { opacity: 0, y: 20, scale: 0.95 }}
-            animate={m ? { y: 0 } : { opacity: 1, y: 0, scale: 1 }}
-            exit={m ? { y: '100%' } : { opacity: 0, y: 20, scale: 0.95 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className={`${styles.panel} ${m ? styles.panelMobile : styles.panelDesktop}`}
+      {open && (
+          <div
+            role="dialog"
+            aria-label="Assistant"
+            className={styles.panel}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') setOpen(false)
+            }}
           >
-            <div className={`${styles.header} ${m ? styles.headerMobile : ''}`}>
+            <div className={styles.header}>
               <div className={styles.headerInfo}>
                 <div className={styles.headerIcon}>
-                  <Bot size={16} style={{ color: '#007AFF' }} />
+                  <Bot size={16} aria-hidden="true" />
                 </div>
                 <div>
                   <h3 className={styles.headerTitle}>Müdür</h3>
                   <p className={styles.headerStatus}>{isStreaming ? 'Replying' : 'Online'}</p>
                 </div>
               </div>
-              <button onClick={() => setOpen(false)} className={styles.headerButton}>
-                {m ? <X size={16} /> : <Minimize2 size={14} />}
+              <button type="button" onClick={() => setOpen(false)} className={styles.headerButton} aria-label="Close assistant">
+                <X size={16} aria-hidden="true" />
               </button>
             </div>
 
-            <div className={styles.messages}>
+            <div className={styles.messages} role="log" aria-live="polite" aria-label="Conversation">
               {messages.length === 0 ? (
                 <div className={styles.emptyState}>
-                  <Bot size={32} />
-                  <p style={{ fontSize: 13, fontWeight: 500, textAlign: 'center' }}>Ask me anything.</p>
+                  <Bot size={32} aria-hidden="true" />
+                  <p className={styles.emptyText}>Ask me anything.</p>
                 </div>
               ) : (
                 <div className={styles.messageList}>
@@ -118,9 +109,7 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
                           <span className={styles.messageAuthor}>
                             {msg.role === 'assistant' ? 'Müdür' : 'You'}
                           </span>
-                          {msg.streaming && (
-                            <Loader2 size={9} style={{ color: '#007AFF', animation: 'spin 1s linear infinite' }} />
-                          )}
+                          {msg.streaming && <Loader2 size={10} className={styles.spin} aria-hidden="true" />}
                         </div>
                         <div
                           className={styles.messageContent}
@@ -158,7 +147,8 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
                       void sendMessage()
                     }
                   }}
-                  placeholder="Message..."
+                  placeholder="Message…"
+                  aria-label="Message"
                   disabled={isStreaming}
                   rows={3}
                   className={styles.textarea}
@@ -172,21 +162,15 @@ export default function ChatWidget({ hideLauncher = false }: ChatWidgetProps) {
                   type="submit"
                   data-chat-send
                   disabled={!input.trim() || isStreaming}
-                  className={`${styles.sendButton} ${
-                    input.trim() && !isStreaming ? styles.sendButtonActive : ''
-                  }`}
+                  aria-label="Send message"
+                  className={cx(styles.sendButton, input.trim() && !isStreaming && styles.sendButtonActive)}
                 >
-                  {isStreaming ? (
-                    <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
-                  ) : (
-                    <Send size={14} />
-                  )}
+                  {isStreaming ? <Loader2 size={14} className={styles.spin} aria-hidden="true" /> : <Send size={14} aria-hidden="true" />}
                 </button>
               </form>
             </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          </div>
+      )}
     </>
   )
 }

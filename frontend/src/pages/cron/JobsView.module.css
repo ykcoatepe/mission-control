@@ -1,0 +1,130 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.divider {
+  align-self: stretch;
+  width: 1px;
+  margin: var(--sp-1) 0;
+  background: var(--line-strong);
+}
+
+.toolbarEnd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+.search {
+  width: 200px;
+}
+
+.count {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.name {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.scheduleCell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+}
+
+.overlap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}
+
+.stateCell {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.model {
+  display: block;
+  max-width: 160px;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Row actions: shown on hover, keyboard focus and the selected row only. */
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.table tr:hover .rowActions,
+.table tr:focus-within .rowActions,
+.table tr[aria-selected='true'] .rowActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowActions {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .rowActions {
+    opacity: 1;
+  }
+
+  .search {
+    width: 100%;
+  }
+
+  .toolbarEnd {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .divider {
+    display: none;
+  }
+}
+
+.time {
+  white-space: nowrap;
+}

@@ -1,0 +1,9 @@
+.freshness {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.freshness[data-kind='stale'] {
+  color: var(--state-warning);
+}
