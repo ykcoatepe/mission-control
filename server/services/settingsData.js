@@ -25,8 +25,16 @@ function createSettingsService({
   skillsPath,
   bedrockRegion,
   openclawExec,
+  // Core ConfigStore (the only writer of mc-config.json, atomic). Without
+  // one (isolated tests) the legacy direct writes are used.
+  configStore = null,
 }) {
   const openclawConfigPath = path.join(os.homedir(), '.openclaw/openclaw.json');
+
+  function persistMcConfig() {
+    if (configStore) return configStore.persist(mcConfig);
+    return fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2));
+  }
 
   function readOpenclawConfigSafe() {
     if (!fs.existsSync(openclawConfigPath)) return {};
@@ -146,7 +154,7 @@ function createSettingsService({
 
   function updateBudget(monthly) {
     mcConfig.budget = { monthly: normalizeMonthlyBudget(monthly) };
-    fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2));
+    persistMcConfig();
     return { status: 'saved', budget: mcConfig.budget };
   }
 
@@ -234,7 +242,7 @@ function createSettingsService({
       mcConfig.scout = { ...mcConfig.scout, ...scout };
     }
 
-    fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2));
+    persistMcConfig();
 
     const scoutResultsPath = path.join(missionControlRoot, 'scout-results.json');
     if (fs.existsSync(scoutResultsPath)) {
@@ -262,8 +270,12 @@ function createSettingsService({
     const configContent = fs.readFileSync(filePath, 'utf8');
     JSON.parse(configContent);
 
-    fs.copyFileSync(missionControlConfigPath, `${missionControlConfigPath}.backup.${Date.now()}`);
-    fs.writeFileSync(missionControlConfigPath, configContent);
+    if (configStore) {
+      configStore.importRaw(configContent);
+    } else {
+      fs.copyFileSync(missionControlConfigPath, `${missionControlConfigPath}.backup.${Date.now()}`);
+      fs.writeFileSync(missionControlConfigPath, configContent);
+    }
     fs.unlinkSync(filePath);
 
     return {

@@ -354,7 +354,8 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
 
   assert.equal(overview.systems.openclaw.state, 'unavailable');
   assert.equal(overview.systems.gbrain.state, 'healthy');
-  const serverSource = fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
+  // The composition root moved from server.js to server/app.js (createApp).
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'app.js'), 'utf8');
   assert.match(
     serverSource,
     /sourceTimeoutMsOverrides:\s*\{\s*gbrain:\s*GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS\s*,?\s*\}/,

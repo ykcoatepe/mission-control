@@ -47,9 +47,16 @@ function buildOllamaRouter({
   openclawExec,
   mcConfig,
   missionControlConfigPath,
+  // The core ConfigStore writer (atomic). Falls back to a direct write only
+  // when the router is built without one (isolated tests).
+  persistMcConfig,
 }) {
   const router = express.Router();
   const openclawConfigPath = path.join(process.env.HOME || '/home/ubuntu', '.openclaw/openclaw.json');
+  function persistConfig() {
+    if (typeof persistMcConfig === 'function') return persistMcConfig();
+    return fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2), 'utf8');
+  }
 
   try {
     fs.watch(openclawConfigPath, { persistent: false }, () => {
@@ -546,7 +553,7 @@ function buildOllamaRouter({
         if (!ollamaOptimizationBackup) return res.status(400).json({ error: 'No rollback backup available' });
         if (!mcConfig.ollama) mcConfig.ollama = {};
         mcConfig.ollama.optimization = normalizeOllamaOptimization(ollamaOptimizationBackup.profile || current);
-        fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2), 'utf8');
+        persistConfig();
         const verify = await fetchJsonWithTiming(`${getOllamaConfig().baseUrl}/api/ps`, 2500);
         return res.json({
           success: true,
@@ -575,7 +582,7 @@ function buildOllamaRouter({
       ollamaOptimizationBackup = { profile: current, savedAt: new Date().toISOString() };
       if (!mcConfig.ollama) mcConfig.ollama = {};
       mcConfig.ollama.optimization = profile;
-      fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2), 'utf8');
+      persistConfig();
 
       const verify = await fetchJsonWithTiming(`${getOllamaConfig().baseUrl}/api/ps`, 2500);
       return res.json({

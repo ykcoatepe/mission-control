@@ -11,10 +11,28 @@ const {
   normalizeHeartbeatPayload,
 } = require('../server/services/statusData');
 
-function makeService(overrides = {}) {
+// The service now runs the OpenClaw CLI through the async core runner
+// (openclawCli(args, timeoutMs) -> { ok, stdout, stderr }). These fakes were
+// written as command-string execSync stand-ins; adapt them so every
+// expectation below stays exactly as it was.
+function openclawCliFromCommandFake(commandFake) {
+  return async (args) => {
+    const command = `openclaw ${args.join(' ')}`;
+    try {
+      return { ok: true, code: 0, stdout: String(commandFake(command)), stderr: '' };
+    } catch (error) {
+      return { ok: false, code: 1, stdout: String(error?.stdout || ''), stderr: '' };
+    }
+  };
+}
+
+function makeService(rawOverrides = {}) {
+  const { execSync: commandFake, ...overrides } = rawOverrides;
+  if (commandFake && !overrides.openclawCli) overrides.openclawCli = openclawCliFromCommandFake(commandFake);
   let snapshot = null;
   const memoryPath = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-status-data-'));
   const service = createStatusService({
+    openclawCli: async () => ({ ok: false, code: 1, stdout: '', stderr: '' }),
     mcConfig: { name: 'Mission Control' },
     memoryPath,
     prettyModelName: (model) => model || 'Unknown',

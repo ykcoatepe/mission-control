@@ -96,6 +96,14 @@ function mergeHeartbeatPayloads(primary = {}, fallback = {}, options = {}) {
   return merged;
 }
 
+// Combine stdout and stderr the way `openclaw status 2>&1` used to.
+function combinedOutput(result) {
+  const out = String(result?.stdout || '');
+  const err = String(result?.stderr || '');
+  if (!err) return out;
+  return out ? `${out}${out.endsWith('\n') ? '' : '\n'}${err}` : err;
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -107,15 +115,24 @@ function createStatusService({
   writeRuntimeSnapshot,
   runtimeSnapshotTtl,
   gatewayPort,
-  execSync,
+  // (args, timeoutMs) => Promise<{ ok, stdout, stderr, ... }> on the core
+  // runner's `openclaw` lane. Never blocks the event loop; never throws for a
+  // failed command.
+  openclawCli,
   fs,
   path,
   sessionRefreshBudgetMs = 1500,
   processEnv = process.env,
+  // When a scheduler owns refresh, reads must not start one (GET is pure).
+  refreshOnRead = true,
+  statusTimeoutMs = 15000,
+  heartbeatTimeoutMs = 10000,
 }) {
+  if (typeof openclawCli !== 'function') throw new TypeError('createStatusService: openclawCli is required');
   let statusCache = null;
   let statusCacheTime = 0;
   let refreshInFlight = null;
+  let completedRefreshes = 0;
   const statusCacheTtl = 60000;
 
   function buildMinimalStatusResponse() {
@@ -249,29 +266,20 @@ function createStatusService({
           }
 
           try {
-            resolve({
-              output: execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }),
-              commandSucceeded: true,
-            });
-          } catch (error) {
-            resolve({
-              output: error.stdout || gatewayHealth,
-              commandSucceeded: false,
-            });
+            const result = await openclawCli(['status'], statusTimeoutMs);
+            resolve(result?.ok
+              ? { output: combinedOutput(result), commandSucceeded: true }
+              : { output: combinedOutput(result) || gatewayHealth, commandSucceeded: false });
+          } catch {
+            resolve({ output: gatewayHealth, commandSucceeded: false });
           }
         }),
         fetchNotionActivity(8).catch(() => null),
         sessionRead,
-        Promise.resolve().then(() => {
-          try {
-            return heartbeatEventToPayload(execSync('openclaw system heartbeat last --json', {
-              timeout: 8000,
-              encoding: 'utf8',
-            }));
-          } catch {
-            return {};
-          }
-        }),
+        Promise.resolve()
+          .then(() => openclawCli(['system', 'heartbeat', 'last', '--json'], heartbeatTimeoutMs))
+          .then((result) => (result?.ok ? heartbeatEventToPayload(result.stdout) : {}))
+          .catch(() => ({})),
       ]);
 
       const statusResult = openclawStatus.status === 'fulfilled'
@@ -352,6 +360,7 @@ function createStatusService({
         heartbeat,
       };
       statusCacheTime = Date.now();
+      completedRefreshes += 1;
       writeRuntimeSnapshot('status', buildStatusResponseFromCache(statusCache, heartbeat));
     } catch (error) {
       console.error('[StatusCache] refresh failed:', error.message);
@@ -382,7 +391,7 @@ function createStatusService({
       };
     }
 
-    if (Date.now() - statusCacheTime > statusCacheTtl) {
+    if (refreshOnRead && Date.now() - statusCacheTime > statusCacheTtl) {
       refreshStatusCache();
     }
 
@@ -396,13 +405,12 @@ function createStatusService({
       heartbeat = mergeHeartbeatPayloads(fileHeartbeat, heartbeat);
     } catch {}
 
-    const response = buildStatusResponseFromCache(statusCache, heartbeat);
-    writeRuntimeSnapshot('status', response);
-    return response;
+    // GET is pure: the snapshot file is written only by the refresh.
+    return buildStatusResponseFromCache(statusCache, heartbeat);
   }
 
   async function getOperationsStatusResponse() {
-    if (!statusCache || Date.now() - statusCacheTime > statusCacheTtl) {
+    if (refreshOnRead && (!statusCache || Date.now() - statusCacheTime > statusCacheTtl)) {
       await refreshStatusCache();
     }
     const response = statusCache
@@ -418,10 +426,31 @@ function createStatusService({
     };
   }
 
+  // Source read (see server/sources/openclaw/status.js): one refresh, and the
+  // status payload only when the OpenClaw status CLI was actually observed.
+  // Throws otherwise, so the caller keeps its last-good value.
+  async function readObservedStatus() {
+    const before = completedRefreshes;
+    await refreshStatusCache();
+    if (completedRefreshes === before || !statusCache) {
+      const error = new Error('Status refresh did not complete');
+      error.code = 'refresh_failed';
+      throw error;
+    }
+    if (!statusCache.operationsSource?.sourceSucceeded) {
+      const error = new Error('OpenClaw status CLI produced no observable status');
+      error.code = 'openclaw_status_unavailable';
+      throw error;
+    }
+    return buildStatusResponseFromCache(statusCache, statusCache.heartbeat || {});
+  }
+
   return {
     refreshStatusCache,
     getStatusResponse,
     getOperationsStatusResponse,
+    readObservedStatus,
+    buildMinimalStatusResponse,
   };
 }
 
