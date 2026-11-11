@@ -1,10 +1,8 @@
 const fs = require('fs');
 const os = require('os');
-const util = require('util');
-const { execFile } = require('child_process');
-
-const defaultExecFilePromise = util.promisify(execFile);
+const { httpError } = require('../core/http');
 const STATUSES = ['triage', 'todo', 'ready', 'running', 'blocked', 'done'];
+const RUNNER_UNAVAILABLE = new Set(['lane_busy', 'lane_quarantined', 'shutdown', 'timeout', 'queue_timeout', 'kill_unverified', 'max_output']);
 
 function findHermesBin(processEnv) {
   const home = processEnv.MC_USER_HOME || processEnv.HOME || os.homedir();
@@ -75,28 +73,38 @@ function buildHermesEnv(profile, processEnv) {
 
 function createHermesKanbanService({
   mcConfig = {},
-  execFilePromise = defaultExecFilePromise,
+  runner,
   processEnv = process.env,
   now = Date.now,
   maxConcurrency = 2,
   freshMs = 5 * 60 * 1000,
   maxStaleMs = 10 * 60 * 1000,
 } = {}) {
+  if (typeof runner?.run !== 'function') throw new TypeError('createHermesKanbanService: core runner required');
   const profile = processEnv.HERMES_PROFILE || mcConfig?.hermes?.profile || 'hmudur';
   const hermesBin = processEnv.HERMES_BIN || findHermesBin(processEnv);
 
   async function hermes(args, { json = false, timeout = 15000 } = {}) {
-    const { stdout, stderr } = await execFilePromise(
+    const argv = ['--profile', profile, 'kanban', ...args];
+    const result = await runner.run(
       hermesBin,
-      ['--profile', profile, 'kanban', ...args],
+      argv,
       {
+        lane: 'hermes',
+        key: JSON.stringify(['hermes-kanban', hermesBin, buildHermesEnv(profile, processEnv).HOME, argv]),
         env: buildHermesEnv(profile, processEnv),
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
+        timeoutMs: timeout,
+        maxOutputBytes: 10 * 1024 * 1024,
       },
     );
+    if (!result?.ok) {
+      const code = typeof result?.error?.code === 'string' && /^[a-z][a-z0-9_]{1,63}$/i.test(result.error.code)
+        ? result.error.code : 'hermes_kanban_unavailable';
+      throw httpError(503, code, 'Hermes Kanban could not be read');
+    }
+    const { stdout, stderr } = result;
     const out = String(stdout || '').trim();
-    if (out.toLowerCase().includes('could not initialize database')) throw new Error(out);
+    if (out.toLowerCase().includes('could not initialize database')) throw httpError(503, 'hermes_kanban_unavailable', 'Hermes Kanban could not be read');
     return json ? parseJsonOutput(out, null) : { stdout: out, stderr: String(stderr || '').trim() };
   }
 
@@ -135,8 +143,8 @@ function createHermesKanbanService({
         const tasks = await hermes(['list', '--status', status, '--json'], { json: true });
         return [status, Array.isArray(tasks) ? tasks.map(normalizeTask) : []];
       }),
-      async () => hermes(['stats', '--json'], { json: true }).catch(() => null),
-      async () => hermes(['assignees', '--json'], { json: true }).catch(() => []),
+      async () => hermes(['stats', '--json'], { json: true }).catch(error => { if (RUNNER_UNAVAILABLE.has(error.code)) throw error; return null; }),
+      async () => hermes(['assignees', '--json'], { json: true }).catch(error => { if (RUNNER_UNAVAILABLE.has(error.code)) throw error; return []; }),
     ];
     const settled = await mapLimited(calls, maxConcurrency, (call) => call());
     const lists = settled.slice(0, STATUSES.length);
@@ -214,7 +222,7 @@ function createHermesKanbanService({
       return staleBoard() || await refresh;
     } catch (error) {
       const stale = staleBoard();
-      if (stale) return stale;
+      if (stale) return { ...stale, unavailable: true, error: { code: error.code || 'hermes_kanban_unavailable', message: 'Hermes Kanban could not be read' } };
       throw error;
     }
   }

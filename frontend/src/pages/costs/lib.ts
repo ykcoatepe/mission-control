@@ -29,6 +29,9 @@ function isReading(value: number | null | undefined): value is number {
   return typeof value === 'number' && Number.isFinite(value)
 }
 
+/** The one phrase for billing that was not read, in the headline, the tabs and every table. */
+export const BILLING_NOT_READ = 'Billing not read'
+
 /** Money, or a dash when the value is null, undefined or not a finite number. */
 export function formatCurrency(value: number | null | undefined) {
   return isReading(value) ? currencyFormatter.format(value) : NOT_READ
@@ -104,6 +107,45 @@ export function formatSessionName(key: string, displayName?: string): string {
   if (key.includes(':subagent:')) return 'Sub-Agent'
   if (displayName) return displayName
   return key.split(':').pop()?.substring(0, 12) || 'Unknown'
+}
+
+const CHANNEL_NAMES: Record<string, string> = {
+  telegram: 'Telegram',
+  discord: 'Discord',
+  slack: 'Slack',
+  whatsapp: 'WhatsApp',
+  signal: 'Signal',
+  imessage: 'iMessage',
+  cron: 'Scheduled job',
+  subagent: 'Sub-agent',
+}
+
+/**
+ * A readable name and one detail line for a session. The raw key is an address
+ * ("agent:main:telegram:direct:<chat id>"): it carries chat ids, so it is never shown.
+ * The detail line names the agent and the channel instead.
+ */
+export function describeSession(
+  session: { key: string; displayName?: string; label?: string | null; agentId?: string | null },
+): { name: string; detail: string } {
+  const { key } = session
+  const parts = key.split(':')
+  const agentId = session.agentId || (parts[0] === 'agent' && parts[1] ? parts[1] : null)
+  const channelWord = parts[0] === 'agent' ? parts[2] : parts[0]
+  const channel = channelWord && channelWord !== 'main' ? (CHANNEL_NAMES[channelWord] ?? channelWord) : null
+  const detail = [agentId ? `Agent ${agentId}` : null, channel].filter(Boolean).join(' · ') || 'Session'
+
+  const label = session.label?.trim()
+  if (label) return { name: label, detail }
+  const display = session.displayName?.trim()
+  if (display && display !== key) return { name: formatSessionName(key, display), detail }
+  if (key.includes('#') || key === 'agent:main:main' || key.includes(':subagent:')) return { name: formatSessionName(key), detail }
+  if (parts[0] === 'agent' && parts[2] && parts[2] !== 'main') {
+    const channelName = CHANNEL_NAMES[parts[2]] ?? parts[2]
+    const kind = parts[3]
+    return { name: kind === 'direct' ? `${channelName} direct chat` : kind ? `${channelName} ${kind}` : `${channelName} session`, detail }
+  }
+  return { name: agentId ? `${agentId} main session` : 'Session', detail }
 }
 
 export function formatSessionTimestamp(timestamp: number) {
@@ -289,18 +331,42 @@ export function getServiceColor(name: string) {
 // Model name utilities
 // ---------------------------------------------------------------------------
 
-export function canonicalModelName(model: string) {
-  const lower = model.toLowerCase()
+/** A usage key is "<platform> / <model>"; every other string is a bare model. Platform and model are two fields. */
+export function splitModelKey(raw: string): { platform: string | null; model: string } {
+  const text = String(raw ?? '').trim()
+  const at = text.indexOf(' / ')
+  if (at <= 0) return { platform: null, model: text }
+  return { platform: text.slice(0, at).trim() || null, model: text.slice(at + 3).trim() }
+}
 
-  if (lower.includes('gpt-5.4-mini')) return 'GPT-5.4 Mini'
-  if (lower.includes('gpt-5.4-nano')) return 'GPT-5.4 Nano'
-  if (lower.includes('gpt-5.4')) return 'GPT-5.4'
-  if (lower.includes('gpt-5.3-codex-spark')) return 'GPT-5.3 Codex Spark'
-  if (lower.includes('gpt-5.3')) return 'GPT-5.3'
-  if (lower.includes('claude-sonnet-4-6') || lower.includes('sonnet-4-6')) return 'Claude Sonnet 4.6'
-  if (lower.includes('claude-sonnet') || lower.includes('sonnet')) return 'Claude Sonnet'
-  if (lower.includes('claude-opus') || lower.includes('opus')) return 'Claude Opus'
-  if (lower.includes('claude-haiku') || lower.includes('haiku')) return 'Claude Haiku'
+const GPT_MODEL = /^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/
+const CLAUDE_MODEL = /^claude-(opus|sonnet|haiku|fable)-(\d+)(?:[-.](\d{1,2}))?$/
+
+function titleWords(text: string) {
+  return text.split(/[-_]/).filter(Boolean).map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ')
+}
+
+/**
+ * The model id with routing noise removed: the platform prefix, the provider path
+ * ("openai-codex/", "anthropic/", "claude-subscription-directsdk-experimental/"),
+ * a context-window tag ("[1m]") and a snapshot date. Two strings that name the same
+ * model give the same id; two different models never do.
+ */
+export function normalizedModelId(raw: string): string {
+  const { model } = splitModelKey(raw)
+  let id = (model.split('/').pop() ?? '').trim()
+  id = id.replace(/\[[^\]]*\]$/, '').trim()
+  const lower = id.toLowerCase()
+  const claude = lower.replace(/-\d{8}$/, '')
+  if (CLAUDE_MODEL.test(claude)) return claude.replace(/^(claude-[a-z]+-\d+)\.(\d+)$/, '$1-$2')
+  const gpt = lower.replace(/-\d{8}$/, '')
+  if (GPT_MODEL.test(gpt)) return gpt
+  return id
+}
+
+export function canonicalModelName(model: string) {
+  const lower = String(model ?? '').toLowerCase()
+
   if (lower.includes('ollama/')) {
     return model
       .split('/')
@@ -318,7 +384,51 @@ export function canonicalModelName(model: string) {
       .replace(/\b\w/g, x => x.toUpperCase()) || 'OpenRouter'
   }
 
-  return model || 'Unknown'
+  const id = normalizedModelId(model)
+  const idLower = id.toLowerCase()
+  const claude = CLAUDE_MODEL.exec(idLower)
+  if (claude) {
+    const family = claude[1].charAt(0).toUpperCase() + claude[1].slice(1)
+    return `Claude ${family} ${claude[2]}${claude[3] ? `.${claude[3]}` : ''}`
+  }
+  const gpt = GPT_MODEL.exec(idLower)
+  if (gpt) return `GPT-${gpt[1]}${gpt[2] ? ` ${titleWords(gpt[2])}` : ''}`
+  if (idLower.includes('claude-sonnet') || idLower.includes('sonnet')) return 'Claude Sonnet'
+  if (idLower.includes('claude-opus') || idLower.includes('opus')) return 'Claude Opus'
+  if (idLower.includes('claude-haiku') || idLower.includes('haiku')) return 'Claude Haiku'
+
+  return id || 'Unknown'
+}
+
+export interface ModelIdentity {
+  /** Stable key: colours and rows are keyed by it. */
+  id: string
+  /** The platform the usage key named, or null for a bare model. */
+  platform: string | null
+  /** Display name before collisions are resolved. */
+  name: string
+}
+
+export function modelIdentity(raw: string): ModelIdentity {
+  return { id: normalizedModelId(raw).toLowerCase() || 'unknown', platform: splitModelKey(raw).platform, name: canonicalModelName(raw) }
+}
+
+/**
+ * One display name per model id. Two different models never share a name: when the
+ * naming rule gives the same name to different ids, the id is appended to each of them.
+ */
+export function uniqueModelNames(identities: ReadonlyArray<Pick<ModelIdentity, 'id' | 'name'>>): Map<string, string> {
+  const idsByName = new Map<string, Set<string>>()
+  identities.forEach(item => {
+    const ids = idsByName.get(item.name) ?? new Set<string>()
+    ids.add(item.id)
+    idsByName.set(item.name, ids)
+  })
+  const names = new Map<string, string>()
+  identities.forEach(item => {
+    names.set(item.id, (idsByName.get(item.name)?.size ?? 0) > 1 ? `${item.name} (${item.id})` : item.name)
+  })
+  return names
 }
 
 export function toChartKey(index: number) {
@@ -383,8 +493,8 @@ export function trackedSpendPresentation({
     coverageLabel: isPartial
       ? count > 0
         ? count === 1
-          ? '1 billing source unknown'
-          : `${count} billing sources unknown`
+          ? '1 billing source not read'
+          : `${count} billing sources not read`
         : 'Billing coverage partial'
       : null,
     projectionAvailable: !isPartial,
@@ -1005,6 +1115,51 @@ export function comparisonLabels(period: 'day' | '7d' | 'month', window: Compari
   return { period: `vs ${span}`, daily: `vs ${span} avg` }
 }
 
+/** A projection needs this share of the month to have passed; before that one busy day swings it. */
+export const MIN_PROJECTION_SHARE = 0.25
+
+export interface PeriodReading {
+  /** The current period is still running (today is part-way through). */
+  inProgress: boolean
+  /**
+   * The current and previous totals cover the same length of time, so a percentage change means
+   * something. A part-way day against a whole previous day is not: it is shown as "so far", with no percentage.
+   */
+  likeForLike: boolean
+  /** Null when a projection is allowed; otherwise why it is withheld, in one sentence. */
+  projectionWithheld: string | null
+}
+
+/**
+ * What the headline may claim for a period. Never projects a month from part of a day or from the
+ * first days of a month, and never compares a part-way day with a whole one. A finished month is a
+ * total: nothing is in progress, nothing is projected (the projection stat is not shown for it).
+ */
+export function periodReading(
+  period: 'day' | '7d' | 'month',
+  window: { end?: string | null } | null,
+  finishedMonth: boolean,
+  now = new Date(),
+): PeriodReading {
+  if (finishedMonth) return { inProgress: false, likeForLike: true, projectionWithheld: null }
+  if (period === 'day') {
+    return {
+      inProgress: true,
+      likeForLike: false,
+      projectionWithheld: 'Today is not over, so there is no month projection from it.',
+    }
+  }
+  if (period === '7d') return { inProgress: true, likeForLike: true, projectionWithheld: null }
+  const end = window?.end && DATE_KEY.test(window.end) ? window.end : dayKeyOf(now)
+  const monthKey = end.slice(0, 7)
+  const total = daysInMonthKey(monthKey)
+  const passed = Math.min(Number(end.slice(8)), total)
+  const withheld = passed / total < MIN_PROJECTION_SHARE
+    ? `Too early to project the month: ${passed} of ${total} days have passed.`
+    : null
+  return { inProgress: true, likeForLike: true, projectionWithheld: withheld }
+}
+
 // Generic period labels read naturally lowercased mid-sentence ("the loaded
 // monthly period"); month-name labels like "July 2026" must keep their casing.
 export function inlinePeriodLabel(label: string) {
@@ -1058,7 +1213,7 @@ export interface ProviderRow {
   /** Server counters of lines the producer could not read; null when it did not supply them. */
   skippedLines: number | null
   oversizedLines: number | null
-  /** Why the coverage is what it is, in words (reason and line counters); null when there is nothing to add. */
+  /** Why the coverage is what it is, as a plain sentence (reason and line counters); null when the records are complete. */
   coverageDetail: string | null
   /** The platform has no usage rows in the period (the server's `hasRecords` is false). Unknown (flag absent) is not "no records". */
   noRecords: boolean
@@ -1076,19 +1231,28 @@ function countOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-const REASON_WORDS: Partial<Record<CoverageReason, string>> = {
-  scan_failed: 'The latest scan failed; showing the last good scan.',
-  unresolved_overlap: 'Ownership overlap with another platform is unresolved.',
-}
+const LINE_NUMBER = (value: number) => value.toLocaleString('en-US')
 
+/**
+ * A plain sentence for why a platform's figure may be low, built from the server's
+ * `coverageReason` and its skipped / oversized line counters. Never the provider's
+ * own note, which is written for logs. Null when the records are complete.
+ */
 function coverageDetailOf(reason: CoverageReason | null, skipped: number | null, oversized: number | null): string | null {
-  const parts: string[] = []
-  const words = reason ? REASON_WORDS[reason] : undefined
-  if (words) parts.push(words)
-  if (skipped !== null && skipped > 0) {
-    parts.push(`${skipped.toLocaleString('en-US')} ${skipped === 1 ? 'line' : 'lines'} skipped${oversized !== null && oversized > 0 ? ` (${oversized.toLocaleString('en-US')} oversized)` : ''}.`)
+  if (reason === 'none') return null
+  if (reason === 'scan_failed') return 'The latest scan failed, so this shows the last good scan.'
+  if (reason === 'unresolved_overlap') return 'Some of this usage may also belong to another platform. That is not settled yet.'
+  if (reason === 'standing_gaps') {
+    const lines = skipped !== null && skipped > 0 ? skipped : null
+    if (lines === null) return 'Its records are known to be incomplete, so this figure may be low.'
+    const noun = lines === 1 ? 'log line' : 'log lines'
+    if (oversized !== null && oversized >= lines) {
+      return `${LINE_NUMBER(lines)} ${noun} ${lines === 1 ? 'was' : 'were'} too large to read, so this figure may be low.`
+    }
+    const large = oversized !== null && oversized > 0 ? ` (${LINE_NUMBER(oversized)} too large)` : ''
+    return `${LINE_NUMBER(lines)} ${noun} could not be read${large}, so this figure may be low.`
   }
-  return parts.length > 0 ? parts.join(' ') : null
+  return 'The platform did not say how complete its records are, so this figure may be low.'
 }
 
 /**
@@ -1119,8 +1283,12 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
     // A platform that was read but has no usage rows has nothing to show: all of its
     // figures are dashes and its state is the quiet "No usage recorded", not "Ready".
     const noRecords = read && provider.hasRecords === false
-    // A standing gap is neutral (never green), its word says so and its note carries the detail.
-    // A failed scan, an unresolved overlap, an unknown coverage and a stale reading are warnings.
+    // THE PARTIAL-PLATFORM RULE (stated once, tested in providers.test.ts): a partial platform is a
+    // warning only when the server says a scan failed (`scan_failed`) or an overlap is unresolved
+    // (`unresolved_overlap`), or when the coverage was not reported at all. A standing gap
+    // (`standing_gaps`: skipped or oversized log lines that are always there) is a condition, not a
+    // fault: calm neutral, never green, with the plain-sentence detail beside it. A stale reading
+    // is always a warning.
     const partial = read && coverage !== 'complete'
     const standingPartial = partial && standing
     // Billing is known only when the server says so (`billingKnown`); a bare 0 is not that.
@@ -1148,7 +1316,7 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
       standing,
       skippedLines,
       oversizedLines,
-      coverageDetail: read ? coverageDetailOf(coverageReason, skippedLines, oversizedLines) : null,
+      coverageDetail: read ? coverageDetailOf(coverageReason, skippedLines, oversizedLines) : 'Could not be read, so it is left out of the totals.',
       noRecords,
       tokens: read ? tokens : null,
       apiEquivalentUsd: read ? apiEquivalentUsd : null,
@@ -1243,7 +1411,7 @@ export function providerCoverageSentences(coverage: ProviderCoverage): string[] 
   sentences.push(...coverage.gaps)
   if (coverage.unexplained) sentences.push('The backend marks some usage as missing.')
   // Partial records alone are a standing condition: say where the detail is.
-  if (coverage.standingOnly) sentences.push('The Platforms table above has each platform\'s note.')
+  if (coverage.standingOnly) sentences.push('The Platforms table above says why, platform by platform.')
   return sentences
 }
 
@@ -1258,3 +1426,12 @@ export function ledgerTokenReading(summary: Pick<NonNullable<TokenData['summary'
   if (summary.periodTokens !== undefined) return finiteOrNull(summary.periodTokens)
   return finiteOrNull(summary.thisMonthTokens) ?? finiteOrNull(summary.totalTokens)
 }
+
+/** One sentence for assistive technology: the span, the total and the busiest day. */
+export function chartSummary(rows: ChartDataRow[]): string {
+  if (rows.length === 0) return 'Daily spend chart, no days'
+  const total = rows.reduce((sum, row) => sum + Number(row.total || 0), 0)
+  const busiest = rows.reduce((best, row) => (Number(row.total || 0) > Number(best.total || 0) ? row : best), rows[0])
+  return `Daily spend, ${rows.length === 1 ? '1 day' : `${rows.length} days`}, ${formatCurrency(total)} in total. Busiest day ${busiest.fullDate}, ${formatCurrency(Number(busiest.total || 0))}.`
+}
+

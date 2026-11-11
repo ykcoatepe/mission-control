@@ -101,7 +101,14 @@ export function buildCronModelOptions(models: CronModelResponse[] = [], jobs: Cr
     add(normalizedModel, isAlias ? `${rawModel} → ${normalizedModel}` : normalizedModel, fromCurrentJobOnly)
   }
 
-  return [{ value: '', label: 'Default' }, ...Array.from(byId.values())]
+  return [{ value: '', label: 'Default' }, ...disambiguateLabels(Array.from(byId.values()))]
+}
+
+/** Two different models can share a display name; those show their id too, so the list never has two identical lines. */
+export function disambiguateLabels(options: ModelOption[]): ModelOption[] {
+  const seen = new Map<string, number>()
+  for (const option of options) seen.set(option.label, (seen.get(option.label) ?? 0) + 1)
+  return options.map((option) => ((seen.get(option.label) ?? 0) > 1 ? { ...option, label: `${option.label} (${option.value})` } : option))
 }
 
 // ── Overlap markers ───────────────────────────────────────────────────────
@@ -144,9 +151,9 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
   for (const bucket of nextRunBuckets.values()) {
     if (bucket.length < 2) continue
     const label = formatOverlapMinute(bucket[0]?.nextRun) || 'same minute'
-    const detail = `${bucket.length} jobs share the next execution window`
+    const detail = `${bucket.length} jobs run in this time slot`
     for (const job of bucket) {
-      markers.set(job.id, { count: bucket.length, label: `Overlap ${label}`, detail })
+      markers.set(job.id, { count: bucket.length, label: `Same time slot at ${label}`, detail })
     }
   }
 
@@ -154,9 +161,9 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
     if (bucket.length < 2) continue
     const [hour, minute] = key.split('|')
     const label = hour === '*'
-      ? `Overlap :${minute.padStart(2, '0')}`
-      : `Overlap ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-    const detail = `${bucket.length} enabled jobs share the same cron slot`
+      ? `Same time slot at :${minute.padStart(2, '0')}`
+      : `Same time slot at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    const detail = `${bucket.length} enabled jobs run in this time slot`
     for (const job of bucket) {
       if (!markers.has(job.id)) {
         markers.set(job.id, { count: bucket.length, label, detail })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeRunKind, isInternalKey } from './jobWords'
+import { describeJobText, describeRunKind, failureReason, isInternalKey } from './jobWords'
 
 describe('describeRunKind', () => {
   it('says what the job does and where, in plain words', () => {
@@ -25,5 +25,22 @@ describe('isInternalKey', () => {
     expect(isInternalKey('Send the daily digest')).toBe(false)
     expect(isInternalKey('')).toBe(false)
     expect(isInternalKey(null)).toBe(false)
+  })
+})
+
+describe('describeJobText', () => {
+  it('a description at the list limit was cut; a shorter one was not', () => {
+    expect(describeJobText('a'.repeat(120)).cut).toBe(true)
+    expect(describeJobText('a'.repeat(119)).cut).toBe(false)
+    expect(describeJobText(null)).toEqual({ text: '', cut: false })
+  })
+})
+
+describe('failureReason', () => {
+  it('prefers the job, then the newest run that has a reason, else null (never invented)', () => {
+    expect(failureReason({ lastError: 'Timed out', history: [] })).toBe('Timed out')
+    expect(failureReason({ history: [{ status: 'failed', error: null }, { status: 'failed', error: 'Exit 2' }] })).toBe('Exit 2')
+    expect(failureReason({ history: [] })).toBeNull()
+    expect(failureReason({ lastError: '  ' })).toBeNull()
   })
 })

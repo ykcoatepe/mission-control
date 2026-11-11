@@ -5,7 +5,10 @@ import { calcSuccessRate, getCronSchedulerLabel, normalizeCronModelValue } from 
 import type { CronJob, CronOverlapMarker, ModelOption } from './types'
 import { jobState } from './jobState'
 import { scheduleDisplay } from './cronSchedule'
-import { describeRunKind, isInternalKey } from './jobWords'
+import { LIST_DESCRIPTION_LIMIT, describeJobText, describeRunKind, failureReason, isInternalKey } from './jobWords'
+import { formatRelative, parseTime } from '../../lib/time'
+import type { SchedulerReading } from './schedulerReadings'
+import { useNow } from '../../lib/useNow'
 import styles from './JobDrawer.module.css'
 
 interface JobDrawerProps {
@@ -15,6 +18,8 @@ interface JobDrawerProps {
   overlapMarker?: CronOverlapMarker
   modelOptions: ModelOption[]
   displayModel: (model?: string) => string
+  /** Set when the job's scheduler could only be read earlier; its details may have changed. */
+  staleSince?: SchedulerReading | null
   pendingAction: string | null
   onToggle: (job: CronJob) => void
   onRun: (job: CronJob) => void
@@ -38,12 +43,14 @@ export default function JobDrawer({
   overlapMarker,
   modelOptions,
   displayModel,
+  staleSince,
   pendingAction,
   onToggle,
   onRun,
   onDelete,
   onModelChange,
 }: JobDrawerProps) {
+  const now = useNow()
   if (!job) return null
 
   const state = jobState(job)
@@ -55,6 +62,10 @@ export default function JobDrawer({
   const schedule = scheduleDisplay(job.schedule, job.scheduleKind)
   const runKind = describeRunKind(job.payload, job.target)
   const internalKey = isInternalKey(job.description)
+  const descriptionText = describeJobText(job.description)
+  const failed = state.state === 'critical'
+  const reason = failed ? failureReason(job) : null
+  const staleAt = staleSince ? parseTime(staleSince.observedAt) : null
 
   return (
     <Drawer
@@ -71,6 +82,7 @@ export default function JobDrawer({
           {canDelete ? (
             <Button
               variant="danger"
+              data-return-focus="delete"
               icon={<Trash2 size={14} />}
               loading={pendingAction === `delete-${job.id}`}
               onClick={() => onDelete(job)}
@@ -83,6 +95,7 @@ export default function JobDrawer({
           {canRun && (
             <Button
               variant="primary"
+              data-return-focus="run"
               icon={<Play size={14} />}
               loading={pendingAction === `run-${job.id}`}
               onClick={() => onRun(job)}
@@ -146,7 +159,18 @@ export default function JobDrawer({
             ) : null}
           </Fact>
           {job.thinking ? <Fact label="Thinking">{job.thinking}</Fact> : null}
+          {failed ? (
+            <Fact label="Why it failed">
+              {reason ?? <span className={styles.note}>No reason reported</span>}
+            </Fact>
+          ) : null}
         </dl>
+
+        {staleSince && (
+          <Notice tone="warning" title={`${staleSince.name} could only be read earlier`}>
+            This job is from the last good reading{staleAt !== null ? `, ${formatRelative(staleAt, now)}` : ''}. It may have changed since.
+          </Notice>
+        )}
 
         {overlapMarker && (
           <Notice tone="warning" title={overlapMarker.label}>
@@ -185,7 +209,16 @@ export default function JobDrawer({
         {job.description && !internalKey && (
           <section className={styles.section} aria-label="Description">
             <h3 className={styles.sectionTitle}>Description</h3>
-            <p className={styles.description}>{job.description}</p>
+            <p className={styles.description}>
+              {descriptionText.text}
+              {descriptionText.cut ? '…' : ''}
+            </p>
+            {descriptionText.cut && (
+              <p className={styles.note}>
+                The jobs list shortens descriptions to {LIST_DESCRIPTION_LIMIT} characters. The Schedule view shows the
+                full text in the notes of this job&rsquo;s entry.
+              </p>
+            )}
           </section>
         )}
       </div>

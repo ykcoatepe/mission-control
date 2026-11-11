@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { planWeek } from './weekPlan'
+import { lastRunMarkerDays, planWeek } from './weekPlan'
 import type { CalendarEntry } from './scheduleLib'
 import { toDayKey } from './scheduleLib'
 
@@ -153,5 +153,32 @@ describe('planWeek with scheduleKind and everyMs', () => {
     const p = plan([entry({ id: 'bad', schedule: 'every 5m', scheduleKind: 'cron' })], { today: SUNDAY })
     expect(daysOf(p, 'bad')).toEqual([])
     expect(p.unplaced).toHaveLength(1)
+  })
+})
+
+describe('lastRunMarkerDays', () => {
+  const keys = week.map(toDayKey)
+  const todayKey = toDayKey(wednesday)
+
+  it('marks a failing recurring job on its first occurrence from today, not on the days after', () => {
+    const job = entry({ id: 'bad', schedule: '0 9 * * *', status: 'failed' })
+    const p = plan([job])
+    const marked = lastRunMarkerDays(p.byDay, keys, todayKey)
+    expect(marked.get('bad')).toBe('2026-11-11')
+    expect(daysOf(p, 'bad').length).toBeGreaterThan(1)
+  })
+
+  it('a job that does not run today is marked on its next day', () => {
+    const job = entry({ id: 'bad', schedule: '0 9 * * 5', status: 'failed' })
+    expect(lastRunMarkerDays(plan([job]).byDay, keys, todayKey).get('bad')).toBe('2026-11-13')
+  })
+
+  it('marks nothing in a week that does not contain today, and nothing for a dated entry', () => {
+    const job = entry({ id: 'bad', schedule: '0 9 * * *', status: 'failed' })
+    expect(lastRunMarkerDays(plan([job]).byDay, keys, '2026-11-20').size).toBe(0)
+    const dated = entry({ id: 'dated', startsAt: new Date(2026, 10, 12, 10).toISOString(), status: 'failed' })
+    const p = plan([dated])
+    expect(p.byDay['2026-11-12'][0].recurring).toBe(false)
+    expect(lastRunMarkerDays(p.byDay, keys, todayKey).size).toBe(0)
   })
 })

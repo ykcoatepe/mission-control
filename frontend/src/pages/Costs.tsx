@@ -16,8 +16,11 @@ import type {
   AggregatedBreakdownItem,
 } from './costs/types'
 import {
-  formatSessionName,
   canonicalModelName,
+  modelIdentity,
+  uniqueModelNames,
+  describeSession,
+  periodReading,
   toChartKey,
   calculateTrend,
   summarizeCostReliability,
@@ -54,12 +57,12 @@ import {
   seriesColorToken,
   isModelColumnKey,
   isModelMetricKey,
-  modelColorKey,
   providerRows,
   summarizeProviderCoverage,
   ledgerTokenReading,
 } from './costs/lib'
 import type { DayUsageEntry } from './costs/lib'
+import { loadSeriesColorMemory, saveSeriesColorMemory } from './costs/seriesColorStore'
 import { nextStaleRetry } from './costs/staleRetry'
 import type { CostsTokenData, StaleRetryState } from './costs/staleRetry'
 import PeriodControls from './costs/PeriodControls'
@@ -93,6 +96,12 @@ type MonthAvailabilityResponse = {
   }
 }
 
+
+/** Live-session token total from the sessions that have a count; null when none does (never 0). */
+function sessionTokenTotal(sessions: SessionData[]): number | null {
+  const counted = sessions.filter(s => typeof s.totalTokens === 'number' && Number.isFinite(s.totalTokens))
+  return counted.length === 0 ? null : counted.reduce((sum, s) => sum + (s.totalTokens ?? 0), 0)
+}
 
 export default function Costs() {
   const queryClient = useQueryClient()
@@ -333,29 +342,41 @@ export default function Costs() {
       return []
     }
 
-    const sorted = Array.from(totals.entries())
-      .map(([model, values], index) => ({
-        model,
-        key: toChartKey(index),
-        color: '',
-        totalCost: values.totalCost,
-        totalTokens: values.totalTokens,
-      }))
+    // A series is a model, not a usage key: "Claude Code / claude-opus-5-5" and
+    // "Hermes / anthropic/claude-opus-5-5[1m]" are one model and one series. Different models
+    // never share a name (uniqueModelNames), so a legend entry names exactly one colour.
+    const identities = Array.from(totals.keys()).map(raw => ({ raw, ...modelIdentity(raw) }))
+    const names = uniqueModelNames(identities)
+    const grouped = new Map<string, { identity: string; model: string; rawModels: string[]; totalCost: number; totalTokens: number }>()
+    identities.forEach(({ raw, id }) => {
+      const values = totals.get(raw)
+      if (!values) return
+      const group = grouped.get(id) ?? { identity: id, model: names.get(id) ?? id, rawModels: [], totalCost: 0, totalTokens: 0 }
+      group.rawModels.push(raw)
+      group.totalCost += values.totalCost
+      group.totalTokens += values.totalTokens
+      grouped.set(id, group)
+    })
+
+    const sorted = Array.from(grouped.values())
+      .map(group => ({ ...group, key: '', color: '' }))
       .filter(item => item.totalCost > 0 || item.totalTokens > 0)
       .sort((a, b) => b.totalCost - a.totalCost || b.totalTokens - a.totalTokens)
 
     const visible = sorted.length > 6 ? sorted.slice(0, 5) : sorted
     const omitted = sorted.length > 6 ? sorted.slice(5) : []
-    const withOther = omitted.length
+    const withOther: ChartSeriesItem[] = omitted.length
       ? [
           ...visible,
           {
             model: 'Other models',
-            key: toChartKey(visible.length),
+            identity: 'other-models',
+            isOther: true,
+            key: '',
             color: '',
             totalCost: omitted.reduce((sum, item) => sum + item.totalCost, 0),
             totalTokens: omitted.reduce((sum, item) => sum + item.totalTokens, 0),
-            rawModels: omitted.map(item => item.model),
+            rawModels: omitted.flatMap(item => item.rawModels),
           },
         ]
       : visible
@@ -366,22 +387,26 @@ export default function Costs() {
   // Models keep their `--series-*` token while they stay active: period changes
   // and replacement data that is still loading must not reshuffle the colours.
   // The sixth token is reserved for "Other models" whenever that bucket exists.
-  const seriesColorSlots = rankedSeries.some(item => item.rawModels) ? SERIES_COLOR_COUNT - 1 : SERIES_COLOR_COUNT
+  const seriesColorSlots = rankedSeries.some(item => item.isOther) ? SERIES_COLOR_COUNT - 1 : SERIES_COLOR_COUNT
   const seriesColorKey = JSON.stringify([
     seriesColorSlots,
-    Array.from(new Set(rankedSeries.filter(item => !item.rawModels).map(item => modelColorKey(item.model)).filter(Boolean))).sort(),
+    Array.from(new Set(rankedSeries.filter(item => !item.isOther).map(item => item.identity))).sort(),
   ])
   const [seriesColorState, setSeriesColorState] = useState<{
     activeKey: string
     assignments: ReadonlyMap<string, string>
-  }>(() => ({ activeKey: '', assignments: new Map() }))
+  }>(() => ({ activeKey: '', assignments: loadSeriesColorMemory() }))
+  // The memory outlives the page: a model keeps its colour after a reload too.
+  useEffect(() => {
+    saveSeriesColorMemory(seriesColorState.assignments)
+  }, [seriesColorState.assignments])
   // `seriesColorState.assignments` is the session's memory of every model's colour, so a
   // model that is not in the Day view still owns its colour for the Month view.
   const seriesColors = useMemo(() => (
     seriesColorState.activeKey === seriesColorKey
       ? seriesColorState.assignments
       : assignStableSeriesColors(
-          rankedSeries.filter(item => !item.rawModels).map(item => item.model),
+          rankedSeries.filter(item => !item.isOther).map(item => item.identity),
           seriesColorState.assignments,
           seriesColorSlots,
         ).assignments
@@ -396,7 +421,7 @@ export default function Costs() {
     setSeriesColorState({
       activeKey: seriesColorKey,
       assignments: assignStableSeriesColors(
-        rankedSeries.filter(item => !item.rawModels).map(item => item.model),
+        rankedSeries.filter(item => !item.isOther).map(item => item.identity),
         seriesColorState.assignments,
         seriesColorSlots,
       ).memory,
@@ -405,9 +430,9 @@ export default function Costs() {
 
   const chartSeries = useMemo<ChartSeriesItem[]>(() => rankedSeries.map(item => ({
     ...item,
-    color: item.rawModels
+    color: item.isOther
       ? seriesColorToken(SERIES_COLOR_COUNT - 1)
-      : seriesColors.get(modelColorKey(item.model)) ?? seriesColorToken(0),
+      : seriesColors.get(item.identity) ?? seriesColorToken(0),
   })), [rankedSeries, seriesColors])
 
   const chartData = useMemo<ChartDataRow[]>(() => {
@@ -533,7 +558,7 @@ export default function Costs() {
   }
 
   const allTokenBreakdown = useMemo<AggregatedBreakdownItem[]>(() => {
-    const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { rawNamesSet: Set<string>; costUnknown: boolean }>()
+    const buckets = new Map<string, Omit<AggregatedBreakdownItem, 'share'> & { id: string; rawNamesSet: Set<string>; platformSet: Set<string>; costUnknown: boolean }>()
 
     // `cost` is billed spend: null means billing for that row is unknown, which is not 0.
     const addBucket = (
@@ -546,11 +571,14 @@ export default function Costs() {
     ) => {
       const billed = typeof cost === 'number' && Number.isFinite(cost) ? cost : null
       if (tokens <= 0 && (billed === null || billed <= 0)) return
-      const name = canonicalModelName(rawName)
-      const current = buckets.get(name) || {
-        name,
+      const identity = modelIdentity(rawName)
+      const current = buckets.get(identity.id) || {
+        id: identity.id,
+        name: identity.name,
         rawNames: [],
         rawNamesSet: new Set<string>(),
+        platforms: [],
+        platformSet: new Set<string>(),
         tokens: 0,
         cost: 0 as number | null,
         costUnknown: false,
@@ -570,7 +598,8 @@ export default function Costs() {
       }
       if (current.isLocal !== isLocal) current.isLocal = null
       if (rawName) current.rawNamesSet.add(rawName)
-      buckets.set(name, current)
+      if (identity.platform) current.platformSet.add(identity.platform)
+      buckets.set(identity.id, current)
     }
 
     if (ledgerActive && tokenData?.byService?.length) {
@@ -617,9 +646,12 @@ export default function Costs() {
       })
     }
 
+    // The same naming rule as the chart legend: one name per model, never shared by two models.
+    const bucketNames = uniqueModelNames(Array.from(buckets.values()))
     const items = Array.from(buckets.values()).map(item => ({
-      name: item.name,
+      name: bucketNames.get(item.id) ?? item.name,
       rawNames: Array.from(item.rawNamesSet),
+      platforms: Array.from(item.platformSet),
       tokens: item.tokens,
       cost: item.costUnknown ? null : item.cost,
       apiEquivalentCost: item.apiEquivalentCost,
@@ -647,8 +679,8 @@ export default function Costs() {
   const totalTokens: number | null = ledgerActive
     ? ledgerTokenReading(tokenData?.summary)
     : viewingPastMonth
-      ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0)
-      : sessions.reduce((sum, s) => sum + (s.totalTokens || 0), 0)
+      ? (codexbarActive ? codexbarPeriodDays.reduce((sum, day) => sum + (day.totalTokens || 0), 0) : null)
+      : sessionTokenTotal(sessions)
 
   // /api/aws/costs always reports the CURRENT month; while an anchored past
   // month is displayed, AWS live billing must not be relabeled as that month —
@@ -746,15 +778,20 @@ export default function Costs() {
   })
 
   const compareLabel = comparisonLabels(period, ledgerActive ? tokenData?.period ?? null : null)
+  // What the headline may claim: a part-way day is not compared with a whole one and never
+  // projected into a month; the first days of a month are not projected either.
+  const reading = periodReading(period, ledgerActive ? tokenData?.period ?? null : null, viewingPastMonth, calendarNow)
 
   // AWS only: a finished month never uses AWS (see hasAwsData), so this is always a live projection.
   const projectedMonthly = dailyAvg === null ? null : dailyAvg * 30
   const metricMode = hasAwsData ? 'tracked' : 'api-equivalent'
   const metricPeriodCost = hasAwsData ? awsPeriodCost : apiEquivalentMetrics.periodCost
   const metricDailyAverage = hasAwsData ? dailyAvg : apiEquivalentMetrics.dailyAverage
-  const metricProjectedMonthly = hasAwsData ? projectedMonthly : apiEquivalentMetrics.projectedMonthly
+  const metricProjectedMonthly = reading.projectionWithheld !== null
+    ? null
+    : hasAwsData ? projectedMonthly : apiEquivalentMetrics.projectedMonthly
   const metricPreviousPeriodCost = hasAwsData ? null : apiEquivalentMetrics.previousPeriodCost
-  const metricPeriodTrend = metricPeriodCost !== null && metricPreviousPeriodCost !== null
+  const metricPeriodTrend = reading.likeForLike && metricPeriodCost !== null && metricPreviousPeriodCost !== null
     ? calculateTrend(metricPeriodCost, metricPreviousPeriodCost)
     : null
   const apiEquivalentDisplayReliability = apiEquivalentReliability === 'partial' || previousApiEquivalentReliability === 'partial'
@@ -762,7 +799,13 @@ export default function Costs() {
     : apiEquivalentReliability
   const chartDayCount = chartData.length || apiEquivalentDays.length
   // Null = no platform could be read; the headline shows "not read", never 0.
-  const periodTokens = ledgerActive ? ledgerTokenReading(tokenData?.summary) : codexbarPeriodTokens
+  // Without a ledger the figure comes from CodexBar rows or, for the live view, the sessions that have a
+  // count. No source at all is "not read", not 0.
+  const periodTokens = ledgerActive
+    ? ledgerTokenReading(tokenData?.summary)
+    : codexbarActive
+      ? codexbarPeriodTokens
+      : viewingPastMonth ? null : sessionTokenTotal(sessions)
   const monthlyBudgetBase = budgetSpendValue({
     hasAwsData,
     awsTotal: awsCosts?.total ?? null,
@@ -779,18 +822,24 @@ export default function Costs() {
     ? awsCosts.remaining / (creditsUsed / Math.max(awsCosts.daily.length, 1))
     : Infinity
 
-  const topSessions = sessions
-    .filter(s => s.totalTokens > 0)
-    .sort((a, b) => b.totalTokens - a.totalTokens)
+  // Sessions the gateway has a token count for. The ones without a count are not listed and are
+  // not counted as 0: the tab says how many were left out.
+  const sessionsWithTokens = sessions.filter(s => typeof s.totalTokens === 'number' && s.totalTokens > 0)
+  const sessionsWithoutTokens = sessions.length - sessions.filter(s => typeof s.totalTokens === 'number').length
+  const topSessions = sessionsWithTokens
+    .slice()
+    .sort((a, b) => (b.totalTokens ?? 0) - (a.totalTokens ?? 0))
     .slice(0, 5)
     .map(s => ({
       sessionId: s.key,
-      sessionName: formatSessionName(s.key, s.displayName),
+      sessionName: describeSession(s).name,
+      detail: describeSession(s).detail,
       model: canonicalModelName(s.model || s.displayName || 'Unknown'),
-      tokens: s.totalTokens,
+      tokens: s.totalTokens ?? 0,
       timestamp: s.updatedAt ? new Date(s.updatedAt).getTime() / 1000 : null,
-      channel: s.key.split(':')[0] || 'session',
+      active: s.isActive === true ? true : s.isActive === false ? false : null,
     }))
+  const activeSessionCount = sessions.filter(s => s.isActive === true).length
 
   const apiEquivalentBreakdownTotal = allTokenBreakdown.reduce((sum, item) => sum + (item.apiEquivalentAvailable ? item.apiEquivalentCost : 0), 0)
   const awsServices = hasAwsData && awsCosts
@@ -875,12 +924,7 @@ export default function Costs() {
         ? periodApiEquivalentAvailable
         : (agent.byService || []).some(service =>
             service.apiEquivalentStatus === 'estimated' || service.apiEquivalentStatus === 'partial'),
-      topModel: topModel?.name
-        ?.replace(/^OpenClaw \/ /, '')
-        .replace(/^Codex App Sessions \/ /, '')
-        .replace(/^Codex CLI \/ /, '')
-        .replace(/^Hermes \/ /, '')
-        .replace(/^Claude Code \/ /, '') || 'No model data',
+      topModel: topModel?.name ? canonicalModelName(topModel.name) : 'No model data',
     }
   })
   const totalAgentTokens = agentSplit.reduce((sum, agent) => sum + agent.tokens, 0)
@@ -972,6 +1016,9 @@ export default function Costs() {
           dailyPace={metricDailyAverage}
           projection={metricProjectedMonthly}
           completePeriod={viewingPastMonth}
+          likeForLike={reading.likeForLike}
+          showPace={period !== 'day'}
+          projectionWithheld={reading.projectionWithheld}
           trackedSpend={trackedValueAvailable ? trackedSpendReading : null}
           trackedNote={trackedNote}
           periodTokens={periodTokens}
@@ -1045,7 +1092,9 @@ export default function Costs() {
           platformsPending={agentSplitPending}
           totalPlatformTokens={totalAgentTokens}
           sessions={topSessions}
-          sessionsLiveOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Live sessions only: not scoped to ${anchoredMonthLabel}.` : null}
+          sessionsOnlyNotice={viewingPastMonth && anchoredMonthLabel ? `Recent sessions only: not scoped to ${anchoredMonthLabel}.` : null}
+          activeSessionCount={activeSessionCount}
+          sessionsWithoutTokens={sessionsWithoutTokens}
           awsServices={awsServices}
         />
       </>

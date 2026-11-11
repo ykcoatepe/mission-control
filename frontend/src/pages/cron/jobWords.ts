@@ -35,3 +35,30 @@ export function describeRunKind(payload: string | null | undefined, target: stri
 export function isInternalKey(description: string | null | undefined): boolean {
   return /^__[A-Za-z0-9_]+__$/.test(String(description ?? '').trim())
 }
+
+/** The jobs list shortens every description to this many characters (`description.substring(0, 120)`). */
+export const LIST_DESCRIPTION_LIMIT = 120
+
+/** A description at the limit was cut by the list; the text stops mid-sentence and says so with an ellipsis. */
+export function describeJobText(description: string | null | undefined): { text: string; cut: boolean } {
+  const text = String(description ?? '').trim()
+  const cut = String(description ?? '').length >= LIST_DESCRIPTION_LIMIT
+  return { text, cut }
+}
+
+/**
+ * Why the last run failed, from what the API reports: the job's own reason, else the newest failed run in its
+ * history that has one. null when nothing says why (the drawer then says so).
+ */
+export function failureReason(job: {
+  lastError?: string | null
+  history?: Array<{ status?: string; error?: string | null }>
+}): string | null {
+  const own = String(job.lastError ?? '').trim()
+  if (own) return own
+  for (const run of job.history ?? []) {
+    const reason = String(run?.error ?? '').trim()
+    if (reason) return reason
+  }
+  return null
+}

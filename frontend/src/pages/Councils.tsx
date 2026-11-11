@@ -260,16 +260,28 @@ export default function Councils() {
     })
   }, [activeCouncil, allDecisions, search, statusFilter])
 
+  // The scorecard's own verdict, when it gave a known word. A missing or unknown word is "not read".
+  const scorecardOverall = useMemo<HealthState | null>(() => {
+    const word = normalizeHealthState(scorecard.data?.overall, 'gray')
+    return scorecard.data?.overall && word !== 'gray' ? word : null
+  }, [scorecard.data?.overall])
+
   const workflowState = useMemo<HealthState>(() => {
     if (!review) return 'gray'
-    if (Number(review.workflowSurfaceLive24h || 0) === 0 || Boolean(review.selfReferentialSurfaceWarn)) return 'yellow'
-    return normalizeHealthState(scorecard.data?.overall, 'green')
-  }, [review, scorecard.data?.overall])
+    // A count that was not read is not "zero real work".
+    const realWork = numberOrNull(review.workflowSurfaceLive24h)
+    if (realWork === null) return 'gray'
+    if (realWork === 0 || Boolean(review.selfReferentialSurfaceWarn)) return 'yellow'
+    return scorecardOverall ?? 'gray'
+  }, [review, scorecardOverall])
 
   const openApprovals = numberOrNull(metrics.activeDecisions)
   const hasOpenApprovals = openApprovals !== null && openApprovals > 0
   const governanceOnly = Boolean(review?.governanceOnlyLive24h || review?.governanceOnlyLive4d || review?.selfReferentialSurfaceWarn)
   const workflowUi: UiState = toUiState(workflowState)
+  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable".
+  const overallValue = !review && scorecardOverall ? `Scorecard: ${scorecardOverall}` : stateLabel(workflowUi)
+  const overallHint = scorecardOverall ? 'no review recorded' : 'no review reported'
   const silenceHours = numberOrNull(review?.workflowSurfaceSilenceHours)
   const infraFailures = numberOrNull(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)
   const totalDecisions = formatCount(archive.totalDecisions ?? metrics.totalDecisions)
@@ -373,7 +385,12 @@ export default function Councils() {
             <Skeleton variant="block" label="Reading governance check" />
           ) : (
             <StatRow aria-label="Governance versus real workflow, last 24 hours">
-              <Stat label="Overall" value={stateLabel(workflowUi)} state={workflowUi} hint={review ? 'audit activity against real work' : 'no review reported'} />
+              <Stat
+                label="Overall"
+                value={overallValue}
+                state={workflowUi}
+                hint={review ? 'audit activity against real work' : overallHint}
+              />
               <Stat label="Real work" value={formatCount(review?.workflowSurfaceLive24h)} hint="events, last 24 hours" />
               <Stat label="Audit's own events" value={formatCount(review?.governanceEventsLive24h)} hint="logged automatically, last 24 hours" />
               <Stat

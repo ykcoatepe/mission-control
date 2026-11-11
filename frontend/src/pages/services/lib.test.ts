@@ -197,33 +197,78 @@ describe('endpointReading', () => {
 })
 
 describe('servicesVerdict', () => {
+  const texts = (v: ReturnType<typeof servicesVerdict>) => v.lines.map((l) => l.text)
+
   it('is healthy only when everything was read and nothing is down', () => {
-    expect(servicesVerdict(data())).toEqual({
+    const v = servicesVerdict(data())
+    expect(v).toMatchObject({
       state: 'healthy',
       text: 'No service is down (2 read)',
       detail: '1 running · 1 idle',
+      note: null,
     })
+    expect(v.lines).toEqual([{ state: 'healthy', text: 'No service is down (2 read)', reason: null, link: null }])
   })
 
-  it('does not say everything is as expected while a service is unidentified or a gateway reports a warning', () => {
+  it('keeps services without a definition file as a calm note, never as an amber headline', () => {
     const unidentified = servicesVerdict(
       data({ services: [row({ label: 'a' }), row({ label: 'b', kind: null, identified: false, plist: 'not-found' }), row({ label: 'c', kind: null, identified: false, plist: 'unreadable' })] }),
     )
-    expect(unidentified.state).toBe('warning')
-    expect(unidentified.text).toBe('No service is down, but 2 services have no definition file, so their kind is unknown')
+    expect(unidentified.state).toBe('healthy')
+    expect(unidentified.text).toBe('No service is down (3 read)')
+    expect(unidentified.note).toEqual({
+      text: '2 services have no definition file, so their kind is unknown.',
+      filter: 'unidentified',
+      actionLabel: 'Show them',
+    })
     const one = servicesVerdict(data({ services: [row({ kind: null, identified: false, plist: 'not-found' })] }))
-    expect(one.text).toBe('No service is down, but 1 service has no definition file, so its kind is unknown')
+    expect(one.note?.text).toBe('1 service has no definition file, so its kind is unknown.')
+  })
 
-    const gateway = servicesVerdict(data(), { openclaw: { state: 'warning' }, hermes: { state: 'healthy' } })
-    expect(gateway).toMatchObject({ state: 'warning', text: 'No service is down, but OpenClaw is reporting a warning' })
-    const both = servicesVerdict(
-      data({ services: [row({ kind: null, identified: false, plist: 'not-found' })] }),
-      { openclaw: { state: 'warning' }, hermes: { state: 'critical' } },
+  it('makes the unidentified note part of the state only through something actually down', () => {
+    const v = servicesVerdict(
+      data({ services: [row({ state: 'down', pid: null }), row({ kind: null, identified: false, plist: 'not-found' })] }),
     )
-    expect(both.state).toBe('critical')
-    expect(both.text).toBe(
-      'No service is down, but 1 service has no definition file, so its kind is unknown, Hermes is reporting a critical state and OpenClaw is reporting a warning',
+    expect(v.state).toBe('critical')
+    expect(texts(v)).toEqual(['1 service is down'])
+    expect(v.note).not.toBeNull()
+  })
+
+  it('gives a gateway warning its own line with the system reason and a link to where it is shown', () => {
+    const v = servicesVerdict(data(), {
+      openclaw: { state: 'warning', reason: 'OpenClaw status evidence is unavailable.', detailHref: '/services' },
+      hermes: { state: 'healthy' },
+    })
+    expect(v.state).toBe('warning')
+    expect(texts(v)).toEqual(['OpenClaw is reporting a warning', 'No service is down (2 read)'])
+    expect(v.lines[0]).toEqual({
+      state: 'warning',
+      text: 'OpenClaw is reporting a warning',
+      reason: 'OpenClaw status evidence is unavailable.',
+      link: { kind: 'anchor', to: '#gateway-readings', label: 'See the gateway readings' },
+    })
+  })
+
+  it('links to another screen when the system names one, and ignores an external address', () => {
+    const away = servicesVerdict(data(), { hermes: { state: 'warning', reason: 'Board is stale.', detailHref: '/automations' } })
+    expect(away.lines[0].link).toEqual({ kind: 'route', to: '/automations', label: 'See details' })
+    const external = servicesVerdict(data(), { hermes: { state: 'warning', detailHref: 'https://example.com/x' } })
+    expect(external.lines[0].link).toEqual({ kind: 'anchor', to: '#gateway-readings', label: 'See the gateway readings' })
+    expect(external.lines[0].reason).toBeNull()
+  })
+
+  it('orders one short sentence per condition by severity', () => {
+    const v = servicesVerdict(
+      data({ services: [row({ state: 'down', pid: null }), row()], ollama: up({ state: 'down', reachable: false }) }),
+      { openclaw: { state: 'warning', reason: 'r' }, hermes: { state: 'critical', reason: 'h' } },
     )
+    expect(v.state).toBe('critical')
+    expect(v.lines.map((l) => [l.state, l.text])).toEqual([
+      ['critical', '1 service is down'],
+      ['critical', 'Ollama is not reachable'],
+      ['critical', 'Hermes is reporting a critical state'],
+      ['warning', 'OpenClaw is reporting a warning'],
+    ])
   })
 
   it('stays healthy when the shell reports the gateways healthy, unread or not at all', () => {
@@ -237,10 +282,9 @@ describe('servicesVerdict', () => {
     const v = servicesVerdict(data({ summary: { total: 9, running: 5, idle: 1, down: 3, unidentified: 0 } }))
     expect(v).toMatchObject({ state: 'critical', text: '3 services are down', detail: '5 running · 1 idle' })
     const u = servicesVerdict(data({ summary: { total: 9, running: 5, idle: 4, down: 0, unidentified: 2 } }))
-    expect(u.text).toBe('No service is down, but 2 services have no definition file, so their kind is unknown')
-    expect(servicesVerdict(data({ summary: { total: 9, running: 5, idle: 4, down: 0, unidentified: 0 } })).text).toBe(
-      'No service is down (9 read)',
-    )
+    expect(u.text).toBe('No service is down (9 read)')
+    expect(u.note?.text).toBe('2 services have no definition file, so their kind is unknown.')
+    expect(servicesVerdict(data({ summary: { total: 9, running: 5, idle: 4, down: 0, unidentified: 0 } })).note).toBeNull()
   })
 
   it('is unavailable, not healthy, when the server sent rows but no summary', () => {
@@ -257,22 +301,26 @@ describe('servicesVerdict', () => {
     expect(servicesVerdict(data({ services: [row({ state: 'down', pid: null })] })).text).toBe('1 service is down')
   })
 
-  it('names unreachable endpoints, together with down services', () => {
+  it('names unreachable endpoints on their own line, after down services', () => {
     const v = servicesVerdict(data({ ollama: up({ state: 'down', reachable: false }) }))
     expect(v).toMatchObject({ state: 'critical', text: 'Ollama is not reachable' })
     const both = servicesVerdict(
       data({ services: [row({ state: 'down', pid: null })], ollama: up({ state: 'down', reachable: false }) }),
     )
-    expect(both.text).toBe('1 service is down and Ollama is not reachable')
+    expect(texts(both)).toEqual(['1 service is down', 'Ollama is not reachable'])
   })
 
   it('is not healthy when an endpoint or a service state was not read', () => {
     const endpoint = servicesVerdict(data({ ollama: up({ state: 'unknown', reachable: null }) }))
     expect(endpoint.state).toBe('unavailable')
-    expect(endpoint.text).toContain('Ollama')
+    expect(texts(endpoint)).toContain('Ollama could not be read')
     expect(servicesVerdict(data({ gateways: null, ollama: null })).state).toBe('unavailable')
-    expect(servicesVerdict(data({ services: [row({ state: 'weird' })] })).state).toBe('unavailable')
-    expect(servicesVerdict(data({ gateways: { openclaw: up(), hermes: up({ state: 'stale' }) } })).state).toBe('warning')
+    const weird = servicesVerdict(data({ services: [row({ state: 'weird' })] }))
+    expect(weird.state).toBe('unavailable')
+    expect(texts(weird)).not.toContain('No service is down (1 read)')
+    const stale = servicesVerdict(data({ gateways: { openclaw: up(), hermes: up({ state: 'stale' }) } }))
+    expect(stale.state).toBe('warning')
+    expect(texts(stale)[0]).toBe('Hermes gateway has not reported recently')
   })
 
   it('is not healthy for a missing or empty service list', () => {

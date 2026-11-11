@@ -1,8 +1,46 @@
+.wrap {
+  position: relative;
+  min-width: 0;
+}
+
 .scroll {
   --dt-max-h: max(360px, calc(100vh - 240px));
   max-height: var(--dt-max-h);
   overflow: auto;
   min-width: 0;
+}
+
+.scroll:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* A table that scrolls sideways fades out at the edge that has more behind it. */
+.fadeStart,
+.fadeEnd {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: calc(var(--z-sticky) + 1);
+  width: var(--sp-8);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.fadeStart {
+  left: 0;
+  background: linear-gradient(to right, var(--surface-1), transparent);
+}
+
+.fadeEnd {
+  right: 0;
+  background: linear-gradient(to left, var(--surface-1), transparent);
+}
+
+.wrap[data-edge-start] .fadeStart,
+.wrap[data-edge-end] .fadeEnd {
+  opacity: 1;
 }
 
 .table {
@@ -31,7 +69,9 @@
   border-bottom: 1px solid var(--line);
   color: var(--text-2);
   vertical-align: middle;
-  overflow-wrap: anywhere;
+  /* Wrap at spaces and hyphens; a word is never broken in the middle. A long unbroken id widens its column
+     and the table scrolls sideways instead (the stacked layout below may break anywhere). */
+  overflow-wrap: break-word;
 }
 
 .table tbody tr:last-child td {
@@ -73,9 +113,15 @@
   background: var(--accent-bg);
 }
 
+/* Dimmed by colour, not opacity: text keeps the contrast of --text-3 (at least 4.5:1) in both themes,
+   and state colours stay readable. Everything that reads --text-1 / --text-2 inside the row turns grey. */
+.dimmed {
+  --text-1: var(--text-3);
+  --text-2: var(--text-3);
+}
+
 .dimmed td {
   color: var(--text-3);
-  opacity: 0.72;
 }
 
 .empty {
@@ -121,6 +167,19 @@
     border-bottom: 0;
     background: transparent;
     text-align: end;
+  }
+
+  /* A cell with nothing in it takes no line and shows no label. */
+  .table td[data-empty] {
+    display: none !important;
+  }
+
+  .table td[data-label='']::before {
+    display: none;
+  }
+
+  .table td {
+    overflow-wrap: anywhere;
   }
 
   .table td::before {

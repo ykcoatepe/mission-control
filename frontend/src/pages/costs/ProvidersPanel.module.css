@@ -10,16 +10,27 @@
   white-space: nowrap;
 }
 
-.note {
-  max-width: 560px;
-  color: var(--text-2);
-  font-size: var(--fs-small);
-  overflow-wrap: anywhere;
+.platformCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 200px;
 }
 
-.noteDetail {
-  display: block;
+/* The coverage sentence: plain words under the platform name, wrapping at word boundaries. */
+.detail {
+  max-width: 520px;
   color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-regular);
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* Figures never wrap, whatever width the table gets. */
+.num {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .pad {
@@ -32,4 +43,23 @@
   border-top: 1px solid var(--line);
   color: var(--text-3);
   font-size: var(--fs-small);
+}
+
+/* Stacked rows (the table's narrow layout): the platform cell and the state may wrap and sit at the end. */
+@media (max-width: 700px) {
+  .platformCell {
+    min-width: 0;
+    align-items: flex-end;
+    text-align: end;
+  }
+
+  .detail {
+    max-width: none;
+  }
+
+  .state {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    white-space: normal;
+  }
 }

@@ -48,10 +48,24 @@
 
 .shareValue {
   min-width: 48px;
+  white-space: nowrap;
   text-align: end;
 }
 
 .shareMeter {
   width: 64px;
   flex: 0 0 auto;
+}
+
+/* Figures never wrap, whatever width the table gets. */
+.num {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.sessionsLine {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }

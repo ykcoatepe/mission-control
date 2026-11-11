@@ -21,6 +21,7 @@ import {
   toInputDateTime,
 } from './scheduleLib'
 import { scheduleDisplay } from './cronSchedule'
+import { isInternalKey } from './jobWords'
 import styles from './EntryDialog.module.css'
 
 /** What the dialog asks the schedule view to send. The id of an update is in the URL, never in a body. */
@@ -284,7 +285,14 @@ export default function EntryDialog({ entry, onClose, onSave }: EntryDialogProps
           </Field>
         )}
 
-        <Field label="Notes" hint={fieldHint('notes')}>
+        <Field
+          label="Notes"
+          hint={
+            isInternalKey(form.notes) && !isOverridden(entry ?? { userOverrides: [] }, 'notes')
+              ? 'This is the scheduler’s internal name for a built-in job. It has no description.'
+              : fieldHint('notes')
+          }
+        >
           {(control) => (
             <textarea
               {...control}

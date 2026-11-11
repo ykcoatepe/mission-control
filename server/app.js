@@ -179,7 +179,8 @@ function createApp(deps = {}) {
   const gbrainOverviewService = services.gbrainOverviewService
     || createGBrainOverviewService({ projectRoot, mcConfig, exec, now });
   gbrainOverviewService.register?.(scheduler);
-  const hermesKanbanService = services.hermesKanbanService || createHermesKanbanService({ mcConfig });
+  // runtime area: the shared runner owns Kanban children, lane limits and shutdown.
+  const hermesKanbanService = services.hermesKanbanService || createHermesKanbanService({ mcConfig, runner: exec, now });
   const hermesGatewayHealthService = services.hermesGatewayHealthService || createHermesGatewayHealthService({
     profile: hermesKanbanService.profile,
     home: process.env.MC_USER_HOME || process.env.HOME || os.homedir(),

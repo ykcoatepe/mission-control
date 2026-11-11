@@ -277,10 +277,10 @@ scoped live API evidence, not deployment or frontend-rendering confirmation.
 ## Pre-PR bounded page/search redaction
 
 `lookups.js` uses `redaction.js` for every displayed page/search string. The
-shared `scrubText`/`redactString` protections remain the base. Local lexing shields
-assignment separators to preserve the N4 whole-key/multiword-prose distinction;
-short single-token credentials, provider tokens, auth values, URL passwords,
-database connections and encoded JSON are still withheld. No recursive regex or
+shared `scrubText`/`redactString` protections run FIRST on unmodified text in
+every decoding frame. No assignment separator is shielded. Core's compound-name
+classification is authoritative by default; page-specific short single-token,
+database connection and encoded JSON redactions run on top. No recursive regex or
 input-controlled recursive call remains in the page redaction path.
 
 Input is capped at 40,000 characters BEFORE lexing, decoding or parsing. Callers
@@ -296,7 +296,9 @@ other string fields carry the marker. No new payload fields or dependencies.
 The scanner uses monotone cursors and precomputed whitespace/field boundaries,
 so repeated assignment candidates cannot rescan overlapping long suffixes. Its
 regexes are bounded character checks or terminal runs, and quoted strings are
-consumed once. Literal shielding characters are escaped and restored losslessly.
+consumed once. Native short credentials use terminal whole words (including
+compound/camelCase names), and a value ends at the next whitespace-separated
+assignment. Literal private-use characters are left alone.
 
 `tests/gbrainRedactionLinearTime.test.js` runs the shared 88-entry 200 KB corpus
 plus whitespace, both backslash/quote spellings and all five assignment-repeat
@@ -311,3 +313,43 @@ was 29.32ms; the full common corpus's worst entry was 14.89ms. Root tests passed
 endpoint or deployment proof. Independent review was unavailable: mloop parent
 preflight for mission-control-rehaul/gbrain-reviewer returned NOT_INITIALIZED;
 the author performed a separate bypass/regression pass, not independent review.
+
+## Core-authoritative assignment correction
+
+The former separator shield weakened core assignment redaction and has been
+removed. Each bounded decoding frame now runs `scrubText` on its unmodified
+input FIRST. Unlisted compound names, separators, casing and same-line fields
+therefore inherit core policy; they do not need a page-specific credential-name
+allowlist. Page additions operate on that result and can only replace more
+content. Short credential additions recognize terminal whole credential words
+(including camelCase and separator compounds) and stop before the next separate
+assignment. Equals/colons within a token remain part of that token.
+
+The requested prose compatibility rule is an explicit, narrow exception to the
+core strong-name policy: one complete sentence-shaped field, with no second
+assignment, no opaque/numeric credential word, and a prose lead. Its prefix and
+RHS are independently scrubbed before restoration. Multiple alphabetic words
+alone do not establish prose: passphrases and credential-plus-comment examples
+retain core redaction. Note/hint prose and the existing short padded quoted-word
+control remain compatible. No separator is masked, and compound credential
+fields otherwise keep the authoritative core reading. The original N4 positive
+and negative tables are unchanged and green.
+
+`tests/gbrainCoreRedaction.test.js` adds five RED-before-fix counter-examples:
+class-wide differential coverage (9,727 inputs / 14,226 credential comparisons),
+all seven reproductions through page/search projections, prose versus multiple
+assignments, short same-line compound credentials, and alphabetic passphrase /
+comment cases. Async lookup tests use `withLiveLoop`. Generated inputs cover
+underscore/hyphen/dot/camelCase names, colon/equals with varied spacing, multiple
+fields and quoted/unquoted values. Current core leaves the 12-character
+MY_API_KEY reproduction intact; the page short-token addition also hides that
+case without changing core. No payload fields were added.
+
+The 40,000-character cap, truncation marker, eight-layer stack and aggregate
+work budget are unchanged. The child-process 200 KB timing harness still passes:
+latest full-run reproduction worst 52.08ms; common-corpus worst 29.09ms, below the
+relative/floor budget and the 5-second hard child timeout. Final root gate:
+746/746; GBrain area: 146/146. No test CLI/network upstream was used, no server
+was restarted and port 3399 was untouched. Independent refutation is still
+unavailable: mloop parent preflight returned NOT_INITIALIZED. The author checked
+bypasses and regressions separately; that is not an independent review.

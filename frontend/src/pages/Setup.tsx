@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { RefObject } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Eye, EyeOff } from 'lucide-react'
@@ -22,12 +23,32 @@ import styles from './Setup.module.css'
 
 type Step = 'detect' | 'configure' | 'done'
 
+/**
+ * A step change unmounts the button that was just pressed, which would drop focus to the page.
+ * The new step takes it: the first field when it has one (`data-autofocus`), else its first control.
+ */
+function useFocusOnMount(ref: RefObject<HTMLElement | null>, enabled = true) {
+  useEffect(() => {
+    if (!enabled) return
+    const root = ref.current
+    const target =
+      root?.querySelector<HTMLElement>('[data-autofocus]') ?? root?.querySelector<HTMLElement>('input, button, select, textarea')
+    target?.focus()
+  }, [ref, enabled])
+}
+
 /** Queries that read `/api/setup`: the shell redirects here while it says setup is needed. */
 const SETUP_QUERY_KEY = ['api', '/api/setup']
 
 export default function Setup() {
   const status = useApi<SetupStatus>('/api/setup')
   const [step, setStep] = useState<Step>('detect')
+  // Focus moves only after the person has moved between steps, never on the first load.
+  const [moved, setMoved] = useState(false)
+  const go = (next: Step) => {
+    setMoved(true)
+    setStep(next)
+  }
 
   return (
     // /setup renders without the top bar, so this page carries its own h1.
@@ -49,9 +70,9 @@ export default function Setup() {
             onRetry={status.refetch}
           />
         ) : step === 'detect' ? (
-          <DetectStep status={status.data} onContinue={() => setStep('configure')} />
+          <DetectStep status={status.data} onContinue={() => go('configure')} takeFocus={moved} />
         ) : step === 'configure' ? (
-          <ConfigureStep status={status.data} onBack={() => setStep('detect')} onSaved={() => setStep('done')} />
+          <ConfigureStep status={status.data} onBack={() => go('detect')} onSaved={() => go('done')} />
         ) : (
           <DoneStep />
         )}
@@ -65,7 +86,9 @@ interface CatalogModel {
   name?: string
 }
 
-function DetectStep({ status, onContinue }: { status: SetupStatus; onContinue: () => void }) {
+function DetectStep({ status, onContinue, takeFocus }: { status: SetupStatus; onContinue: () => void; takeFocus: boolean }) {
+  const frame = useRef<HTMLDivElement>(null)
+  useFocusOnMount(frame, takeFocus)
   // The catalog gives the model its readable name (as Settings shows it); without it the id is shown.
   const catalog = useApi<CatalogModel[]>('/api/models')
   const modelNames = useMemo<Record<string, string>>(() => {
@@ -80,14 +103,14 @@ function DetectStep({ status, onContinue }: { status: SetupStatus; onContinue: (
   const gateway = gatewayLines(status)
   const detected = detectedLines(status, modelNames)
   return (
-    <>
+    <div ref={frame} className={styles.step}>
       <Panel title="OpenClaw gateway" description="What this machine reports. Reachability is checked on the Services page.">
         <dl className={styles.rows}>
           {gateway.map((line) => (
             <div key={line.label} className={styles.row}>
               <dt className={styles.rowLabel}>{line.label}</dt>
               <dd className={styles.rowValue}>
-                <StatePill state={line.state} label={line.value} />
+                {line.state ? <StatePill state={line.state} label={line.value} /> : <Mono truncate>{line.value}</Mono>}
               </dd>
             </div>
           ))}
@@ -114,7 +137,7 @@ function DetectStep({ status, onContinue }: { status: SetupStatus; onContinue: (
           Continue
         </Button>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -126,6 +149,8 @@ function ConfigureStep({ status, onBack, onSaved }: { status: SetupStatus; onBac
   const [showToken, setShowToken] = useState(false)
   const [saving, setSaving] = useState(false)
   const [failure, setFailure] = useState<string | null>(null)
+  const form = useRef<HTMLFormElement>(null)
+  useFocusOnMount(form)
   const tokenConfigured = status.detectedConfig?.gatewayTokenConfigured === true
   const invalidName = nameError(name)
 
@@ -150,6 +175,7 @@ function ConfigureStep({ status, onBack, onSaved }: { status: SetupStatus; onBac
   return (
     <Panel title="Configure" description="Two settings. Both can be changed later.">
       <form
+        ref={form}
         className={styles.form}
         onSubmit={(event) => {
           event.preventDefault()
@@ -220,9 +246,11 @@ function ConfigureStep({ status, onBack, onSaved }: { status: SetupStatus; onBac
 
 function DoneStep() {
   const navigate = useNavigate()
+  const body = useRef<HTMLDivElement>(null)
+  useFocusOnMount(body)
   return (
     <Panel title="Setup saved">
-      <div className={styles.form}>
+      <div ref={body} className={styles.form}>
         <p className={styles.lead}>The settings were saved. The dashboard is ready.</p>
         <div className={styles.actions}>
           <Button variant="primary" onClick={() => navigate('/')}>

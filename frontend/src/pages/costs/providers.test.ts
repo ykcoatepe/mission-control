@@ -139,18 +139,18 @@ describe('providerRows', () => {
     expect(row).toMatchObject({ read: false, stateWord: 'Not read', tokens: null })
   })
 
-  it('words the failed scan and the skipped line counters; no counters means nothing is said', () => {
+  it('words the failed scan and the skipped line counters; no counters gives the general sentence', () => {
     const [failed, skipped, none, zero] = providerRows([
       provider({ coverageReason: 'scan_failed', coverage: 'partial' }),
       provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: 99, oversizedLines: 99 }),
       provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: null, oversizedLines: null }),
       provider({ coverageReason: 'standing_gaps', coverage: 'partial', skippedLines: 0, oversizedLines: 0 }),
     ])
-    expect(failed.coverageDetail).toBe('The latest scan failed; showing the last good scan.')
-    expect(skipped.coverageDetail).toBe('99 lines skipped (99 oversized).')
+    expect(failed.coverageDetail).toBe('The latest scan failed, so this shows the last good scan.')
+    expect(skipped.coverageDetail).toBe('99 log lines were too large to read, so this figure may be low.')
     expect(skipped).toMatchObject({ skippedLines: 99, oversizedLines: 99 })
-    expect(none).toMatchObject({ coverageDetail: null, skippedLines: null })
-    expect(zero.coverageDetail).toBeNull()
+    expect(none).toMatchObject({ coverageDetail: 'Its records are known to be incomplete, so this figure may be low.', skippedLines: null })
+    expect(zero.coverageDetail).toBe(none.coverageDetail)
   })
 
   it('never gives a partial, stale, unread or no-record platform the healthy state', () => {

@@ -10,16 +10,23 @@
 //   mloop --project P --json participants        bound participants
 // Projects are the ledger directories that hold an events.jsonl.
 //
-// Argus rule (hard boundary, ./restricted.js): a project is "restricted" when
-// the marker appears anywhere in its COMPLETE RAW material, classified before
-// any scrub, truncation or whitelist: its id, its check rows (every field),
-// its status text (heading, outcome, body), its confirmation rows and its
-// participants. Classification fails closed: when a part it needs cannot be
-// read or parsed the project is restricted too (restrictedBy: 'unverified').
-// A restricted project keeps its id and counts only. When the id or the check
-// rows already carry the marker no per-project command runs and no file under
-// its directory is touched; otherwise reading stops at the first part that
-// carries it. Its text never enters memory beyond the classifying loop.
+// Argus rule (hard boundary, ./restricted.js). Three layers, in order:
+//   1. Identity (the guarantee): a project whose id matches the configured
+//      restricted set is restricted before anything about it is read. No
+//      per-project command runs, nothing under its directory is touched, and
+//      its check rows are reduced to counting tuples (subjects become
+//      ordinals) as soon as they are grouped.
+//   2. Content (a heuristic second line): every other project is classified on
+//      ALL its raw material together (id, check rows, status, confirmation
+//      rows, participants), so a marker split across fields is caught. A part
+//      that cannot be read or parsed restricts it too (restrictedBy:
+//      'unverified'). Reading stops at the first part that completes a match.
+//   3. Publication: ONE function, publishProject(), builds what any route shows
+//      from a classified project; a restricted one carries only id, counts,
+//      restrictedBy and error codes, so there is no text to emit. A final gate
+//      runs the content check over everything published, across projects
+//      (the ranked attention list puts different projects' text side by side),
+//      and restricts every project that contributes to a match.
 //
 // A mention of the marker in another project's text cannot be told apart from
 // restricted content quoted there, so that project is restricted as well.
@@ -33,7 +40,9 @@ const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
 const { scrubText } = require('../../core/scrub');
 const { CONFIRMATION_CODES, OVERDUE_CODES, projectNeeds, needsOperator } = require('./attention');
-const { RESTRICTED_MARKERS, containsRestrictedMarker } = require('./restricted');
+const {
+  RESTRICTED_MARKERS, collectStrings, containsRestrictedMarker, findMarkerChain, isRestrictedId, restrictedMarkers,
+} = require('./restricted');
 
 const MLOOP_SOURCE_ID = 'mloop.loops';
 const MLOOP_REFRESH_INTERVAL_MS = 60_000;
@@ -139,15 +148,32 @@ function emptyCounts() {
 }
 
 // Split the all-projects check into per-project RAW row lists (classified
-// before anything is cleaned).
-function groupRawRows(rows) {
+// before anything is cleaned). Rows of an id-restricted project are reduced
+// at once to counting tuples: its subjects become per-project ordinals, so
+// confirmation identity still de-duplicates and no text is kept.
+function groupRawRows(rows, markers) {
   if (!Array.isArray(rows)) throw readError('mloop_unparsable', 'mloop check did not return a list');
   const byProject = new Map();
+  const ordinals = new Map();
   for (const row of rows) {
     const project = typeof row?.project === 'string' ? row.project : null;
     if (!project || !PROJECT_ID_PATTERN.test(project)) continue;
     const list = byProject.get(project) || [];
-    list.push(row);
+    if (isRestrictedId(project, markers)) {
+      const keys = ordinals.get(project) || new Map();
+      ordinals.set(project, keys);
+      const subject = typeof row.subject === 'string' ? row.subject : '';
+      if (!keys.has(subject)) keys.set(subject, `#${keys.size}`);
+      const code = typeof row.code === 'string' && /^[A-Z0-9_]{1,64}$/.test(row.code) ? row.code : 'UNKNOWN';
+      list.push({
+        code,
+        severity: severityOf(row.severity),
+        subject: row.subject === row.code ? code : keys.get(subject),
+        ...(Number.isInteger(row.count) ? { count: row.count } : {}),
+      });
+    } else {
+      list.push(row);
+    }
     byProject.set(project, list);
   }
   return byProject;
@@ -240,8 +266,9 @@ async function mapLimit(items, limit, fn) {
   return out;
 }
 
-// restrictedBy: 'marker' (the marker is in its material) or 'unverified' (a
-// part needed to classify it could not be read; `errors` names which).
+// restrictedBy: 'identity' (its id is in the restricted set), 'content' (the
+// marker is in its material) or 'unverified' (a part needed to classify it
+// could not be read; `errors` names which). Counts only.
 function restrictedProject(id, counts, restrictedBy, errors = null) {
   return {
     id,
@@ -258,14 +285,64 @@ function restrictedProject(id, counts, restrictedBy, errors = null) {
   };
 }
 
+// The one constructor of what any route shows for a project. A restricted
+// classified project carries no material, so only id, counts, restrictedBy
+// and error codes can come out.
+function publishProject(classified, nowMs) {
+  if (classified.restricted) {
+    return restrictedProject(classified.id, classified.counts, classified.restrictedBy, classified.errors || null);
+  }
+  const { rows, status: rawStatus, teyit, participants, lastActivityAt, errors } = classified.material;
+  const findings = cleanFindings(rows);
+  const status = parseStatusMarkdown(rawStatus);
+  return {
+    id: classified.id,
+    restricted: false,
+    title: status.title,
+    outcome: status.outcome,
+    openFindings: countFindings(findings),
+    pendingConfirmations: pendingFromTeyit(teyit, nowMs),
+    participants: participantsFrom(participants, findings),
+    lastActivityAt,
+    statusMarkdown: status.markdown,
+    findings,
+    errors,
+  };
+}
+
+// Publication gate: the content check over everything published, across
+// projects. Every project contributing to a match is restricted; repeat
+// until no match is left.
+function gatePublished(published, classifiedById, markers, nowMs) {
+  let projects = published;
+  for (;;) {
+    const strings = [];
+    const owners = [];
+    for (const project of projects) {
+      if (project.restricted) continue;
+      for (const text of collectStrings(project, { keys: false })) {
+        strings.push(text);
+        owners.push(project.id);
+      }
+    }
+    const chain = findMarkerChain(strings, markers);
+    if (!chain) return projects;
+    const caught = new Set(chain.map((index) => owners[index]));
+    projects = projects.map((project) => (caught.has(project.id)
+      ? publishProject({ id: project.id, restricted: true, restrictedBy: 'content', counts: classifiedById.get(project.id).counts }, nowMs)
+      : project));
+  }
+}
+
 // Ranked attention across projects: error > warning > info, then the
 // longest-waiting first. Restricted projects contribute one count-only row.
-function rankAttention(projects, restrictedWorst) {
+// Built from published projects only.
+function rankAttention(projects) {
   const items = [];
   for (const project of projects) {
     if (project.restricted) {
       if (project.openFindings) {
-        items.push({ project: project.id, kind: 'restricted', restricted: true, severity: restrictedWorst.get(project.id) || 'warning', count: project.openFindings });
+        items.push({ project: project.id, kind: 'restricted', restricted: true, severity: project.worstSeverity || 'info', count: project.openFindings });
       }
       continue;
     }
@@ -289,9 +366,9 @@ function rankAttention(projects, restrictedWorst) {
     || String(a.code || '').localeCompare(String(b.code || '')));
 }
 
-function errorCode(error) {
+function errorCode(error, markers) {
   const code = typeof error?.code === 'string' ? error.code : 'mloop_failed';
-  return containsRestrictedMarker(code) ? 'mloop_failed' : code;
+  return /^[a-z0-9_]{1,80}$/.test(code) && !containsRestrictedMarker(code, markers) ? code : 'mloop_failed';
 }
 
 function createMloopReader({
@@ -303,8 +380,10 @@ function createMloopReader({
   checkTimeoutMs = 30_000,
   callTimeoutMs = 15_000,
   concurrency = 2,
+  env = process.env,
 } = {}) {
   if (typeof exec?.run !== 'function') throw new TypeError('createMloopReader: exec.run required');
+  const markers = restrictedMarkers(env);
 
   const run = (args, timeoutMs) => exec.run(bin, args, {
     lane: 'default',
@@ -323,7 +402,7 @@ function createMloopReader({
     const ids = [];
     for (const entry of entries) {
       if (!entry.isDirectory() || !PROJECT_ID_PATTERN.test(entry.name)) continue;
-      if (containsRestrictedMarker(entry.name)) {
+      if (isRestrictedId(entry.name, markers)) {
         // Restricted: listed by name only, nothing inside it is touched.
         ids.push(entry.name);
         continue;
@@ -336,36 +415,31 @@ function createMloopReader({
     return ids;
   }
 
-  // Reads the raw parts one by one and classifies each before the next is
-  // read. Returns { restrictedBy, errors } or { raw: {status, teyit,
-  // participants}, errors }.
-  async function readRaw(id) {
-    const errors = [];
+  // Content classification of an ordinary id: all raw material together,
+  // re-checked after each part; reading stops at the first match or failure.
+  // Returns a classified project: restricted ones carry counts only.
+  async function classify(id, rows) {
+    const counts = restrictedCountsFrom(rows);
+    const restricted = (restrictedBy, errors = null) => ({ id, restricted: true, restrictedBy, counts, errors });
+    if (isRestrictedId(id, markers)) return restricted('identity');
+    const material = { id, rows };
+    if (containsRestrictedMarker(material, markers)) return restricted('content');
     const parts = [
       ['status', ['status'], (body) => typeof body === 'string'],
       ['teyit', ['teyit', 'list'], Array.isArray],
       ['participants', ['participants'], Array.isArray],
     ];
-    const raw = {};
     for (const [part, args, valid] of parts) {
-      let body;
       try {
-        body = parseMloopJson(await run(['--project', id, '--json', ...args], callTimeoutMs), part);
+        const body = parseMloopJson(await run(['--project', id, '--json', ...args], callTimeoutMs), part);
         if (!valid(body)) throw readError('mloop_unparsable', `mloop ${part} has an unexpected shape`);
+        material[part] = body;
       } catch (error) {
-        errors.push({ part, code: errorCode(error) });
-        return { restrictedBy: 'unverified', errors };
+        return restricted('unverified', [{ part, code: errorCode(error, markers) }]);
       }
-      if (containsRestrictedMarker(body)) return { restrictedBy: 'marker', errors: null };
-      raw[part] = body;
+      if (containsRestrictedMarker(material, markers)) return restricted('content');
     }
-    return { raw, errors };
-  }
-
-  async function readProject(id, rows) {
-    const read = await readRaw(id);
-    if (read.restrictedBy) return { restrictedBy: read.restrictedBy, errors: read.errors };
-    const { errors } = read;
+    const errors = [];
     let lastActivityAt = null;
     try {
       const stat = await fsImpl.stat(path.join(ledgerDir, id, 'events.jsonl'));
@@ -373,48 +447,28 @@ function createMloopReader({
     } catch {
       errors.push({ part: 'ledger', code: 'mloop_ledger_unreadable' });
     }
-    // Presentation transforms only after classification.
-    const findings = cleanFindings(rows);
-    const status = parseStatusMarkdown(read.raw.status);
     return {
       id,
       restricted: false,
-      title: status.title,
-      outcome: status.outcome,
-      openFindings: countFindings(findings),
-      pendingConfirmations: pendingFromTeyit(read.raw.teyit, now()),
-      participants: participantsFrom(read.raw.participants, findings),
-      lastActivityAt,
-      statusMarkdown: status.markdown,
-      findings,
-      errors,
+      counts,
+      material: { rows, status: material.status, teyit: material.teyit, participants: material.participants, lastActivityAt, errors },
     };
   }
 
   async function read() {
     const checkRows = parseMloopJson(await run(['check', '--all-projects', '--json'], checkTimeoutMs), 'check');
-    const rowsByProject = groupRawRows(checkRows);
+    const rowsByProject = groupRawRows(checkRows, markers);
     const ids = new Set(await listProjectIds());
     for (const id of rowsByProject.keys()) ids.add(id);
     const sorted = [...ids].sort();
-    const restrictedWorst = new Map();
-    const projects = await mapLimit(sorted, concurrency, async (id) => {
-      const rows = rowsByProject.get(id) || [];
-      const restrict = (restrictedBy, errors = null) => {
-        const counts = restrictedCountsFrom(rows);
-        restrictedWorst.set(id, counts.worst);
-        return restrictedProject(id, counts, restrictedBy, errors);
-      };
-      // Id and check rows first: a marked project gets no per-project command.
-      if (containsRestrictedMarker(id) || containsRestrictedMarker(rows)) return restrict('marker');
-      const project = await readProject(id, rows);
-      if (project.restrictedBy) return restrict(project.restrictedBy, project.errors);
-      return project;
-    });
+    const classified = await mapLimit(sorted, concurrency, (id) => classify(id, rowsByProject.get(id) || []));
+    const nowMs = now();
+    const byId = new Map(classified.map((project) => [project.id, project]));
+    const projects = gatePublished(classified.map((project) => publishProject(project, nowMs)), byId, markers, nowMs);
     return {
-      observedAt: new Date(now()).toISOString(),
+      observedAt: new Date(nowMs).toISOString(),
       projects,
-      attention: rankAttention(projects, restrictedWorst),
+      attention: rankAttention(projects),
     };
   }
 

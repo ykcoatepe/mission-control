@@ -142,12 +142,12 @@ export function describeTokenUsage(split: LocalTokenSplit, periodLabel: string, 
   parts.push(
     split.listed > 0
       ? `${formatTokens(split.listed)} tokens across these models`
-      : 'No token usage recorded for these models',
+      : 'No tokens recorded for these models',
   )
-  if (split.other > 0) parts.push(`${formatTokens(split.other)} more by local endpoints not in this list`)
+  if (split.other > 0) parts.push(`${formatTokens(split.other)} more from local models not listed here`)
   if (unknownLocality > 0) {
     parts.push(
-      `${unknownLocality} usage ${unknownLocality === 1 ? 'row has' : 'rows have'} no recorded locality and ${unknownLocality === 1 ? 'is' : 'are'} not counted`,
+      `${unknownLocality} ${unknownLocality === 1 ? 'usage entry' : 'usage entries'} not counted: it is not known whether ${unknownLocality === 1 ? 'it ran' : 'they ran'} locally`,
     )
   }
   parts.push(period)

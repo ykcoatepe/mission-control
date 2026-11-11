@@ -1,8 +1,9 @@
-import { ErrorState, Freshness, Page, Skeleton } from '../components/ui'
+import { ErrorState, Page, Skeleton } from '../components/ui'
 import { useApi } from '../lib/hooks'
 import { SIGNALS_POLL_MS, SIGNALS_URL, attentionFrom, attentionReading } from '../lib/signals'
 import type { SignalsEnvelope } from '../lib/signals'
 import AttentionView from './attention/AttentionView'
+import ReadingAge from './attention/ReadingAge'
 import { errorText } from './attention/lib'
 import type { Envelope, LoopsData } from './attention/types'
 
@@ -24,7 +25,7 @@ export default function Attention() {
       description="What needs you across your systems and manager loops?"
       actions={
         data && meta ? (
-          <Freshness observedAt={meta.observedAt ?? data.observedAt} state={meta.stale ? 'stale' : undefined} />
+          <ReadingAge observedAt={meta.observedAt ?? data.observedAt} stale={meta.stale} />
         ) : undefined
       }
     >

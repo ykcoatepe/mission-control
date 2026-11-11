@@ -70,7 +70,19 @@ describe('detection', () => {
     const [gateway, port, token] = gatewayLines(status())
     expect(gateway).toEqual({ label: 'Gateway', value: 'Not checked here', state: 'unavailable' })
     expect(port).toMatchObject({ label: 'Port', value: '18789' })
-    expect(token).toEqual({ label: 'Token', value: 'Not read', state: 'unavailable' })
+    expect(token).toEqual({ label: 'Token', value: 'Not read', state: null })
+  })
+
+  it('gives only the gateway line a state: a port, a version or a configured token is a fact, not a state', () => {
+    const lines = gatewayLines(status({ gatewayRunning: true, gatewayVersion: '2026.11', detectedConfig: { ...status().detectedConfig!, gatewayTokenConfigured: true } }))
+    expect(lines.map((l) => [l.label, l.state])).toEqual([
+      ['Gateway', 'healthy'],
+      ['Port', null],
+      ['Version', null],
+      ['Token', null],
+    ])
+    expect(gatewayLines(status({ gatewayRunning: false }))[0].state).toBe('critical')
+    expect(gatewayLines(status({ gatewayRunning: null }))[0].state).toBe('unavailable')
   })
 
   it('reports a measured gateway and a configured token, without ever carrying a token value', () => {

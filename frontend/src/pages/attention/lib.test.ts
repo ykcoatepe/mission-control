@@ -11,11 +11,15 @@ import {
   findingLabel,
   findingLabelOrNull,
   groupFindingsByCode,
+  filterChipOptions,
   parseAttentionFilter,
+  plainTimes,
   severityState,
   shortenHomePaths,
   sortConfirmations,
+  splitCommand,
   summarize,
+  tableSummary,
 } from './lib'
 import type { AttentionEntry, Confirmation, LoopProject, LoopsData, OpenProject } from './types'
 
@@ -389,6 +393,11 @@ const CODES_IN_THE_LEDGER = [
   'STATUS_PAGE_STALE',
   'TEYIT_DUE',
   'TEYIT_STALE',
+  // The codes server/sources/mloop/attention.js names beyond the ones above.
+  'ACCEPTED_NOT_LIVE',
+  'TEYIT_KEEP_KILL',
+  'TEYIT_RESCHEDULED_REPEATEDLY',
+  'TEYIT_UNRESOLVED',
 ]
 
 describe('findingLabel', () => {
@@ -484,3 +493,90 @@ function alphaForNull(): LoopProject {
     errors: [],
   }
 }
+
+describe('filterChipOptions', () => {
+  const withConfirmations = data(
+    [
+      project({
+        pendingConfirmations: [confirmation({ id: 'late', deadline: iso(-HOUR), overdue: true }), confirmation({ id: 'soon' })],
+        openFindings: { total: 3, bySeverity: { error: 0, warning: 3, info: 0 }, byCode: {} },
+      }),
+      restricted,
+    ],
+    [{ project: 'alpha', kind: 'finding', severity: 'warning', code: 'W', subject: 's', detail: 'd', at: iso(-HOUR) }],
+  )
+  const options = (d: LoopsData, scope = 'all', active: Parameters<typeof filterChipOptions>[3] = 'all') =>
+    filterChipOptions(buildAttentionRows(d, NOW), buildProjectRows(d.projects, NOW), scope, active)
+
+  it('counts confirmations and findings, restricted projects included, not list rows', () => {
+    // 2 open confirmations (1 overdue) + argus 74 pending / 21 overdue; findings 3 + 117.
+    expect(options(withConfirmations)).toEqual([
+      { value: 'all', label: 'All' },
+      { value: 'overdue', label: 'Overdue confirmations', count: 22 },
+      { value: 'pending', label: 'Pending confirmations', count: 76 },
+      { value: 'findings', label: 'Findings', count: 120 },
+    ])
+  })
+
+  it('leaves out a chip that would show the same rows as All', () => {
+    const onlyFindings = data(
+      [restricted],
+      [{ project: 'alpha', kind: 'finding', severity: 'warning', code: 'W', subject: 's', detail: 'd', at: iso(-HOUR) }],
+    )
+    const values = options(onlyFindings).map((o) => o.value)
+    expect(values).not.toContain('findings')
+    // ...unless it is the chosen one, so it can still be switched off.
+    expect(options(onlyFindings, 'all', 'findings').map((o) => o.value)).toContain('findings')
+  })
+
+  it('shows no count when a count in scope was not read, never a partial total', () => {
+    const unread = data([
+      project({ id: 'a', pendingConfirmations: null }),
+      project({ id: 'b', pendingConfirmations: [confirmation()] }),
+    ])
+    const pending = options(unread, 'all', 'pending').find((o) => o.value === 'pending')
+    expect(pending).toEqual({ value: 'pending', label: 'Pending confirmations' })
+  })
+
+  it('counts within the chosen project', () => {
+    expect(options(withConfirmations, 'alpha').find((o) => o.value === 'pending')?.count).toBe(2)
+  })
+})
+
+describe('splitCommand', () => {
+  const raw =
+    'codex/01a1a0b8-ee6e-7473-b1ac-a0e46370ff66 silent since 2026-11-03T09:25:15+00:00 (rotated session?); managers self: mloop --project sahil unbind --host codex --session 01a1 && mloop --project sahil bind --role reviewer --name x'
+
+  it('puts the command in its own field under a plain summary', () => {
+    const parts = splitCommand(raw)
+    expect(parts.command).toMatch(/^mloop --project sahil unbind .* && mloop --project sahil bind/)
+    expect(parts.summary).not.toContain('mloop')
+    expect(parts.summary).not.toContain('managers self')
+    expect(parts.summary).not.toMatch(/2026-11-03T/)
+    expect(parts.summary).toContain('(rotated session?)')
+    expect(parts.commandCut).toBe(false)
+  })
+
+  it('marks a command the server cut short', () => {
+    const parts = splitCommand('x silent; managers self: mloop --project…')
+    expect(parts.command).toBe('mloop --project…')
+    expect(parts.commandCut).toBe(true)
+    expect(parts.summary).toBe('x silent')
+  })
+
+  it('returns text without a command whole, and does not mistake a word for a command', () => {
+    expect(splitCommand('session 01a1; status blocked')).toEqual({ summary: 'session 01a1; status blocked', command: null, commandCut: false })
+    expect(splitCommand('the mloop ledger is slow').command).toBeNull()
+    expect(splitCommand(null)).toEqual({ summary: '', command: null, commandCut: false })
+  })
+
+  it('shortens session ids for a table line only', () => {
+    expect(tableSummary('codex/01a1a0b8-ee6e-7473-b1ac-a0e46370ff66 silent').summary).toBe('codex/01a1a0b8… silent')
+    expect(splitCommand('codex/01a1a0b8-ee6e-7473-b1ac-a0e46370ff66 silent').summary).toContain('01a1a0b8-ee6e-7473-b1ac-a0e46370ff66')
+  })
+
+  it('writes an ISO time as a short date and leaves anything else alone', () => {
+    expect(plainTimes('since 2026-11-03T09:25:15Z.')).toMatch(/^since 3 Nov, \d{2}:\d{2}\.$/)
+    expect(plainTimes('no time here 2026-11')).toBe('no time here 2026-11')
+  })
+})

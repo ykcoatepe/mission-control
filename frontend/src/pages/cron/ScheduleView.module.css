@@ -175,6 +175,10 @@
   gap: var(--sp-1);
 }
 
+.lastRun {
+  color: var(--text-3);
+}
+
 .footnote {
   color: var(--text-3);
   font-size: var(--fs-small);

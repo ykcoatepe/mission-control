@@ -8,6 +8,7 @@ const CRON_OVERRIDABLE_FIELDS = Object.freeze(['title', 'schedule', 'assignee', 
 const CRON_OWNED_FIELDS = Object.freeze(['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs', 'scheduleKind', 'everyMs', 'atIso']);
 const STATUS_VALUES = Object.freeze(['scheduled', 'active', 'running', 'done', 'failed', 'disabled', 'cancelled', 'idle']);
 const SOURCE_VALUES = Object.freeze(['cron', 'manual', 'assistant']);
+const SCHEDULE_KINDS = Object.freeze(['interval', 'interval_unknown', 'cron', 'at', 'unknown', 'manual']);
 
 // This is the sole field/type/size contract for persisted rows and request
 // bodies. Requests may carry typed server-owned fields for compatibility;
@@ -16,7 +17,7 @@ const ENTRY_SCHEMA = Object.freeze({
   id: { type: 'string', min: 1, max: 256 },
   title: { type: 'string', min: 1, max: 256 },
   schedule: { type: 'string', nullable: true, max: 1024 },
-  scheduleKind: { type: 'enum', values: ['interval', 'interval_unknown', 'cron', 'at', 'unknown', 'manual'] },
+  scheduleKind: { type: 'enum', values: SCHEDULE_KINDS },
   everyMs: { type: 'number', nullable: true, integer: true, minExclusive: 0 },
   atIso: { type: 'date', nullable: true, max: 64 },
   startsAt: { type: 'date', nullable: true, max: 64 },
@@ -98,4 +99,4 @@ function partitionCalendarEntries(rows) {
   } };
 }
 
-module.exports = { ENTRY_SCHEMA, CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries };
+module.exports = { ENTRY_SCHEMA, SCHEDULE_KINDS, CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries };

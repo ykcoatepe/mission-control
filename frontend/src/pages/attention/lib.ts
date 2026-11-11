@@ -63,6 +63,7 @@ export function isRestricted(project: LoopProject): project is RestrictedProject
  */
 const FINDING_LABELS: Record<string, string> = {
   ACK_MISSING: 'Result not acknowledged',
+  ACCEPTED_NOT_LIVE: 'Accepted, not live yet',
   AUTHORITY_UNQUOTED: 'Approval has no quoted reason',
   BINDING_DEAD: 'Session stopped answering',
   CODEX_GOAL_NOT_ACTIVE: 'Codex goal is not active',
@@ -78,6 +79,8 @@ const FINDING_LABELS: Record<string, string> = {
   ROUND_CAP_REACHED: 'Round limit reached',
   STATUS_PAGE_STALE: 'Status page is out of date',
   TEYIT_DUE: 'Confirmation due soon',
+  TEYIT_KEEP_KILL: 'Keep-or-stop decision pending',
+  TEYIT_RESCHEDULED_REPEATEDLY: 'Confirmation pushed back repeatedly',
   TEYIT_STALE: 'Confirmation overdue',
   TEYIT_UNRESOLVED: 'Confirmation unresolved',
 }
@@ -99,6 +102,62 @@ export function shortenHomePaths(text: string | null | undefined): string | null
 export function shortenHomePaths(text: string | null | undefined): string | null {
   if (typeof text !== 'string') return null
   return text.replace(/(?:\/Users|\/home)\/[^/\s]+(\/)?/g, (_match, slash?: string) => (slash ? '~/' : '~'))
+}
+
+/** A session id (`01a1a0b8-ee6e-7473-b1ac-a0e46370ff66`) is long and says nothing at a glance: its first block is enough. */
+const SESSION_ID = /\b([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/g
+const ISO_TIME = /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b/g
+
+/** "2026-11-03T09:25:15+00:00" becomes "3 Nov, 09:25" (local time). Text that is not a time is untouched. */
+export function plainTimes(text: string): string {
+  return text.replace(ISO_TIME, (match) => {
+    const ms = Date.parse(match)
+    if (!Number.isFinite(ms)) return match
+    return new Date(ms).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+  })
+}
+
+/** A command the ledger suggests (`mloop --project x unbind ...`) starts at `mloop` followed by an option or a subcommand. */
+const COMMAND_START = /\bmloop\s+(?:--|(?:check|bind|unbind|send|inbox|decide|deploy|confirm|ready|dispatch|init)\b)/
+
+export interface TextParts {
+  /** The sentence an operator reads: no command, times in plain words, home paths shortened. */
+  summary: string
+  /** The command to run, shown in a code block; null when the text holds none. */
+  command: string | null
+  /** The command was cut short by the server (it ends with an ellipsis): do not present it as runnable. */
+  commandCut: boolean
+}
+
+/**
+ * Splits ledger text into a plain one-line summary and the raw command it carries.
+ * "<what happened>; <who> self: mloop --project … unbind … && mloop … bind …" becomes
+ * summary "<what happened>" and the command as its own block. Text without a command is
+ * returned whole (times and home paths made plain).
+ */
+export function splitCommand(text: string | null | undefined): TextParts {
+  const raw = typeof text === 'string' ? text : ''
+  const start = COMMAND_START.exec(raw)
+  const plain = (value: string) => plainTimes(shortenHomePaths(value)).replace(/\s+/g, ' ').trim()
+  if (!start) return { summary: plain(raw), command: null, commandCut: false }
+  let head = raw.slice(0, start.index).trimEnd()
+  // The clause that introduces the command ("managers self:") is not part of what happened.
+  if (head.endsWith(':')) {
+    const cut = head.lastIndexOf(';')
+    head = cut >= 0 ? head.slice(0, cut) : head.slice(0, -1)
+  }
+  const command = raw.slice(start.index).trim()
+  return {
+    summary: plain(head.replace(/[\s;:,]+$/, '')),
+    command: shortenHomePaths(command),
+    commandCut: command.endsWith('…') || command.endsWith('...'),
+  }
+}
+
+/** For one table line: also shortens session ids. The full text stays in the tooltip and the drawer. */
+export function tableSummary(text: string | null | undefined): TextParts {
+  const parts = splitCommand(text)
+  return { ...parts, summary: parts.summary.replace(SESSION_ID, '$1…') }
 }
 
 // ---- time ----
@@ -250,6 +309,55 @@ export const ATTENTION_FILTERS: readonly AttentionFilter[] = ['all', 'overdue', 
 /** The filter named in the URL; anything else is "all". */
 export function parseAttentionFilter(value: string | null | undefined): AttentionFilter {
   return ATTENTION_FILTERS.find((filter) => filter === value) ?? 'all'
+}
+
+export interface FilterChipOption {
+  value: AttentionFilter
+  label: string
+  /** The number of confirmations or findings this chip covers; absent when a count in scope was not read. */
+  count?: number
+}
+
+/** Sum of one count over the projects in scope; null as soon as one of them was not read (never a partial total). */
+function scopedTotal(rows: ProjectRow[], pick: (row: ProjectRow) => number | null): number | null {
+  let total = 0
+  for (const row of rows) {
+    const value = pick(row)
+    if (value === null) return null
+    total += value
+  }
+  return total
+}
+
+/**
+ * The filter chips. A chip counts the same unit as the stat beside it: Overdue and Pending count
+ * confirmations, Findings counts findings, both taken from every project in scope (a restricted
+ * project contributes its counts). "All" carries no count: its unit is list rows, which the
+ * "Showing x of y" line already states. A chip that would leave the list unchanged is not offered
+ * (the one currently chosen stays so it can be switched off).
+ */
+export function filterChipOptions(
+  allRows: AttentionRow[],
+  projectRows: ProjectRow[],
+  project: string,
+  active: AttentionFilter,
+): FilterChipOption[] {
+  const scoped = project === 'all' ? projectRows : projectRows.filter((row) => row.id === project)
+  const listed = filterRows(allRows, 'all', project).length
+  const chip = (value: AttentionFilter, label: string, count: number | null): FilterChipOption =>
+    count === null ? { value, label } : { value, label, count }
+  const candidates: FilterChipOption[] = [
+    chip('overdue', 'Overdue confirmations', scopedTotal(scoped, (row) => row.overdueConfirmations)),
+    chip('pending', 'Pending confirmations', scopedTotal(scoped, (row) => row.pendingConfirmations)),
+    chip('findings', 'Findings', scopedTotal(scoped, (row) => row.openFindings)),
+  ]
+  return [
+    { value: 'all', label: 'All' },
+    ...candidates.filter(
+      (candidate) =>
+        candidate.value === active || filterRows(allRows, candidate.value, project).length !== listed,
+    ),
+  ]
 }
 
 export function filterRows(rows: AttentionRow[], filter: AttentionFilter, project: string): AttentionRow[] {

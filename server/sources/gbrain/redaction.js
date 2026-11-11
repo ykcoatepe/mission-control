@@ -9,9 +9,14 @@ const MAX_JSON_DEPTH = 8;
 const WORK_BUDGET = PAGE_SCAN_MAX_CHARS * 12;
 const MARKER = '…[truncated]';
 const ENCODED_LIMIT = '[redacted: truncated encoded content]';
-const ESC = '\ue000';
 const KEYS = new Set(['token', 'pass', 'password', 'passwd', 'pwd', 'secret', 'apikey',
   'authorization', 'credential', 'secretkey', 'accesstoken', 'authtoken']);
+// Prose is an explicit compatibility exception, not the default for any value
+// containing a space. Credential names/aliases remain wholly core-owned.
+const PROSE_LEADS = new Set(['a', 'an', 'the', 'this', 'that', 'these', 'those', 'use', 'read', 'see', 'review',
+  'ship', 'please', 'do', "don't", 'keep', 'never', 'always', 'only', 'when', 'if', 'to', 'for', 'we', 'you',
+  'your', 'our', 'it', 'they', 'there', 'here', 'is', 'are', 'should', 'must', 'can', 'will', 'would', 'note',
+  'avoid', 'remember', 'write', 'check', 'set', 'choose', 'open', 'save', 'follow', 'refer', 'prefer', 'ordinary', 'readable']);
 const whitespace = (c) => c !== undefined && /\s/u.test(c);
 const isQuote = (c) => c === '"' || c === "'" || c === '`';
 const isBoundary = (c) => c === ':' || c === '=' || c === '\n' || c === '\r'
@@ -63,7 +68,7 @@ function keyName(raw) {
     else name = name.slice(1, -1);
   }
   if (!/^[A-Za-z][A-Za-z0-9_. -]{0,127}$/.test(name)) return null;
-  return name.toLowerCase().replace(/^api(?:[ \t]{1,8}|[_.-])key$/, 'apikey')
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase().replace(/^api(?:[ \t]{1,8}|[_.-])key$/, 'apikey')
     .replace(/^secret[_-]key$/, 'secretkey').replace(/^(access|auth)[_-]token$/, '$1token');
 }
 function wordsOf(value) {
@@ -79,15 +84,70 @@ function wordsOf(value) {
   }
   return words;
 }
-function escapeLiteral(text) { return text.replaceAll(ESC, ESC + ESC); }
-function restoreSeparators(text) {
-  const out = [];
-  for (let i = 0; i < text.length; i++) {
-    if (text[i] !== ESC) { out.push(text[i]); continue; }
-    const next = text[++i];
-    out.push(next === 'c' ? ':' : next === 'e' ? '=' : next === ESC ? ESC : ESC + (next || ''));
+function credentialKind(name) {
+  if (KEYS.has(name)) return name;
+  const words = name.split(/[_. -]/).filter(Boolean);
+  const last = words.at(-1);
+  if (last === 'key' && words.at(-2) === 'api') return 'apikey';
+  return KEYS.has(last) ? last : null;
+}
+// The only explicit compatibility exception to core's strong-name assignment
+// policy: a complete, single prose field, never a row with more assignments.
+// It is applied AFTER core scrub. Core still sanitizes its prefix and RHS, so
+// provider tokens, credentials embedded in URLs, paths and nested assignments
+// cannot be restored from original text.
+function proseView(text) {
+  const tokens = lex(text);
+  const assignments = tokens.boundaries.filter((b) => b.mark === ':' || b.mark === '=');
+  if (assignments.length !== 1) return null;
+  const separator = assignments[0].index;
+  let keyStart = 0;
+  while (keyStart < separator && (whitespace(text[keyStart]) || text[keyStart] === '{' || text[keyStart] === '[')) keyStart++;
+  const name = keyName(text.slice(keyStart, separator));
+  if (!name || !(KEYS.has(name) || name.includes(' ') || /(?:[_.-](?:hint|note))$/.test(name))) return null;
+  let start = separator + 1;
+  while (start < text.length && whitespace(text[start])) start++;
+  let end = text.length;
+  while (end > start && (whitespace(text[end - 1]) || (keyStart > 0 && (text[end - 1] === '}' || text[end - 1] === ']')))) end--;
+  const quote = tokens.quotes.find((q) => q.start === start && q.end === end && q.closed);
+  const body = quote ? quoteBody(text, quote) : text.slice(start, end);
+  const urls = lex(body).urls;
+  let count = 0; let urlIndex = 0; let firstWord = '';
+  // A prose word is alphabetic with ordinary punctuation, not an opaque
+  // credential, a number or a second field. Inspect every word, not a prefix.
+  for (let i = 0; i < body.length;) {
+    if (whitespace(body[i])) { i++; continue; }
+    if (urls[urlIndex]?.start === i) { i = urls[urlIndex++].end; if (!count) firstWord = 'url'; count++; continue; }
+    const from = i;
+    while (i < body.length && !whitespace(body[i])) i++;
+    if (i - from > 15 || !/^[A-Za-z'"`.,!?;:=-]{1,15}$/.test(body.slice(from, i))) return null;
+    if (!count) {
+      let fromWord = from; let toWord = i;
+      while (fromWord < toWord && isQuote(body[fromWord])) fromWord++;
+      while (toWord > fromWord && /['"`.,!?;:=-]/.test(body[toWord - 1])) toWord--;
+      firstWord = body.slice(fromWord, toWord).toLowerCase();
+    }
+    count++;
   }
-  return out.join('');
+  const paddedShortWord = quote && count === 1 && body.trim() !== body && body.trim().length < 4;
+  if (!paddedShortWord && (count < 2 || !PROSE_LEADS.has(firstWord))) return null;
+  return scrubText(text.slice(0, start), { maxChars: WORK_BUDGET })
+    + scrubText(text.slice(start, end), { maxChars: WORK_BUDGET })
+    + scrubText(text.slice(end), { maxChars: WORK_BUDGET });
+}
+function coreFirst(text) {
+  const core = scrubText(text, { maxChars: WORK_BUDGET });
+  if (core === text) return core;
+  const prose = proseView(text);
+  if (prose !== null) return prose;
+  const original = text.split('\n'); const lines = core.split('\n');
+  if (original.length !== lines.length) return core;
+  for (let i = 0; i < lines.length; i++) {
+    if (original[i] === lines[i]) continue;
+    const line = proseView(original[i]);
+    if (line !== null && scrubText(original[i], { maxChars: WORK_BUDGET }) === lines[i]) lines[i] = line;
+  }
+  return lines.join('\n');
 }
 function pagePass(text) {
   const { quotes, boundaries, urls } = lex(text);
@@ -105,21 +165,35 @@ function pagePass(text) {
     nextWord[i] = space ? nextWord[i + 1] : i;
   }
   for (let i = 0; i < text.length; i++) priorWord[i + 1] = whitespace(text[i]) ? priorWord[i] : i + 1;
+  const quoteEnds = new Map(quotes.filter((q) => q.closed).map((q) => [q.end, q]));
+  const candidates = new Map(); const starts = [];
+  for (const { index, mark } of boundaries) {
+    if (mark !== ':' && mark !== '=') continue;
+    const keyEnd = priorWord[index]; const quotedKey = quoteEnds.get(keyEnd);
+    let keyStart = quotedKey?.start ?? keyEnd;
+    if (!quotedKey) {
+      while (keyStart > 0 && keyEnd - keyStart < 128 && /[A-Za-z0-9_.-]/.test(text[keyStart - 1])) keyStart--;
+      if (keyStart > 0 && /[A-Za-z0-9_.-]/.test(text[keyStart - 1])) continue;
+    }
+    const name = keyName(text.slice(keyStart, keyEnd));
+    if (name === null) continue;
+    candidates.set(index, name);
+    if (keyStart > 0 && whitespace(text[keyStart - 1])) starts.push(keyStart);
+  }
   const edits = [];
-  let previous = -1; let right = 0; let quoteIndex = 0;
+  let previous = -1; let right = 0; let quoteIndex = 0; let nextAssignment = 0;
   for (let b = 0; b < boundaries.length; b++) {
     const { index, mark } = boundaries[b];
     const name = mark === ':' || mark === '=' ? keyName(text.slice(previous + 1, index)) : null;
     previous = index;
-    if (name === null) continue;
-    // Shield the separator, not the value. Shared provider-token, URL and path
-    // protections still scan every byte, but their generic assignment rule
-    // cannot erase prose such as "The secret: ship small diffs".
-    edits.push({ start: index, end: index + 1, replacement: ESC + (mark === ':' ? 'c' : 'e') });
+    const kind = (name === null ? null : credentialKind(name)) || credentialKind(candidates.get(index) || '');
+    if (!kind) continue;
     const start = nextWord[index + 1];
     while (right < fields.length && fields[right].index < start) right++;
-    const end = priorWord[right < fields.length ? fields[right].index : text.length];
-    if (end <= start || !KEYS.has(name)) continue;
+    while (nextAssignment < starts.length && starts[nextAssignment] <= start) nextAssignment++;
+    const fieldEnd = right < fields.length ? fields[right].index : text.length;
+    const end = priorWord[Math.min(fieldEnd, starts[nextAssignment] ?? text.length)];
+    if (end <= start) continue;
     while (quoteIndex < quotes.length && quotes[quoteIndex].start < start) quoteIndex++;
     const quote = quotes[quoteIndex];
     const quoted = quote?.start === start && quote.end === end;
@@ -136,15 +210,15 @@ function pagePass(text) {
     if (oneWord) replacement = '[redacted]';
     else if (twoWords && /^(?:postgres(?:ql)?|mysql|redis):\/\//i.test(second.slice(0, 16))) {
       replacement = '[redacted] [redacted connection]';
-    } else if (name === 'authorization' && twoWords) {
+    } else if (kind === 'authorization' && twoWords) {
       const scheme = quoted ? words[0].value : firstEnd - start <= 6 ? text.slice(start, firstEnd) : '';
       if (/^(?:basic|bearer|token|digest)$/i.test(scheme)) {
         replacement = redactString(`Authorization: ${quoted ? value : text.slice(start, end)}`).slice('Authorization: '.length);
       }
     }
     if (replacement !== undefined && replacement !== value) {
-      edits.push({ start, end, replacement: escapeLiteral(quoted && quote.mark === '"' ? JSON.stringify(replacement)
-        : quoted ? quote.mark + replacement + (quote.closed ? quote.mark : '') : replacement) });
+      edits.push({ start, end, replacement: quoted && quote.mark === '"' ? JSON.stringify(replacement)
+        : quoted ? quote.mark + replacement + (quote.closed ? quote.mark : '') : replacement });
     }
   }
   for (const url of urls) if (/^(?:postgres(?:ql)?|mysql|redis):\/\//i.test(text.slice(url.start, url.start + 16))) {
@@ -157,20 +231,21 @@ function pagePass(text) {
     const old = byStart.get(edit.start);
     if (!old || edit.end > old.end) byStart.set(edit.start, edit);
   }
-  const shielded = [];
+  const output = [];
   for (let i = 0; i < text.length;) {
     const edit = byStart.get(i);
-    if (edit) { shielded.push(edit.replacement); i = edit.end; }
-    else { shielded.push(text[i] === ESC ? ESC + ESC : text[i]); i++; }
+    if (edit) { output.push(edit.replacement); i = edit.end; }
+    else { output.push(text[i]); i++; }
   }
-  return restoreSeparators(scrubText(shielded.join(''), { maxChars: WORK_BUDGET }))
+  return output.join('')
     .replace(/\bsk-[A-Za-z0-9_-]+/g, '[redacted]');
 }
 function redactBounded(text) {
   let remaining = WORK_BUDGET; let limited = false;
   function frame(value, depth) {
     remaining -= value.length;
-    return { text: value, depth, quotes: lex(value).quotes, next: 0, cursor: 0, pieces: [] };
+    const text = coreFirst(value);
+    return { text, depth, quotes: lex(text).quotes, next: 0, cursor: 0, pieces: [] };
   }
   const stack = [frame(text, 0)]; let result = '';
   while (stack.length) {

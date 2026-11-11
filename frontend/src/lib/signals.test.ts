@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { annunciators, attentionFrom, attentionPill, attentionReading, attentionWords, breakdownWords, countOrNull, navBadges, signalsStale } from './signals'
+import {
+  annunciators,
+  attentionFrom,
+  attentionPill,
+  attentionReading,
+  attentionUnread,
+  attentionWords,
+  breakdownWords,
+  countOrNull,
+  navBadges,
+  navUnread,
+  plainReason,
+  signalsAge,
+  signalsStale,
+} from './signals'
 import type { SignalsData, SignalsEnvelope } from './signals'
 
 const NOW = Date.parse('2026-11-11T09:00:00.000Z')
@@ -196,7 +210,7 @@ describe('annunciator reason and link', () => {
       opts,
     )
     expect(gbrain.reason).toBeNull()
-    expect(openclaw.reason).toBe('OpenClaw status evidence is unavailable.')
+    expect(openclaw.reason).toBe('OpenClaw status could not be read.')
   })
 
   it('links to the server detailHref, else the static fallback', () => {
@@ -257,16 +271,12 @@ describe('navBadges', () => {
     expect(badges['/services']).toEqual({ count: 2, tone: 'critical', word: 'down' })
   })
 
-  it('shows the same number and words as the top-bar pill, with the breakdown as secondary text', () => {
+  it('shows the same number as the top-bar pill and leaves the breakdown to the pill', () => {
     const signals = base({ loops: { openFindings: 9, overdueConfirmations: 24 }, attention: { count: 158, worst: 'critical', breakdown: BREAKDOWN } })
     const pill = attentionPill(signals)
-    expect(navBadges(signals)['/attention']).toEqual({
-      count: 158,
-      tone: 'critical',
-      word: 'need attention',
-      secondary: '3 systems · 23 findings · 3 overdue · 129 restricted',
-    })
-    expect(pill).toMatchObject({ count: 158, text: '158 need attention' })
+    // The pill carries the breakdown; the badge is the number only.
+    expect(navBadges(signals)['/attention']).toEqual({ count: 158, tone: 'critical', word: 'need attention' })
+    expect(pill).toMatchObject({ count: 158, text: '158 need attention', secondary: '3 systems · 23 findings · 3 overdue · 129 restricted' })
   })
 
   it('uses a caution badge when the worst item is a warning', () => {
@@ -274,11 +284,74 @@ describe('navBadges', () => {
       count: 4,
       tone: 'warning',
       word: 'need attention',
-      secondary: null,
     })
   })
 
   it('does not turn an unread attention count into a badge of another number', () => {
     expect(navBadges(base({ attention: { count: null, worst: null }, loops: { openFindings: 1, overdueConfirmations: 5 } }))['/attention']).toBeUndefined()
+  })
+})
+
+describe('plainReason', () => {
+  it('says "reading" and "could not be read" instead of evidence, proof and probe', () => {
+    expect(plainReason('OpenClaw status evidence is unavailable.')).toBe('OpenClaw status could not be read.')
+    expect(plainReason('Embed-job probe unavailable; the missing-embedding verdict uses embedding age only.')).toBe(
+      'Embed-job could not be read; the missing-embedding verdict uses embedding age only.',
+    )
+    expect(plainReason('Evidence is older than 10 minutes.')).toBe('Reading is older than 10 minutes.')
+    expect(plainReason('The proof was not refreshed.')).toBe('The reading was not refreshed.')
+  })
+
+  it('leaves a plain reason alone and handles long input in linear time', () => {
+    expect(plainReason('Hermes has a caveat.')).toBe('Hermes has a caveat.')
+    expect(plainReason('')).toBe('')
+    const long = `${'status '.repeat(5000)}evidence`
+    const started = Date.now()
+    plainReason(long)
+    expect(Date.now() - started).toBeLessThan(500)
+  })
+
+  it('reaches the annunciator tooltip text', () => {
+    const [gbrain] = annunciators(
+      base({ systems: { gbrain: { state: 'unavailable', observedAt: RECENT, reason: 'Embed-job probe unavailable.' } } }),
+      opts,
+    )
+    expect(gbrain.reason).toBe('Embed-job could not be read.')
+  })
+})
+
+describe('unread is not quiet', () => {
+  it('flags an attention count that was not read, but not while loading or when it is a real zero', () => {
+    expect(attentionUnread(base({ attention: null }), { loading: false })).toBe(true)
+    expect(attentionUnread(base({ attention: { count: null, worst: null } }), { loading: false })).toBe(true)
+    expect(attentionUnread(base({ attention: { count: null, worst: null, breakdown: BREAKDOWN } }), { loading: false })).toBe(true)
+    expect(attentionUnread(null, { loading: false })).toBe(true)
+    expect(attentionUnread(null, { loading: true })).toBe(false)
+    expect(attentionUnread(base({ attention: { count: 0, worst: null } }), { loading: false })).toBe(false)
+    expect(attentionUnread(base({ attention: { count: 3, worst: 'warning' } }), { loading: false })).toBe(false)
+  })
+
+  it('marks sidebar routes whose count was not read, never as 0', () => {
+    const unread = navUnread(base({ automations: null, attention: null, services: { down: null } }), { loading: false })
+    expect(unread).toEqual({ '/attention': true, '/automations': true, '/services': true })
+    expect(navUnread(base(), { loading: false })).toEqual({})
+    expect(navUnread(base({ automations: { failed: 0, nextRunAt: null }, services: { down: 0 } }), { loading: false })).toEqual({})
+    expect(navUnread(null, { loading: true })).toEqual({})
+    expect(Object.keys(navUnread(null, { loading: false })).sort()).toEqual(['/attention', '/automations', '/services'])
+  })
+})
+
+describe('signalsAge', () => {
+  it('names the signals in its tooltip so it does not contradict a page freshness', () => {
+    const age = signalsAge(RECENT, NOW, false)
+    expect(age.text).toBe('Updated 2m ago')
+    expect(age.title).toMatch(/^Signals updated 2m ago/)
+  })
+
+  it('says reading, then not read, and never invents a time', () => {
+    expect(signalsAge(null, NOW, true).text).toBe('Reading…')
+    expect(signalsAge(null, NOW, false).text).toBe('Not read')
+    expect(signalsAge('not a date', NOW, false).text).toBe('Not read')
+    expect(signalsAge(undefined, NOW, false).title).toMatch(/could not be read/)
   })
 })

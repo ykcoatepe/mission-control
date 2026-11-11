@@ -25,16 +25,17 @@ import {
   confirmationKindLabel,
   deadlineTiming,
   errorText,
+  filterChipOptions,
   filterRows,
   findingAge,
   findingLabel,
   findingLabelOrNull,
   isRestricted,
   parseAttentionFilter,
-  shortenHomePaths,
   severityLabel,
   severityState,
   summarize,
+  tableSummary,
 } from './lib'
 import type { ApiMeta, AttentionFilter, AttentionRow, LoopsData, OpenProject, ProjectRow } from './types'
 import ProjectDrawer from './ProjectDrawer'
@@ -53,13 +54,6 @@ interface AttentionViewProps {
   refreshError: string | null
   onRetry: () => void
 }
-
-const FILTER_OPTIONS = [
-  { value: 'all', label: 'All' },
-  { value: 'overdue', label: 'Overdue' },
-  { value: 'pending', label: 'Pending confirmation' },
-  { value: 'findings', label: 'Findings' },
-]
 
 const cell = (value: number | null) => (value === null ? '—' : value)
 
@@ -98,14 +92,10 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
   // A project that vanished from the reading must not leave the list filtered to nothing.
   const activeProject = projectOptions.some((option) => option.value === project) ? project : 'all'
   const rows = useMemo(() => filterRows(allRows, filter, activeProject), [allRows, filter, activeProject])
-  // Real counts for the chips, within the chosen project.
+  // Chip counts use the unit of the stats above (confirmations, findings), within the chosen project.
   const filterOptions = useMemo(
-    () =>
-      FILTER_OPTIONS.map((option) => ({
-        ...option,
-        count: filterRows(allRows, option.value as AttentionFilter, activeProject).length,
-      })),
-    [allRows, activeProject],
+    () => filterChipOptions(allRows, projectRows, activeProject, filter),
+    [allRows, projectRows, activeProject, filter],
   )
 
   // ---- drawer (?project=<id>) ----
@@ -173,6 +163,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
     {
       key: 'project',
       header: 'Project',
+      width: '208px',
       cell: (row) => (
         <div className={styles.projectCell}>
           <span className={styles.projectName}>{row.project}</span>
@@ -294,7 +285,14 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         <Stat
           label="Projects with open items"
           value={summary.projectsWithOpenItems}
-          hint={summary.projects !== null ? `of ${summary.projects}` : undefined}
+          hint={
+            [
+              summary.projects !== null ? `of ${summary.projects}` : null,
+              summary.unreadProjects > 0 ? `${summary.unreadProjects} not read` : null,
+            ]
+              .filter(Boolean)
+              .join(' · ') || undefined
+          }
         />
         <Stat label="Open findings" value={summary.openFindings} />
         <Stat
@@ -398,12 +396,18 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
 
 function WhatCell({ row }: { row: AttentionRow }) {
   if (row.type === 'finding') {
-    const primary = shortenHomePaths(row.summary) || row.subject || findingLabel(row.code)
+    const parts = tableSummary(row.summary)
+    const primary = parts.summary || row.subject || findingLabel(row.code)
     return (
       <div className={styles.what}>
-        <span className={styles.clamp} title={primary}>
+        <span className={styles.clamp} title={row.summary ?? primary}>
           {primary}
         </span>
+        {parts.command && !parts.commandCut && (
+          <code className={styles.command} title={parts.command}>
+            {parts.command}
+          </code>
+        )}
         {row.summary && row.subject && (
           <span className={styles.sub}>
             <Mono muted>{row.subject}</Mono>
@@ -414,12 +418,18 @@ function WhatCell({ row }: { row: AttentionRow }) {
     )
   }
   if (row.type === 'confirmation') {
-    const primary = shortenHomePaths(row.unit) || row.id || 'Unnamed confirmation'
+    const parts = tableSummary(row.unit)
+    const primary = parts.summary || row.id || 'Unnamed confirmation'
     return (
       <div className={styles.what}>
-        <span className={styles.clamp} title={primary}>
+        <span className={styles.clamp} title={row.unit ?? primary}>
           {primary}
         </span>
+        {parts.command && !parts.commandCut && (
+          <code className={styles.command} title={parts.command}>
+            {parts.command}
+          </code>
+        )}
         {row.id && row.unit && (
           <span className={styles.sub}>
             <Mono muted>{row.id}</Mono>
@@ -430,15 +440,28 @@ function WhatCell({ row }: { row: AttentionRow }) {
   }
   const count = (value: number | null, one: string, many: string) =>
     value === null ? `${many} not read` : `${value} ${value === 1 ? one : many}`
-  const parts = [
-    count(row.openFindings, 'open finding', 'open findings'),
-    row.pendingConfirmations === null ? 'pending not read' : `${row.pendingConfirmations} pending`,
-    row.overdueConfirmations === null ? 'overdue not read' : `${row.overdueConfirmations} overdue`,
-  ]
   return (
     <div className={styles.what}>
       <span>Details are restricted</span>
-      <span className={styles.sub}>{parts.join(' · ')}</span>
+      <span className={styles.sub}>
+        <span className={styles.part}>{count(row.openFindings, 'open finding', 'open findings')}</span>
+        {' · '}
+        <span className={styles.part}>
+          {row.pendingConfirmations === null ? 'pending not read' : `${row.pendingConfirmations} pending`}
+        </span>
+        {' · '}
+        {row.overdueConfirmations !== null && row.overdueConfirmations > 0 ? (
+          // Never colour alone: an icon, the number and the word go together.
+          <span className={styles.overdue}>
+            <TriangleAlert size={12} aria-hidden="true" />
+            {row.overdueConfirmations} overdue
+          </span>
+        ) : (
+          <span className={styles.part}>
+            {row.overdueConfirmations === null ? 'overdue not read' : '0 overdue'}
+          </span>
+        )}
+      </span>
     </div>
   )
 }

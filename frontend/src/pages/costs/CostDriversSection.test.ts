@@ -33,7 +33,9 @@ const base: CostDriversSectionProps = {
   platformsPending: false,
   totalPlatformTokens: 0,
   sessions: [],
-  sessionsLiveOnlyNotice: null,
+  sessionsOnlyNotice: null,
+  activeSessionCount: 0,
+  sessionsWithoutTokens: 0,
   awsServices: null,
 }
 
@@ -54,8 +56,8 @@ describe('CostDriversSection', () => {
   it('shows API-equivalent and tracked spend as separate columns, with a dash where no price exists', async () => {
     const host = await render({
       models: [
-        { name: 'priced', rawNames: ['priced'], tokens: 10, cost: 0, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
-        { name: 'local-only', rawNames: ['ollama/local-only'], tokens: 10, cost: 0, apiEquivalentCost: 0, apiEquivalentAvailable: false, isLocal: true, share: 0 },
+        { name: 'priced', rawNames: ['priced'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'local-only', rawNames: ['ollama/local-only'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 0, apiEquivalentAvailable: false, isLocal: true, share: 0 },
       ],
       modelApiEquivalentTotal: 7,
     })
@@ -71,10 +73,10 @@ describe('CostDriversSection', () => {
   it('tags a model Local only when the server said so: unknown (null) and false get no tag', async () => {
     const host = await render({
       models: [
-        { name: 'explicit-local', rawNames: ['a'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: true, share: 0 },
+        { name: 'explicit-local', rawNames: ['a'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: true, share: 0 },
         // The name looks local; the server did not say it is, so no tag.
-        { name: 'ollama/looks-local', rawNames: ['b'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: null, share: 0 },
-        { name: 'not-local', rawNames: ['c'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'ollama/looks-local', rawNames: ['b'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: null, share: 0 },
+        { name: 'not-local', rawNames: ['c'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
       ],
       modelApiEquivalentTotal: 3,
     })
@@ -124,8 +126,8 @@ describe('CostDriversSection', () => {
   })
 
   it('flags live sessions as not belonging to the month in view, only when asked to', async () => {
-    const session = { sessionId: 's1', sessionName: 'Main Session', model: 'gpt', tokens: 10, timestamp: null, channel: 'agent' }
-    const flagged = await render({ tab: 'sessions', sessions: [session], sessionsLiveOnlyNotice: 'Live sessions only: not scoped to June 2026.' })
+    const session = { sessionId: 's1', sessionName: 'Main Session', model: 'gpt', tokens: 10, timestamp: null, detail: 'Agent main', active: false }
+    const flagged = await render({ tab: 'sessions', sessions: [session], sessionsOnlyNotice: 'Recent sessions only: not scoped to June 2026.' })
     expect(flagged.textContent).toContain('not scoped to June 2026')
     document.body.innerHTML = ''
     const plain = await render({ tab: 'sessions', sessions: [session] })
@@ -145,9 +147,9 @@ describe('CostDriversSection', () => {
   it('shows a dash for unknown tracked spend, a real zero only when billing recorded zero', async () => {
     const host = await render({
       models: [
-        { name: 'unknown-billing', rawNames: ['u'], tokens: 10, cost: null, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
-        { name: 'recorded-zero', rawNames: ['z'], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
-        { name: 'billed', rawNames: ['b'], tokens: 10, cost: 3.5, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'unknown-billing', rawNames: ['u'], platforms: [], tokens: 10, cost: null, apiEquivalentCost: 7, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'recorded-zero', rawNames: ['z'], platforms: [], tokens: 10, cost: 0, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
+        { name: 'billed', rawNames: ['b'], platforms: [], tokens: 10, cost: 3.5, apiEquivalentCost: 1, apiEquivalentAvailable: true, isLocal: false, share: 0 },
       ],
       modelApiEquivalentTotal: 9,
     })

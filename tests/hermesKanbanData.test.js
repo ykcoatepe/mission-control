@@ -39,7 +39,7 @@ async function testBoardUsesProfileAndKeepsPayloadShape() {
   };
   const service = createHermesKanbanService({
     mcConfig: { hermes: { profile: 'hmudur' } },
-    execFilePromise,
+    runner: { run: async (...args) => ({ ok: true, ...await execFilePromise(...args) }) },
     processEnv: { HOME: '/tmp/home' },
   });
   const board = await service.getBoard();

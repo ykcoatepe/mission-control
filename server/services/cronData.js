@@ -4,7 +4,7 @@ const { httpError } = require('../core/http');
 const { randomUUID } = require('node:crypto');
 const { homeRelativePath } = require('../core/scrub');
 const { redactString } = require('../core/config');
-const { CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
+const { SCHEDULE_KINDS, CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
 
 function writeFileAtomic(filePath, content, { fsImpl = fs, mode } = {}) {
   const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
@@ -238,32 +238,62 @@ function parseCronTableOutput(output) {
 // interval(minutes/display), once(run_at/display); OpenClaw cron(expr with
 // optional tz/staggerMs), every(everyMs/anchorMs). Other supported units are
 // explicit conversions; unrecognised kinds never become a made-up cron kind.
+// Conservative parser for the standard five/six-field cron grammar. An
+// unlabelled scheduler display must pass syntax AND field ranges before it
+// can be described as cron. Unsupported extensions remain honest unknowns.
+function isCronExpression(expression) {
+  if (expression.length > 1024) return false;
+  if (['@yearly', '@annually', '@monthly', '@weekly', '@daily', '@midnight', '@hourly'].includes(expression.toLowerCase())) return true;
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5 && fields.length !== 6) return false;
+  const specs = [[0, 59], [0, 23], [1, 31], [1, 12, ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']], [0, 7, ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']]];
+  if (fields.length === 6) specs.unshift([0, 59]);
+  return fields.every((field, index) => {
+    const [min, max, names] = specs[index];
+    const number = token => {
+      if (names?.includes(token)) return names.indexOf(token) + min;
+      return /^\d{1,2}$/.test(token) ? Number(token) : NaN;
+    };
+    return field.toUpperCase().split(',').every(part => {
+      const split = part.split('/');
+      if (split.length > 2) return false;
+      if (split.length === 2 && (!/^\d{1,2}$/.test(split[1]) || Number(split[1]) < 1 || Number(split[1]) > max - min + 1)) return false;
+      if (split[0] === '*') return true;
+      const range = split[0].split('-');
+      if (range.length > 2) return false;
+      const start = number(range[0]), end = number(range.at(-1));
+      return Number.isFinite(start) && Number.isFinite(end) && start >= min && end <= max && start <= end;
+    });
+  });
+}
+
 function describeCronSchedule(job = {}) {
   const raw = job.schedule;
   const kind = typeof raw?.kind === 'string' ? raw.kind.toLowerCase() : null;
+  const expression = raw?.expr || (typeof raw === 'string' ? raw : null);
   const display = [raw?.display, job.schedule_display].find(value => typeof value === 'string' && value.trim() && !['?', 'every'].includes(value.trim().toLowerCase())) || null;
   const unknown = { schedule: display, scheduleKind: 'unknown', everyMs: null, atIso: null };
-  if (kind === 'every' || kind === 'interval' || raw === 'every') {
+  const kindlessInterval = !kind && typeof expression === 'string' && /^every\b/i.test(expression);
+  if (kind === 'every' || kind === 'interval' || raw === 'every' || kindlessInterval) {
     const candidates = [[raw?.everyMs, 1], [raw?.seconds, 1000], [raw?.minutes, 60000], [raw?.hours, 3600000]];
-    const fromDisplay = display?.match(/^every\s+(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i);
+    const fromDisplay = (kindlessInterval ? expression : display)?.match(/^every\s+(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i);
     if (fromDisplay) candidates.push([Number(fromDisplay[1]), { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[fromDisplay[2].toLowerCase()]]);
     const everyMs = candidates.map(([value, scale]) => typeof value === 'number' ? value * scale : null)
       .find(value => Number.isSafeInteger(value) && value > 0);
-    if (!everyMs) return unknown;
+    if (!everyMs) return kindlessInterval ? { ...unknown, schedule: expression } : unknown;
     const units = [[86400000, 'd'], [3600000, 'h'], [60000, 'm'], [1000, 's'], [1, 'ms']];
     const [size, suffix] = units.find(([size]) => everyMs % size === 0);
-    return { schedule: `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs, atIso: null };
+    return { schedule: kindlessInterval ? expression : `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs, atIso: null };
   }
   if (kind === 'once' || kind === 'at') {
     const at = raw?.run_at ?? raw?.at;
     const atIso = dateIsoOrNull(at);
     return { schedule: display || (atIso && typeof at === 'string' ? at : atIso), scheduleKind: 'at', everyMs: null, atIso };
   }
-  const expression = raw?.expr || (typeof raw === 'string' ? raw : null);
-  if ((kind === 'cron' || !kind) && typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
+  if ((kind === 'cron' || (!kind && typeof expression === 'string' && isCronExpression(expression))) && typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
     return { schedule: expression, scheduleKind: 'cron', everyMs: null, atIso: null };
   }
-  return unknown;
+  return !kind && typeof expression === 'string' && !['?', 'every'].includes(expression.trim().toLowerCase()) ? { ...unknown, schedule: display || expression } : unknown;
 }
 
 function createCronService({
@@ -686,7 +716,7 @@ function createCronService({
       id: String(entry.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       title: String(entry.title || 'Untitled').trim() || 'Untitled',
       schedule: entry.schedule === null ? null : (entry.schedule || ''),
-      scheduleKind: ['cron', 'interval', 'at', 'unknown'].includes(entry.scheduleKind) ? entry.scheduleKind : 'unknown',
+      scheduleKind: SCHEDULE_KINDS.includes(entry.scheduleKind) ? entry.scheduleKind : 'unknown',
       everyMs: entry.everyMs ?? null,
       atIso: entry.atIso ?? null,
       startsAt: toIsoOrNull(entry.startsAt),

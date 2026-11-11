@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import {
+  Button,
   DataTable,
   EmptyState,
   ErrorState,
@@ -21,6 +22,7 @@ import { useApi } from '../../lib/hooks'
 import { SIGNALS_POLL_MS, SIGNALS_URL } from '../../lib/signals'
 import type { SignalsEnvelope } from '../../lib/signals'
 import {
+  GATEWAY_READINGS_ID,
   endpointReading,
   filterCounts,
   filterServices,
@@ -41,16 +43,24 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
   {
     key: 'label',
     header: 'Service',
-    cell: (row) => <Mono className={styles.label}>{row.label}</Mono>,
+    cell: (row) => {
+      // The explanation sits under the name, on its own line, so the table needs no wide Note column.
+      const hint = serviceHint(row)
+      return (
+        <div className={styles.service}>
+          <Mono className={styles.label}>{row.label}</Mono>
+          {hint && <span className={styles.hint}>{hint}</span>}
+        </div>
+      )
+    },
   },
   {
     key: 'kind',
     header: 'Kind',
-    width: '176px',
     cell: (row) => {
       const kind = kindLabel(row.kind)
       const note = scheduleNote(row)
-      if (!kind) return <span className={styles.muted}>{row.identified === false ? 'Unidentified' : '—'}</span>
+      if (!kind) return <span className={styles.kind}>{row.identified === false ? 'Unidentified' : '—'}</span>
       return (
         <span className={styles.kind}>
           {kind}
@@ -88,14 +98,6 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
           {row.lastExitCode}
         </Mono>
       ),
-  },
-  {
-    key: 'note',
-    header: 'Note',
-    cell: (row) => {
-      const hint = serviceHint(row)
-      return hint ? <span className={styles.hint}>{hint}</span> : null
-    },
   },
 ]
 
@@ -181,10 +183,32 @@ export default function ServicesView() {
   return (
     <>
       <div className={styles.verdict}>
-        <p className={styles.verdictLine} data-state={verdict.state}>
-          <StateDot state={verdict.state} />
-          <span>{verdict.text}</span>
-        </p>
+        <ul className={styles.verdictLines} aria-label="Verdict">
+          {verdict.lines.map((entry) => (
+            <li key={entry.text} className={styles.verdictLine} data-state={entry.state}>
+              <StateDot state={entry.state} />
+              <span className={styles.verdictBody}>
+                <span className={styles.verdictText}>{entry.text}</span>
+                {(entry.reason || entry.link) && (
+                  <span className={styles.verdictReason}>
+                    {entry.reason}
+                    {entry.reason && entry.link && ' '}
+                    {entry.link &&
+                      (entry.link.kind === 'anchor' ? (
+                        <a className={styles.link} href={entry.link.to}>
+                          {entry.link.label}
+                        </a>
+                      ) : (
+                        <Link className={styles.link} to={entry.link.to}>
+                          {entry.link.label}
+                        </Link>
+                      ))}
+                  </span>
+                )}
+              </span>
+            </li>
+          ))}
+        </ul>
         <p className={styles.verdictDetail}>
           {verdict.detail}
           {verdict.detail && observedAt && ' · '}
@@ -194,6 +218,14 @@ export default function ServicesView() {
             </>
           )}
         </p>
+        {verdict.note && (
+          <p className={styles.verdictNote}>
+            {verdict.note.text}{' '}
+            <Button size="sm" variant="ghost" onClick={() => setFilter(verdict.note!.filter)}>
+              {verdict.note.actionLabel}
+            </Button>
+          </p>
+        )}
       </div>
 
       {(stale || error) && (
@@ -204,11 +236,13 @@ export default function ServicesView() {
         </Notice>
       )}
 
-      <StatRow aria-label="Reachability">
-        <ReachabilityStat label="OpenClaw gateway" endpoint={data.gateways?.openclaw} />
-        <ReachabilityStat label="Hermes gateway" endpoint={data.gateways?.hermes} />
-        <ReachabilityStat label="Ollama" endpoint={data.ollama} />
-      </StatRow>
+      <div id={GATEWAY_READINGS_ID} className={styles.readings}>
+        <StatRow aria-label="Reachability">
+          <ReachabilityStat label="OpenClaw gateway" endpoint={data.gateways?.openclaw} />
+          <ReachabilityStat label="Hermes gateway" endpoint={data.gateways?.hermes} />
+          <ReachabilityStat label="Ollama" endpoint={data.ollama} />
+        </StatRow>
+      </div>
 
       <div className={styles.toolbar}>
         <FilterChips

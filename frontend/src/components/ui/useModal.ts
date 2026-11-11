@@ -4,6 +4,9 @@ import type { RefObject } from 'react'
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
+/** Open modals, innermost last. Only the innermost one handles Esc and Tab (a Dialog over a Drawer closes alone). */
+const openModals: object[] = []
+
 /**
  * Shared behaviour of Drawer and Dialog while open: focus moves into the
  * container, Tab is trapped, Esc closes, and focus returns to the element that
@@ -27,6 +30,8 @@ export function useModal(
     if (!open) return
     const container = containerRef.current
     if (!container) return
+    const token = {}
+    openModals.push(token)
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null
 
     const focusables = () =>
@@ -37,6 +42,7 @@ export function useModal(
     initial.focus()
 
     const onKeyDown = (event: KeyboardEvent) => {
+      if (openModals[openModals.length - 1] !== token) return
       if (event.key === 'Escape') {
         event.stopPropagation()
         event.preventDefault()
@@ -68,6 +74,8 @@ export function useModal(
     document.addEventListener('keydown', onKeyDown, true)
     return () => {
       document.removeEventListener('keydown', onKeyDown, true)
+      const at = openModals.indexOf(token)
+      if (at >= 0) openModals.splice(at, 1)
       const meaningful = previouslyFocused && previouslyFocused !== document.body && document.contains(previouslyFocused)
       const target = meaningful ? previouslyFocused : (fallbackRef.current?.() ?? null)
       if (target && document.contains(target)) target.focus()

@@ -23,7 +23,8 @@ import { describeApiError, postJson, sendJson, useApi, writeFailureMessage } fro
 import { useNow } from '../../lib/useNow'
 import { Link } from 'react-router-dom'
 import { scheduleDisplay } from './cronSchedule'
-import { planWeek } from './weekPlan'
+import { lastRunMarkerDays, planWeek } from './weekPlan'
+import { isInternalKey } from './jobWords'
 import { oneOf, useQueryParam } from './urlState'
 import EntryDialog from './EntryDialog'
 import type { EntryChange } from './EntryDialog'
@@ -154,6 +155,11 @@ export default function ScheduleView() {
     [filteredEntries, hideDisabled, todayStart, weekDays],
   )
   const dayBuckets = plan.byDay
+  // A job's last run result goes on its next occurrence only; the days after it are not failures.
+  const markerDays = useMemo(
+    () => lastRunMarkerDays(plan.byDay, weekDays.map(toDayKey), todayKey),
+    [plan.byDay, todayKey, weekDays],
+  )
   const hiddenDisabledCount = plan.hiddenDisabled
 
   const weekLabel = formatWeekRange(weekDays)
@@ -391,7 +397,11 @@ export default function ScheduleView() {
                 ) : (
                   shown.map((placed) => {
                     const { entry } = placed
-                    const state = entryState(entry.status)
+                    const rawState = entryState(entry.status)
+                    // A repeating entry's "failed" is its last run's result: shown once, quietly, on the next occurrence.
+                    const lastRunFailed = placed.recurring && rawState === 'critical'
+                    const showLastRunFailed = lastRunFailed && markerDays.get(entry.id) === key
+                    const state = lastRunFailed ? null : rawState
                     return (
                       <button
                         key={`${key}:${entry.id}`}
@@ -411,6 +421,7 @@ export default function ScheduleView() {
                               {entryStatusLabel(entry.status)}
                             </span>
                           )}
+                          {showLastRunFailed && <span className={styles.lastRun}>Last run failed</span>}
                         </span>
                       </button>
                     )
@@ -491,7 +502,14 @@ export default function ScheduleView() {
               <div className={styles.fact}>
                 <dt>State</dt>
                 <dd>
-                  {detailState ? <StatePill state={detailState} label={entryStatusLabel(detailEntry.status)} /> : entryStatusLabel(detailEntry.status)}
+                  {detailState ? (
+                    <StatePill
+                      state={detailState}
+                      label={detailState === 'critical' && isLinkedEntry(detailEntry) ? 'Last run failed' : entryStatusLabel(detailEntry.status)}
+                    />
+                  ) : (
+                    entryStatusLabel(detailEntry.status)
+                  )}
                 </dd>
               </div>
               <div className={styles.fact}>
@@ -545,7 +563,16 @@ export default function ScheduleView() {
                 <Link to={detailJobHref}>Automations, Jobs</Link>.
               </p>
             )}
-            {detailEntry.notes && (
+            {detailEntry.notes && isInternalKey(detailEntry.notes) && (
+              <section className={styles.notes} aria-label="Built-in job">
+                <h3 className={styles.notesTitle}>Built-in job</h3>
+                <p className={styles.notesBody}>
+                  The scheduler runs this one itself and gives it no description. Internal name:{' '}
+                  <Mono muted>{detailEntry.notes.trim()}</Mono>
+                </p>
+              </section>
+            )}
+            {detailEntry.notes && !isInternalKey(detailEntry.notes) && (
               <section className={styles.notes} aria-label="Notes">
                 <h3 className={styles.notesTitle}>Notes</h3>
                 <p className={styles.notesBody}>{detailEntry.notes}</p>

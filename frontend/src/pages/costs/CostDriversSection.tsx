@@ -12,6 +12,7 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import {
+  BILLING_NOT_READ,
   formatCompactTokenValue,
   formatCurrency,
   formatPreciseCurrency,
@@ -40,7 +41,10 @@ export interface TopSession {
   tokens: number
   /** Epoch seconds, or null when the session has no update time. */
   timestamp: number | null
-  channel: string
+  /** Agent and channel, in words. The raw session key (it carries chat ids) is never shown. */
+  detail: string
+  /** True: running now. False: not running. Null: the gateway did not say. */
+  active: boolean | null
 }
 
 export interface AwsServiceDriver {
@@ -61,8 +65,12 @@ export interface CostDriversSectionProps {
   platformsPending: boolean
   totalPlatformTokens: number
   sessions: TopSession[]
-  /** Set when the period is a past month: sessions are live, not that month's. */
-  sessionsLiveOnlyNotice: string | null
+  /** Set when the period is a past month: sessions are recent, not that month's. */
+  sessionsOnlyNotice: string | null
+  /** How many of all sessions are running now (for the line above the list). */
+  activeSessionCount: number
+  /** Sessions with no token count: not listed, and not counted as 0. */
+  sessionsWithoutTokens: number
   awsServices: AwsServiceDriver[] | null
 }
 
@@ -102,16 +110,16 @@ function billingStatus(agent: AgentSplitItem) {
     case 'Estimated':
       return `Estimated · ${formatPreciseCurrency(agent.estimatedCost)}`
     case 'Partial':
-      return details ? `Partly tracked · ${details}` : 'Partly tracked'
+      return details ? `Billing partly read · ${details}` : 'Billing partly read'
     case 'Mixed':
       return details ? `Mixed · ${details}` : 'Mixed'
     default:
-      return 'Not tracked'
+      return BILLING_NOT_READ
   }
 }
 
 function apiEquivalentText(cost: number, available: boolean) {
-  return available && Number.isFinite(cost) ? formatPreciseCurrency(cost) : '—'
+  return <span className={styles.num}>{available && Number.isFinite(cost) ? formatPreciseCurrency(cost) : '—'}</span>
 }
 
 function ShareCell({ pct, label }: { pct: number | null; label: string }) {
@@ -125,13 +133,17 @@ function ShareCell({ pct, label }: { pct: number | null; label: string }) {
 }
 
 function TokenCell({ tokens }: { tokens: number | null }) {
-  return <span title={formatTokenPhrase(tokens)}>{formatCompactTokenValue(tokens)}</span>
+  return <span className={styles.num} title={formatTokenPhrase(tokens)}>{formatCompactTokenValue(tokens)}</span>
 }
 
 /** Billed spend; a dash with its reason when billing for the row was not read. Never $0.00. */
 function TrackedSpendCell({ cost }: { cost: number | null }) {
-  if (cost === null || !Number.isFinite(cost)) return <span title="Billing for this row was not read">—</span>
-  return <>{formatCurrency(cost)}</>
+  if (cost === null || !Number.isFinite(cost)) {
+    return (
+      <span className={styles.num} role="img" aria-label={BILLING_NOT_READ} title={BILLING_NOT_READ}>—</span>
+    )
+  }
+  return <span className={styles.num}>{formatCurrency(cost)}</span>
 }
 
 export default function CostDriversSection({
@@ -143,7 +155,9 @@ export default function CostDriversSection({
   platformsPending,
   totalPlatformTokens,
   sessions,
-  sessionsLiveOnlyNotice,
+  sessionsOnlyNotice,
+  activeSessionCount,
+  sessionsWithoutTokens,
   awsServices,
 }: CostDriversSectionProps) {
   const hasPlatforms = platformsPending || platforms.length > 0
@@ -151,7 +165,7 @@ export default function CostDriversSection({
     ...(awsServices ? [{ id: 'aws' as const, label: 'By AWS service' }] : []),
     { id: 'models', label: 'By model' },
     ...(hasPlatforms ? [{ id: 'platforms' as const, label: 'By platform' }] : []),
-    { id: 'sessions', label: 'Live sessions' },
+    { id: 'sessions', label: 'Recent sessions' },
   ]
   const fallbackTab: DriverTab = awsServices ? 'aws' : 'models'
   const active: DriverTab = tab && tabs.some(item => item.id === tab) ? tab : fallbackTab
@@ -161,10 +175,13 @@ export default function CostDriversSection({
       key: 'model',
       header: 'Model',
       cell: item => (
-        <span className={styles.name}>
-          <span className={styles.nameText}>{item.name}</span>
-          {item.isLocal === true && <span className={styles.tag}>Local</span>}
-          {item.rawNames.length > 1 && <span className={styles.tag}>{item.rawNames.length} variants</span>}
+        <span className={styles.nameStack}>
+          <span className={styles.name}>
+            <span className={styles.nameText}>{item.name}</span>
+            {item.isLocal === true && <span className={styles.tag}>Local</span>}
+            {item.rawNames.length > 1 && <span className={styles.tag} title={item.rawNames.join('\n')}>{item.rawNames.length} variants</span>}
+          </span>
+          {item.platforms.length > 0 && <span className={styles.sub}>{item.platforms.join(', ')}</span>}
         </span>
       ),
     },
@@ -244,8 +261,11 @@ export default function CostDriversSection({
       header: 'Session',
       cell: session => (
         <span className={styles.nameStack}>
-          <span className={styles.nameText}>{session.sessionName}</span>
-          <span className={styles.sub}>{session.channel}</span>
+          <span className={styles.name}>
+            <span className={styles.nameText}>{session.sessionName}</span>
+            {session.active === true && <StatePill state="healthy" label="Running" />}
+          </span>
+          <span className={styles.sub}>{session.detail}</span>
         </span>
       ),
     },
@@ -255,7 +275,7 @@ export default function CostDriversSection({
       key: 'updated',
       header: 'Updated',
       align: 'end',
-      cell: session => <TimeAgo value={session.timestamp === null ? null : session.timestamp * 1000} />,
+      cell: session => <span className={styles.num}><TimeAgo value={session.timestamp === null ? null : session.timestamp * 1000} /></span>,
     },
   ]
 
@@ -302,18 +322,24 @@ export default function CostDriversSection({
   } else if (active === 'sessions') {
     content = (
       <>
-        {sessionsLiveOnlyNotice && (
+        {sessionsOnlyNotice && (
           <div className={styles.pad}>
-            <Notice tone="warning">{sessionsLiveOnlyNotice}</Notice>
+            <Notice tone="warning">{sessionsOnlyNotice}</Notice>
           </div>
         )}
+        <p className={styles.sessionsLine}>
+          {activeSessionCount === 0
+            ? 'No session is running now; these are the heaviest recent ones.'
+            : `${activeSessionCount} ${activeSessionCount === 1 ? 'session is' : 'sessions are'} running now; the heaviest recent sessions are listed.`}
+          {sessionsWithoutTokens > 0 && ` ${sessionsWithoutTokens} more ${sessionsWithoutTokens === 1 ? 'has' : 'have'} no token count and ${sessionsWithoutTokens === 1 ? 'is' : 'are'} not listed.`}
+        </p>
         <DataTable
-          caption="Heaviest live sessions by tokens"
+          caption="Heaviest recent sessions by tokens"
           columns={sessionColumns}
           rows={sessions}
           rowKey={session => session.sessionId}
           maxHeight="none"
-          empty={<EmptyState title="No session load yet" description="Sessions with token usage appear here while they are live." />}
+          empty={<EmptyState title="No session with a token count" description="Sessions appear here once the gateway reports their tokens." />}
         />
       </>
     )

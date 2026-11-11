@@ -107,6 +107,25 @@ describe('Setup', () => {
     await act(async () => root.unmount())
   })
 
+  it('moves focus into the next step after Continue, and shows one state dot for the gateway only', async () => {
+    stubServer(() => json({ success: true }))
+    const { host, root } = await mount()
+    // Gateway, port and token: only the gateway is a state.
+    const valueOf = (label: string) =>
+      [...host.querySelectorAll('dt')].find((dt) => dt.textContent === label)?.nextElementSibling as HTMLElement
+    expect(valueOf('Gateway').querySelector('[data-state]')).not.toBeNull()
+    expect(valueOf('Port').querySelector('[data-state]')).toBeNull()
+    expect(valueOf('Token').querySelector('[data-state]')).toBeNull()
+    expect(document.activeElement).toBe(document.body)
+    await click(host, 'Continue')
+    const name = host.querySelector('[data-autofocus]') as HTMLInputElement
+    expect(name).not.toBeNull()
+    expect(document.activeElement).toBe(name)
+    await click(host, 'Back')
+    expect(document.activeElement).toBe(button(host, 'Continue'))
+    await act(async () => root.unmount())
+  })
+
   it('shows the gateway token as a password field with a show/hide control, and never fills it', async () => {
     stubServer(() => json({ success: true }))
     const { host, root } = await mount()

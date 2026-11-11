@@ -61,7 +61,7 @@ describe('UsageSummary', () => {
   it('says billing coverage is unavailable instead of showing tracked spend as zero', async () => {
     const host = await render({ trackedSpend: null })
     expect(host.textContent).toMatch(/Tracked spend.*not read/)
-    expect(host.textContent).toContain('Billing coverage not available')
+    expect(host.textContent).toContain('Billing not read')
     expect(host.textContent).not.toMatch(/Tracked spend\$0\.00/)
   })
 
@@ -149,7 +149,7 @@ describe('UsageSummary', () => {
     })
     const text = host.textContent ?? ''
     expect(text).toContain('Claude Code and Codex have incomplete records')
-    expect(text).toContain("The Platforms table above has each platform's note.")
+    expect(text).toContain('The Platforms table above says why, platform by platform.')
     expect(text.match(/This total is partial\./g)).toHaveLength(1)
     expect(host.querySelectorAll('[data-tone]')).toHaveLength(1)
     expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('info')

@@ -53,3 +53,34 @@ export const HEARTBEAT_INTERVAL = /^\d+(?:ms|s|m|h|d)$/
 export function heartbeatError(interval: string): string | null {
   return HEARTBEAT_INTERVAL.test(interval.trim()) ? null : 'Choose a duration such as 30m or 1h.'
 }
+
+export interface HeartbeatReading {
+  /** "30m", "1h"; null when none is configured. */
+  interval: string | null
+  /** The interval is zero: the server's "0m" turns the checks off. */
+  off: boolean
+  /** Plain words for the interval ("Every 30 minutes", "Every hour", "Off"); null when there is none. */
+  label: string | null
+}
+
+const UNIT_WORDS: Record<string, [string, string]> = {
+  ms: ['millisecond', 'milliseconds'],
+  s: ['second', 'seconds'],
+  m: ['minute', 'minutes'],
+  h: ['hour', 'hours'],
+  d: ['day', 'days'],
+}
+
+/**
+ * The configured heartbeat interval in words. `null`, an empty value or anything that is not a
+ * duration is "none" (never a made-up interval); a zero duration is "Off", not "Every 0 minutes".
+ */
+export function describeHeartbeat(value: unknown): HeartbeatReading {
+  const text = typeof value === 'string' ? value.trim() : ''
+  const match = /^(\d+)(ms|s|m|h|d)$/.exec(text)
+  if (!match) return { interval: null, off: false, label: null }
+  const amount = Number(match[1])
+  const [one, many] = UNIT_WORDS[match[2]]
+  if (amount === 0) return { interval: text, off: true, label: 'Off' }
+  return { interval: text, off: false, label: amount === 1 ? `Every ${one}` : `Every ${amount} ${many}` }
+}

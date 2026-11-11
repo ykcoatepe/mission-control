@@ -64,7 +64,9 @@ describe('ProvidersPanel', () => {
     expect(row[2]).toBe('2.4M')
     expect(row[3]).toBe('$816.90')
     expect(row[4]).toBe('$12.50')
-    expect(row[5]).toBe('Local usage records')
+    // A complete platform has no coverage line: the provider's own note is not shown.
+    expect(row[0]).toBe('Codex App and CLI')
+    expect(row).toHaveLength(5)
   })
 
   it('shows an unread provider as "Not read" with dashes, never 0', async () => {
@@ -75,7 +77,7 @@ describe('ProvidersPanel', () => {
     expect(row[1]).toContain('Not read')
     expect(row[1]).not.toContain('fresh')
     expect(row.slice(2, 5)).toEqual(['—', '—', '—'])
-    expect(row[5]).toContain('Usage has not been observed')
+    expect(row[0]).toContain('Could not be read, so it is left out of the totals.')
     expect(row.join(' ')).not.toMatch(/\$0|\b0\b/)
   })
 
@@ -118,7 +120,9 @@ describe('ProvidersPanel', () => {
     const [partial, stale] = cells(host)
     expect(partial[1]).toContain('Partial')
     expect(partial[1]).not.toContain('Ready')
-    expect(partial[5]).toBe('Claude log scan incomplete 99 lines skipped (99 oversized).')
+    // Plain words built from coverageReason and the counters, never the provider's note.
+    expect(partial[0]).toBe('Claude Code99 log lines were too large to read, so this figure may be low.')
+    expect(partial[0]).not.toContain('incomplete')
     expect(stale[1]).toContain('Stale')
     expect(stale[1]).toContain('stale')
   })

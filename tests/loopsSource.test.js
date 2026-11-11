@@ -143,7 +143,7 @@ test('Argus counter-example: restricted projects expose counts only and are neve
   const view = loopsView(data);
   const argus = view.projects.find((p) => p.id === 'argus-live');
   assert.deepEqual(argus, {
-    id: 'argus-live', restricted: true, restrictedBy: 'marker', openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3,
+    id: 'argus-live', restricted: true, restrictedBy: 'identity', openFindings: 3, pendingConfirmations: 4, overdueConfirmations: 3,
     operatorFindings: 2, operatorConfirmations: 3, worstSeverity: 'error', countsBasis: 'mloop-check',
   });
   const disguised = view.projects.find((p) => p.id === 'disguised');

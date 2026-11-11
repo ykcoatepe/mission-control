@@ -14,6 +14,7 @@ import {
   severityState,
   shortenHomePaths,
   sortConfirmations,
+  splitCommand,
 } from './lib'
 import type { Envelope, OpenProject, ProjectDetail } from './types'
 import styles from './ProjectDrawer.module.css'
@@ -82,7 +83,9 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                     </Mono>
                   </span>
                   <StatePill state={severityState(group.severity)} label={severityLabel(group.severity)} />
-                  <span className={styles.muted}>{group.findings.length}</span>
+                  <span className={styles.muted}>
+                    {group.findings.length} {group.findings.length === 1 ? 'finding' : 'findings'}
+                  </span>
                 </div>
                 <ul className={styles.list}>
                   {group.findings.map((finding, index) => (
@@ -96,7 +99,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                           {findingAge(finding.at, now)}
                         </span>
                       </div>
-                      {finding.detail && <p className={styles.detail}>{shortenHomePaths(finding.detail)}</p>}
+                      <TextWithCommand text={finding.detail} />
                     </li>
                   ))}
                 </ul>
@@ -133,7 +136,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                       {item.id && <Mono muted>{item.id}</Mono>}
                       <span className={styles.muted}>{confirmationKindLabel(item.kind)}</span>
                     </div>
-                    {item.verification && <p className={styles.detail}>{shortenHomePaths(item.verification)}</p>}
+                    <TextWithCommand text={item.verification} />
                   </li>
                 )
               })}
@@ -162,7 +165,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
                     {participant.alive ? (
                       <>
                         <StateDot state="healthy" />
-                        <span className={styles.muted}>alive</span>
+                        <span className={styles.muted}>Alive</span>
                       </>
                     ) : (
                       <StatePill state="warning" label="Not alive" />
@@ -182,6 +185,7 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
           <h3 id="attention-status" className={styles.heading}>
             Status text
           </h3>
+          <p className={styles.meta}>As written in the project status page.</p>
           {detailQuery.isLoading ? (
             <Skeleton lines={6} label="Loading status text" />
           ) : detail?.statusMarkdown ? (
@@ -194,5 +198,24 @@ export default function ProjectDrawer({ project, onClose, now }: ProjectDrawerPr
         </section>
       </div>
     </Drawer>
+  )
+}
+
+/**
+ * Ledger text as a plain sentence, with any command it carries in its own code block under it
+ * (never inline in the sentence).
+ */
+function TextWithCommand({ text }: { text: string | null | undefined }) {
+  if (!text) return null
+  const parts = splitCommand(text)
+  return (
+    <>
+      {parts.summary && <p className={styles.detail}>{parts.summary}</p>}
+      {parts.command && (
+        <pre className={styles.command}>
+          <code>{parts.command}</code>
+        </pre>
+      )}
+    </>
   )
 }

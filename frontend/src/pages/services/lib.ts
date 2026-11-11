@@ -200,12 +200,44 @@ export function endpointReading(endpoint: Endpoint | null | undefined): Endpoint
 
 // ---- verdict ----
 
-export interface Verdict {
+/** Where the gateway readings sit on this page (the reachability strip). */
+export const GATEWAY_READINGS_ID = 'gateway-readings'
+
+export interface VerdictLink {
+  /** `anchor`: a place on this page (`#id`); `route`: another screen. */
+  kind: 'anchor' | 'route'
+  to: string
+  label: string
+}
+
+/** One condition, in one short sentence. */
+export interface VerdictLine {
   state: UiState
-  /** The answer to the page's question, in words. */
   text: string
-  /** Quiet second line, or null. */
+  /** The system's own reason (from `/api/signals`), only on a line about a system warning. */
+  reason: string | null
+  /** Where that system can be looked at. */
+  link: VerdictLink | null
+}
+
+/** A calm remark that is not a fault: it never colours the verdict. */
+export interface VerdictNote {
+  text: string
+  /** The filter that lists the services it is about. */
+  filter: ServiceFilter
+  actionLabel: string
+}
+
+export interface Verdict {
+  /** The worst state among the lines. */
+  state: UiState
+  /** The first (most severe) line. */
+  text: string
+  /** Quiet extra line, or null. */
   detail: string | null
+  /** One line per condition, most severe first. */
+  lines: VerdictLine[]
+  note: VerdictNote | null
 }
 
 const ENDPOINTS = [
@@ -220,35 +252,66 @@ function joinNames(names: string[]): string {
   return names.length <= 2 ? names.join(' and ') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1)
-
 /** The shell's reading of the two gateways (`signals.systems`), when the page has it. */
-export type GatewaySystems = Partial<Record<'openclaw' | 'hermes', { state: string } | null | undefined>> | null | undefined
+export type GatewaySystems = Partial<
+  Record<'openclaw' | 'hermes', { state: string; reason?: string | null; detailHref?: string | null } | null | undefined>
+> | null | undefined
 
 const GATEWAY_NAME = { openclaw: 'OpenClaw', hermes: 'Hermes' } as const
+const GATEWAY_HREF = { openclaw: '/services', hermes: '/services' } as const
 
-/** Gateways the shell reports as warning or critical, in words ("OpenClaw is reporting a warning"). */
-function gatewayReports(systems: GatewaySystems): Array<{ name: string; state: 'warning' | 'critical' }> {
+/** The path of this page; a system whose detail lives here is shown by the reachability strip. */
+const SERVICES_PATH = '/services'
+
+/** An in-app path only; an external or malformed value is not followed. */
+function localPath(href: unknown): string | null {
+  return typeof href === 'string' && /^\/(?!\/)[^\s]*$/.test(href) ? href : null
+}
+
+function systemLink(id: 'openclaw' | 'hermes', detailHref: unknown): VerdictLink {
+  const path = localPath(detailHref) ?? GATEWAY_HREF[id]
+  if (path === SERVICES_PATH || path.startsWith(`${SERVICES_PATH}?`) || path.startsWith(`${SERVICES_PATH}#`)) {
+    return { kind: 'anchor', to: `#${GATEWAY_READINGS_ID}`, label: 'See the gateway readings' }
+  }
+  return { kind: 'route', to: path, label: 'See details' }
+}
+
+/** One line per gateway the shell reports as warning or critical, with its own reason and a link. */
+function systemLines(systems: GatewaySystems): VerdictLine[] {
   if (!systems) return []
-  const reports: Array<{ name: string; state: 'warning' | 'critical' }> = []
+  const lines: VerdictLine[] = []
   for (const id of ['openclaw', 'hermes'] as const) {
     const raw = systems[id]
     if (!raw || typeof raw.state !== 'string') continue
     const state = toUiState(raw.state)
-    if (state === 'warning' || state === 'critical') reports.push({ name: GATEWAY_NAME[id], state })
+    if (state !== 'warning' && state !== 'critical') continue
+    const reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason.trim() : null
+    lines.push({
+      state,
+      text: `${GATEWAY_NAME[id]} is reporting ${state === 'critical' ? 'a critical state' : 'a warning'}`,
+      reason,
+      link: systemLink(id, raw.detailHref),
+    })
   }
-  return reports
+  return lines
 }
 
+const LINE_RANK: Record<UiState, number> = { critical: 0, warning: 1, unavailable: 2, healthy: 3, inactive: 4 }
+
+const line = (state: UiState, text: string): VerdictLine => ({ state, text, reason: null, link: null })
+
 /**
- * The worst state in words. Down services and unreachable endpoints are red;
- * anything not read keeps the verdict grey. The verdict says only what was
- * observed: "No service is down" is not "everything is as expected", so a service
- * without a definition file (its kind is unknown) or a gateway the shell reports
- * as warning keeps the line amber and is named.
+ * The page's answer, one short sentence per condition, most severe first. It says only what was
+ * observed. "No service is down" is not "everything is as expected": a gateway the shell reports
+ * as warning has its own line with the system's reason and a link. Services without a definition
+ * file are a calm note (their kind is unknown, nothing is known to be wrong), never part of the
+ * state.
  */
 export function servicesVerdict(data: ServicesData | null | undefined, systems?: GatewaySystems): Verdict {
-  if (!data) return { state: 'unavailable', text: 'Services could not be read', detail: null }
+  if (!data) {
+    const text = 'Services could not be read'
+    return { state: 'unavailable', text, detail: null, lines: [line('unavailable', text)], note: null }
+  }
 
   const rows = Array.isArray(data.services) ? data.services : null
   // The server's tally: the page counts none of this itself.
@@ -257,66 +320,53 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
   // A state word the page does not know is "not read" (never healthy, never down).
   const unreadRows = rows ? rows.filter((row) => serviceStatus(row).state === 'unavailable').length : 0
   const unidentified = summary?.unidentified ?? 0
-  const reports = gatewayReports(systems)
 
   const endpoints = ENDPOINTS.map((entry) => ({ name: entry.name, reading: endpointReading(entry.pick(data)) }))
-  const endpointsDown = endpoints.filter((e) => e.reading.state === 'critical').map((e) => e.name)
-  const endpointsUnread = endpoints.filter((e) => e.reading.state === 'unavailable').map((e) => e.name)
-  const endpointsStale = endpoints.filter((e) => e.reading.state === 'warning').map((e) => e.name)
+  const named = (state: UiState) => endpoints.filter((e) => e.reading.state === state).map((e) => e.name)
+  const endpointsDown = named('critical')
+  const endpointsUnread = named('unavailable')
+  const endpointsStale = named('warning')
 
-  const detail = summary ? `${summary.running} running · ${summary.idle} idle` : null
+  const lines: VerdictLine[] = []
 
-  if (down > 0 || endpointsDown.length > 0) {
-    const parts: string[] = []
-    if (down > 0) parts.push(`${down} ${plural(down, 'service is', 'services are')} down`)
-    if (endpointsDown.length > 0) {
-      parts.push(`${joinNames(endpointsDown)} ${plural(endpointsDown.length, 'is', 'are')} not reachable`)
-    }
-    return { state: 'critical', text: capitalize(parts.join(' and ')), detail }
-  }
+  if (down > 0) lines.push(line('critical', `${down} ${plural(down, 'service is', 'services are')} down`))
+  else if (!rows) lines.push(line('unavailable', 'The service list could not be read'))
+  else if (!summary) lines.push(line('unavailable', 'The service summary could not be read'))
+  else if (summary.total === 0) lines.push(line('unavailable', 'No services were found'))
+  else if (unreadRows > 0) {
+    lines.push(line('unavailable', `${unreadRows} ${plural(unreadRows, 'service', 'services')} could not be read`))
+  } else lines.push(line('healthy', `No service is down (${summary.total} read)`))
 
-  if (!rows) {
-    return { state: 'unavailable', text: 'The service list could not be read', detail: null }
+  if (endpointsDown.length > 0) {
+    lines.push(line('critical', `${joinNames(endpointsDown)} ${plural(endpointsDown.length, 'is', 'are')} not reachable`))
   }
-  if (!summary) {
-    return { state: 'unavailable', text: 'The service summary could not be read', detail: null }
+  if (endpointsUnread.length > 0) {
+    lines.push(line('unavailable', `${joinNames(endpointsUnread)} could not be read`))
   }
-  if (summary.total === 0) {
-    return { state: 'unavailable', text: 'No services were found', detail: null }
-  }
-
-  const unread = [...endpointsUnread, ...endpointsStale]
-  if (unreadRows > 0 || unread.length > 0) {
-    const what = [
-      ...(unreadRows > 0 ? [`${unreadRows} ${plural(unreadRows, 'service', 'services')}`] : []),
-      ...unread,
-    ]
-    return {
-      state: endpointsStale.length > 0 && unreadRows === 0 && endpointsUnread.length === 0 ? 'warning' : 'unavailable',
-      text: `No service is down, but ${joinNames(what)} could not be fully read`,
-      detail,
-    }
-  }
-
-  const caveats: string[] = []
-  if (unidentified > 0) {
-    caveats.push(
-      `${unidentified} ${plural(unidentified, 'service has', 'services have')} no definition file, so ${plural(unidentified, 'its', 'their')} kind is unknown`,
+  if (endpointsStale.length > 0) {
+    lines.push(
+      line('warning', `${joinNames(endpointsStale)} ${plural(endpointsStale.length, 'has', 'have')} not reported recently`),
     )
   }
-  if (reports.length > 0) {
-    const critical = reports.filter((report) => report.state === 'critical').map((report) => report.name)
-    const warning = reports.filter((report) => report.state === 'warning').map((report) => report.name)
-    if (critical.length > 0) caveats.push(`${joinNames(critical)} ${plural(critical.length, 'is', 'are')} reporting a critical state`)
-    if (warning.length > 0) caveats.push(`${joinNames(warning)} ${plural(warning.length, 'is', 'are')} reporting a warning`)
-  }
-  if (caveats.length > 0) {
-    return {
-      state: reports.some((report) => report.state === 'critical') ? 'critical' : 'warning',
-      text: `No service is down, but ${joinNames(caveats)}`,
-      detail,
-    }
-  }
+  lines.push(...systemLines(systems))
 
-  return { state: 'healthy', text: `No service is down (${summary.total} read)`, detail }
+  // Array.prototype.sort is stable: lines of one severity keep the order above.
+  lines.sort((a, b) => LINE_RANK[a.state] - LINE_RANK[b.state])
+
+  const note: VerdictNote | null =
+    unidentified > 0
+      ? {
+          text: `${unidentified} ${plural(unidentified, 'service has', 'services have')} no definition file, so ${plural(unidentified, 'its', 'their')} kind is unknown.`,
+          filter: 'unidentified',
+          actionLabel: 'Show them',
+        }
+      : null
+
+  return {
+    state: lines[0].state,
+    text: lines[0].text,
+    detail: summary ? `${summary.running} running · ${summary.idle} idle` : null,
+    lines,
+    note,
+  }
 }

@@ -26,6 +26,7 @@ function stubServer(heartbeat: string | null, heartbeatSource: Source, subagentS
       }
       if (url === '/api/models') return json([{ id: 'a/b', name: 'A B' }])
       if (url === '/api/settings/model-routing') return json({ main: 'a/b', subagent, heartbeat, mainSource: 'set', subagentSource, heartbeatSource })
+      if (url === '/api/settings/heartbeat') return json({ interval: '30m' })
       if (url === '/api/settings') return json({ gateway_port: 18789, system: {} })
       return json({ error: { code: 'not_found', message: 'No API route' } }, 404)
     }),

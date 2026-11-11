@@ -61,7 +61,11 @@ export function buildSetupPayload(input: { name: string; token: string }): Setup
 export interface DetectedLine {
   label: string
   value: string
-  state: UiState
+  /**
+   * Set only on the line that is a health state (is the gateway running). A port, a version
+   * or "a token is configured" is a fact, not a state, and carries none.
+   */
+  state: UiState | null
 }
 
 /**
@@ -80,15 +84,15 @@ export function gatewayLines(status: SetupStatus | null | undefined): DetectedLi
     {
       label: 'Port',
       value: status.gatewayPort === null || status.gatewayPort === undefined ? 'Not read' : String(status.gatewayPort),
-      state: status.gatewayPort === null || status.gatewayPort === undefined ? 'unavailable' : 'healthy',
+      state: null,
     },
   ]
-  if (status.gatewayVersion) lines.push({ label: 'Version', value: status.gatewayVersion, state: 'healthy' })
+  if (status.gatewayVersion) lines.push({ label: 'Version', value: status.gatewayVersion, state: null })
   const configured = status.detectedConfig?.gatewayTokenConfigured
   lines.push({
     label: 'Token',
     value: configured === true ? 'Configured locally' : configured === false ? 'Not configured' : 'Not read',
-    state: configured === true ? 'healthy' : configured === false ? 'warning' : 'unavailable',
+    state: null,
   })
   return lines
 }

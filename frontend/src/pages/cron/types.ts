@@ -2,6 +2,8 @@ export type CronScheduler = 'openclaw' | 'hermes'
 
 export interface CronHistoryEntry {
   status?: string
+  /** Why a run failed, when the scheduler recorded a reason. */
+  error?: string | null
 }
 
 export interface CronJobActions {
@@ -34,6 +36,8 @@ export interface CronJob {
   thinking?: string
   description: string
   history: CronHistoryEntry[]
+  /** Why the last run failed, when the API reports it. Absent today: only run history can carry a reason. */
+  lastError?: string | null
 }
 
 /** GET /api/cron `summary`: `active` counts every enabled job, failed ones included. */
@@ -46,9 +50,32 @@ export interface CronSummary {
   definitions?: { active?: string; failed?: string }
 }
 
+/** One scheduler's proof in GET /api/cron `schedulers`. A scheduler that was not read has `sourceSucceeded: false` and no jobs in the list. */
+export interface CronSchedulerProof {
+  sourceSucceeded?: boolean
+  provenance?: string
+  /** When this reading was taken. null when the scheduler has never been read. */
+  observedAt?: string | null
+  /** The jobs come from the last good reading, older than the scheduler's fresh window. */
+  stale?: boolean
+  staleAgeMs?: number
+  cacheAgeMs?: number
+}
+
+/** GET /api/cron `meta`: how good the whole reading is. `ok: false` with `stale: true` means a scheduler is missing or cached. */
+export interface CronMeta {
+  ok?: boolean
+  stale?: boolean
+  observedAt?: string | null
+  ageMs?: number | null
+  error?: { code?: string; message?: string } | null
+}
+
 export interface CronApiResponse {
   jobs?: CronJob[]
   summary?: CronSummary
+  schedulers?: Partial<Record<CronScheduler, CronSchedulerProof>>
+  meta?: CronMeta
 }
 
 export interface CronModelResponse {

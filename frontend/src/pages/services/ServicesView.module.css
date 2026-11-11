@@ -1,17 +1,31 @@
 .verdict {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-1);
+  gap: var(--sp-2);
+}
+
+.verdictLines {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .verdictLine {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--sp-3);
   color: var(--text-1);
-  font-size: var(--fs-h3);
+  font-size: var(--fs-lead);
   font-weight: var(--fw-semibold);
   line-height: var(--lh-tight);
+}
+
+.verdictLine > :first-child {
+  flex: none;
+  align-self: center;
 }
 
 .verdictLine[data-state='critical'] {
@@ -22,11 +36,46 @@
   color: var(--state-warning);
 }
 
+.verdictBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.verdictReason {
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-body);
+}
+
+.link {
+  color: var(--accent);
+  white-space: nowrap;
+}
+
 .verdictDetail {
   padding-left: var(--sp-5);
   color: var(--text-3);
   font-size: var(--fs-small);
   font-variant-numeric: tabular-nums;
+}
+
+/* A remark, not a fault: quiet text with a way to list the services it is about. */
+.verdictNote {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  padding-left: var(--sp-5);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.readings {
+  min-width: 0;
+  scroll-margin-top: var(--sp-4);
 }
 
 .toolbar {
@@ -54,12 +103,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+.service {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
 .kind {
   display: inline-flex;
   align-items: baseline;
   flex-wrap: wrap;
   column-gap: var(--sp-2);
-  /* Break between the word and its schedule, never inside "Interval". */
+  /* Break between the word and its schedule, never inside "Interval" or "Unidentified". */
   overflow-wrap: normal;
   word-break: normal;
   white-space: nowrap;
@@ -69,12 +125,15 @@
   color: var(--text-3);
 }
 
+/* The note for a service: its own line under the name, wrapping inside the cell. */
 .hint {
   display: block;
-  min-width: 200px;
-  max-width: 480px;
+  max-width: 44ch;
   color: var(--text-2);
+  font-family: var(--font-sans);
   font-size: var(--fs-small);
+  overflow-wrap: break-word;
+  white-space: normal;
 }
 
 @media (max-width: 700px) {
@@ -87,8 +146,18 @@
     margin-left: 0;
   }
 
-  .verdictDetail {
+  .verdictDetail,
+  .verdictNote {
     padding-left: 0;
+  }
+
+  .hint {
+    max-width: none;
+    text-align: end;
+  }
+
+  .service {
+    align-items: flex-end;
   }
 }
 

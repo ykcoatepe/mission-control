@@ -199,9 +199,14 @@ export interface CodexBarCostData {
 export interface SessionData {
   key: string
   model: string
-  totalTokens: number
-  updatedAt: string | null
+  /** Null when the gateway has no token count for the session: it is left out, never counted as 0. */
+  totalTokens: number | null
+  updatedAt: string | number | null
   displayName?: string
+  label?: string | null
+  agentId?: string | null
+  /** Whether the session is running now. Absent means unknown, which is not "active". */
+  isActive?: boolean
 }
 
 /** The only parts of GET /api/config the Usage page reads (`modules.aws`, `aws.enabled`). */
@@ -213,7 +218,12 @@ export interface ConfigData {
 }
 
 export interface ChartSeriesItem {
+  /** Display name: one per model, never shared by two models. */
   model: string
+  /** Stable model id the colour is remembered by (platform and routing removed). */
+  identity: string
+  /** The "Other models" bucket: it has the reserved colour and no identity of its own. */
+  isOther?: boolean
   key: string
   color: string
   totalCost: number
@@ -232,6 +242,8 @@ export interface ChartDataRow {
 export interface AggregatedBreakdownItem {
   name: string
   rawNames: string[]
+  /** Platforms that ran this model, when the usage key named one. */
+  platforms: string[]
   tokens: number
   /** Tracked (billed) spend; null when billing for any variant of this model is unknown. */
   cost: number | null

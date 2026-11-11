@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { Notice, Stat, StatRow } from '../../components/ui'
 import type { UiState } from '../../lib/state'
-import { calculateTrend, formatCompactTokenValue, formatCurrency, formatTokens, NO_PROVIDER_ISSUES, providerCoverageSentences } from './lib'
+import { BILLING_NOT_READ, calculateTrend, formatCompactTokenValue, formatCurrency, formatTokens, NO_PROVIDER_ISSUES, providerCoverageSentences } from './lib'
 import type { ProviderCoverage } from './lib'
 import styles from './UsageSummary.module.css'
 
@@ -21,6 +21,15 @@ export interface UsageSummaryProps {
   projection: number | null
   /** A finished month is a total, not a projection: the projection stat is omitted. */
   completePeriod: boolean
+  /**
+   * False while the period is part-way and the previous one is whole (Day): the headline then says
+   * "so far" and gives the previous total without a percentage. Default true.
+   */
+  likeForLike?: boolean
+  /** False in Day view: an average per day of one part-way day is not a pace. Default true. */
+  showPace?: boolean
+  /** Why no projection is shown (part-way day, first days of a month); null when it may be. */
+  projectionWithheld?: string | null
   /** Billed / tracked spend for the period; null when billing coverage is unavailable. */
   trackedSpend: number | null
   trackedNote: string | null
@@ -98,6 +107,9 @@ export default function UsageSummary({
   dailyPace,
   projection,
   completePeriod,
+  likeForLike = true,
+  showPace = true,
+  projectionWithheld = null,
   trackedSpend,
   trackedNote,
   periodTokens,
@@ -109,9 +121,14 @@ export default function UsageSummary({
 }: UsageSummaryProps) {
   const isEstimate = mode === 'api-equivalent'
   const trendLine = trendText(trend)
-  const headlineHint = previousPeriodCost === null
+  const comparisonHint = previousPeriodCost === null
     ? 'No previous period to compare'
-    : `${trendLine ? `${trendLine} ` : ''}${compareLabel} (${formatCurrency(previousPeriodCost)})`
+    : likeForLike
+      ? `${trendLine ? `${trendLine} ` : ''}${compareLabel} (${formatCurrency(previousPeriodCost)})`
+      : `${periodName} so far, not compared with the whole previous day (${formatCurrency(previousPeriodCost)})`
+  // With no pace stat (Day), the reason for the missing projection goes under the headline instead.
+  const headlineHint = !showPace && projectionWithheld ? `${comparisonHint}. ${projectionWithheld}` : comparisonHint
+  const paceHint = projectionWithheld && !completePeriod ? `Average per day. ${projectionWithheld}` : 'Average per day'
   const notice = isEstimate ? estimateNotice(reliability, platformCoverage) : null
 
   return (
@@ -124,12 +141,14 @@ export default function UsageSummary({
           value={periodCost === null ? null : <span className={styles.headlineValue}>{formatCurrency(periodCost)}</span>}
           hint={periodCost === null ? undefined : headlineHint}
         />
-        <Stat
-          label="Daily pace"
-          value={dailyPace === null ? null : formatCurrency(dailyPace)}
-          hint="Average per day"
-        />
-        {!completePeriod && (
+        {showPace && (
+          <Stat
+            label="Daily pace"
+            value={dailyPace === null ? null : formatCurrency(dailyPace)}
+            hint={paceHint}
+          />
+        )}
+        {!completePeriod && projectionWithheld === null && (
           <Stat
             label="Projection"
             value={projection === null ? null : formatCurrency(projection)}
@@ -140,7 +159,7 @@ export default function UsageSummary({
           <Stat
             label="Tracked spend"
             value={trackedSpend === null ? null : formatCurrency(trackedSpend)}
-            hint={trackedSpend === null ? 'Billing coverage not available' : trackedNote ?? 'From billing data'}
+            hint={trackedSpend === null ? BILLING_NOT_READ : trackedNote ?? 'From billing data'}
           />
         )}
         <Stat

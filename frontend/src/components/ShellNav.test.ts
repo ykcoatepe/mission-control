@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
@@ -102,7 +104,7 @@ describe('mobile navigation drawer', () => {
 })
 
 describe('one attention number', () => {
-  it('shows the same count and words in the top-bar pill and the sidebar badge, with the breakdown as secondary text', async () => {
+  it('shows the count once in words (top-bar pill, with the breakdown) and as a bare number in the sidebar badge', async () => {
     stubShell(false)
     const { host, root } = await mount(
       createElement('div', null, createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }), createElement(Sidebar, { collapsed: false, onToggleCollapsed: () => undefined, open: false, onClose: () => undefined })),
@@ -112,7 +114,9 @@ describe('one attention number', () => {
     const badge = [...host.querySelectorAll('nav a[href="/attention"]')].map((a) => a.textContent ?? '').join(' ')
     expect(badge).toContain('30')
     expect(badge).toContain('need attention')
-    expect(badge).toContain('3 systems · 2 findings · 4 overdue · 21 restricted')
+    // The sidebar badge is the number only: the breakdown belongs to the top-bar pill.
+    expect(badge).not.toContain('systems')
+    expect(host.querySelector('nav a[href="/attention"] [title]')).toBeNull()
     // The loops signal's overdue count (24) is a different number and must not stand in for the attention count.
     expect(badge).not.toContain('24')
     await act(async () => root.unmount())
@@ -124,7 +128,7 @@ describe('one attention number', () => {
       createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }),
     )
     const gbrain = host.querySelector('ul[aria-label="Systems"] a[href="/gbrain"]') as HTMLAnchorElement
-    expect(gbrain.getAttribute('title')).toBe('GBrain: warning. Embed-job probe unavailable.')
+    expect(gbrain.getAttribute('title')).toBe('GBrain: warning. Embed-job could not be read.')
     // "/work" is a removed screen: the link falls back to the Services page instead of redirecting home.
     const hermes = [...host.querySelectorAll('ul[aria-label="Systems"] a')].find((a) => a.textContent?.includes('Hermes')) as HTMLAnchorElement
     expect(hermes.getAttribute('href')).toBe('/services')
@@ -138,5 +142,92 @@ describe('one attention number', () => {
     const h1 = host.querySelector('h1') as HTMLHeadingElement
     expect(h1.getAttribute('title')).toBe(h1.textContent)
     await act(async () => root.unmount())
+  })
+})
+
+function stubSignals(signals: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: string) => {
+      const url = new URL(input, 'http://localhost').pathname
+      return url === '/api/signals' ? json(signals) : json({})
+    }),
+  )
+  vi.stubGlobal(
+    'matchMedia',
+    (query: string) => ({ matches: false, media: query, addEventListener: () => undefined, removeEventListener: () => undefined }) as unknown as MediaQueryList,
+  )
+}
+
+describe('an unread count is not quiet', () => {
+  const unreadSignals = {
+    data: { ...SIGNALS.data, attention: null, automations: null, services: { down: null }, systems: { gbrain: null, hermes: null, openclaw: null } },
+    meta: SIGNALS.meta,
+  }
+
+  it('shows a grey "not read" pill in the top bar instead of hiding the attention count', async () => {
+    stubSignals(unreadSignals)
+    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
+    const pill = host.querySelector('a[href="/attention"]') as HTMLAnchorElement
+    expect(pill).not.toBeNull()
+    expect(pill.getAttribute('aria-label')).toBe('Attention not read')
+    expect(pill.getAttribute('data-state')).toBe('unavailable')
+    expect(pill.textContent).not.toMatch(/\b0\b/)
+    await act(async () => root.unmount())
+  })
+
+  it('marks the sidebar items whose count was not read, without a number', async () => {
+    stubSignals(unreadSignals)
+    const { host, root } = await mount(
+      createElement(Sidebar, { collapsed: false, onToggleCollapsed: () => undefined, open: false, onClose: () => undefined }),
+    )
+    for (const path of ['/attention', '/automations', '/services']) {
+      const link = host.querySelector(`nav a[href="${path}"]`) as HTMLAnchorElement
+      expect(link.querySelector('[data-tone="unread"]')).not.toBeNull()
+      expect(link.textContent).toContain('count not read')
+      expect(link.textContent).not.toMatch(/\d/)
+    }
+    await act(async () => root.unmount())
+  })
+
+  it('shows neither a pill nor a marker for a real zero', async () => {
+    stubSignals({ data: { ...SIGNALS.data, attention: { count: 0, worst: null }, services: { down: 0 } }, meta: SIGNALS.meta })
+    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
+    expect(host.querySelector('a[href="/attention"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+})
+
+describe('top bar data age', () => {
+  it('names the shell signals in its tooltip so it does not contradict a page freshness', async () => {
+    stubShell(false)
+    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
+    const age = host.querySelector('[title^="Signals updated"]') as HTMLElement
+    expect(age).not.toBeNull()
+    expect(age.textContent).toMatch(/^Updated /)
+    const refresh = host.querySelector('button[aria-label="Refresh data"]') as HTMLButtonElement
+    expect(refresh.getAttribute('title')).toMatch(/^Refresh data\. Signals updated /)
+    await act(async () => root.unmount())
+  })
+})
+
+describe('top bar layout contract', () => {
+  // jsdom cannot measure layout. The four widths (1100, 1280, 1440, 1680) were measured in headless Chrome;
+  // this keeps the rules that make the title survive from being edited away.
+  const css = readFileSync(join(__dirname, 'TopBar.module.css'), 'utf8')
+
+  it('keeps the page title at its content width and makes the bar a size container', () => {
+    const title = css.slice(css.indexOf('.title {'), css.indexOf('}', css.indexOf('.title {')))
+    expect(title).toMatch(/flex:\s*0 0 auto/)
+    expect(css.slice(css.indexOf('.bar {'), css.indexOf('}', css.indexOf('.bar {')))).toMatch(/container-type:\s*inline-size/)
+  })
+
+  it('yields in a fixed order as the bar narrows: age, breakdown, words, annunciators, search, systems menu', () => {
+    const steps = [...css.matchAll(/@container \(max-width: (\d+)px\)\s*{([^]*?)\n}\n/g)].map((match) => ({ width: Number(match[1]), body: match[2] }))
+    const find = (needle: RegExp) => steps.find((step) => needle.test(step.body))?.width ?? 0
+    const order = [find(/\.ageText/), find(/\.attentionSecondary/), find(/\.attentionWords/), find(/\.annName/), find(/\.paletteText/), find(/\.systemsMenu/)]
+    expect(order.every((width) => width > 0)).toBe(true)
+    expect([...order].sort((a, b) => b - a)).toEqual(order)
+    expect(new Set(order).size).toBe(order.length)
   })
 })

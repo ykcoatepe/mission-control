@@ -80,7 +80,7 @@ describe('JobsView summary', () => {
     expect(strip.textContent).toContain('Active3')
     expect(strip.textContent).toContain('Paused2')
     expect(strip.textContent).toContain('Failed1')
-    expect(strip.textContent).toContain('1 failed last run')
+    expect(strip.textContent).not.toContain('failed last run')
     await act(async () => byText('Active')?.click())
     expect(rowNames()).toHaveLength(3)
     await act(async () => root.unmount())
@@ -171,6 +171,124 @@ describe('JobsView drawer wording', () => {
     const drawer = document.querySelector('[role="dialog"]') as HTMLElement
     expect(drawer.textContent).toContain('Interval not reported')
     expect(drawer.textContent).toContain('Agent task in its own session')
+    await act(async () => root.unmount())
+  })
+})
+
+describe('JobsView with a scheduler that could not be read', () => {
+  const GOOD = { sourceSucceeded: true, observedAt: new Date().toISOString() }
+  const UNREAD = { sourceSucceeded: false, observedAt: null }
+  const hermesOnly = jobs.filter((j) => j.scheduler === 'hermes')
+  const strip = () => (document.querySelector('[aria-label="Automations summary"]') as HTMLElement).textContent ?? ''
+
+  it('both read: numbers and counts show, no notice', async () => {
+    stub({ jobs, summary, schedulers: { openclaw: GOOD, hermes: GOOD }, meta: { ok: true, stale: false, error: null } })
+    const root = await mount()
+    expect(strip()).toContain('Failed1')
+    expect(text()).not.toContain('could not be read')
+    expect(byText('OpenClaw')?.textContent).toContain('3')
+    await act(async () => root.unmount())
+  })
+
+  it('OpenClaw unread: warns, shows dashes instead of 0, and OpenClaw has no count', async () => {
+    stub({
+      jobs: hermesOnly,
+      summary: { active: 0, paused: 2, failed: 0, nextRunAt: null },
+      schedulers: { openclaw: UNREAD, hermes: GOOD },
+      meta: { ok: false, stale: true, error: { code: 'scheduler_stale', message: 'One or more scheduler readings are unavailable or cached' } },
+    })
+    const root = await mount()
+    expect(text()).toContain('OpenClaw could not be read')
+    expect(strip()).toContain('Failed—')
+    expect(strip()).not.toContain('Failed0')
+    expect(strip()).toContain('Active—')
+    expect(strip()).toContain('OpenClaw not read')
+    const chip = byText('OpenClaw')!
+    expect(chip.textContent).toContain('not read')
+    expect(chip.textContent).not.toMatch(/\d/)
+    expect(byText('Failed')?.textContent).not.toMatch(/\d/)
+    expect(byText('Hermes')?.textContent).toContain('2')
+    await act(async () => root.unmount())
+  })
+
+  it('OpenClaw filter on an unread scheduler says it was not read, not that nothing matches', async () => {
+    stub({ jobs: hermesOnly, summary, schedulers: { openclaw: UNREAD, hermes: GOOD }, meta: { ok: false, stale: true } })
+    const root = await mount('/?scheduler=openclaw')
+    expect(text()).toContain('OpenClaw was not read')
+    expect(text()).not.toContain('No jobs match')
+    await act(async () => root.unmount())
+  })
+
+  it('Hermes unread names Hermes', async () => {
+    stub({
+      jobs: jobs.filter((j) => j.scheduler === 'openclaw'),
+      summary,
+      schedulers: { openclaw: GOOD, hermes: UNREAD },
+      meta: { ok: false, stale: true },
+    })
+    const root = await mount()
+    expect(text()).toContain('Hermes could not be read')
+    expect(strip()).toContain('Hermes not read')
+    expect(strip()).not.toContain('OpenClaw not read')
+    await act(async () => root.unmount())
+  })
+
+  it('both unread: no list, an explicit not-read state, no create call to action', async () => {
+    stub({ jobs: [], summary: { active: 0, paused: 0, failed: 0, nextRunAt: null }, schedulers: { openclaw: UNREAD, hermes: UNREAD }, meta: { ok: false, stale: true } })
+    const root = await mount()
+    expect(text()).toContain('OpenClaw could not be read')
+    expect(text()).toContain('Hermes could not be read')
+    expect(text()).toContain('Automations were not read')
+    expect(text()).not.toContain('No automations yet')
+    expect(strip()).not.toMatch(/(Active|Paused|Failed)0/)
+    await act(async () => root.unmount())
+  })
+
+  it('stale but served: keeps the rows and the numbers, and warns', async () => {
+    const stale = { sourceSucceeded: true, stale: true, staleAgeMs: 420_000, observedAt: new Date(Date.now() - 420_000).toISOString() }
+    stub({ jobs, summary, schedulers: { openclaw: stale, hermes: GOOD }, meta: { ok: false, stale: true } })
+    const root = await mount()
+    expect(text()).toContain('OpenClaw jobs are from an older reading')
+    expect(strip()).toContain('Failed1')
+    expect(rowNames()).toHaveLength(5)
+    await act(async () => root.unmount())
+  })
+})
+
+describe('JobsView drawer details', () => {
+  it('a failed job says why when the API gives a reason, and says so when it does not', async () => {
+    stub({ jobs: [job({ id: 'bad', status: 'failed', lastError: 'Gateway timeout' }), job({ id: 'bad2', status: 'failed' })], summary })
+    let root = await mount('/?job=bad')
+    expect((document.querySelector('[role="dialog"]') as HTMLElement).textContent).toContain('Gateway timeout')
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+    root = await mount('/?job=bad2')
+    const drawer = (document.querySelector('[role="dialog"]') as HTMLElement).textContent
+    expect(drawer).toContain('Why it failed')
+    expect(drawer).toContain('No reason reported')
+    await act(async () => root.unmount())
+  })
+
+  it('a description cut by the list ends with an ellipsis', async () => {
+    stub({ jobs: [job({ id: 'long', description: 'x'.repeat(120) }), job({ id: 'short', description: 'Short one' })], summary })
+    let root = await mount('/?job=long')
+    expect((document.querySelector('[aria-label="Description"]') as HTMLElement).textContent).toContain('x…')
+    await act(async () => root.unmount())
+    document.body.innerHTML = ''
+    root = await mount('/?job=short')
+    expect((document.querySelector('[aria-label="Description"]') as HTMLElement).textContent).not.toContain('…')
+    await act(async () => root.unmount())
+  })
+
+  it('focus returns to the button that opened a confirmation from the drawer', async () => {
+    stub()
+    const root = await mount('/?job=ok-job')
+    const drawerRun = document.querySelector('[data-return-focus="run"]') as HTMLButtonElement
+    await act(async () => drawerRun.click())
+    const cancel = [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === 'Cancel') as HTMLButtonElement
+    await act(async () => cancel.click())
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    expect(document.activeElement).toBe(document.querySelector('[data-return-focus="run"]'))
     await act(async () => root.unmount())
   })
 })

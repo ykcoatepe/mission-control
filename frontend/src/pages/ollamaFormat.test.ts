@@ -55,9 +55,9 @@ describe('token usage above the models table', () => {
   it('states only what the rows show, and says where the rest comes from', () => {
     expect(describeTokenUsage({ listed: 4_200, other: 0 }, 'This month')).toBe('4.20K tokens across these models · this month')
     expect(describeTokenUsage({ listed: 0, other: 45_220 }, 'This month')).toBe(
-      'No token usage recorded for these models · 45.2K more by local endpoints not in this list · this month',
+      'No tokens recorded for these models · 45.2K more from local models not listed here · this month',
     )
-    expect(describeTokenUsage({ listed: 0, other: 0 }, 'Today')).toBe('No token usage recorded for these models · today')
+    expect(describeTokenUsage({ listed: 0, other: 0 }, 'Today')).toBe('No tokens recorded for these models · today')
   })
 })
 
@@ -83,9 +83,9 @@ describe('local token usage comes from isLocal, not from names', () => {
 
   it('says how many rows were left out for unknown locality', () => {
     expect(describeTokenUsage({ listed: 0, other: 45_220 }, 'This month', 2)).toBe(
-      'No token usage recorded for these models · 45.2K more by local endpoints not in this list · 2 usage rows have no recorded locality and are not counted · this month',
+      'No tokens recorded for these models · 45.2K more from local models not listed here · 2 usage entries not counted: it is not known whether they ran locally · this month',
     )
-    expect(describeTokenUsage({ listed: 1_000, other: 0 }, 'Today', 1)).toContain('1 usage row has no recorded locality and is not counted')
+    expect(describeTokenUsage({ listed: 1_000, other: 0 }, 'Today', 1)).toContain('1 usage entry not counted: it is not known whether it ran locally')
     expect(describeTokenUsage({ listed: 1_000, other: 0 }, 'Today')).not.toContain('locality')
   })
 

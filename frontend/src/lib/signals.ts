@@ -1,6 +1,6 @@
 import { stateLabel, toUiState } from './state'
 import type { UiState } from './state'
-import { parseTime } from './time'
+import { formatRelative, parseTime } from './time'
 
 /**
  * The shell's small readings: `GET /api/signals` (docs/explanation-backend-redesign.md).
@@ -138,6 +138,25 @@ export interface AnnunciatorOptions {
 
 const NOT_READ = { state: 'unavailable', word: 'not read' } as const
 
+/** Keep the capital when a replaced word starts a sentence: "Evidence" -> "Reading". */
+function matchCase(source: string, replacement: string): string {
+  return source.charAt(0) === source.charAt(0).toUpperCase() && source.charAt(0) !== source.charAt(0).toLowerCase()
+    ? replacement.charAt(0).toUpperCase() + replacement.slice(1)
+    : replacement
+}
+
+/**
+ * The server's reason for a lit system is written for engineers ("status evidence is unavailable",
+ * "probe unavailable"). The tooltip says it the way an operator would (docs/reference-design-system.md, section 6):
+ * evidence / proof -> reading, "probe unavailable" -> "could not be read". Everything else passes through.
+ */
+export function plainReason(reason: string): string {
+  return reason
+    .replace(/\b(status|state|health|embed-job|job)\s+(?:evidence|proof)\s+(?:is|are)\s+(?:unavailable|missing|not available)\b/gi, '$1 could not be read')
+    .replace(/\bprobe\s+(?:is\s+|are\s+)?(?:unavailable|not available|missing)\b/gi, 'could not be read')
+    .replace(/\b(?:evidence|proof)s?\b/gi, (word) => matchCase(word, 'reading'))
+}
+
 function systemReading(
   system: SystemSignal | null | undefined,
   { now, stale }: Pick<AnnunciatorOptions, 'now' | 'stale'>,
@@ -170,7 +189,7 @@ export function annunciators(signals: SignalsData | null | undefined, options: A
       state: reading.state,
       word: reading.word,
       lit: reading.state !== 'healthy',
-      reason: reading.state !== 'healthy' && typeof reason === 'string' && reason.trim() ? reason.trim() : null,
+      reason: reading.state !== 'healthy' && typeof reason === 'string' && reason.trim() ? plainReason(reason.trim()) : null,
     }
   })
 }
@@ -270,15 +289,50 @@ export function attentionPill(signals: SignalsData | null | undefined): Attentio
   }
 }
 
+/**
+ * Signals arrived (or the request failed with nothing to show) but the attention count was not read.
+ * A pill that simply vanished would read as "nothing needs attention", so the shell shows a grey
+ * "not read" marker instead. Still loading is not unread.
+ */
+export function attentionUnread(signals: SignalsData | null | undefined, options: { loading: boolean }): boolean {
+  if (!signals) return !options.loading
+  const reading = attentionReading(signals)
+  return reading === null || reading.count === null
+}
+
+export const ATTENTION_NOT_READ = 'Attention not read'
+
+// ---- data age of the signals reading ----
+
+export interface SignalsAge {
+  /** The short visible text: "Updated 2m ago", "Reading…", "Not read". */
+  text: string
+  /** The tooltip. It names the signals so it does not contradict a page's own freshness. */
+  title: string
+}
+
+/** The top bar's data age. It is the age of the shell signals, not of the page being shown. */
+export function signalsAge(observedAt: string | null | undefined, now: number, loading: boolean): SignalsAge {
+  const ms = parseTime(observedAt)
+  if (ms === null) {
+    return loading
+      ? { text: 'Reading…', title: 'Reading the shell signals…' }
+      : { text: 'Not read', title: 'The shell signals (systems, attention count) could not be read.' }
+  }
+  const ago = formatRelative(ms, now)
+  return {
+    text: `Updated ${ago}`,
+    title: `Signals updated ${ago} (${new Date(ms).toLocaleString()}). This is the shell reading: the systems and the attention count. Each page shows its own freshness.`,
+  }
+}
+
 // ---- sidebar badges ----
 
 export interface NavBadge {
   count: number
   tone: 'warning' | 'critical'
-  /** Spoken after the count: "need attention", "failed". */
+  /** Spoken after the count: "need attention", "failed". The badge shows the number only. */
   word: string
-  /** Secondary text for the tooltip: the breakdown of the count. */
-  secondary?: string | null
 }
 
 /** Abnormal-only counts by route path. A path with no entry shows no badge. */
@@ -289,20 +343,34 @@ export function navBadges(signals: SignalsData | null | undefined): Record<strin
   const failed = countOrNull(signals.automations?.failed)
   if (failed !== null && failed > 0) badges['/automations'] = { count: failed, tone: 'critical', word: 'failed' }
 
-  // The same number and words as the top-bar pill.
+  // The same number as the top-bar pill. The pill carries the breakdown; the badge is the number only.
   const pill = attentionPill(signals)
   if (pill) {
     const tone = pill.state === 'critical' ? 'critical' : 'warning'
-    badges['/attention'] = {
-      count: pill.count,
-      tone,
-      word: pill.text.replace(/^\d+ /, ''),
-      secondary: pill.secondary,
-    }
+    badges['/attention'] = { count: pill.count, tone, word: pill.text.replace(/^\d+ /, '') }
   }
 
   const down = countOrNull(signals.services?.down)
   if (down !== null && down > 0) badges['/services'] = { count: down, tone: 'critical', word: 'down' }
 
   return badges
+}
+
+/**
+ * Routes whose badge count could not be read. A missing badge means "nothing abnormal", so an unread
+ * count gets its own grey marker instead of silence. Before the first load nothing is unread yet.
+ */
+export function navUnread(signals: SignalsData | null | undefined, options: { loading: boolean }): Record<string, true | undefined> {
+  const unread: Record<string, true | undefined> = {}
+  if (!signals) {
+    if (options.loading) return unread
+    unread['/attention'] = true
+    unread['/automations'] = true
+    unread['/services'] = true
+    return unread
+  }
+  if (attentionUnread(signals, options)) unread['/attention'] = true
+  if (countOrNull(signals.automations?.failed) === null) unread['/automations'] = true
+  if (countOrNull(signals.services?.down) === null) unread['/services'] = true
+  return unread
 }

@@ -14,6 +14,8 @@ export interface PlacedEntry {
   firstMinute: number | null
   /** Runs often enough that it is shown as a count and sorted below the rest. */
   frequent: boolean
+  /** A schedule that repeats. Its state belongs to the job's last run, not to any one day in the grid. */
+  recurring: boolean
 }
 
 /** An entry that cannot be put on a day, and why. */
@@ -46,7 +48,7 @@ function compareEntries(a: PlacedEntry, b: PlacedEntry): number {
 
 function place(runsCount: number, schedule: Schedule | null, entry: CalendarEntry, label: string, firstMinute: number | null): PlacedEntry {
   const frequent = schedule !== null && schedule.kind !== 'once' && runsCount > LISTED_TIMES
-  return { entry, label, runs: runsCount, firstMinute, frequent }
+  return { entry, label, runs: runsCount, firstMinute, frequent, recurring: schedule !== null && schedule.kind !== 'once' }
 }
 
 /**
@@ -109,10 +111,29 @@ export function planWeek(entries: CalendarEntry[], days: Date[], options: PlanOp
     const key = toDayKey(startsAt)
     if (byDay[key]) {
       const minute = startsAt.getHours() * 60 + startsAt.getMinutes()
-      byDay[key].push({ entry, label: formatMinuteOfDay(minute), runs: 1, firstMinute: minute, frequent: false })
+      byDay[key].push({ entry, label: formatMinuteOfDay(minute), runs: 1, firstMinute: minute, frequent: false, recurring: false })
     }
   }
 
   for (const key of keys) byDay[key].sort(compareEntries)
   return { byDay, unplaced, hiddenDisabled }
+}
+
+/**
+ * The one day on which a recurring entry may carry its job's last-run result: the first day it runs, today or
+ * after. Later days are predictions, not results, so they carry nothing. Only weeks that contain today qualify;
+ * in any other week no day is "next".
+ *
+ * `orderedKeys` are the week's day keys in order. Returns entry id to day key.
+ */
+export function lastRunMarkerDays(byDay: Record<string, PlacedEntry[]>, orderedKeys: string[], todayKey: string): Map<string, string> {
+  const marked = new Map<string, string>()
+  if (!orderedKeys.includes(todayKey)) return marked
+  for (const key of orderedKeys) {
+    if (key < todayKey) continue
+    for (const placed of byDay[key] ?? []) {
+      if (placed.recurring && !marked.has(placed.entry.id)) marked.set(placed.entry.id, key)
+    }
+  }
+  return marked
 }

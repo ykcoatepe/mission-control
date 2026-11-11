@@ -269,3 +269,178 @@ test('cross-project: a mention of the marker in another project hides that proje
   assert.equal(list.totals.openFindings, 3, 'their counts still add up');
   assert.equal(JSON.parse(bodies.signals).data.attention.breakdown.restricted, 2);
 });
+
+// --- review-fix round 2: identity is the guarantee, content a second line ---
+
+test('reproduced: a marker split across a finding subject and detail restricts the project', async () => {
+  const plain = {
+    id: 'plain',
+    status: '# plain\nOutcome: ok\n',
+    teyit: [],
+    participants: [],
+    checkRows: [{ project: 'plain', code: 'BINDING_DEAD', severity: 'warning', subject: 'ar', detail: 'gus PRIVATE_SENTINEL' }],
+  };
+  const other = { ...PLAIN, id: 'other', checkRows: PLAIN.checkRows.map((row) => ({ ...row, project: 'other' })) };
+  const { source } = sourceFor([plain, other]);
+  await source.refresh();
+  const snapshot = source.snapshot().data;
+  assert.equal(snapshot.projects.find((p) => p.id === 'plain').restricted, true);
+  assert.equal(snapshot.projects.find((p) => p.id === 'other').restricted, false);
+  assert.equal(JSON.stringify(snapshot).includes('PRIVATE_SENTINEL'), false, 'the snapshot holds restricted text');
+  assertNoText(await responses(source, ['plain', 'other']), 'PRIVATE_SENTINEL', 'reproduced split');
+});
+
+test('identity: an id-restricted project holds nothing but id and counts, even in the source snapshot', async () => {
+  const restricted = {
+    id: 'argus-live',
+    status: '# IDTEXT status\n',
+    teyit: [{ id: 'IDTEXT-T1', unit: 'IDTEXT', how: 'h', deadline: '2026-11-09T00:00:00Z', state: 'open', closed: false }],
+    participants: [{ name: 'IDTEXT-worker', role: 'manager', host: 'claude' }],
+    checkRows: [
+      { project: 'argus-live', code: 'TEYIT_STALE', subject: 'IDTEXT-T1', severity: 'warning', detail: 'IDTEXT detail', ts: '2026-11-10T00:00:00Z' },
+      { project: 'argus-live', code: 'TEYIT_KEEP_KILL', subject: 'IDTEXT-T1', severity: 'warning', detail: 'IDTEXT keep or kill', ts: '2026-11-10T00:00:00Z' },
+      { project: 'argus-live', code: 'BINDING_DEAD', subject: 'IDTEXT-worker', severity: 'error', detail: 'IDTEXT bot', ts: '2026-11-10T00:00:00Z' },
+    ],
+  };
+  const { source, calls } = sourceFor([restricted, PLAIN]);
+  await source.refresh();
+  assert.equal(calls.some((args) => args.some((arg) => /argus/i.test(arg))), false, 'a per-project command ran');
+  const snapshot = source.snapshot().data;
+  assert.equal(JSON.stringify(snapshot).includes('IDTEXT'), false, 'the snapshot holds text of an id-restricted project');
+  assert.deepEqual(snapshot.projects.find((p) => p.id === 'argus-live'), {
+    id: 'argus-live',
+    restricted: true,
+    restrictedBy: 'identity',
+    openFindings: 3,
+    pendingConfirmations: 1,
+    overdueConfirmations: 1,
+    operatorFindings: 1,
+    operatorConfirmations: 1,
+    worstSeverity: 'error',
+    countsBasis: 'mloop-check',
+  });
+  assertNoText(await responses(source, ['argus-live']), 'IDTEXT', 'identity');
+});
+
+test('identity: the restricted set extends from configuration without code changes', async () => {
+  const hush = generatedProject({ id: 'hush-ops', token: 'HUSHTEXT', field: 'none', variant: '', padLength: 0, random: rng(3) });
+  const projects = [hush, PLAIN];
+  const byId = new Map(projects.map((project) => [project.id, project]));
+  const calls = [];
+  const exec = {
+    async run(file, args) {
+      calls.push(args);
+      if (args[0] === 'check') return ok(projects.flatMap((project) => project.checkRows));
+      const [, id, , command] = args;
+      const project = byId.get(id);
+      return ok(command === 'status' ? project.status : command === 'teyit' ? project.teyit : project.participants);
+    },
+  };
+  const fsImpl = {
+    async readdir() { return projects.map((project) => ({ name: project.id, isDirectory: () => true })); },
+    async stat() { return { isFile: () => true, mtimeMs: NOW }; },
+  };
+  const source = createMloopSource({ exec, fsImpl, ledgerDir: '/fake', bin: '/fake/mloop', now: () => NOW, env: { MC_RESTRICTED_PROJECT_MARKERS: 'hush, ' } });
+  await source.refresh();
+  assert.equal(calls.some((args) => args[1] === 'hush-ops'), false);
+  const hushed = source.snapshot().data.projects.find((p) => p.id === 'hush-ops');
+  assert.equal(hushed.restrictedBy, 'identity');
+  assert.equal(JSON.stringify(source.snapshot().data).includes('HUSHTEXT'), false);
+});
+
+// Fields as they reach the source raw. A split marker puts a marker prefix at
+// the END of one field and the rest at the START of another (and, for three
+// fields, a whole middle field that is only marker letters).
+const SPLIT_FIELDS = [
+  'id', 'heading', 'outcome', 'statusBody', 'participantName', 'participantRole', 'participantHost',
+  'teyitId', 'teyitUnit', 'teyitHow', 'teyitKind', 'teyitDependsOn',
+  'findingSubject', 'findingDetail', 'findingCode', 'findingSummaryLine',
+];
+
+function splitProject(n, token, parts, random) {
+  const words = () => pad(Math.floor(random() * 40), random).trim();
+  const value = (field, fallback) => (field in parts ? parts[field] : fallback);
+  const text = (field) => value(field, `${token} ${words()} ${token}`);
+  const id = value('id', `s${n}`);
+  const status = [`# ${text('heading')}`, `Outcome: ${text('outcome')}`, '', '## Notes', text('statusBody')].join('\n');
+  return {
+    id,
+    status,
+    teyit: [{
+      id: text('teyitId'), unit: text('teyitUnit'), how: text('teyitHow'), kind: text('teyitKind'), depends_on: text('teyitDependsOn'),
+      deadline: '2026-11-09T00:00:00Z', state: 'open', closed: false,
+    }],
+    participants: [{ name: text('participantName'), role: text('participantRole'), host: text('participantHost') }],
+    checkRows: [
+      { project: id, code: value('findingCode', `${token}_CODE`), subject: text('findingSubject'), severity: 'warning', detail: text('findingDetail'), ts: '2026-11-10T00:00:00Z' },
+      // A second finding whose first line is its own field in the published summary.
+      { project: id, code: 'NOTE', subject: `${token}-n`, severity: 'info', detail: `${text('findingSummaryLine')}\nsecond line ${token}`, ts: '2026-11-10T00:00:00Z' },
+    ],
+  };
+}
+
+// The marker pieces as a field value of that kind: ids and codes stay valid.
+function piece(field, letters, where, n, token) {
+  if (field === 'id') return where === 'end' ? `s${n}-${letters}` : where === 'start' ? `${letters}-s${n}` : `${letters}-${n}`;
+  if (field === 'findingCode') return where === 'end' ? `${token}_${letters.toUpperCase()}` : where === 'start' ? `${letters.toUpperCase()}_${token}` : `_${letters.toUpperCase()}_`;
+  if (where === 'end') return `${token} step ${letters}`;
+  if (where === 'start') return `${letters}. note ${token}`;
+  return ` ${letters} `;
+}
+
+async function assertBatchHidden(batch, label) {
+  const { source } = sourceFor([...batch.map((entry) => entry.project), PLAIN]);
+  await source.refresh();
+  const snapshot = source.snapshot().data;
+  const memory = JSON.stringify(snapshot);
+  assert.equal(snapshot.projects.find((p) => p.id === 'plain').restricted, false, `${label}: control project hidden`);
+  const bodies = await responses(source, batch.map((entry) => entry.project.id));
+  for (const { project, token, what } of batch) {
+    assert.equal(snapshot.projects.find((p) => p.id === project.id)?.restricted, true, `${label} ${what}: not restricted`);
+    assert.equal(memory.includes(token), false, `${label} ${what}: snapshot holds restricted text`);
+    assertNoText(bodies, token, `${label} ${what}`);
+  }
+}
+
+test('property: a marker split at every position across every ordered pair of fields is caught', async () => {
+  const random = rng(4242);
+  const marker = RESTRICTED_MARKERS[0];
+  const cases = [];
+  let n = 0;
+  for (const first of SPLIT_FIELDS) {
+    for (const second of SPLIT_FIELDS) {
+      if (first === second) continue;
+      for (let cut = 1; cut < marker.length; cut += 1) {
+        n += 1;
+        const token = `SPLIT${n}Q`;
+        const parts = {
+          [first]: piece(first, marker.slice(0, cut), 'end', n, token),
+          [second]: piece(second, marker.slice(cut), 'start', n, token),
+        };
+        cases.push({ project: splitProject(n, token, parts, random), token, what: `${first}|${second} cut=${cut}` });
+      }
+    }
+  }
+  for (let i = 0; i < cases.length; i += 80) await assertBatchHidden(cases.slice(i, i + 80), 'pair');
+});
+
+test('property: a marker split across three fields (a whole middle field of marker letters) is caught', async () => {
+  const random = rng(777);
+  const marker = RESTRICTED_MARKERS[0];
+  const cases = [];
+  for (let n = 1; n <= 240; n += 1) {
+    const pick = () => SPLIT_FIELDS[Math.floor(random() * SPLIT_FIELDS.length)];
+    const [a, b, c] = [pick(), pick(), pick()];
+    if (new Set([a, b, c]).size < 3) { n -= 1; continue; }
+    const i = 1 + Math.floor(random() * (marker.length - 2));
+    const j = i + 1 + Math.floor(random() * (marker.length - i - 1));
+    const token = `TRIPLE${n}Q`;
+    const parts = {
+      [a]: piece(a, marker.slice(0, i), 'end', n, token),
+      [b]: piece(b, marker.slice(i, j), 'middle', n, token),
+      [c]: piece(c, marker.slice(j), 'start', n, token),
+    };
+    cases.push({ project: splitProject(n + 10_000, token, parts, random), token, what: `${a}|${b}|${c} ${i}/${j}` });
+  }
+  for (let k = 0; k < cases.length; k += 80) await assertBatchHidden(cases.slice(k, k + 80), 'triple');
+});

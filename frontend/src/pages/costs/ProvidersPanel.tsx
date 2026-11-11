@@ -1,6 +1,6 @@
 import { DataTable, EmptyState, Freshness, Panel, Skeleton, StatePill } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
-import { formatCompactTokenValue, formatPreciseCurrency, formatTokenPhrase, NOT_READ } from './lib'
+import { BILLING_NOT_READ, formatCompactTokenValue, formatPreciseCurrency, formatTokenPhrase, NOT_READ } from './lib'
 import type { ProviderRow } from './lib'
 import styles from './ProvidersPanel.module.css'
 
@@ -19,18 +19,32 @@ function money(row: ProviderRow, value: number | null) {
   return row.noRecords ? DASH : formatPreciseCurrency(value)
 }
 
+/** Billed spend: a recorded bill, a plain dash for a platform with no records, or a dash that says billing was not read. */
+function billed(row: ProviderRow) {
+  if (row.noRecords) return DASH
+  if (row.billedUsd !== null) return formatPreciseCurrency(row.billedUsd)
+  return (
+    <span role="img" aria-label={BILLING_NOT_READ} title={BILLING_NOT_READ}>{DASH}</span>
+  )
+}
+
 export default function ProvidersPanel({ periodName, rows, pending = false }: ProvidersPanelProps) {
+  // Numbers keep their width and never wrap; the long coverage sentence sits on a second line
+  // under the platform name, so it cannot squeeze the numeric columns.
   const columns: DataTableColumn<ProviderRow>[] = [
     {
       key: 'platform',
       header: 'Platform',
-      width: '176px',
-      cell: row => <span className={styles.platform}>{row.label}</span>,
+      cell: row => (
+        <span className={styles.platformCell}>
+          <span className={styles.platform}>{row.label}</span>
+          {row.coverageDetail && <span className={styles.detail}>{row.coverageDetail}</span>}
+        </span>
+      ),
     },
     {
       key: 'state',
       header: 'State',
-      width: '216px',
       cell: row => (
         <span className={styles.state}>
           <StatePill state={row.uiState} label={row.stateWord} />
@@ -41,28 +55,14 @@ export default function ProvidersPanel({ periodName, rows, pending = false }: Pr
     {
       key: 'tokens',
       header: 'Tokens',
-      width: '104px',
       align: 'end',
       mono: true,
       cell: row => (row.tokens === null || row.noRecords
-        ? DASH
-        : <span title={formatTokenPhrase(row.tokens)}>{formatCompactTokenValue(row.tokens)}</span>),
+        ? <span className={styles.num}>{DASH}</span>
+        : <span className={styles.num} title={formatTokenPhrase(row.tokens)}>{formatCompactTokenValue(row.tokens)}</span>),
     },
-    { key: 'api', header: 'API equivalent', width: '136px', align: 'end', mono: true, cell: row => money(row, row.apiEquivalentUsd) },
-    { key: 'billed', header: 'Billed', width: '104px', align: 'end', mono: true, cell: row => money(row, row.billedUsd) },
-    {
-      key: 'coverage',
-      header: 'Coverage',
-      cell: row => (row.note || row.coverageDetail
-        ? (
-          <span className={styles.note}>
-            {row.note}
-            {row.note && row.coverageDetail ? ' ' : ''}
-            {row.coverageDetail && <span className={styles.noteDetail}>{row.coverageDetail}</span>}
-          </span>
-        )
-        : DASH),
-    },
+    { key: 'api', header: 'API equivalent', align: 'end', mono: true, cell: row => <span className={styles.num}>{money(row, row.apiEquivalentUsd)}</span> },
+    { key: 'billed', header: 'Billed', align: 'end', mono: true, cell: row => <span className={styles.num}>{billed(row)}</span> },
   ]
 
   return (

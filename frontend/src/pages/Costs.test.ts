@@ -145,7 +145,18 @@ function tableFirstColumn() {
   return Array.from(host!.querySelectorAll('tbody tr')).map(row => row.querySelector('td, th')?.textContent?.trim() ?? '')
 }
 
+function memoryStorage() {
+  const data = new Map<string, string>()
+  return {
+    getItem: (key: string) => data.get(key) ?? null,
+    setItem: (key: string, value: string) => { data.set(key, String(value)) },
+    removeItem: (key: string) => { data.delete(key) },
+    clear: () => data.clear(),
+  }
+}
+
 beforeEach(() => {
+  vi.stubGlobal('localStorage', memoryStorage())
   routes = baseRoutes()
   calls = []
   vi.useFakeTimers({ toFake: ['Date'] })
@@ -216,7 +227,7 @@ describe('Usage page: a historical month', () => {
   it('labels the live-only sessions view so current sessions are not read as the month\'s drivers', async () => {
     await mount()
     await click('Show July 2026')
-    await click('Live sessions')
+    await click('Recent sessions')
     expect(host!.textContent).toContain('not scoped to July 2026')
     // The session is still shown, but flagged as live rather than July usage.
     expect(host!.textContent).toContain('live-session-model')
@@ -485,8 +496,8 @@ describe('Usage page: unknown is never zero', () => {
   const unknownBilling = ledger({
     summary: { periodUsd: null, thisMonthUsd: null, periodTokens: 300, thisMonthTokens: 300, totalTokens: 300, periodApiEquivalentUsd: 12 },
     byService: [
-      { name: 'Claude Code / claude-opus-x', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
-      { name: 'Claude Code / claude-opus-y', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
+      { name: 'Claude Code / claude-opus-5-5', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
+      { name: 'Hermes / anthropic/claude-opus-5-5[1m]', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
       { name: 'Hermes / recorded-model', tokens: 100, cost: 2.5, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 3, apiEquivalentStatus: 'estimated' },
       { name: 'Hermes / free-model', tokens: 50, cost: 0, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 0, apiEquivalentStatus: 'estimated' },
     ],
@@ -517,8 +528,8 @@ describe('Usage page: unknown is never zero', () => {
     routes['/api/costs?period=month'] = ledger({
       summary: { periodUsd: null, periodTokens: 200, thisMonthTokens: 200, totalTokens: 200, periodApiEquivalentUsd: 9 },
       byService: [
-        { name: 'Claude Code / claude-opus-x', tokens: 100, cost: 4, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
-        { name: 'Claude Code / claude-opus-y', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
+        { name: 'Claude Code / claude-opus-5-5', tokens: 100, cost: 4, costSource: 'recorded', costStatus: 'recorded', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
+        { name: 'Hermes / anthropic/claude-opus-5-5[1m]', tokens: 100, cost: null, costSource: 'unknown', costStatus: 'unknown', apiEquivalentUsd: 4, apiEquivalentStatus: 'estimated' },
       ],
     })
     await mount()
@@ -677,5 +688,134 @@ describe('Usage page: colours stay with the model across Day, 7 days and Month',
     expect(week.e).toBe(day.e)
     expect(['a', 'b', 'c', 'd'].map(name => colourOf(`${name}-model`))).toEqual(month)
     expect(month).not.toContain(day.e)
+  })
+})
+
+describe('Usage page: part-way periods are not compared or projected', () => {
+  const summary = {
+    periodUsd: null, periodTokens: 10, thisMonthTokens: 10, totalTokens: 10,
+    periodApiEquivalentUsd: 880, previousPeriodApiEquivalentUsd: 130, previousPeriodApiEquivalentReliability: 'estimated',
+  }
+
+  it('Day view says "so far": no percentage, no pace, no month projection, and why', async () => {
+    routes['/api/costs?period=day'] = ledger({
+      period: { key: 'day', anchor: null, start: '2026-08-15', end: '2026-08-15', previousStart: '2026-08-14', previousEnd: '2026-08-14', previousIsPartial: true },
+      summary,
+    })
+    await mount()
+    await click('Day')
+    const text = summaryText()
+    expect(text).toContain('$880.00')
+    expect(text).toContain('Today so far')
+    expect(text).toContain('$130.00')
+    expect(text).not.toMatch(/\d%/)
+    expect(text).not.toMatch(/\bUp\b|\bDown\b/)
+    expect(text).not.toContain('Projection')
+    expect(text).not.toContain('Daily pace')
+    expect(text).toContain('no month projection')
+  })
+
+  it('the first days of a month are not projected, with the reason beside the pace', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-03', previousStart: '2026-08-01', previousEnd: '2026-08-03' },
+      summary,
+    })
+    await mount()
+    const text = summaryText()
+    expect(text).not.toContain('Projection')
+    expect(text).toContain('Daily pace')
+    expect(text).toContain('Too early to project the month: 3 of 31 days have passed.')
+  })
+
+  it('a month far enough along still shows its projection, and a like-for-like change', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      period: { key: 'month', anchor: null, start: '2026-08-01', end: '2026-08-15', previousStart: '2026-07-01', previousEnd: '2026-07-15' },
+      summary,
+    })
+    await mount()
+    expect(summaryText()).toContain('Projection')
+    expect(summaryText()).toMatch(/Up \d+%/)
+  })
+})
+
+describe('Usage page: one name and one colour per model', () => {
+  it('the same model on two platforms is one legend entry; two versions are two entries', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      dailyByModel: [dayRow('2026-08-01', {
+        'Claude Code / claude-opus-5-5': 10,
+        'Hermes / anthropic/claude-opus-5-5[1m]': 6,
+        'Claude Code / claude-opus-4-8': 3,
+        'Codex App and CLI / openai/gpt-6.1-sol': 5,
+      })],
+      byService: [
+        { name: 'Claude Code / claude-opus-5-5', tokens: 10000, cost: null, costSource: 'unknown', apiEquivalentUsd: 10, apiEquivalentStatus: 'estimated' },
+        { name: 'Hermes / anthropic/claude-opus-5-5[1m]', tokens: 6000, cost: null, costSource: 'unknown', apiEquivalentUsd: 6, apiEquivalentStatus: 'estimated' },
+        { name: 'Claude Code / claude-opus-4-8', tokens: 3000, cost: null, costSource: 'unknown', apiEquivalentUsd: 3, apiEquivalentStatus: 'estimated' },
+        { name: 'Codex App and CLI / openai/gpt-6.1-sol', tokens: 5000, cost: null, costSource: 'unknown', apiEquivalentUsd: 5, apiEquivalentStatus: 'estimated' },
+      ],
+    })
+    await mount()
+    const names = legend().map(item => item.name)
+    expect(names.sort()).toEqual(['Claude Opus 4.8', 'Claude Opus 5.5', 'GPT-6.1 Sol'])
+    expect(new Set(legend().map(item => item.color)).size).toBe(3)
+    await click('By model')
+    const rows = tableFirstColumn().join(' | ')
+    expect(rows).toContain('Claude Opus 5.5')
+    expect(rows).toContain('Claude Code, Hermes')
+    expect(rows).not.toMatch(/Claude Code \/|Codex App and CLI \//)
+  })
+
+  it('remembers colours in localStorage and survives a reload', async () => {
+    routes['/api/costs?period=month'] = ledger({
+      dailyByModel: [dayRow('2026-08-01', { 'alpha-model': 10, 'beta-model': 8 })],
+    })
+    await mount()
+    const first = Object.fromEntries(legend().map(item => [item.name, item.color]))
+    const stored = JSON.parse(window.localStorage.getItem('mc.usage.seriesColors.v1') ?? '{}')
+    expect(Object.keys(stored).sort()).toEqual(['alpha-model', 'beta-model'])
+
+    // A reload: the model that arrives first now would otherwise take the first free colour.
+    await act(async () => root!.unmount())
+    host!.remove()
+    window.localStorage.setItem('mc.usage.seriesColors.v1', JSON.stringify({ 'beta-model': 'var(--series-1)', 'alpha-model': 'var(--series-3)' }))
+    await mount()
+    expect(legend().find(item => item.name === 'beta-model')?.color).toContain('var(--series-1)')
+    expect(legend().find(item => item.name === 'alpha-model')?.color).toContain('var(--series-3)')
+    expect(first['alpha-model']).toBeDefined()
+  })
+
+  it('works without storage: a blocked localStorage does not break the page', async () => {
+    vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') } })
+    routes['/api/costs?period=month'] = ledger({ dailyByModel: [dayRow('2026-08-01', { 'alpha-model': 10 })] })
+    await mount()
+    expect(legend().map(item => item.name)).toEqual(['alpha-model'])
+  })
+})
+
+describe('Usage page: sessions', () => {
+  it('names sessions without showing the raw key or chat id, says none is running, and counts the unread ones', async () => {
+    routes['/api/costs?period=month'] = ledger({ source: 'sessions.fallback', summary: {}, byService: [] })
+    routes['/api/sessions'] = {
+      sessions: [
+        { key: 'agent:main:telegram:direct:473633590', displayName: 'agent:main:telegram:direct:473633590', agentId: 'main', model: 'gpt-6-astra', totalTokens: 132426, updatedAt: 1786000000000, isActive: false },
+        { key: 'agent:main:cron:abc', displayName: 'Cron: nightly review', model: 'm', totalTokens: null, updatedAt: 1786000000000, isActive: false },
+      ],
+    }
+    await mount()
+    await click('Recent sessions')
+    const text = host!.textContent ?? ''
+    expect(text).not.toContain('473633590')
+    expect(text).toContain('Telegram direct chat')
+    expect(text).toContain('Agent main')
+    expect(text).toContain('No session is running now')
+    expect(text).toContain('1 more has no token count and is not listed.')
+    expect(text).not.toContain('Live sessions')
+  })
+
+  it('the token total is "not read", never 0, when no session has a count', async () => {
+    routes['/api/costs?period=month'] = ledger({ source: 'sessions.fallback', summary: {}, byService: [] })
+    routes['/api/sessions'] = { sessions: [{ key: 'agent:main:cron:abc', displayName: 'Cron', model: 'm', totalTokens: null, updatedAt: 1, isActive: false }] }
+    await mount()
+    expect(summaryText()).toMatch(/Tokens.*not read/)
   })
 })

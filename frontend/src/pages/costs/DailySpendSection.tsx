@@ -2,11 +2,11 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { EmptyState, Mono, Panel } from '../../components/ui'
 import {
+  chartSummary,
   formatCurrency,
   formatPreciseCurrency,
   formatTokens,
   formatTokenPhrase,
-  canonicalModelName,
 } from './lib'
 import type { ChartDataRow, ChartSeriesItem, AWSSCostData } from './types'
 import styles from './DailySpendSection.module.css'
@@ -49,7 +49,7 @@ function ChartTooltip({
             <li key={dataKey} className={styles.tooltipRow}>
               <span className={styles.tooltipName}>
                 <span className={styles.dot} style={{ background: entry.color }} />
-                <span className={styles.nameText}>{canonicalModelName(model)}</span>
+                <span className={styles.nameText}>{model}</span>
               </span>
               <Mono>{`${formatCurrency(Number(entry.value || 0))} · ${formatTokens(tokens)} tok`}</Mono>
             </li>
@@ -201,7 +201,7 @@ export default function DailySpendSection({
           {activeDaySegments.map(segment => (
             <li key={segment.key} className={styles.segment}>
               <span className={styles.dot} style={{ background: segment.color }} />
-              <span className={styles.nameText}>{canonicalModelName(segment.label)}</span>
+              <span className={styles.nameText}>{segment.label}</span>
               <Mono muted>{segment.value > 0 ? formatCurrency(segment.value) : `${formatTokens(segment.tokens)} tok`}</Mono>
             </li>
           ))}
@@ -282,9 +282,19 @@ export default function DailySpendSection({
   } else if (chartData.length > 0 && hasChartBars) {
     body = (
       <>
-        <div ref={chartFrameRef} className={styles.chartFrame} style={{ height: CHART_HEIGHT }}>
+        {/* The chart is a picture with a summary, not a control: it has a name, and neither it nor its
+            parts take Tab focus (recharts' keyboard layer is off). Days are chosen with the calendar
+            and the day buttons; the legend and the day detail below carry the same figures as text. */}
+        <div
+          ref={chartFrameRef}
+          className={styles.chartFrame}
+          style={{ height: CHART_HEIGHT }}
+          role="img"
+          aria-label={chartSummary(chartData)}
+        >
           {chartSize.width > 0 && chartSize.height > 0 ? (
             <BarChart
+              accessibilityLayer={false}
               width={chartSize.width}
               height={chartSize.height}
               data={chartData}
@@ -339,7 +349,7 @@ export default function DailySpendSection({
           {chartSeries.map(series => (
             <li key={series.key} className={styles.legendItem}>
               <span className={styles.dot} style={{ background: series.color }} />
-              <span className={styles.nameText}>{canonicalModelName(series.model)}</span>
+              <span className={styles.nameText}>{series.model}</span>
             </li>
           ))}
         </ul>

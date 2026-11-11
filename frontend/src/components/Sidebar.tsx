@@ -3,7 +3,7 @@ import { useMemo, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import type { AppRouteDefinition } from '../appRoutes'
 import { useApi } from '../lib/hooks'
-import { SIGNALS_POLL_MS, SIGNALS_URL, navBadges } from '../lib/signals'
+import { SIGNALS_POLL_MS, SIGNALS_URL, navBadges, navUnread } from '../lib/signals'
 import type { NavBadge, SignalsEnvelope } from '../lib/signals'
 import { useNavigation } from '../lib/useNavigation'
 import { MissionControlMark } from './MissionControlMark'
@@ -31,16 +31,22 @@ const GROUPS: Array<{ key: Section | 'overview'; label: string | null }> = [
   { key: 'run', label: 'Run' },
 ]
 
-/** Abnormal-only counts from the shell signals: nothing is shown when a count is zero or not read. */
-function useNavBadges(): Record<string, NavBadge | undefined> {
-  const { data } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
+/**
+ * Abnormal-only counts from the shell signals: nothing is shown when a count is a real zero. A count that
+ * could not be read gets a grey "not read" ring, because silence would read as "all quiet".
+ */
+function useNavBadges(): { badges: Record<string, NavBadge | undefined>; unread: Record<string, true | undefined> } {
+  const { data, loading } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
   const signals = data?.data ?? null
-  return useMemo(() => navBadges(signals), [signals])
+  return useMemo(
+    () => ({ badges: navBadges(signals), unread: navUnread(signals, { loading }) }),
+    [signals, loading],
+  )
 }
 
 export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }: SidebarProps) {
   const { name, primary, utility } = useNavigation()
-  const badges = useNavBadges()
+  const { badges, unread } = useNavBadges()
   const asideRef = useRef<HTMLElement>(null)
 
   const groups = useMemo(
@@ -62,25 +68,28 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
     const Icon = route.icon
     if (!Icon) return null
     const badge = badges[route.path]
+    const notRead = !badge && unread[route.path] === true
+    const tooltip = badge ? `${route.label}: ${badge.count} ${badge.word}` : notRead ? `${route.label}: count not read` : route.label
     return (
       <NavLink
         key={route.path}
         to={route.path}
         end={route.path === '/'}
-        data-tooltip={route.label}
+        data-tooltip={tooltip}
         className={({ isActive }) => cx(styles.item, isActive && styles.itemActive)}
         onClick={onClose}
       >
         <Icon className={styles.icon} size={16} strokeWidth={1.75} aria-hidden="true" />
         <span className={styles.label}>{route.label}</span>
         {badge && (
-          <span className={styles.badge} data-tone={badge.tone} title={badge.secondary ? `${badge.count} ${badge.word} · ${badge.secondary}` : undefined}>
+          <span className={styles.badge} data-tone={badge.tone}>
             {badge.count}
-            <span className="visually-hidden">
-              {' '}
-              {badge.word}
-              {badge.secondary ? `, ${badge.secondary}` : ''}
-            </span>
+            <span className="visually-hidden"> {badge.word}</span>
+          </span>
+        )}
+        {notRead && (
+          <span className={styles.badge} data-tone="unread" title="Count not read">
+            <span className="visually-hidden">count not read</span>
           </span>
         )}
       </NavLink>

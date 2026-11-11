@@ -220,7 +220,7 @@ describe('trackedSpendPresentation', () => {
     })).toEqual({
       isPartial: true,
       valueQualifier: 'Tracked spend from available billing data',
-      coverageLabel: '2 billing sources unknown',
+      coverageLabel: '2 billing sources not read',
       projectionAvailable: false,
     })
   })

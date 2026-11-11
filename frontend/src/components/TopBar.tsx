@@ -2,7 +2,16 @@ import { Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useApi } from '../lib/hooks'
-import { SIGNALS_POLL_MS, SIGNALS_URL, annunciators, attentionPill, signalsStale } from '../lib/signals'
+import {
+  ATTENTION_NOT_READ,
+  SIGNALS_POLL_MS,
+  SIGNALS_URL,
+  annunciators,
+  attentionPill,
+  attentionUnread,
+  signalsAge,
+  signalsStale,
+} from '../lib/signals'
 import type { Annunciator, SignalsEnvelope } from '../lib/signals'
 import { worstState } from '../lib/state'
 import type { UiState } from '../lib/state'
@@ -13,7 +22,6 @@ import { appRoutes, isLiveRoutePath } from '../appRoutes'
 import { Kbd } from './ui/Kbd'
 import { IconButton } from './ui/IconButton'
 import { StateDot } from './ui/StateDot'
-import { TimeAgo } from './ui/TimeAgo'
 import { usePageTitle } from './ui/pageTitleContext'
 import styles from './TopBar.module.css'
 
@@ -132,7 +140,9 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
   const stale = signalsStale(envelope, error !== null)
   const lights = annunciators(signals, { loading, now, stale, isLivePath: isLiveRoutePath })
   const pill = attentionPill(signals)
+  const attentionNotRead = !pill && attentionUnread(signals, { loading })
   const observedAt = envelope?.meta?.observedAt ?? null
+  const age = signalsAge(observedAt, now, loading)
   const hint = paletteHint()
   const nextTheme = theme === 'dark' ? 'light' : 'dark'
 
@@ -187,14 +197,32 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
           {pill.secondary && <span className={styles.attentionSecondary}>{pill.secondary}</span>}
         </Link>
       )}
+      {attentionNotRead && (
+        <Link
+          to="/attention"
+          className={styles.attention}
+          data-state="unavailable"
+          aria-label={ATTENTION_NOT_READ}
+          title={`${ATTENTION_NOT_READ}: the attention count could not be read, so it is not shown as zero.`}
+        >
+          <StateDot state="unavailable" />
+          <span className={styles.attentionWords}>{ATTENTION_NOT_READ}</span>
+        </Link>
+      )}
 
-      <button type="button" className={styles.palette} onClick={onOpenPalette} aria-label="Open command palette">
+      <button
+        type="button"
+        className={styles.palette}
+        onClick={onOpenPalette}
+        aria-label="Open command palette"
+        title={`Search or run (${hint})`}
+      >
         <Search size={14} aria-hidden="true" />
         <span className={styles.paletteText}>Search or run…</span>
         <Kbd>{hint}</Kbd>
       </button>
 
-      <div className={styles.age} aria-live="off">
+      <div className={styles.age} aria-live="off" title={age.title}>
         {stale && (
           <span
             className={styles.stale}
@@ -204,19 +232,10 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
             <span className={styles.staleText}>Signals stale</span>
           </span>
         )}
-        <span className={styles.ageText}>
-          {observedAt ? (
-            <>
-              Updated <TimeAgo value={observedAt} />
-            </>
-          ) : loading ? (
-            'Reading…'
-          ) : (
-            'Not read'
-          )}
-        </span>
+        <span className={styles.ageText}>{age.text}</span>
         <IconButton
           label="Refresh data"
+          title={`Refresh data. ${age.title}`}
           size="sm"
           className={refreshing ? styles.spinning : undefined}
           icon={<RefreshCw size={14} />}

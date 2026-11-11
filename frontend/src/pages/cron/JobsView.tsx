@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { Clock, Play, Plus, Trash2 } from 'lucide-react'
@@ -46,6 +46,15 @@ import type {
 import { jobState } from './jobState'
 import { scheduleDisplay } from './cronSchedule'
 import { isJobOn, summarizeJobs } from './jobsSummary'
+import {
+  SCHEDULERS,
+  SCHEDULER_NAMES,
+  joinNames,
+  readSchedulers,
+  readingNotices,
+  schedulersIn,
+  useLastGoodReadings,
+} from './schedulerReadings'
 import { oneOf, useQueryParam } from './urlState'
 import CreateJobDialog from './CreateJobDialog'
 import JobDrawer from './JobDrawer'
@@ -76,6 +85,8 @@ export default function JobsView() {
   const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  // A confirmation opened from the drawer hides the drawer; when it closes, focus goes back to the button that opened it.
+  const returnFocus = useRef<'run' | 'delete' | null>(null)
   // Filters and search live in the URL, so a reload or a shared link keeps them.
   const [stateParam, setStateParam] = useQueryParam('state')
   const [schedulerParam, setSchedulerParam] = useQueryParam('scheduler')
@@ -88,6 +99,13 @@ export default function JobsView() {
   const setJobSearch = (value: string) => setSearchParam(value.trim() === '' ? null : value)
 
   const jobs = useMemo<CronJob[]>(() => data?.jobs || [], [data?.jobs])
+  // Which schedulers were actually read. A scheduler that was not read has no jobs in the list,
+  // which must never look like "no jobs" or "nothing failed".
+  const lastGood = useLastGoodReadings(readSchedulers(data, now))
+  const readings = useMemo(() => readSchedulers(data, now, lastGood), [data, now, lastGood])
+  const notRead = schedulersIn(readings, 'not-read')
+  const incomplete = notRead.length > 0
+  const notices = readingNotices(readings, data?.meta, now)
   const modelOptions = useMemo(
     () => buildCronModelOptions(Array.isArray(modelsData) ? modelsData : [], jobs),
     [modelsData, jobs],
@@ -108,7 +126,6 @@ export default function JobsView() {
 
   const schedulerCounts = useMemo(
     () => ({
-      all: jobs.length,
       openclaw: jobs.filter((job) => getCronScheduler(job) === 'openclaw').length,
       hermes: jobs.filter((job) => getCronScheduler(job) === 'hermes').length,
     }),
@@ -215,8 +232,9 @@ export default function JobsView() {
     }
   }
 
-  const requestRun = (job: CronJob) => {
+  const requestRun = (job: CronJob, fromDrawer = false) => {
     if (job.actions?.run === false) return
+    returnFocus.current = fromDrawer ? 'run' : null
     setRunTarget(job)
   }
 
@@ -236,8 +254,9 @@ export default function JobsView() {
     }
   }
 
-  const requestDelete = (job: CronJob) => {
+  const requestDelete = (job: CronJob, fromDrawer = false) => {
     if (job.actions?.delete === false) return
+    returnFocus.current = fromDrawer ? 'delete' : null
     setDeleteTarget(job)
   }
 
@@ -283,6 +302,14 @@ export default function JobsView() {
     }
   }
 
+  const confirming = runTarget !== null || deleteTarget !== null
+  useEffect(() => {
+    if (confirming || !returnFocus.current) return
+    const kind = returnFocus.current
+    returnFocus.current = null
+    document.querySelector<HTMLElement>(`[data-return-focus="${kind}"]`)?.focus()
+  }, [confirming])
+
   // ---- table ----
 
   const columns: DataTableColumn<CronJob>[] = [
@@ -310,7 +337,7 @@ export default function JobsView() {
             {overlap && (
               <span className={styles.overlap} title={overlap.detail}>
                 <Clock size={12} aria-hidden="true" />
-                {overlap.count} share this slot
+                {overlap.count} jobs, same time slot
               </span>
             )}
           </div>
@@ -412,44 +439,62 @@ export default function JobsView() {
     return <ErrorState title="Automations could not be read" message={error} onRetry={refetch} />
   }
 
+  // With a scheduler unread, the totals would be a count of part of the jobs: they are not read, not smaller.
+  const stateChip = (value: string, label: string, count: number) =>
+    incomplete ? { value, label: `${label} —` } : { value, label, count }
   const stateOptions = [
     { value: 'all', label: 'All' },
-    { value: 'active', label: 'Active', count: summary.active },
-    { value: 'disabled', label: 'Paused', count: summary.paused },
-    { value: 'failed', label: 'Failed', count: summary.failed },
+    stateChip('active', 'Active', summary.active),
+    stateChip('disabled', 'Paused', summary.paused),
+    stateChip('failed', 'Failed', summary.failed),
     ...(overlapState.affectedJobs > 0 || statusFilter === 'overlap'
-      ? [{ value: 'overlap', label: 'Sharing a slot', count: overlapState.affectedJobs }]
+      ? [{ value: 'overlap', label: 'Same time slot', count: overlapState.affectedJobs }]
       : []),
   ]
 
   const schedulerOptions = [
     { value: 'all', label: 'All schedulers' },
-    { value: 'openclaw', label: 'OpenClaw', count: schedulerCounts.openclaw },
-    { value: 'hermes', label: 'Hermes', count: schedulerCounts.hermes },
+    ...SCHEDULERS.map((scheduler) =>
+      readings[scheduler].state === 'not-read'
+        ? { value: scheduler, label: `${SCHEDULER_NAMES[scheduler]} · not read` }
+        : { value: scheduler, label: SCHEDULER_NAMES[scheduler], count: schedulerCounts[scheduler] },
+    ),
   ]
 
-  const activeHint = [
-    summary.failed > 0 ? `${summary.failed} failed last run` : null,
-    summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : null,
-  ]
-    .filter(Boolean)
-    .join(' · ') || undefined
+  // The failed count is shown once, in its own card.
+  const activeHint = summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : undefined
+  const notReadHint = incomplete ? `${joinNames(notRead)} not read` : undefined
+  const filteredUnread = schedulerFilter !== 'all' && readings[schedulerFilter].state === 'not-read'
 
   return (
     <div className={styles.view}>
+      {notices.map((notice) => (
+        <Notice key={notice.id} tone={notice.tone} title={notice.title}>
+          {notice.body}
+        </Notice>
+      ))}
+
       <StatRow aria-label="Automations summary">
-        <Stat label="Active" value={summary.active} hint={defined(activeHint, data?.summary?.definitions?.active)} />
-        <Stat label="Paused" value={summary.paused} />
+        <Stat
+          label="Active"
+          value={incomplete ? null : summary.active}
+          hint={incomplete ? notReadHint : defined(activeHint, data?.summary?.definitions?.active)}
+        />
+        <Stat label="Paused" value={incomplete ? null : summary.paused} hint={notReadHint} />
         <Stat
           label="Failed"
-          value={summary.failed}
-          state={summary.failed > 0 ? 'critical' : undefined}
-          hint={defined(summary.failed > 0 ? 'Last run failed' : undefined, data?.summary?.definitions?.failed)}
+          value={incomplete ? null : summary.failed}
+          state={!incomplete && summary.failed > 0 ? 'critical' : undefined}
+          hint={
+            incomplete
+              ? notReadHint
+              : defined(summary.failed > 0 ? 'Last run failed' : undefined, data?.summary?.definitions?.failed)
+          }
         />
         <Stat
           label="Next run"
-          value={summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
-          hint={summary.nextRun?.name ?? undefined}
+          value={!incomplete && summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
+          hint={incomplete ? notReadHint : (summary.nextRun?.name ?? undefined)}
         />
       </StatRow>
 
@@ -512,14 +557,26 @@ export default function JobsView() {
           empty={
             <EmptyState
               icon={<Clock size={20} />}
-              title={jobs.length === 0 ? 'No automations yet' : 'No jobs match'}
+              title={
+                filteredUnread
+                  ? `${SCHEDULER_NAMES[schedulerFilter as CronScheduler]} was not read`
+                  : jobs.length === 0 && incomplete
+                    ? 'Automations were not read'
+                    : jobs.length === 0
+                      ? 'No automations yet'
+                      : 'No jobs match'
+              }
               description={
-                jobs.length === 0
-                  ? 'Create a scheduled job and it will appear here.'
-                  : 'No jobs match the current search and filters.'
+                filteredUnread
+                  ? 'Its jobs are not in this list, so none can be shown. This does not mean it has none.'
+                  : jobs.length === 0 && incomplete
+                    ? 'No job list could be read. This does not mean there are none.'
+                    : jobs.length === 0
+                      ? 'Create a scheduled job and it will appear here.'
+                      : 'No jobs match the current search and filters.'
               }
               action={
-                jobs.length === 0 ? (
+                jobs.length === 0 && !incomplete ? (
                   <Button variant="primary" icon={<Plus size={14} />} onClick={() => setShowCreate(true)}>
                     Create automation
                   </Button>
@@ -539,10 +596,11 @@ export default function JobsView() {
         overlapMarker={selectedJob ? overlapState.markers.get(selectedJob.id) : undefined}
         modelOptions={modelOptions}
         displayModel={displayModel}
+        staleSince={selectedJob && readings[getCronScheduler(selectedJob)].state === 'stale' ? readings[getCronScheduler(selectedJob)] : null}
         pendingAction={pendingAction}
         onToggle={handleToggle}
-        onRun={requestRun}
-        onDelete={requestDelete}
+        onRun={(job) => requestRun(job, true)}
+        onDelete={(job) => requestDelete(job, true)}
         onModelChange={handleModelChange}
       />
 

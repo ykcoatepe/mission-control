@@ -237,7 +237,7 @@ describe('buildCronOverlapMarkers', () => {
     const a = makeJob({ id: 'a', schedule: '30 9 * * *' })
     const b = makeJob({ id: 'b', schedule: '30 9 * * 1' })
     const state = buildCronOverlapMarkers([a, b])
-    expect(state.markers.get('a')?.label).toBe('Overlap 09:30')
+    expect(state.markers.get('a')?.label).toBe('Same time slot at 09:30')
     expect(state.markers.get('b')?.detail).toContain('2 enabled jobs')
   })
 
@@ -245,7 +245,7 @@ describe('buildCronOverlapMarkers', () => {
     const a = makeJob({ id: 'a', schedule: '15 * * * *' })
     const b = makeJob({ id: 'b', schedule: '15 * * * *' })
     const state = buildCronOverlapMarkers([a, b])
-    expect(state.markers.get('a')?.label).toBe('Overlap :15')
+    expect(state.markers.get('a')?.label).toBe('Same time slot at :15')
   })
 
   it('ignores disabled jobs and wildcard minutes', () => {
@@ -337,5 +337,16 @@ describe('cronRequest', () => {
   it('falls back to the HTTP status for non-JSON error bodies', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad gateway', { status: 502 })))
     await expect(cronRequest('/api/cron/x', 'DELETE', {})).rejects.toThrow('HTTP 502')
+  })
+})
+
+describe('model list labels', () => {
+  it('never lists two identical lines: models with the same name show their id', () => {
+    const options = buildCronModelOptions([{ id: 'openai/gpt-5.5', name: 'GPT-5.5' }, { id: 'openai/gpt-6-astra', name: 'GPT-6-Astra' }], [])
+    const labels = options.map((option) => option.label)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(labels).toContain('GPT-5.5 (openai/gpt-5.5)')
+    expect(labels).toContain('GPT-5.5 (openai-codex/gpt-5.5)')
+    expect(labels).toContain('GPT-6-Astra')
   })
 })

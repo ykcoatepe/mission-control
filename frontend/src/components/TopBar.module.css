@@ -1,4 +1,16 @@
+/*
+ * The bar is its own size container: what fits depends on the width of the workspace (viewport minus the
+ * sidebar), not on the viewport. As it narrows, things yield in a fixed order and the title never does:
+ *   1. "Updated 2m ago" collapses to the refresh button (the age moves to its tooltip)
+ *   2. the attention pill drops its breakdown, then its words (the number stays)
+ *   3. the annunciators collapse to dots (names and states move to their tooltips)
+ *   4. the search box becomes an icon button
+ *   5. the three dots become one status button with a list
+ * The thresholds are widths of the bar's content box, sized for the widest content each part can have
+ * (long breakdown, all three systems lit); the bar's own padding is not counted.
+ */
 .bar {
+  container-type: inline-size;
   display: flex;
   align-items: center;
   gap: var(--sp-3);
@@ -14,8 +26,9 @@
 }
 
 .title {
-  flex: 0 1 auto;
-  min-width: 0;
+  /* Never shrinks below its text; only a very long title is cut, with an ellipsis and a tooltip. */
+  flex: 0 0 auto;
+  max-width: 24ch;
   overflow: hidden;
   color: var(--text-1);
   font-size: var(--fs-h2);
@@ -30,7 +43,7 @@
   min-width: 0;
 }
 
-/* The title gives way last: everything on the right keeps its size. */
+/* Everything on the right keeps its size; the container queries below decide what is shown. */
 .annunciators,
 .systemsMenu,
 .attention,
@@ -211,6 +224,10 @@
   color: var(--state-critical);
 }
 
+.attention[data-state='unavailable'] {
+  color: var(--text-3);
+}
+
 .attentionCount {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -295,36 +312,74 @@
   }
 }
 
-/* Wide: the three annunciators sit inline with their names and states. */
+/* ---- Yielding order (bar width = workspace width) ---- */
+
 .annunciators {
+  display: flex;
+}
+
+.systemsMenu {
   display: none;
 }
 
-@media (min-width: 1200px) {
-  .annunciators {
-    display: flex;
-  }
-
-  .systemsMenu {
+@container (max-width: 1369px) {
+  .ageText,
+  .staleText {
     display: none;
   }
 }
 
-/* Mid widths: the secondary text and the data age go; the title and the numbers stay. */
-@media (max-width: 1399px) {
+@container (max-width: 1269px) {
   .attentionSecondary {
     display: none;
   }
 }
 
-@media (max-width: 1199px) {
-  .staleText,
-  .ageText {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+@container (max-width: 989px) {
+  .attentionWords {
+    display: none;
+  }
+}
+
+@container (max-width: 879px) {
+  .annName,
+  .annWord {
+    display: none;
+  }
+
+  .annunciator {
+    padding: 0 var(--sp-2);
+  }
+}
+
+@container (max-width: 729px) {
+  .paletteText,
+  .palette kbd {
+    display: none;
+  }
+
+  .palette {
+    width: var(--control-h);
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@container (max-width: 649px) {
+  .annunciators {
+    display: none;
+  }
+
+  .systemsMenu {
+    display: block;
+  }
+}
+
+/* Very narrow phones: the title may shorten, but never to a sliver. */
+@container (max-width: 329px) {
+  .title {
+    flex: 0 1 auto;
+    min-width: 5ch;
   }
 }
 
@@ -343,26 +398,9 @@
   }
 }
 
-/* Phones: the attention pill is its count (the words stay for screen readers). */
+/* Phones: the theme switch lives in Settings. */
 @media (max-width: 699px) {
-  .theme,
-  .paletteText,
-  .attentionWords {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .palette {
-    width: var(--control-h);
-    justify-content: center;
-    padding: 0;
-  }
-
-  .palette kbd {
+  .theme {
     display: none;
   }
 }

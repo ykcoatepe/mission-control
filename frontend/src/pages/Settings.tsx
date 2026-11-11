@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Download, Upload } from 'lucide-react'
 import { describeApiError, isApiError, postForm, postJson, useApi } from '../lib/hooks'
-import { changedRouting, heartbeatError, routingErrors } from './settings/lib'
+import { changedRouting, describeHeartbeat, heartbeatError, routingErrors } from './settings/lib'
 import type { Routing, RoutingField } from './settings/lib'
 import { useTheme } from '../lib/theme'
 import type { Theme } from '../lib/theme'
@@ -286,9 +286,35 @@ function ModelsPanel({ saver }: { saver: Saver }) {
   )
 }
 
+/** GET /api/settings/heartbeat: `interval` is null when none is configured; a failed read is an error. */
+interface HeartbeatData {
+  interval: string | null
+}
+
 function HeartbeatPanel({ saver }: { saver: Saver }) {
-  const [interval, setInterval] = useState('')
+  const heartbeat = useApi<HeartbeatData>('/api/settings/heartbeat')
+  // null: the person has not touched the select, so it shows what is configured.
+  const [draft, setDraft] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const current = describeHeartbeat(heartbeat.data?.interval)
+  const configured = current.interval ?? ''
+  const interval = draft ?? configured
+  const readFailed = !heartbeat.loading && (heartbeat.error !== null || heartbeat.data === null)
+
+  // The configured value is always an option, so the select can show it even when it is not a preset.
+  const options: SelectOption[] = []
+  if (current.interval && !HEARTBEAT_OPTIONS.some((option) => option.value === current.interval)) {
+    options.push({ value: current.interval, label: current.off ? `Off (${current.interval})` : (current.label ?? current.interval) })
+  }
+  options.push(...HEARTBEAT_OPTIONS.filter((option) => option.value !== '' || configured === ''))
+
+  let hint: string
+  if (heartbeat.loading) hint = 'Reading the current interval…'
+  else if (readFailed) hint = 'The current interval could not be read. Choose one to change it.'
+  else if (current.off) hint = `Heartbeat checks are off (the interval is ${current.interval}). Choose an interval to turn them on.`
+  else if (current.label) hint = `Currently ${current.label.charAt(0).toLowerCase()}${current.label.slice(1)}.`
+  else hint = 'No interval is set. Choose one to set it.'
 
   const onSave = async () => {
     const invalid = heartbeatError(interval)
@@ -301,23 +327,27 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
       success: 'Heartbeat interval saved',
       error: 'Heartbeat interval could not be saved',
     })
-    if (!result.ok && isApiError(result.error) && result.error.status === 400) setError(result.message)
+    if (result.ok) {
+      setDraft(null)
+      heartbeat.refetch()
+    } else if (isApiError(result.error) && result.error.status === 400) setError(result.message)
   }
 
   return (
     <Panel title="Heartbeat" description="How often the assistant checks in on its own.">
       <div className={styles.form}>
         <div className={styles.fields}>
-          <Field label="Check interval" hint="The current interval is not readable here. Choose one to change it." error={error}>
+          <Field label="Check interval" hint={hint} error={error}>
             {(c) => (
               <Select
                 {...c}
                 value={interval}
+                disabled={heartbeat.loading}
                 onChange={(e) => {
-                  setInterval(e.target.value)
+                  setDraft(e.target.value)
                   setError(null)
                 }}
-                options={HEARTBEAT_OPTIONS}
+                options={options}
               />
             )}
           </Field>
@@ -327,7 +357,7 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
             variant="primary"
             onClick={onSave}
             loading={saver.busy === 'heartbeat'}
-            disabled={!interval || saver.busy !== null}
+            disabled={!interval || interval === configured || saver.busy !== null}
           >
             Save interval
           </Button>

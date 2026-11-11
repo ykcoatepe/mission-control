@@ -221,7 +221,7 @@ describe('Local models page: unknown values stay unknown', () => {
     await mount()
     const text = host!.textContent ?? ''
     expect(text).toContain('4.20K tokens across these models')
-    expect(text).toContain('45.2K more by local endpoints not in this list')
+    expect(text).toContain('45.2K more from local models not listed here')
     expect(text).not.toContain('49.4K')
   })
 
@@ -229,8 +229,8 @@ describe('Local models page: unknown values stay unknown', () => {
     costsBody = { ...costs, byService: [{ name: 'Hermes / custom/Qwen3.8-Flash', tokens: 45220, cost: null, isLocal: true }] }
     await mount()
     const text = host!.textContent ?? ''
-    expect(text).toContain('No token usage recorded for these models')
-    expect(text).toContain('45.2K more by local endpoints not in this list')
+    expect(text).toContain('No tokens recorded for these models')
+    expect(text).toContain('45.2K more from local models not listed here')
     expect(text).not.toMatch(/45\.2K tokens across these models/)
   })
 
@@ -244,9 +244,9 @@ describe('Local models page: unknown values stay unknown', () => {
     }
     await mount()
     const text = host!.textContent ?? ''
-    expect(text).toContain('No token usage recorded for these models')
-    expect(text).toContain('45.2K more by local endpoints not in this list')
-    expect(text).toContain('1 usage row has no recorded locality and is not counted')
+    expect(text).toContain('No tokens recorded for these models')
+    expect(text).toContain('45.2K more from local models not listed here')
+    expect(text).toContain('1 usage entry not counted: it is not known whether it ran locally')
     expect(text).not.toContain('4.20K tokens across these models')
   })
 

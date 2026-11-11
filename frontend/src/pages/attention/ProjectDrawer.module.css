@@ -152,3 +152,18 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* A raw command: its own block, wrapped, never mixed into the sentence above it. */
+.command {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
