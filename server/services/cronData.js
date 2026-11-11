@@ -815,7 +815,7 @@ function createCronService({
     const { document, raw } = readCalendarDocument({ withRaw: true });
     const { valid, quarantined, duplicates } = partitionCalendarEntries(document.entries);
     const counts = { kept: valid.length, quarantined: quarantined.length, duplicates: duplicates.length };
-    if (!quarantined.length && !duplicates.length) return { ok: true, repaired: false, counts, backupPath: null };
+    if (!quarantined.length && !duplicates.length) return { ok: true, repaired: false, counts, backupPath: null, ...readCalendarDataSafe({ strict: true }) };
     const repairedAt = new Date(now()).toISOString();
     const backup = `${calendarFile}.repair-${repairedAt.replace(/[:.]/g, '-')}-${randomUUID()}.json`;
     const relative = file => {
@@ -827,7 +827,7 @@ function createCronService({
       // replacing the source. Recovery files are always private (0600).
       // If the source rename fails, retain this backup and the original file.
       writeFileAtomic(backup, raw, { fsImpl: fs, mode: 0o600 });
-      writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt }, { originalDocument: document });
+      const repaired = writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt }, { originalDocument: document });
       const prefix = `${path.basename(calendarFile)}.repair-`;
       const backups = fs.readdirSync(path.dirname(calendarFile))
         .filter(name => name.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f-]{36}\.json$/.test(name.slice(prefix.length)))
@@ -837,7 +837,7 @@ function createCronService({
       // Keep the just-committed recovery point even on coarse timestamp FSs.
       const retainedOrder = [backup, ...backups.filter(file => file !== backup)];
       for (const old of retainedOrder.slice(10)) fs.unlinkSync(old);
-      return { ok: true, repaired: true, counts, backupPath: relative(backup) };
+      return { ok: true, repaired: true, counts, backupPath: relative(backup), entries: repaired.entries, updatedAt: repaired.updatedAt, lastCronSyncAt: repaired.lastCronSyncAt };
     } catch {
       throw httpError(503, 'calendar_repair_failed', 'Calendar repair could not be committed safely');
     }
@@ -980,7 +980,7 @@ function createCronService({
       lastCronSyncAt: current.lastCronSyncAt,
     });
 
-    return { ok: true, entry, entries: next.entries };
+    return { ok: true, entry, entries: next.entries, updatedAt: next.updatedAt, lastCronSyncAt: next.lastCronSyncAt };
   }
 
   function updateCalendarEntry(id, payload = {}) {
@@ -1030,7 +1030,7 @@ function createCronService({
       lastCronSyncAt: current.lastCronSyncAt,
     });
 
-    return { ok: true, entry: updated, entries: next.entries };
+    return { ok: true, entry: updated, entries: next.entries, updatedAt: next.updatedAt, lastCronSyncAt: next.lastCronSyncAt };
   }
 
   return {
@@ -1048,6 +1048,8 @@ function createCronService({
     repairCalendarData,
     syncCalendarWithLiveCron,
     syncCalendarWithCronEvidence,
+    mergeCalendarEntriesWithCronJobs,
+    sortCalendarEntries,
     createCalendarEntry,
     updateCalendarEntry,
   };

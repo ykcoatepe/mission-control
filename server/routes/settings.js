@@ -18,15 +18,19 @@ function buildSettingsRouter({ settingsService, projectRoot }) {
     const payload = await fn(req);
     return res.json({ ...payload, meta: payload.meta || localConfigMeta() });
   });
-  router.post('/api/settings/budget', asyncHandler((req, res) => res.json(settingsService.updateBudget(req.body?.monthly))));
+  const write = (fn) => asyncHandler(async (req, res) => {
+    const payload = await fn(req);
+    return res.json({ ...payload, meta: payload.meta || localConfigMeta() });
+  });
+  router.post('/api/settings/budget', write(req => settingsService.updateBudget(req.body?.monthly)));
   router.get('/api/config', read(() => settingsService.getPublicConfig()));
   router.get('/api/setup', read(() => settingsService.getSetupStatus()));
-  router.post('/api/setup', asyncHandler((req, res) => res.json(settingsService.updateSetup(req.body || {}))));
+  router.post('/api/setup', write(req => settingsService.updateSetup(req.body || {})));
   router.get('/api/settings', read(() => settingsService.getSettingsPayload()));
   router.get('/api/settings/model-routing', read(() => settingsService.getModelRouting()));
-  router.post('/api/settings/model-routing', asyncHandler(async (req, res) => res.json(await settingsService.setModelRouting(req.body || {}))));
+  router.post('/api/settings/model-routing', write(req => settingsService.setModelRouting(req.body || {})));
   router.get('/api/settings/heartbeat', read(() => settingsService.getHeartbeatSettings()));
-  router.post('/api/settings/heartbeat', asyncHandler(async (req, res) => res.json(await settingsService.setHeartbeatInterval(req.body?.interval))));
+  router.post('/api/settings/heartbeat', write(req => settingsService.setHeartbeatInterval(req.body?.interval)));
   router.get('/api/settings/export', (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename=mc-config.json');
     const payload = settingsService.getExportConfig();
@@ -40,12 +44,12 @@ function buildSettingsRouter({ settingsService, projectRoot }) {
     if (error.code === 'LIMIT_FILE_SIZE') return next(httpError(413, 'payload_too_large', 'Config file is too large'));
     return next(httpError(400, 'invalid_upload', 'Config upload could not be read'));
   });
-  router.post('/api/settings/import', receiveConfig, asyncHandler((req, res) => {
+  router.post('/api/settings/import', receiveConfig, write(async req => {
     if (!req.file) throw httpError(400, 'config_file_required', 'No config file uploaded');
     try {
-      return res.json(settingsService.importMissionControlConfig(req.file.path));
+      return await settingsService.importMissionControlConfig(req.file.path);
     } finally {
-      fs.rmSync(req.file.path, { force: true });
+      try { fs.rmSync(req.file.path, { force: true }); } catch {}
     }
   }));
   return router;

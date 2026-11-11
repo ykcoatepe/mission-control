@@ -1,0 +1,218 @@
+{
+  "name": "Mission Control",
+  "subtitle": "Mission Control",
+  "modules": {
+    "dashboard": true,
+    "chat": true,
+    "workshop": true,
+    "costs": true,
+    "cron": true,
+    "calendar": true,
+    "scout": false,
+    "docs": true,
+    "ollamaMonitor": true,
+    "agents": true,
+    "office": true,
+    "settings": true,
+    "skills": true,
+    "aws": false,
+    "councils": true,
+    "team": true
+  },
+  "gateway": {
+    "port": 18789,
+    "token": "ac918c708627fdd3b59693bfeb5c94df2556f69766be2c1b89b20da62da51977"
+  },
+  "aws": {
+    "enabled": false,
+    "bucket": "",
+    "region": "us-east-1"
+  },
+  "ollama": {
+    "host": "127.0.0.1",
+    "port": 11434,
+    "enabled": true,
+    "optimization": {
+      "enabled": true,
+      "strategy": "conservative",
+      "keepAlive": "10m",
+      "maxLoadedModels": 2,
+      "numCtx": 4096,
+      "numParallel": 1
+    }
+  },
+  "notion": {
+    "enabled": false,
+    "dbId": "",
+    "token": ""
+  },
+  "scout": {
+    "enabled": false,
+    "braveApiKey": "",
+    "queries": [
+      {
+        "q": "\"looking for\" \"web developer\" OR \"website developer\" remote 2026",
+        "category": "freelance",
+        "source": "web",
+        "weight": 1
+      },
+      {
+        "q": "site:x.com \"hiring\" OR \"looking for\" \"react developer\" OR \"frontend developer\" remote",
+        "category": "twitter-jobs",
+        "source": "twitter",
+        "weight": 0.9
+      },
+      {
+        "q": "site:reddit.com/r/forhire \"looking for\" react developer",
+        "category": "reddit-gigs",
+        "source": "reddit",
+        "weight": 0.8
+      },
+      {
+        "q": "\"startup grant\" OR \"startup competition\" 2026 application deadline",
+        "category": "funding",
+        "source": "web",
+        "weight": 0.95
+      }
+    ],
+    "schedule": "daily"
+  },
+  "workspace": "/Users/yordamkocatepe/clawd",
+  "skillsPath": "",
+  "memoryPath": "",
+  "orchestration": {
+    "intentAuto": {
+      "enabled": true,
+      "mode": "canary",
+      "classes": [
+        "coding",
+        "audit",
+        "ops-change"
+      ]
+    },
+    "topicAffinities": [
+      {
+        "topicId": "5626",
+        "agentId": "flight-briefing",
+        "reason": "topic#5626 flight briefing workflow",
+        "patterns": [
+          "\\bflight\\b",
+          "\\bbrif\\w*\\b",
+          "\\bbrief(ing)?\\b",
+          "\\bofp\\b",
+          "\\bnotam\\b",
+          "\\bmetar\\b",
+          "\\btaf\\b",
+          "\\bmel\\b",
+          "\\bcdl\\b",
+          "\\brtow\\b",
+          "\\bdispatch\\b",
+          "\\btk\\d{2,5}\\b",
+          "\\ba320\\b"
+        ]
+      },
+      {
+        "topicId": "4516",
+        "agentId": "a320-reference",
+        "reason": "topic#4516 A320 reference workflow",
+        "patterns": [
+          "\\ba320\\b",
+          "\\bfcom\\b",
+          "\\bqrh\\b",
+          "\\bfctm\\b",
+          "\\bafm\\b",
+          "\\bmel\\b",
+          "\\bom part a\\b",
+          "\\bom part b\\b",
+          "\\bcabin handbook\\b",
+          "\\bcabin manual\\b",
+          "\\bground operations manual\\b",
+          "\\bground operations\\b",
+          "\\btakeoff\\b",
+          "\\blanding\\b",
+          "\\bdispatch\\b",
+          "\\bbulletin\\b",
+          "\\bannouncement\\b"
+        ]
+      },
+      {
+        "topicId": "2338",
+        "agentId": "doktor",
+        "reason": "topic#2338 doctor workflow",
+        "patterns": [
+          "\\bholter\\b",
+          "\\babpm\\b",
+          "\\btansiyon\\b",
+          "\\bkan bas[ıi]nc[ıi]\\b",
+          "\\btahlil\\b",
+          "\\blab\\b",
+          "\\bnab[ıi]z\\b",
+          "\\bekg\\b",
+          "\\brapor\\b",
+          "\\bsonuc\\b",
+          "\\bsonuç\\b",
+          "\\bila[çc]\\b",
+          "\\bsemptom\\b",
+          "\\bmuayene\\b"
+        ]
+      },
+      {
+        "topicId": "1664",
+        "agentId": "shopping-research",
+        "reason": "topic#1664 alışveriş odaklı workflow",
+        "patterns": [
+          "\\bfiyat\\b",
+          "\\bürün\\b",
+          "\\burun\\b",
+          "\\bamazon\\b",
+          "\\bhepsiburada\\b",
+          "\\btrendyol\\b",
+          "\\bkarşılaştır\\b",
+          "\\bkarsilastir\\b",
+          "\\bshortlist\\b"
+        ]
+      }
+    ]
+  },
+  "agentModelOverrides": {
+    "main": {
+      "model": "openai/gpt-5.5"
+    },
+    "ci-doctor": {
+      "model": "openai-codex/gpt-5.4"
+    },
+    "code-implementer": {
+      "model": "openai/gpt-5.5"
+    },
+    "qa": {
+      "model": "openai-codex/gpt-5.3-codex-spark"
+    },
+    "doktor": {
+      "model": "openai-codex/gpt-5.4"
+    },
+    "main-orchestrator": {
+      "model": "openai/gpt-5.5"
+    },
+    "token-budget-auditor": {
+      "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free"
+    },
+    "event-governance-auditor": {
+      "model": "openai-codex/gpt-5.3-codex-spark"
+    },
+    "toolsmith": {
+      "model": "anthropic/claude-sonnet-4-6"
+    },
+    "local-oss-worker": {
+      "model": "ollama/qwen3.5:35b"
+    },
+    "code-reviewer": {
+      "model": "openai-codex/gpt-5.3-codex-spark"
+    },
+    "a320-reference": {
+      "model": "openai-codex/gpt-5.4"
+    }
+  },
+  "budget": {
+    "monthly": 5000
+  }
+}

@@ -43,6 +43,7 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
     },
   });
   const snapshot = source.snapshot;
+  source.projectJobs = (data, jobs) => ({ ...data, cron: { ...data?.cron, jobs, summary: summarizeJobs(jobs, now()) } });
   source.snapshot = () => {
     const stored = snapshot();
     // A next-run can expire between scheduled reads, including while serving

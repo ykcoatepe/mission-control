@@ -2,6 +2,7 @@
 
 const { GBrainActionDefinitions, activeGBrainActions } = require('./constants');
 const { requiresExplicitConfirmation } = require('./actionPolicy');
+const { diagnosticReport } = require('./diagnosticReports');
 const {
   createGBrainExecOptions,
   sanitizeMessage,
@@ -67,17 +68,21 @@ async function runGBrainAction(action, options = {}) {
         timeoutMs: definition.timeoutMs, maxOutputBytes: 1024 * 1024,
         env: createGBrainExecOptions(definition.timeoutMs).env });
       const quarantined = ['kill_unverified', 'lane_quarantined'].includes(result.error?.code);
-      return { ...result, pending: false, quarantined,
+      const reportEligible = !result.error && !result.signal && !result.timedOut && !result.truncated
+        && (result.ok || (Number.isInteger(result.code) && result.code >= 0));
+      return { ...result, pending: false, quarantined, reportEligible,
         error: result.ok ? '' : quarantined ? 'GBrain action lane is quarantined; command exit could not be verified.'
           : result.timedOut ? 'GBrain action timed out.' : 'GBrain action failed.' };
     };
     const result = await execute(definition.args);
     const followUpResult = result.ok && definition.afterSuccessArgs ? await execute(definition.afterSuccessArgs) : null;
-    const actionOk = result.ok && (!followUpResult || followUpResult.ok);
     const payload = parseJsonFromOutput(result.stdout);
+    const report = diagnosticReport(action, definition, payload);
+    const completedReport = result.reportEligible ? report : null;
+    const actionOk = Boolean(completedReport) || (result.ok && (!followUpResult || followUpResult.ok));
     const followUpPayload = followUpResult ? parseJsonFromOutput(followUpResult.stdout) : null;
     const responsePayload = followUpResult ? { result: payload, afterSuccess: followUpPayload } : payload;
-    const summary = [result, followUpResult]
+    const summary = completedReport ? completedReport.summary : [result, followUpResult]
       .filter(Boolean)
       .map((item) => !item.ok && !item.stdout && !item.stderr ? item.error : summarizeCommandOutput(item.stdout, item.stderr))
       .join('\n');
@@ -96,7 +101,8 @@ async function runGBrainAction(action, options = {}) {
       pending,
       refreshAfter: definition.refreshAfter,
       summary,
-      payload: responsePayload ? sanitizePayload(responsePayload) : null,
+      ...(completedReport ? { outcome: completedReport.outcome, result: completedReport.result } : {}),
+      payload: report ? report.payload : responsePayload ? sanitizePayload(responsePayload) : null,
       error: actionOk ? '' : followUpResult?.error || result.error || summary,
     };
   } finally {

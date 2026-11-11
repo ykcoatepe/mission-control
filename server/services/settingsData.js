@@ -164,6 +164,27 @@ function createSettingsService({
   // in a response, whichever alias of home the config uses.
   const homeRelative = (value) => (value ? homeRelativePath(value, { homeDir }) : null);
   const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
+  const committedOpenclawFields = new Map();
+  let lastOpenclawConfig = null;
+  let hasOpenclawMutation = false;
+  let openclawReadMeta = null;
+  let committedMcText = null;
+
+  function localMeta(error = null) {
+    return { ok: !error, stale: Boolean(error), observedAt: new Date().toISOString(), ageMs: 0,
+      error, latencyMs: null, source: 'settings.local-config' };
+  }
+
+  function configuredGatewayPort() {
+    const port = mcConfig.gateway?.port;
+    return Number.isInteger(port) && port > 0 && port < 65536 ? port : null;
+  }
+
+  function replaceSharedConfig(next) {
+    for (const key of Object.keys(mcConfig)) if (!Object.hasOwn(next, key)) delete mcConfig[key];
+    Object.assign(mcConfig, next);
+    committedMcText = JSON.stringify(next, null, 2);
+  }
 
   function readCurrentMcConfig() {
     if (!missionControlConfigPath) return structuredClone(mcConfig);
@@ -182,11 +203,10 @@ function createSettingsService({
     validateSettingsDocument(next);
     if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
     configStore.persist(next);
-    for (const key of Object.keys(mcConfig)) if (!Object.hasOwn(next, key)) delete mcConfig[key];
-    Object.assign(mcConfig, next);
+    replaceSharedConfig(next);
   }
 
-  function readOpenclawConfigSafe() {
+  function readOpenclawConfigRaw() {
     try {
       const parsed = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid config document');
@@ -195,6 +215,43 @@ function createSettingsService({
       if (error?.code === 'ENOENT') return null;
       throw httpError(503, 'settings_config_unavailable', 'OpenClaw configuration could not be read');
     }
+  }
+
+  function readOpenclawConfigSafe() {
+    let cfg, failed = false;
+    try {
+      cfg = readOpenclawConfigRaw();
+      if (cfg) lastOpenclawConfig = structuredClone(cfg);
+      else if (hasOpenclawMutation || committedMcText !== null) {
+        cfg = lastOpenclawConfig === null ? null : structuredClone(lastOpenclawConfig);
+        failed = true;
+      }
+    } catch (error) {
+      if (!hasOpenclawMutation && committedMcText === null) throw error;
+      cfg = lastOpenclawConfig === null ? null : structuredClone(lastOpenclawConfig);
+      failed = true;
+    }
+    const projected = cfg == null && !committedOpenclawFields.size ? null : structuredClone(cfg || {});
+    for (const [field, expected] of committedOpenclawFields) {
+      const keys = field.split('.');
+      let observed = cfg;
+      for (const key of keys) observed = observed?.[key];
+      if (!failed && (expected === null ? observed == null || observed === '' : observed === expected)) {
+        committedOpenclawFields.delete(field);
+        continue;
+      }
+      let target = projected;
+      for (const key of keys.slice(0, -1)) {
+        if (!target[key] || typeof target[key] !== 'object' || Array.isArray(target[key])) target[key] = {};
+        target = target[key];
+      }
+      if (expected === null) delete target[keys.at(-1)]; else target[keys.at(-1)] = expected;
+    }
+    openclawReadMeta = localMeta(failed || committedOpenclawFields.size ? {
+      code: failed ? 'settings_config_unavailable' : 'settings_refresh_pending',
+      message: 'Saved values are visible; waiting for the local configuration read to confirm them',
+    } : null);
+    return projected;
   }
 
   async function reloadGatewayConfig() {
@@ -245,7 +302,10 @@ function createSettingsService({
 
     return {
       model: defaultModel,
+      budget: { monthly: Number.isFinite(mcConfig.budget?.monthly) && mcConfig.budget.monthly >= 0 ? mcConfig.budget.monthly : null },
+      ...(hasOpenclawMutation || committedMcText !== null ? { meta: openclawReadMeta } : {}),
       gateway_port: gatewayPort ?? null,
+      configuredGatewayPort: configuredGatewayPort(),
       memory_path: homeRelative(memoryPath),
       skills_path: homeRelative(skillsPath),
       bedrock_region: bedrockRegion || null,
@@ -291,6 +351,7 @@ function createSettingsService({
           code: observed ? 'invalid_model_routing' : 'settings_config_unavailable',
           message: observed ? 'Some model routing fields could not be read' : 'OpenClaw configuration could not be read',
         } : null,
+        ...((hasOpenclawMutation || committedMcText !== null) && openclawReadMeta?.stale ? openclawReadMeta : {}),
       },
     };
   }
@@ -311,20 +372,26 @@ function createSettingsService({
         throw httpError(400, 'invalid_model', 'Model fields must contain a valid model identifier');
       }
     }
-    if (provided.length) readOpenclawConfigSafe();
+    if (provided.length) {
+      const cfg = readOpenclawConfigRaw();
+      if (cfg) lastOpenclawConfig = structuredClone(cfg);
+    }
     for (const field of provided) {
       const value = body[field];
       await openclawExec(value === ''
         ? ['config', 'unset', paths[field]]
         : ['config', 'set', paths[field], value], 15000);
+      committedOpenclawFields.set(paths[field], value === '' ? null : value);
+      hasOpenclawMutation = true;
     }
     if (provided.length) await reloadGatewayConfig();
-    return { status: 'saved' };
+    return { status: 'saved', ...getModelRouting() };
   }
 
   function getHeartbeatSettings() {
     const cfg = readOpenclawConfigSafe();
-    return { interval: cfg?.agents?.defaults?.heartbeat?.every || null };
+    return { interval: cfg?.agents?.defaults?.heartbeat?.every || null,
+      ...(hasOpenclawMutation || committedMcText !== null ? { meta: openclawReadMeta } : {}) };
   }
 
   async function setHeartbeatInterval(interval) {
@@ -332,10 +399,13 @@ function createSettingsService({
     if (!/^\d+(?:ms|s|m|h|d)$/.test(normalized)) {
       throw httpError(400, 'invalid_interval', 'interval must be a duration such as 30m');
     }
-    readOpenclawConfigSafe();
+    const cfg = readOpenclawConfigRaw();
+    if (cfg) lastOpenclawConfig = structuredClone(cfg);
     await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', normalized], 15000);
+    committedOpenclawFields.set('agents.defaults.heartbeat.every', normalized);
+    hasOpenclawMutation = true;
     await reloadGatewayConfig();
-    return { status: 'saved' };
+    return { status: 'saved', ...getHeartbeatSettings() };
   }
 
   function updateBudget(monthly) {
@@ -349,11 +419,22 @@ function createSettingsService({
   async function getSetupStatus() {
     const gatewayRunning = readGatewayRunning();
     const gatewayVersion = null;
+    let setupMeta = null;
 
     let needsSetup = !fs.existsSync(missionControlConfigPath);
     if (!needsSetup && fs.existsSync(missionControlDefaultConfigPath)) {
-      const currentConfig = fs.readFileSync(missionControlConfigPath, 'utf8');
-      const defaultConfig = fs.readFileSync(missionControlDefaultConfigPath, 'utf8');
+      let currentConfig, defaultConfig;
+      try {
+        currentConfig = fs.readFileSync(missionControlConfigPath, 'utf8');
+        defaultConfig = fs.readFileSync(missionControlDefaultConfigPath, 'utf8');
+      } catch (error) {
+        if (committedMcText === null) throw error;
+        currentConfig = committedMcText;
+        // The validated committed state is sufficient to display saved setup
+        // fields even if a following file read fails. Do not fail the save.
+        try { defaultConfig = fs.readFileSync(missionControlDefaultConfigPath, 'utf8'); } catch { defaultConfig = null; }
+        setupMeta = localMeta({ code: 'settings_config_unavailable', message: 'Saved configuration is visible; the following file read could not be confirmed' });
+      }
       needsSetup = currentConfig === defaultConfig;
     }
 
@@ -392,9 +473,11 @@ function createSettingsService({
     }
 
     return {
+      ...(setupMeta ? { meta: setupMeta } : {}),
       needsSetup,
       gatewayRunning,
       gatewayPort,
+      configuredGatewayPort: configuredGatewayPort(),
       gatewayVersion,
       detectedConfig,
     };
@@ -455,7 +538,7 @@ function createSettingsService({
     if (gateway != null) next.gateway = { ...next.gateway, ...gateway };
     if (modules != null) next.modules = { ...next.modules, ...modules };
     persistMcConfig(next);
-    return { success: true, config: getPublicConfig() };
+    return { success: true, config: getPublicConfig(), configuredGatewayPort: configuredGatewayPort() };
   }
 
   function getMissionControlConfigPath() {
@@ -472,11 +555,17 @@ function createSettingsService({
     validateSettingsDocument(resolved);
     if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
     configStore.importRaw(JSON.stringify(resolved, null, 2));
-    fs.unlinkSync(filePath);
+    replaceSharedConfig(resolved);
+    // Upload cleanup cannot turn a committed config write into a failed save.
+    try { fs.unlinkSync(filePath); } catch {}
 
     return {
       status: 'imported',
-      message: 'Configuration imported successfully. Restart required.',
+      message: 'Configuration imported successfully. Restart required for startup-only settings.',
+      config: getPublicConfig(),
+      configuredGatewayPort: configuredGatewayPort(),
+      budget: { monthly: mcConfig.budget?.monthly ?? null },
+      meta: localMeta(),
     };
   }
 

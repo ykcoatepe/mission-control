@@ -41,3 +41,21 @@ export interface Meta {
 }
 export interface Envelope<T> { data: T | null; meta: Meta }
 export type SynopticEnvelope = Envelope<GBrainSynoptic>;
+
+/** POST /api/gbrain/actions, only for recognized R0 diagnostic reports. */
+export interface DiagnosticFinding { name: string | null; status: string | null; message: string | null }
+export interface DiagnosticResult {
+  reportStatus: string | null;
+  healthScore: number | null;
+  failing: DiagnosticFinding[];
+  warning: DiagnosticFinding[];
+  /** Observed report counts; optional keys depend on the action's schema. */
+  counts: { failing: number; warning: number; checks?: number; issues?: number; pages?: number;
+    missingFiles?: number; failingOmitted?: number; warningOmitted?: number };
+}
+export interface CompletedDiagnosticAction {
+  ok: true; status: 'completed'; outcome: 'clean' | 'findings'; result: DiagnosticResult;
+  action: 'doctor-fast' | 'check-resolvable' | 'storage-status';
+  mode: 'live-write'; label: string; checkedAt: string; args: string[];
+  summary: string; payload: Record<string, unknown>; pending: false; refreshAfter: boolean;
+}

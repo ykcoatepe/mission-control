@@ -353,3 +353,86 @@ relative/floor budget and the 5-second hard child timeout. Final root gate:
 was restarted and port 3399 was untouched. Independent refutation is still
 unavailable: mloop parent preflight returned NOT_INITIALIZED. The author checked
 bypasses and regressions separately; that is not an independent review.
+
+## Completed diagnostic reports (POST action contract)
+
+History was rechecked before this unit: HEAD 42aaed5, then 20340a7 and d41cd1d.
+`actionsExecutor.js` still owns the static action id/argv, confirmation, lock,
+follow-up and gbrain-action lane. The constants.js diff is EMPTY: no allowlist,
+argument, class, kind, confirmation, timeout, refreshAfter or lane was changed.
+`commandRunner.js` and the router/status-code mapping are unchanged too.
+
+Producer matrix (all inspected with read-only --help through the core runner):
+
+| Action | Recognized report | Finding interpretation |
+| --- | --- | --- |
+| doctor-fast | schema_version=2, status, checks with names/statuses; optional health_score | Failed/warning/unknown checks, a non-healthy report status or complete=false are findings. healthScore uses health_score only, never brain_checks_score. |
+| check-resolvable | ok + report {ok, errors[], warnings[], issues[]} | Report errors/warnings or either reported ok=false are findings. Errors are issues, not fabricated failed-check counts. |
+| storage-status | totalPages, pagesByTier, diskUsageByTier, missingFiles[], warnings[] | Missing files, warnings or a reported restore refusal are findings. A refusal is not relabelled as a missing file. |
+| preview-sync | unchanged | R0 but kind=preview, outside the diagnostic normalization. |
+| All W1 ids | unchanged | No report can turn a W1 nonzero exit into completion or bypass confirmation/follow-up. |
+
+Only a settled process exit (including nonzero), without core execution errors,
+signal, timeout, truncation or quarantine, may complete from a recognized report.
+Garbage/wrong-schema nonzero stdout stays HTTP 502. Spawn failure and lane_busy
+stay 502, app single-flight busy stays 409, timeout stays 504, quarantine stays
+503, and missing strict W1 confirmation stays 400. Existing zero-exit legacy
+outputs without a recognized schema keep their previous response, without an
+invented diagnostic outcome.
+
+A recognized completed diagnostic returns HTTP 200 with the existing fields
+`ok:true`, `status:"completed"`, action, label, mode, args, checkedAt,
+`pending:false`, `refreshAfter`, summary and payload, plus these additive fields:
+
+```
+outcome: "clean" | "findings"
+result: {
+  reportStatus: string | null,
+  healthScore: number | null,
+  failing: [{name: string|null, status: string|null, message: string|null}],
+  warning: [{name: string|null, status: string|null, message: string|null}],
+  counts: {
+    failing: number, warning: number,
+    checks?: number, issues?: number, pages?: number, missingFiles?: number,
+    failingOmitted?: number, warningOmitted?: number
+  }
+}
+```
+
+All counts come from actual report arrays/fields. The short result lists at most
+10 failing and 10 warning entries, with remainder counts only when capped.
+Unknown reportStatus/healthScore are null, not an invented status or score. A
+one-sentence summary replaces raw JSON, e.g. `Check finished: unhealthy (45/100);
+1 check failed: resolver_health - 110 issues (39 errors, 71 warnings); 7 warnings.`
+The reported numbers are copied from the report; no audit/default values enter.
+The public types are in `contract.d.ts:CompletedDiagnosticAction`.
+
+`payload` is a scrubbed field-whitelist projection, capped at 32,768 UTF-8 bytes.
+Doctor checks are capped at 20, each issues list at 5, with `checksOmitted` and
+per-check `issuesOmitted`. Routing errors/warnings/issues and storage
+missingFiles/warnings are capped at 20 each; each gets `<arrayName>Omitted`.
+Further byte-budget omissions increment those same counters. `payload.truncated`
+flags omitted array detail. Unknown/raw nested objects (including transcript or
+auth fields) are not returned. W1 payload/summary behavior stays unchanged.
+
+Consumer sweep: the router uses result.ok to deliver HTTP 200; the frontend
+`postGBrainAction` reaches onSuccess, `resolveActionSuccessPolicy` reads the
+unchanged refreshAfter flag, and `useGBrainActions` invalidates the readings.
+Doctor keeps refreshAfter=true even with findings. Routing/storage keep false.
+This is reading refetch/verification, not a fabricated health transition or a
+request-triggered scheduled probe. Existing consumer tests passed 21/21 without
+frontend edits. Backend tests inject exec fakes and use withLiveLoop; nonzero
+real-shaped report, clean report and bounded/scrubbed payload counter-examples
+were observed RED before repair. Operational failure, W1 and argv guards remain
+green. Additional counters distinguish routing errors and storage refusals.
+
+Scoped useful-live verification used an isolated router on 3401 and ONLY the
+fixed R0 doctor-fast argv. The real CLI exited 1 in 521ms; HTTP returned 200,
+completed/findings, unhealthy, healthScore=45, checks=25, failing=1, warning=7,
+refreshAfter=true and a 4,529-byte bounded payload with the human summary above.
+The private router was stopped; no request was sent to 3399, and no W1 command
+was executed. Skill-routing and storage report schemas were also inspected via
+read-only CLI reads (334ms / 418ms); their nonzero/clean paths use injected fixtures
+in tests. Final validation: 789/789 root tests, 157/157 GBrain tests, 21/21 focused
+frontend consumer tests; syntax and diff checks pass. The running 3399 instance
+and PR/deployment have not been updated by this unit.
