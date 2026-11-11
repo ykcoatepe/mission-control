@@ -188,39 +188,74 @@ function redactString(input) {
 // Anything not listed is OMITTED (not redacted): unknown fields, future
 // fields, wrong types. No credential-bearing field may ever be added.
 //
-// Shapes:  'string' | 'number' | 'boolean'
+// Shapes:  'number' | 'boolean'
+//          { $string: { max, fallback? } }
+//                                a display string: control characters are
+//                                stripped, it is cut to `max` characters, and
+//                                it must survive redactString unchanged. If
+//                                redaction would change it (it carries a
+//                                credential) or nothing printable is left, the
+//                                field becomes `fallback`, or is omitted when
+//                                there is none. `max` is required: there is
+//                                no unbounded string type.
 //          'url'                 parsed with the WHATWG URL parser, username
 //                                and password stripped; omitted if it does
 //                                not parse as scheme://host
 //          { key: shape, ... }   an object; only the listed children
 //          { $array: shape }     an array of that element shape
-//          { $map: shape }       an object with identifier-like keys, every
-//                                value of that shape
+// There is no open-ended map: every key that can appear is written down.
 //
 // Derived from the consumers of GET /api/config:
 //   name, subtitle   sidebar / document title (frontend/src/lib/useNavigation.ts)
-//   modules          route and sidebar filtering (appRoutes.tsx isRouteEnabled);
-//                    a map because module names belong to the frontend routes
+//   modules          route and sidebar filtering (appRoutes.tsx isRouteEnabled)
 //   aws.enabled      Usage page AWS toggle (pages/costs/lib.ts awsIntegrationEnabled)
+
+// Every module id that may appear in the public view: the `module` /
+// `anyModule` keys of the route registry (frontend/src/appRoutes.tsx) plus the
+// flags server/ reads (modules.aws, modules.gbrainTimeline). A new module id
+// must be added here; tests/corePublicView.test.js fails when the frontend
+// registry or server/ uses one that is missing.
+const PUBLIC_MODULE_IDS = Object.freeze([
+  'dashboard', 'attention', 'cron', 'costs', 'services', 'ollamaMonitor', 'settings', 'councils', 'gbrain',
+  'calendar', 'workshop', 'chat', 'agents', 'office', 'team', 'docs', 'scout', 'aws', 'skills', 'gbrainTimeline',
+]);
+
+const DISPLAY_LABEL = { $string: { max: 120, fallback: BUILTIN_DEFAULTS.name } };
 const PUBLIC_MC_SCHEMA = deepFreeze({
-  name: 'string',
-  subtitle: 'string',
-  modules: { $map: 'boolean' },
+  name: DISPLAY_LABEL,
+  subtitle: DISPLAY_LABEL,
+  modules: Object.fromEntries(PUBLIC_MODULE_IDS.map((id) => [id, 'boolean'])),
   aws: { enabled: 'boolean' },
 });
 
 // The loaded config (publicView). server/index.js logs `.server`; the rest is
 // what /api/health already reports.
 const PUBLIC_CONFIG_SCHEMA = deepFreeze({
-  server: { port: 'number', host: 'string' },
-  guard: { writeGuardMode: 'string' },
-  load: { source: 'string', problems: { $array: 'string' } },
-  gatewayTokenCheck: { state: 'string', ok: 'boolean', message: 'string' },
+  server: { port: 'number', host: { $string: { max: 255 } } },
+  guard: { writeGuardMode: { $string: { max: 32 } } },
+  load: { source: { $string: { max: 64 } }, problems: { $array: { $string: { max: 300 } } } },
+  gatewayTokenCheck: { state: { $string: { max: 32 } }, ok: 'boolean', message: { $string: { max: 300 } } },
   mc: PUBLIC_MC_SCHEMA,
 });
 
 const OMIT = Symbol('omit');
-const MAP_KEY = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+// C0/C1 controls, DEL, line/paragraph separators, bidi and zero-width marks.
+const UNPRINTABLE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]/g;
+const DISPLAY_SCAN_CHARS = 4096;
+
+function publicString(value, rule) {
+  if (!Number.isInteger(rule?.max) || rule.max < 1 || rule.max > DISPLAY_SCAN_CHARS) {
+    throw new TypeError('public schema: $string needs an integer max between 1 and 4096');
+  }
+  const fallback = typeof rule.fallback === 'string' ? rule.fallback : OMIT;
+  if (typeof value !== 'string') return OMIT;
+  // Scan well past `max`, so a credential cut by the length bound is still
+  // seen whole; control characters go first so they cannot split a pattern.
+  const cleaned = value.slice(0, DISPLAY_SCAN_CHARS).replace(UNPRINTABLE, '').trim();
+  if (!cleaned) return fallback;
+  if (redactString(cleaned) !== cleaned) return fallback;
+  return Array.from(cleaned.slice(0, rule.max * 2)).slice(0, rule.max).join('');
+}
 
 function publicUrl(value) {
   if (typeof value !== 'string') return OMIT;
@@ -242,25 +277,20 @@ function publicUrl(value) {
 }
 
 function projectValue(value, shape) {
-  if (shape === 'string') return typeof value === 'string' ? value : OMIT;
   if (shape === 'number') return typeof value === 'number' && Number.isFinite(value) ? value : OMIT;
   if (shape === 'boolean') return typeof value === 'boolean' ? value : OMIT;
   if (shape === 'url') return publicUrl(value);
-  if (!isPlainObject(shape)) return OMIT;
+  if (shape === 'string') throw new TypeError('public schema: use { $string: { max } }; there is no unbounded string type (max is required)');
+  if (!isPlainObject(shape)) throw new TypeError('public schema: unknown shape');
+  if (Object.hasOwn(shape, '$string')) return publicString(value, shape.$string);
   if (Object.hasOwn(shape, '$array')) {
     if (!Array.isArray(value)) return OMIT;
     return value.map((item) => projectValue(item, shape.$array)).filter((item) => item !== OMIT);
   }
+  const reserved = Object.keys(shape).find((key) => key.startsWith('$'));
+  if (reserved) throw new TypeError(`public schema: unknown shape ${reserved}`);
   if (!isPlainObject(value)) return OMIT;
   const out = {};
-  if (Object.hasOwn(shape, '$map')) {
-    for (const key of Object.keys(value)) {
-      if (!MAP_KEY.test(key)) continue;
-      const inner = projectValue(value[key], shape.$map);
-      if (inner !== OMIT) out[key] = inner;
-    }
-    return out;
-  }
   for (const key of Object.keys(shape)) {
     if (!Object.hasOwn(value, key)) continue;
     const inner = projectValue(value[key], shape[key]);
@@ -269,8 +299,28 @@ function projectValue(value, shape) {
   return out;
 }
 
+// A schema is checked whole before use, so a bad entry fails even when the
+// config has no value at that path.
+function assertPublicSchema(shape) {
+  if (shape === 'number' || shape === 'boolean' || shape === 'url') return;
+  if (shape === 'string') throw new TypeError('public schema: use { $string: { max } }; there is no unbounded string type (max is required)');
+  if (!isPlainObject(shape)) throw new TypeError('public schema: unknown shape');
+  if (Object.hasOwn(shape, '$string')) {
+    const max = shape.$string?.max;
+    if (!Number.isInteger(max) || max < 1 || max > DISPLAY_SCAN_CHARS) throw new TypeError('public schema: $string needs an integer max between 1 and 4096');
+    return;
+  }
+  if (Object.hasOwn(shape, '$array')) return assertPublicSchema(shape.$array);
+  for (const [key, inner] of Object.entries(shape)) {
+    if (key.startsWith('$')) throw new TypeError(`public schema: unknown shape ${key}`);
+    assertPublicSchema(inner);
+  }
+  return undefined;
+}
+
 // Project a value onto an allowlist shape. Always returns a fresh object.
 function projectPublic(value, shape) {
+  assertPublicSchema(shape);
   const out = projectValue(value, shape);
   return out === OMIT ? {} : out;
 }
@@ -553,6 +603,8 @@ function createConfigStore({ config, fsImpl = fsDefault, logger = console } = {}
   };
 }
 
+assertPublicSchema(PUBLIC_CONFIG_SCHEMA);
+
 module.exports = {
   loadConfig,
   createConfigStore,
@@ -563,6 +615,7 @@ module.exports = {
   publicMcView,
   projectPublic,
   PUBLIC_MC_SCHEMA,
+  PUBLIC_MODULE_IDS,
   PUBLIC_CONFIG_SCHEMA,
   resolveEnvPlaceholders,
   validateMcConfig,

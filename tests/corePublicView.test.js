@@ -11,6 +11,7 @@ const {
   projectPublic,
   redactString,
   PUBLIC_MC_SCHEMA,
+  PUBLIC_MODULE_IDS,
   PUBLIC_CONFIG_SCHEMA,
 } = require('../server/core/config');
 const { createSettingsService } = require('../server/services/settingsData');
@@ -34,15 +35,15 @@ function leafPaths(value, prefix = '') {
 const ALLOWED = {
   name: 'Console',
   subtitle: 'Ops',
-  modules: { dashboard: true, costs: false, aws: true, brandNewModule: true },
+  modules: { dashboard: true, costs: false, aws: true },
   aws: { enabled: true },
 };
 
 test('the public mc-config allowlist is exactly this', () => {
   assert.deepEqual(PUBLIC_MC_SCHEMA, {
-    name: 'string',
-    subtitle: 'string',
-    modules: { $map: 'boolean' },
+    name: { $string: { max: 120, fallback: 'Mission Control' } },
+    subtitle: { $string: { max: 120, fallback: 'Mission Control' } },
+    modules: Object.fromEntries(PUBLIC_MODULE_IDS.map((id) => [id, 'boolean'])),
     aws: { enabled: 'boolean' },
   });
   assert.deepEqual(Object.keys(PUBLIC_CONFIG_SCHEMA).sort(), ['gatewayTokenCheck', 'guard', 'load', 'mc', 'server']);
@@ -114,11 +115,11 @@ test('wrong types are omitted, never coerced or passed through', () => {
   assert.deepEqual(view, { aws: {} });
   assert.deepEqual(publicMcView(null), {});
   assert.deepEqual(publicMcView('LEAK'), {});
-  assert.deepEqual(publicMcView({ modules: { ok: true, 'bad key': true, __proto__x: true, n: 1, s: 'LEAK', o: { a: true } } }), { modules: { ok: true } });
+  assert.deepEqual(publicMcView({ modules: { costs: true, 'bad key': true, __proto__x: true, cron: 1, chat: 'LEAK', agents: { a: true } } }), { modules: { costs: true } });
 });
 
 test('a url-typed field is rendered without userinfo, or omitted when it does not parse', () => {
-  const schema = { endpoint: 'url', mirrors: { $array: 'url' }, items: { $array: { label: 'string' } }, port: 'number' };
+  const schema = { endpoint: 'url', mirrors: { $array: 'url' }, items: { $array: { label: { $string: { max: 10 } } } }, port: 'number' };
   const view = projectPublic({
     endpoint: 'https://deploy:TOPSECRET@example.com:8443/hook?x=1#frag',
     mirrors: [
@@ -256,4 +257,73 @@ test('redactString table: 30+ strings that must lose their credential', () => {
 test('redactString table: 30+ ordinary strings that must stay exactly as they are', () => {
   assert.ok(NEGATIVE.length >= 30);
   for (const input of NEGATIVE) assert.equal(redactString(input), input);
+});
+
+// --- review of cb9630e: allowlisted VALUES are constrained too --------------
+test('counter-example: credentials inside allowlisted values do not pass (reviewer reproduction)', () => {
+  const input = {
+    name: 'Bearer SENTINEL1234567890',
+    subtitle: 'postgresql://u:PASS@host/db',
+    modules: { AKIAIOSFODNN7EXAMPLE: true, costs: true },
+  };
+  for (const view of [publicMcView(input), createSettingsService({ mcConfig: input }).getPublicConfig()]) {
+    assert.deepEqual(view, { name: 'Mission Control', subtitle: 'Mission Control', modules: { costs: true } });
+    assert.doesNotMatch(JSON.stringify(view), /SENTINEL|PASS|AKIA|redacted|Bearer|postgresql/);
+  }
+  // A secret that would be cut by the length bound is still caught whole.
+  const straddling = `${'a'.repeat(110)} sk-proj-AbCdEf0123456789xyz`;
+  assert.equal(publicMcView({ name: straddling }).name, 'Mission Control');
+});
+
+test('display strings are bounded and lose control characters', () => {
+  const long = publicMcView({ name: 'x'.repeat(1_000_000), subtitle: 'é'.repeat(500) });
+  assert.equal(long.name, 'x'.repeat(120));
+  assert.equal(long.subtitle, 'é'.repeat(120));
+  const dirty = publicMcView({ name: 'Mission\u0000 \u001b[31mControl\r\n\u0007\u007f\u0085 ‮!', subtitle: '\u0000\n\t' });
+  assert.equal(dirty.name, 'Mission [31mControl!');
+  assert.equal(dirty.subtitle, 'Mission Control', 'nothing printable left: the default label');
+  assert.doesNotMatch(JSON.stringify(dirty), /\\u00|\\n|\\r|\\t|\\u2028|\\u202e/);
+});
+
+test('ordinary names and every real module id pass unchanged', () => {
+  const modules = Object.fromEntries(PUBLIC_MODULE_IDS.map((id, index) => [id, index % 2 === 0]));
+  for (const name of ['Mission Control', 'Müdür console', 'Ops — İstanbul 🚀', 'key: value board', 'Auth & Tokens (team 2)', 'a']) {
+    const input = { name, subtitle: name, modules, aws: { enabled: false } };
+    assert.deepEqual(publicMcView(structuredClone(input)), input, name);
+  }
+});
+
+test('counter-example: an unknown module key is omitted; the list covers the frontend route registry and server reads', () => {
+  assert.deepEqual(publicMcView({ modules: { costs: false, brandNewModule: true, Costs: true, constructor: true } }), { modules: { costs: false } });
+  assert.equal(Object.isFrozen(PUBLIC_MODULE_IDS), true);
+  assert.equal(new Set(PUBLIC_MODULE_IDS).size, PUBLIC_MODULE_IDS.length);
+  const repo = path.join(__dirname, '..');
+  const routes = fs.readFileSync(path.join(repo, 'frontend/src/appRoutes.tsx'), 'utf8');
+  const used = new Set();
+  for (const match of routes.matchAll(/\bmodule:\s*['"]([^'"]+)['"]/g)) used.add(match[1]);
+  for (const match of routes.matchAll(/\banyModule:\s*\[([^\]]*)\]/g)) {
+    for (const id of match[1].matchAll(/['"]([^'"]+)['"]/g)) used.add(id[1]);
+  }
+  assert.ok(used.size >= 10, 'the route registry was parsed');
+  // What server/ reads from mcConfig.modules.
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (
+    entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith('.js') ? [path.join(dir, entry.name)] : []));
+  for (const file of walk(path.join(repo, 'server'))) {
+    for (const match of fs.readFileSync(file, 'utf8').matchAll(/[cC]onfig\??\.modules\??\.([A-Za-z][A-Za-z0-9]*)\b/g)) used.add(match[1]);
+  }
+  for (const id of used) {
+    assert.ok(PUBLIC_MODULE_IDS.includes(id), `module "${id}" is used but missing from PUBLIC_MODULE_IDS in server/core/config.js`);
+  }
+});
+
+test('the schema refuses an unbounded string type', () => {
+  assert.throws(() => projectPublic({ a: 'x' }, { a: 'string' }), /max/);
+  assert.throws(() => projectPublic({ a: 'x' }, { a: { $string: {} } }), /max/);
+  assert.throws(() => projectPublic({ a: {} }, { a: { $map: 'boolean' } }), /shape/);
+  assert.deepEqual(projectPublic({ a: 'hello world', b: 'Bearer SENTINEL1234567890' }, { a: { $string: { max: 5 } }, b: { $string: { max: 50 } } }), { a: 'hello' });
+});
+
+test('a bad schema entry fails even when the config has no value there', () => {
+  assert.throws(() => projectPublic({}, { deep: { label: 'string' } }), /max/);
+  assert.throws(() => projectPublic({}, { list: { $array: { $string: { max: 0 } } } }), /max/);
 });
