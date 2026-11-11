@@ -184,6 +184,43 @@ export interface RepairResult {
   backupPath: string | null
 }
 
+/** What a calendar write answers: the committed entry and/or the whole list, and the reading's `meta`. */
+export interface CalendarWriteResponse {
+  ok?: boolean
+  entry?: CalendarEntry
+  entries?: CalendarEntry[]
+  repaired?: boolean
+  meta?: CalendarMeta
+}
+
+const CLEAN_DIAGNOSTICS: CalendarDiagnostics = {
+  quarantined: { count: 0, ids: [] },
+  duplicates: { count: 0, ids: [] },
+}
+
+/**
+ * The calendar after a write, from what the server committed: the list it
+ * returned, the entry it saved (inserted or replaced by id), and, after a
+ * repair, no damaged rows left. `meta.stale` on the response is about the
+ * refresh that followed the write, not about the calendar, so it is not copied.
+ */
+export function applyCalendarWrite(data: CalendarPayload, response: CalendarWriteResponse | null): CalendarPayload {
+  if (!response) return data
+  let entries = Array.isArray(response.entries) ? response.entries : data.entries
+  const saved = response.entry
+  if (saved && typeof saved.id === 'string') {
+    entries = entries.some((entry) => entry.id === saved.id)
+      ? entries.map((entry) => (entry.id === saved.id ? saved : entry))
+      : [...entries, saved]
+  }
+  const next: CalendarPayload = { ...data, entries }
+  if (response.repaired !== undefined) {
+    next.diagnostics = CLEAN_DIAGNOSTICS
+    next.meta = { ...data.meta, repairAvailable: false }
+  }
+  return next
+}
+
 export interface RepairOffer {
   malformed: number
   duplicates: number

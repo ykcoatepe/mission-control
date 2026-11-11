@@ -1,6 +1,7 @@
 import { useMutation } from '@tanstack/react-query'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { postGBrainAction } from '../gbrain/api'
+import { readActionReport, type ActionReport } from '../gbrain/report'
 import {
   canStartAction,
   hasFreshReadingAdvanced,
@@ -45,6 +46,8 @@ export function useGBrainActions({
   const [pending, setPending] = useState<OperationCapability | null>(null)
   const [running, setRunning] = useState<string | null>(null)
   const [status, setStatus] = useState<ActionStatus | null>(null)
+  // What the last check found: stays until it is dismissed or the next action starts.
+  const [report, setReport] = useState<ActionReport | null>(null)
   // Reading time before the action; `undefined` when no verification is waiting.
   const [baseline, setBaseline] = useState<string | null | undefined>(undefined)
   const executionRef = useRef<string | null>(null)
@@ -59,10 +62,14 @@ export function useGBrainActions({
     onMutate: ({ capability }) => {
       setRunning(capability.id)
       setBaseline(undefined)
+      setReport(null)
       setStatus({ state: 'running', message: `${capability.label} is running` })
     },
     onSuccess: (result, run) => {
-      const policy = resolveActionSuccessPolicy(result)
+      const found = readActionReport(result, run.capability.label)
+      // The panel carries the sentence; the notice only says the check finished (and, for findings, never "failed").
+      const policy = resolveActionSuccessPolicy(found ? { ...result, summary: `${found.label} finished` } : result)
+      if (found) setReport(found)
       setStatus(policy.status)
       if (policy.shouldRefreshReading) startVerifying(run)
     },
@@ -123,6 +130,7 @@ export function useGBrainActions({
   }
 
   const cancel = useCallback(() => setPending(null), [])
+  const dismissReport = useCallback(() => setReport(null), [])
 
   const advanced =
     status?.state === 'verifying' && baseline !== undefined && hasFreshReadingAdvanced(baseline, reading)
@@ -148,6 +156,8 @@ export function useGBrainActions({
     pending,
     running,
     status: shownStatus,
+    report,
+    dismissReport,
     verifying,
     request,
     confirm,

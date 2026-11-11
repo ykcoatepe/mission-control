@@ -419,8 +419,9 @@ Consumer sweep: the router uses result.ok to deliver HTTP 200; the frontend
 `postGBrainAction` reaches onSuccess, `resolveActionSuccessPolicy` reads the
 unchanged refreshAfter flag, and `useGBrainActions` invalidates the readings.
 Doctor keeps refreshAfter=true even with findings. Routing/storage keep false.
-This is reading refetch/verification, not a fabricated health transition or a
-request-triggered scheduled probe. Existing consumer tests passed 21/21 without
+This is reading refetch/verification, not a fabricated health transition. The
+post-action refresh extension below now refreshes sources before that refetch.
+Existing consumer tests passed 21/21 without
 frontend edits. Backend tests inject exec fakes and use withLiveLoop; nonzero
 real-shaped report, clean report and bounded/scrubbed payload counter-examples
 were observed RED before repair. Operational failure, W1 and argv guards remain
@@ -436,3 +437,81 @@ read-only CLI reads (334ms / 418ms); their nonzero/clean paths use injected fixt
 in tests. Final validation: 789/789 root tests, 157/157 GBrain tests, 21/21 focused
 frontend consumer tests; syntax and diff checks pass. The running 3399 instance
 and PR/deployment have not been updated by this unit.
+
+## Read-your-writes after completed actions
+
+A completed POST action whose static definition has refreshAfter=true now awaits
+`refreshAfterAction()` for at most 20 seconds AFTER the action completes. This
+explicit POST-only read-your-writes exception reuses the scheduler's source
+refresh function: GBrain CLI probes retain the gbrain lane and two-reader limit;
+GETs remain snapshot-only. There is no new timer loop or refresh from a GET.
+No allowlist, argv, R0/W1 class, confirmation, native action lock/lane, execution
+timeout or HTTP status mapping changed. actionsExecutor.js/constants.js diffs
+are empty for this unit. Failed actions and refreshAfter=false do not refresh.
+
+The successful action response adds:
+
+```
+observedAt: string | null
+refreshPending: boolean
+meta: {ok, stale, observedAt, ageMs, error, latencyMs, source}
+```
+
+These fields describe the cached reading, independently of the action's existing
+ok/status/outcome/pending/summary/payload. `observedAt` equals meta.observedAt:
+the oldest actual observation composing the resulting overview. It is never
+advanced by inventing a timestamp. A completed refresh supplies a fresh reading
+newer than the action. On a bounded-wait timeout, refreshPending=true and
+meta.stale=true; the SAME refresh continues in the background, with rejection
+handling attached. A finished but failed refresh has refreshPending=false and
+stale metadata (last-good observations are retained). No refresh failure turns
+a completed action into an HTTP error. Refresh-infrastructure exceptions expose
+only gbrain_refresh_failed with a generic message, never process/exception text.
+An injected legacy service without the refresh method likewise preserves the
+action result and reports unavailable/stale reading metadata.
+
+A local action-generation barrier marks every public cached snapshot stale
+until a complete successful post-action pass verifies it, including health,
+sources, version, timeline, overview, integration and synoptic. Operations and
+Signals consume the same overview facade, so the invalidation reaches their
+GBrain reading too. Individual probe failures retain last-good values; a later
+good scheduler pass clears the barrier and error. This preserves the frontend's
+existing `meta.ok && !meta.stale` plus strictly newer observation verification.
+
+If an action finishes while an older refresh is running, that pass is not proof
+of the action. The single-flight worker queues a later pass whose upstream
+reads start after completion. Concurrent completed actions coalesce; passes do
+not run concurrently. The bounded wait limits the HTTP wait, not source work.
+The wait budget is injectable as actionRefreshWaitMs for tests but capped at
+20,000ms. Source deadlines and native process shutdown handling are unchanged.
+
+Timeline capture remains inside that shared pass. Capture composes raw probe
+evidence without the temporary public cache barrier, so invalidation itself
+cannot manufacture a warning event or a duplicate. The ledger's material-change
+fingerprint, retention and lock behavior remain intact; a newer unchanged
+reading updates cache metadata without appending an entry.
+
+Producer/consumer matrix: completed static action -> post-action generation ->
+shared source refresh -> ledger capture/read -> public snapshots -> legacy and
+synoptic routes -> Operations GBrain facade -> Signals -> frontend verification.
+`tests/gbrainReadYourWrites.test.js` uses createApp, injected clock/exec/probes,
+a real scratch ledger, no upstream CLI/network and withLiveLoop plus a hard
+wait watchdog. Five initial defect counter-examples were RED before repair.
+Ten tests now cover R0 findings and W1 completion, immediate GETs (including
+Operations/Signals), probe failure, rejected refresh, bounded timeout/background
+completion, older-refresh overlap, concurrent coalescing, no-op ledger dedupe,
+failed/no-refresh actions and scheduler recovery. All GETs are checked for no
+additional probe reads. Public action refresh types are in contract.d.ts.
+
+Useful-live scope: an isolated GBrain router on 3401, a disposable ledger and
+real core-runner probes. Warm observation 2026-11-11T16:24:28.604Z; R0 doctor action
+checkedAt 16:24:30.928Z; action response observedAt 16:24:31.981Z, HTTP 200,
+outcome=findings, refreshPending=false, meta.ok=true, meta.stale=false. Action plus
+refresh and immediate GET checks took 3,666ms; synoptic/overview/health/sources/
+timeline all returned fresh post-action observations. The router was stopped;
+no 3399 request and no real W1 action was executed. No deployment is implied.
+
+Final gate for this extension: 828/828 root tests and 167/167 GBrain tests,
+zero failures/cancellations; syntax and owned-file diff checks passed. Shared
+app/core/frontend files were not edited. Independent refutation remains pending:
+parent mloop preflight returned NOT_INITIALIZED, so no reviewer was dispatched.

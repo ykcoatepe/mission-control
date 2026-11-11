@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import { ErrorState, Page, Skeleton, Tabs, resolveTab } from '../components/ui'
 import { useApi } from '../lib/hooks'
 import { ActionConfirmDialog } from './brain/ActionConfirmDialog'
+import { ActionResultPanel } from './brain/ActionResultPanel'
 import { ActionStatusNotice } from './brain/ActionStatusNotice'
 import { HealthView, type BrainData } from './brain/HealthView'
 import { KnowledgeView } from './brain/KnowledgeView'
@@ -133,6 +134,7 @@ export default function BrainHome() {
 
   return (
     <Page title="Brain" tabs={head}>
+      {actions.report && <ActionResultPanel report={actions.report} onDismiss={actions.dismissReport} />}
       {view === 'knowledge' ? (
         <KnowledgeView />
       ) : synoptic.loading ? (

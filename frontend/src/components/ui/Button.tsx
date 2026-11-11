@@ -1,5 +1,6 @@
 import type { ComponentProps, ReactNode } from 'react'
 import { cx } from './cx'
+import { labelText } from './labelText'
 import styles from './Button.module.css'
 
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
@@ -24,11 +25,15 @@ export function Button({
   className,
   disabled,
   children,
+  'aria-label': ariaLabel,
   ...rest
 }: ButtonProps) {
+  // An accessible name that is written, not inferred from content: it survives a label that is clipped or hidden at some width.
+  const name = ariaLabel ?? (rest['aria-labelledby'] ? undefined : labelText(children).trim() || undefined)
   return (
     <button
       {...rest}
+      aria-label={name}
       type={type}
       disabled={disabled || loading}
       aria-busy={loading || undefined}

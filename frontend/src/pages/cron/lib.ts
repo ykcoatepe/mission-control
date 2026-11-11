@@ -1,5 +1,6 @@
 import { describeApiError, sendJson } from '../../lib/hooks'
 import type {
+  CronApiResponse,
   CronJob,
   CronModelResponse,
   CronOverlapMarker,
@@ -207,4 +208,58 @@ export async function cronRequest(
   body?: unknown,
 ): Promise<void> {
   await sendJson(url, method, body)
+}
+
+/**
+ * What a cron write answers: `job` is the committed job as the list shows it
+ * (a deleted job carries `deleted: true`); create names it `entity`. `meta.stale`
+ * means the write succeeded but a dependent reading is still catching up.
+ */
+export interface CronWriteResponse {
+  ok?: boolean
+  message?: string
+  job?: Partial<CronJob> & { deleted?: boolean }
+  entity?: Partial<CronJob>
+  meta?: { ok?: boolean; stale?: boolean; error?: { code?: string; message?: string } | null }
+}
+
+/** Same request as `cronRequest`, but hands back the committed entity. */
+export async function cronWrite(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<CronWriteResponse | null> {
+  const response = await sendJson<CronWriteResponse | null>(url, method, body)
+  return response && typeof response === 'object' ? response : null
+}
+
+export type CronWriteArg =
+  | { kind: 'update'; jobId: string; response: CronWriteResponse | null; fallback?: Partial<CronJob> }
+  | { kind: 'delete'; jobId: string }
+  | { kind: 'create'; response: CronWriteResponse | null }
+
+const isWholeJob = (job: Partial<CronJob> | undefined): job is CronJob =>
+  Boolean(job) && typeof job?.id === 'string' && typeof job?.name === 'string' && typeof job?.enabled === 'boolean'
+
+/**
+ * The list after a write, from what the server committed. An update merges the
+ * returned job over the one on screen (or, with no entity, the change that was
+ * asked for), a delete drops the row, a create adds the new job once. A response
+ * that carries no usable entity leaves the list as it is: the refetch decides.
+ */
+export function applyCronWrite(data: CronApiResponse, write: CronWriteArg): CronApiResponse {
+  const jobs = data.jobs ?? []
+  if (write.kind === 'delete') return { ...data, jobs: jobs.filter((job) => job.id !== write.jobId) }
+  if (write.kind === 'create') {
+    const created = write.response?.entity ?? write.response?.job
+    if (!isWholeJob(created) || jobs.some((job) => job.id === created.id)) return data
+    return { ...data, jobs: [...jobs, created] }
+  }
+  const committed = write.response?.job
+  const patch = committed && committed.id === write.jobId ? committed : write.fallback
+  if (!patch || !jobs.some((job) => job.id === write.jobId)) return data
+  // `deleted` is a marker on the response, not a field of the job.
+  const fields: Partial<CronJob> & { deleted?: boolean } = { ...patch }
+  delete fields.deleted
+  return { ...data, jobs: jobs.map((job) => (job.id === write.jobId ? { ...job, ...fields } : job)) }
 }

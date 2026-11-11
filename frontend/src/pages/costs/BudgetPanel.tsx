@@ -1,6 +1,7 @@
 import type { FormEvent } from 'react'
 import { Button, Field, Meter, Mono, Panel, Switch, TextInput } from '../../components/ui'
 import type { UiState } from '../../lib/state'
+import { StaleWriteNote } from '../../components/StaleWriteNote'
 import { formatCurrency } from './lib'
 import styles from './BudgetPanel.module.css'
 
@@ -16,6 +17,8 @@ interface BudgetPanelProps {
   savingBudget: boolean
   canSaveBudget: boolean
   budgetError: string | null
+  /** The last save went through, but the server's follow-up reading is not confirmed yet. */
+  catchingUp?: boolean
   /** Used share of the cap (1 = 100%); null when tracked coverage is incomplete. */
   budgetUsage: number | null
   budgetUsagePct: number | null
@@ -41,6 +44,7 @@ export default function BudgetPanel({
   savingBudget,
   canSaveBudget,
   budgetError,
+  catchingUp = false,
   budgetUsage,
   budgetUsagePct,
   budgetRemaining,
@@ -116,6 +120,7 @@ export default function BudgetPanel({
             </Button>
           </div>
           <Switch checked={noBudget} onChange={setNoBudget} label="No monthly budget" aria-label="No monthly budget" />
+          <StaleWriteNote show={catchingUp} />
         </form>
       </div>
     </Panel>

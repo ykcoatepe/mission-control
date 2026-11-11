@@ -79,6 +79,18 @@ function buildGBrainRouter(options = {}) {
     const statusCode = result.status === 'timed-out' ? 504 : result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
     if (statusCode === 200) {
       const { error: _unused, ...success } = result;
+      if (result.status === 'completed' && definition.refreshAfter === true) {
+        try {
+          if (typeof overviewService.refreshAfterAction !== 'function') throw new Error('Refresh unavailable');
+          Object.assign(success, await overviewService.refreshAfterAction());
+        } catch {
+          // The action completed. Missing/failed refresh infrastructure must
+          // not turn that result into an action error or expose process text.
+          Object.assign(success, { observedAt: null, refreshPending: false,
+            meta: { ok: false, stale: true, observedAt: null, ageMs: null, latencyMs: null, source: 'gbrain.overview',
+              error: { code: 'gbrain_refresh_failed', message: 'GBrain readings could not be refreshed' } } });
+        }
+      }
       return res.json(success);
     }
     return res.status(statusCode).json(actionErrorBody(result));

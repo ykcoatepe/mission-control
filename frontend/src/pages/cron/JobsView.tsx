@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Clock, Play, Plus, Trash2 } from 'lucide-react'
 import {
   Button,
@@ -24,17 +24,21 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
+import { applyCommitted, isStaleWrite } from '../../lib/writes'
+import { StaleWriteNote } from '../../components/StaleWriteNote'
 import { useNow } from '../../lib/useNow'
 import { normalizeCronStatus } from '../../lib/status'
 import {
   buildCronModelOptions,
   buildCronOverlapMarkers,
-  cronRequest,
+  applyCronWrite,
+  cronWrite,
   errorMessage,
   getCronScheduler,
   getCronSchedulerLabel,
   normalizeCronModelValue,
 } from './lib'
+import type { CronWriteArg, CronWriteResponse } from './lib'
 import type {
   CreateCronJobPayload,
   CronApiResponse,
@@ -79,12 +83,15 @@ export default function JobsView() {
   const { data, loading, error, refetch } = useApi<CronApiResponse>('/api/cron', 30000)
   const { data: modelsData } = useApi<CronModelResponse[]>('/api/models', 60000)
   const toast = useToast()
+  const queryClient = useQueryClient()
   const now = useNow()
   const [params, setParams] = useSearchParams()
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
+  // The last write succeeded but the server could not confirm its follow-up reading yet.
+  const [catchingUp, setCatchingUp] = useState(false)
   // A confirmation opened from the drawer hides the drawer; when it closes, focus goes back to the button that opened it.
   const returnFocus = useRef<'run' | 'delete' | null>(null)
   // Filters and search live in the URL, so a reload or a shared link keeps them.
@@ -196,35 +203,44 @@ export default function JobsView() {
 
   const toggleMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronRequest(`/api/cron/${job.id}/toggle`, 'POST', { enabled: !job.enabled, scheduler: getCronScheduler(job) }),
+      cronWrite(`/api/cron/${job.id}/toggle`, 'POST', { enabled: !job.enabled, scheduler: getCronScheduler(job) }),
   })
 
   const runMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronRequest(`/api/cron/${job.id}/run`, 'POST', { scheduler: getCronScheduler(job) }),
+      cronWrite(`/api/cron/${job.id}/run`, 'POST', { scheduler: getCronScheduler(job) }),
   })
 
   const deleteMutation = useMutation({
     mutationFn: (job: CronJob) =>
-      cronRequest(`/api/cron/${job.id}`, 'DELETE', { scheduler: getCronScheduler(job) }),
+      cronWrite(`/api/cron/${job.id}`, 'DELETE', { scheduler: getCronScheduler(job) }),
   })
 
   const createMutation = useMutation({
     mutationFn: (job: CreateCronJobPayload) =>
-      cronRequest('/api/cron/create', 'POST', { job }),
+      cronWrite('/api/cron/create', 'POST', { job }),
   })
 
   const modelMutation = useMutation({
     mutationFn: ({ job, model }: { job: CronJob; model: string }) =>
-      cronRequest(`/api/cron/${job.id}/model`, 'PATCH', { model, scheduler: getCronScheduler(job) }),
+      cronWrite(`/api/cron/${job.id}/model`, 'PATCH', { model, scheduler: getCronScheduler(job) }),
   })
+
+  /** Shows what the server committed at once, then refetches. A reading that is still catching up is said so, calmly. */
+  const showCommitted = async (
+    response: CronWriteResponse | null,
+    write: (response: CronWriteResponse | null) => CronWriteArg,
+  ) => {
+    setCatchingUp(isStaleWrite(response))
+    await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyCronWrite(current, write(response)))
+  }
 
   const handleToggle = async (job: CronJob) => {
     if (job.actions?.toggle === false) return
     setPendingAction(`toggle-${job.id}`)
     try {
-      await toggleMutation.mutateAsync(job)
-      refetch()
+      const response = await toggleMutation.mutateAsync(job)
+      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r, fallback: { enabled: !job.enabled } }))
     } catch (err) {
       toast.show('error', `Failed to toggle "${job.name}": ${errorMessage(err)}`)
     } finally {
@@ -243,9 +259,9 @@ export default function JobsView() {
     if (!job) return
     setPendingAction(`run-${job.id}`)
     try {
-      await runMutation.mutateAsync(job)
+      const response = await runMutation.mutateAsync(job)
       toast.show('success', `"${job.name}" triggered`)
-      setTimeout(refetch, 1500)
+      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r }))
     } catch (err) {
       toast.show('error', `Run failed: ${errorMessage(err)}`)
     } finally {
@@ -265,10 +281,10 @@ export default function JobsView() {
     if (!job) return
     setPendingAction(`delete-${job.id}`)
     try {
-      await deleteMutation.mutateAsync(job)
+      const response = await deleteMutation.mutateAsync(job)
       toast.show('success', `"${job.name}" deleted`)
       if (selectedJob?.id === job.id) setJobParam(null)
-      refetch()
+      await showCommitted(response, () => ({ kind: 'delete', jobId: job.id }))
     } catch (err) {
       toast.show('error', `Delete failed: ${errorMessage(err)}`)
     } finally {
@@ -279,9 +295,9 @@ export default function JobsView() {
 
   const handleCreateJob = async (job: CreateCronJobPayload) => {
     try {
-      await createMutation.mutateAsync(job)
+      const response = await createMutation.mutateAsync(job)
       toast.show('success', `"${job.name}" created`)
-      refetch()
+      await showCommitted(response, (r) => ({ kind: 'create', response: r }))
     } catch (err) {
       toast.show('error', `Create failed: ${errorMessage(err)}`)
       throw err
@@ -292,9 +308,9 @@ export default function JobsView() {
     if (job.actions?.model === false) return
     setPendingAction(`model-${job.id}`)
     try {
-      await modelMutation.mutateAsync({ job, model })
+      const response = await modelMutation.mutateAsync({ job, model })
       toast.show('success', `"${job.name}" model set to ${model || 'default'}`)
-      refetch()
+      await showCommitted(response, (r) => ({ kind: 'update', jobId: job.id, response: r, fallback: { model } }))
     } catch (err) {
       toast.show('error', `Model update failed: ${errorMessage(err)}`)
     } finally {
@@ -468,6 +484,7 @@ export default function JobsView() {
 
   return (
     <div className={styles.view}>
+      <StaleWriteNote show={catchingUp} />
       {notices.map((notice) => (
         <Notice key={notice.id} tone={notice.tone} title={notice.title}>
           {notice.body}

@@ -53,7 +53,13 @@ export interface DiagnosticResult {
   counts: { failing: number; warning: number; checks?: number; issues?: number; pages?: number;
     missingFiles?: number; failingOmitted?: number; warningOmitted?: number };
 }
-export interface CompletedDiagnosticAction {
+/** Added after a completed action with refreshAfter=true (R0 or W1). */
+export interface ActionReadingRefresh {
+  observedAt: string | null;
+  refreshPending: boolean;
+  meta: Meta;
+}
+export interface CompletedDiagnosticAction extends Partial<ActionReadingRefresh> {
   ok: true; status: 'completed'; outcome: 'clean' | 'findings'; result: DiagnosticResult;
   action: 'doctor-fast' | 'check-resolvable' | 'storage-status';
   mode: 'live-write'; label: string; checkedAt: string; args: string[];

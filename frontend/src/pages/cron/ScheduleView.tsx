@@ -19,7 +19,10 @@ import {
   cx,
   useToast,
 } from '../../components/ui'
+import { useQueryClient } from '@tanstack/react-query'
 import { describeApiError, postJson, sendJson, useApi, writeFailureMessage } from '../../lib/hooks'
+import { applyCommitted, isStaleWrite } from '../../lib/writes'
+import { StaleWriteNote } from '../../components/StaleWriteNote'
 import { useNow } from '../../lib/useNow'
 import { Link } from 'react-router-dom'
 import { scheduleDisplay } from './cronSchedule'
@@ -28,8 +31,9 @@ import { isInternalKey } from './jobWords'
 import { oneOf, useQueryParam } from './urlState'
 import EntryDialog from './EntryDialog'
 import type { EntryChange } from './EntryDialog'
-import type { CalendarEntry, CalendarPayload, RepairResult } from './scheduleLib'
+import type { CalendarEntry, CalendarPayload, CalendarWriteResponse, RepairResult } from './scheduleLib'
 import {
+  applyCalendarWrite,
   ASSIGNEE_OPTIONS,
   SOURCE_OPTIONS,
   calendarNotices,
@@ -70,7 +74,10 @@ function toggleChip(current: string | null, value: string) {
 export default function ScheduleView() {
   const { data, loading, error, refetch } = useApi<CalendarPayload>('/api/calendar', 15000)
   const toast = useToast()
+  const queryClient = useQueryClient()
   const now = useNow()
+  // The last write succeeded but the server could not confirm its follow-up reading yet.
+  const [catchingUp, setCatchingUp] = useState(false)
   const [syncing, setSyncing] = useState(false)
   const [repairOpen, setRepairOpen] = useState(false)
   const [repairing, setRepairing] = useState(false)
@@ -164,11 +171,16 @@ export default function ScheduleView() {
 
   const weekLabel = formatWeekRange(weekDays)
 
+  /** Shows what the server committed at once (the entry is in the grid before the refetch lands), then refetches. */
+  const showCommitted = async (response: CalendarWriteResponse | null) => {
+    setCatchingUp(isStaleWrite(response))
+    await applyCommitted<CalendarPayload>(queryClient, '/api/calendar', (current) => applyCalendarWrite(current, response))
+  }
+
   const handleSync = async () => {
     setSyncing(true)
     try {
-      await postJson('/api/calendar/sync-cron')
-      await refetch()
+      await showCommitted(await postJson<CalendarWriteResponse>('/api/calendar/sync-cron'))
     } catch (err) {
       toast.show('error', writeFailureMessage('Schedule sync failed', err))
     } finally {
@@ -187,10 +199,10 @@ export default function ScheduleView() {
     setRepairing(true)
     setRepairError(null)
     try {
-      const result = await postJson<RepairResult>('/api/calendar/repair')
+      const result = await postJson<RepairResult & CalendarWriteResponse>('/api/calendar/repair')
       setRepairOpen(false)
       toast.show('success', repairResultMessage(result), { duration: 12000 })
-      await refetch()
+      await showCommitted(result)
     } catch (err) {
       setRepairError(describeApiError(err))
     } finally {
@@ -200,12 +212,11 @@ export default function ScheduleView() {
 
   /** Throws when the server refuses, so the dialog can show its message and stay open. */
   const saveEntry = async (change: EntryChange) => {
-    if (change.kind === 'create') {
-      await postJson('/api/calendar', change.payload)
-    } else {
-      await sendJson(`/api/calendar/${encodeURIComponent(change.id)}`, 'PATCH', change.patch)
-    }
-    await refetch()
+    const response =
+      change.kind === 'create'
+        ? await postJson<CalendarWriteResponse>('/api/calendar', change.payload)
+        : await sendJson<CalendarWriteResponse>(`/api/calendar/${encodeURIComponent(change.id)}`, 'PATCH', change.patch)
+    await showCommitted(response)
   }
 
   // Only an entry nobody links to the scheduler has a status of its own. A linked
@@ -262,6 +273,7 @@ export default function ScheduleView() {
 
   return (
     <div className={styles.view}>
+      <StaleWriteNote show={catchingUp} />
       <div className={styles.toolbar}>
         <div className={styles.nav}>
           <IconButton

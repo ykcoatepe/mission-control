@@ -21,7 +21,7 @@ export function Switch({ checked, onChange, label, 'aria-label': ariaLabel, disa
         type="button"
         role="switch"
         aria-checked={checked}
-        aria-label={ariaLabel}
+        aria-label={ariaLabel ?? (typeof label === 'string' ? label : undefined)}
         disabled={disabled}
         className={styles.track}
         onClick={() => onChange(!checked)}

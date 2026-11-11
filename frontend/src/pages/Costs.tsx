@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { applyCommitted, isStaleWrite } from '../lib/writes'
 import { ApiError, apiQueryOptions, describeApiError, fetchJson, postJson, retryOnce, useApi, writeFailureMessage } from '../lib/hooks'
 import { ErrorState, Page, Skeleton, useToast } from '../components/ui'
 import type { UiState } from '../lib/state'
@@ -101,6 +102,12 @@ type MonthAvailabilityResponse = {
 function sessionTokenTotal(sessions: SessionData[]): number | null {
   const counted = sessions.filter(s => typeof s.totalTokens === 'number' && Number.isFinite(s.totalTokens))
   return counted.length === 0 ? null : counted.reduce((sum, s) => sum + (s.totalTokens ?? 0), 0)
+}
+
+/** POST /api/settings/budget: `{ status: 'saved', budget: { monthly }, meta? }`. */
+interface BudgetWriteResponse {
+  budget?: { monthly?: number | null }
+  meta?: { stale?: boolean }
 }
 
 export default function Costs() {
@@ -249,6 +256,7 @@ export default function Costs() {
   const [noBudget, setNoBudget] = useState(true)
   // The server validates the amount too; its 400 message shows next to the field.
   const [budgetServerError, setBudgetServerError] = useState<string | null>(null)
+  const [budgetCatchingUp, setBudgetCatchingUp] = useState(false)
 
   const budgetFromData = savedBudgetCap(tokenData?.budget?.monthly)
   // Derive a stable key from whether we have data yet
@@ -262,11 +270,17 @@ export default function Costs() {
 
   // ---- saveBudget mutation ----
   const saveBudgetMutation = useMutation({
-    mutationFn: (monthly: number | null) => postJson('/api/settings/budget', { monthly }),
-    onSuccess: (_data, monthly) => {
-      setBudget(savedBudgetCap(monthly))
+    mutationFn: (monthly: number | null) => postJson<BudgetWriteResponse>('/api/settings/budget', { monthly }),
+    onSuccess: (data, monthly) => {
+      // The committed budget is the server's; what was sent is only the fallback.
+      const committed = data && typeof data === 'object' && data.budget && 'monthly' in data.budget ? data.budget.monthly : monthly
+      setBudget(savedBudgetCap(committed))
       setBudgetServerError(null)
-      void queryClient.invalidateQueries({ queryKey: ['api', costsPath] })
+      setBudgetCatchingUp(isStaleWrite(data))
+      void applyCommitted<TokenData>(queryClient, costsPath, (current) => ({
+        ...current,
+        budget: { ...current.budget, monthly: savedBudgetCap(committed) },
+      }))
       toast.show('success', monthly === null ? 'Budget removed' : 'Budget saved')
     },
     onError: (error) => {
@@ -1066,6 +1080,7 @@ export default function Costs() {
               savingBudget={savingBudget}
               canSaveBudget={canSaveBudget}
               budgetError={budgetError}
+              catchingUp={budgetCatchingUp}
               budgetUsage={budgetUsage}
               budgetUsagePct={budgetUsagePct}
               budgetRemaining={budgetRemaining}

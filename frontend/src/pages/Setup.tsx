@@ -168,6 +168,8 @@ function ConfigureStep({ status, onBack, onSaved }: { status: SetupStatus; onBac
     }
     // The shell sends people here while its cached reading says setup is needed: refresh that
     // reading first, so leaving the page does not bounce straight back.
+    // The saved name also shows in the shell (/api/config).
+    void queryClient.invalidateQueries({ queryKey: ['api', '/api/config'] })
     await queryClient.invalidateQueries({ queryKey: SETUP_QUERY_KEY })
     onSaved()
   }

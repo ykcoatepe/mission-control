@@ -1,7 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { Download, Upload } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { describeApiError, isApiError, postForm, postJson, useApi } from '../lib/hooks'
+import { applyCommitted, isStaleWrite } from '../lib/writes'
+import { StaleWriteNote } from '../components/StaleWriteNote'
 import { changedRouting, describeHeartbeat, heartbeatError, routingErrors } from './settings/lib'
 import type { Routing, RoutingField } from './settings/lib'
 import { useTheme } from '../lib/theme'
@@ -61,7 +64,7 @@ interface SaveMessages {
   error: string
 }
 
-type SaveResult = { ok: true } | { ok: false; error: unknown; message: string }
+type SaveResult = { ok: true; response: unknown } | { ok: false; error: unknown; message: string }
 
 /**
  * One save path for every write on this page: busy flag per action and a toast
@@ -71,14 +74,18 @@ type SaveResult = { ok: true } | { ok: false; error: unknown; message: string }
 function useSaver() {
   const toast = useToast()
   const [busy, setBusy] = useState<string | null>(null)
+  // The save whose follow-up reading the server could not confirm yet (meta.stale): it is saved, the list is behind.
+  const [catchingUp, setCatchingUp] = useState<string | null>(null)
 
   const run = useCallback(
     async (key: string, request: () => Promise<unknown>, messages: SaveMessages): Promise<SaveResult> => {
       setBusy(key)
+      setCatchingUp(null)
       try {
-        await request()
+        const response = await request()
+        setCatchingUp(isStaleWrite(response) ? key : null)
         toast.show('success', messages.success)
-        return { ok: true }
+        return { ok: true, response }
       } catch (error) {
         const message = describeApiError(error)
         toast.show('error', `${messages.error}: ${message}`)
@@ -96,7 +103,7 @@ function useSaver() {
     [run],
   )
 
-  return { busy, run, post }
+  return { busy, catchingUp, run, post }
 }
 
 type Saver = ReturnType<typeof useSaver>
@@ -165,6 +172,25 @@ function routingForServer(changed: Partial<Routing>): Partial<Routing> {
   return changed.heartbeat === INHERIT ? { ...changed, heartbeat: '' } : changed
 }
 
+const ROUTING_URL = '/api/settings/model-routing'
+const HEARTBEAT_URL = '/api/settings/heartbeat'
+
+/** The routing a save answers with, when it is complete enough to show (every field and why it is empty). */
+function committedRouting(response: unknown): ModelRoutingData | null {
+  if (!response || typeof response !== 'object') return null
+  const body = response as Record<string, unknown> & ModelRoutingData
+  const complete = ['mainSource', 'subagentSource', 'heartbeatSource'].every((key) => typeof body[key] === 'string')
+  if (!complete) return null
+  return {
+    main: body.main ?? null,
+    subagent: body.subagent ?? null,
+    heartbeat: body.heartbeat ?? null,
+    mainSource: body.mainSource,
+    subagentSource: body.subagentSource,
+    heartbeatSource: body.heartbeatSource,
+  }
+}
+
 /** The hint under a field that holds no model: the server's `*Source` says why. */
 function unreadHint(name: string, source: RoutingSource | undefined): string {
   return source === 'unset'
@@ -173,8 +199,9 @@ function unreadHint(name: string, source: RoutingSource | undefined): string {
 }
 
 function ModelsPanel({ saver }: { saver: Saver }) {
+  const queryClient = useQueryClient()
   const models = useApi<ModelInfo[]>('/api/models')
-  const routingApi = useApi<ModelRoutingData>('/api/settings/model-routing')
+  const routingApi = useApi<ModelRoutingData>(ROUTING_URL)
   const [draft, setDraft] = useState<Partial<Routing>>({})
   const [saved, setSaved] = useState<Routing | null>(null)
   // What the server said about the last save, next to the fields that were sent.
@@ -230,7 +257,15 @@ function ModelsPanel({ saver }: { saver: Saver }) {
         error: 'Model routing could not be saved',
       })
       if (result.ok) {
-        setSaved(routing)
+        const entity = committedRouting(result.response)
+        if (entity) {
+          // The server's own account of what is configured now: nothing to keep locally.
+          await applyCommitted<ModelRoutingData>(queryClient, ROUTING_URL, () => entity)
+          setSaved(null)
+        } else {
+          setSaved(routing)
+          void queryClient.invalidateQueries({ queryKey: ['api', ROUTING_URL] })
+        }
         setDraft({})
       } else if (isApiError(result.error) && result.error.status === 400) {
         // The server validates every model value; say so next to the fields that were sent.
@@ -265,6 +300,7 @@ function ModelsPanel({ saver }: { saver: Saver }) {
             Only the current choices are listed.
           </Notice>
         )}
+        <StaleWriteNote show={saver.catchingUp === 'routing'} />
         <div className={styles.actions}>
           <Button
             variant="primary"
@@ -292,7 +328,8 @@ interface HeartbeatData {
 }
 
 function HeartbeatPanel({ saver }: { saver: Saver }) {
-  const heartbeat = useApi<HeartbeatData>('/api/settings/heartbeat')
+  const queryClient = useQueryClient()
+  const heartbeat = useApi<HeartbeatData>(HEARTBEAT_URL)
   // null: the person has not touched the select, so it shows what is configured.
   const [draft, setDraft] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -328,8 +365,12 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
       error: 'Heartbeat interval could not be saved',
     })
     if (result.ok) {
+      // The interval the server answers with is what is configured now; the draft is no longer needed.
+      const committed = (result.response as Partial<HeartbeatData> | null)?.interval
+      await applyCommitted<HeartbeatData>(queryClient, HEARTBEAT_URL, (current) =>
+        committed === undefined ? current : { ...current, interval: committed },
+      )
       setDraft(null)
-      heartbeat.refetch()
     } else if (isApiError(result.error) && result.error.status === 400) setError(result.message)
   }
 
@@ -352,6 +393,7 @@ function HeartbeatPanel({ saver }: { saver: Saver }) {
             )}
           </Field>
         </div>
+        <StaleWriteNote show={saver.catchingUp === 'heartbeat'} />
         <div className={styles.actions}>
           <Button
             variant="primary"
@@ -427,6 +469,7 @@ function ConnectionPanel() {
 }
 
 function BackupPanel({ saver }: { saver: Saver }) {
+  const queryClient = useQueryClient()
   const inputRef = useRef<HTMLInputElement>(null)
   const [imported, setImported] = useState(false)
   // The server names the offending path when it refuses a document; keep that visible.
@@ -449,7 +492,11 @@ function BackupPanel({ saver }: { saver: Saver }) {
       () => postForm('/api/settings/import', formData),
       { success: 'Configuration imported. Restart required.', error: 'Configuration could not be imported' },
     )
-    if (result.ok) setImported(true)
+    if (result.ok) {
+      setImported(true)
+      // An import can change every setting: read them all again.
+      void queryClient.invalidateQueries({ queryKey: ['api'] })
+    }
     else setImportError(result.message)
     input.value = ''
   }
@@ -479,6 +526,7 @@ function BackupPanel({ saver }: { saver: Saver }) {
             onChange={onFile}
           />
         </div>
+        <StaleWriteNote show={saver.catchingUp === 'import'} />
         {importError && (
           <Notice tone="critical" title="This file was not imported">
             {importError}
