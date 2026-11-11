@@ -77,6 +77,46 @@ describe('GBrain presentation model', () => {
     ])
   })
 
+  it('shows catching-up pages as a compiled truth change without calling them stale', () => {
+    const base = {
+      trust: { status: 'healthy' as const, score: 100 },
+      sourceFreshness: { status: 'healthy' as const },
+    }
+    const clean = { ...base, metrics: { missingEmbeddings: 0, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    const catchingUp = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 0, caveats: '0' } }
+    const overdue = { ...base, metrics: { missingEmbeddings: 0, stalePages: 3, stalePagesOverdue: 3, caveats: '0' } }
+
+    expect(timelineDeltaLines(catchingUp, clean)).toEqual(['Compiled truth Current → Current · 3 catching up'])
+    expect(timelineDeltaLines(overdue, catchingUp)).toEqual(['Compiled truth Current · 3 catching up → 3 stale pages'])
+  })
+
+  it('labels missing embeddings as raw count, catching up inside tolerance and with the oldest age when overdue', () => {
+    const base = {
+      trust: { status: 'healthy' as const, score: 100 },
+      sourceFreshness: { status: 'healthy' as const },
+    }
+    const clean = { ...base, metrics: { missingEmbeddings: 0, missingEmbeddingsOverdue: 0, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    const catchingUp = { ...base, metrics: { missingEmbeddings: 3, missingEmbeddingsOverdue: 0, missingEmbeddingsOldestAgeSeconds: 240, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    const overdue = { ...base, metrics: { missingEmbeddings: 3, missingEmbeddingsOverdue: 3, missingEmbeddingsOldestAgeSeconds: 1500, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    const overdueNoAge = { ...base, metrics: { missingEmbeddings: 3, missingEmbeddingsOverdue: 3, stalePages: 0, stalePagesOverdue: 0, caveats: '0' } }
+    // Older snapshots without missingEmbeddingsOverdue count every missing embedding.
+    const legacy = { ...base, metrics: { missingEmbeddings: 3, stalePages: 0, caveats: '0' } }
+
+    expect(timelineDeltaLines(catchingUp, clean)).toEqual(['Missing embeddings 0 → 3 catching up (oldest 4m)'])
+    expect(timelineDeltaLines(overdue, catchingUp)).toEqual(['Missing embeddings 3 catching up (oldest 4m) → 3 (oldest 25m)'])
+    expect(timelineDeltaLines(overdueNoAge, clean)).toEqual(['Missing embeddings 0 → 3'])
+    expect(timelineDeltaLines(legacy, catchingUp)).toEqual(['Missing embeddings 3 catching up (oldest 4m) → 3'])
+  })
+
+  it('judges the embedding queue on the overdue verdict and fails closed when the count is unavailable', () => {
+    const live = { fallbackStatus: 'warning' as const, hasLiveHealth: true, countersAvailable: true, stalledJobs: 0 }
+    expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: 3, missingEmbeddingsOverdue: 0 })).toBe('healthy')
+    expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: 3, missingEmbeddingsOverdue: 3 })).toBe('warning')
+    expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: 3 })).toBe('warning')
+    expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: null, missingEmbeddingsOverdue: null, missingEmbeddingsUnavailable: true })).toBe('warning')
+    expect(deriveQueueEvidenceStatus({ ...live, missingEmbeddings: 0, missingEmbeddingsOverdue: 0, missingEmbeddingsUnavailable: true })).toBe('warning')
+  })
+
   it('keeps stale compiled pages separate from a clean embedding queue', () => {
     expect(deriveQueueEvidenceStatus({
       fallbackStatus: 'warning',

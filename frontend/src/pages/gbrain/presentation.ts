@@ -30,6 +30,10 @@ export interface QueueEvidenceInput {
   hasLiveHealth: boolean
   countersAvailable: boolean
   missingEmbeddings: number | null
+  // Verdict-bearing part of missingEmbeddings (oldest older than the embed
+  // tolerance). Absent means every missing embedding counts.
+  missingEmbeddingsOverdue?: number | null
+  missingEmbeddingsUnavailable?: boolean
   stalledJobs: number | null
 }
 
@@ -73,15 +77,38 @@ function missingEmbeddingsCount(entry: TimelineDeltaEntry) {
     ?? legacyCount(entry.metrics.embeddingsDetail, /([\d,]+)\s+missing/i)
 }
 
+function oldestAgeText(seconds: number | null) {
+  return seconds === null ? '' : ` (oldest ${Math.max(1, Math.round(seconds / 60))}m)`
+}
+
+// Raw missing-embedding count; inside the embed tolerance it is labeled as
+// catching up, beyond it with the oldest age. Snapshots without
+// missingEmbeddingsOverdue treat every missing embedding as overdue.
+function missingEmbeddingsLabel(entry: TimelineDeltaEntry) {
+  const count = missingEmbeddingsCount(entry)
+  if (count === null) return null
+  const overdue = structuredCount(entry.metrics, 'missingEmbeddingsOverdue') ?? count
+  const oldest = oldestAgeText(structuredCount(entry.metrics, 'missingEmbeddingsOldestAgeSeconds'))
+  if (overdue > 0) return `${count.toLocaleString()}${oldest}`
+  if (count > 0) return `${count.toLocaleString()} catching up${oldest}`
+  return count.toLocaleString()
+}
+
 function stalePagesCount(entry: TimelineDeltaEntry) {
   return structuredCount(entry.metrics, 'stalePages')
     ?? legacyCount(entry.metrics.embeddingsDetail, /([\d,]+)\s+stale pages?/i)
 }
 
-function compiledTruthLabel(count: number | null) {
+// Overdue pages (older than the sweep tolerance) are "stale"; the rest of the
+// raw count is shown as catching up. Snapshots without stalePagesOverdue
+// treat every stale page as overdue.
+function compiledTruthLabel(entry: TimelineDeltaEntry) {
+  const count = stalePagesCount(entry)
   if (count === null) return null
-  if (count === 0) return 'Current'
-  return `${count.toLocaleString()} stale page${count === 1 ? '' : 's'}`
+  const overdue = structuredCount(entry.metrics, 'stalePagesOverdue') ?? count
+  if (overdue > 0) return `${overdue.toLocaleString()} stale page${overdue === 1 ? '' : 's'}`
+  if (count > 0) return `Current · ${count.toLocaleString()} catching up`
+  return 'Current'
 }
 
 export function deriveOperationalState(input: OperationalStateInput): OperationalState {
@@ -103,8 +130,10 @@ export function deriveOperationalState(input: OperationalStateInput): Operationa
 
 export function deriveQueueEvidenceStatus(input: QueueEvidenceInput): GBrainEvidenceStatus {
   if (!input.hasLiveHealth) return input.fallbackStatus
-  if (!input.countersAvailable || input.missingEmbeddings === null || input.stalledJobs === null) return 'warning'
-  if (input.missingEmbeddings > 0 || input.stalledJobs > 0) return 'warning'
+  if (input.missingEmbeddingsUnavailable === true) return 'warning'
+  const missingEmbeddings = input.missingEmbeddingsOverdue ?? input.missingEmbeddings
+  if (!input.countersAvailable || missingEmbeddings === null || input.stalledJobs === null) return 'warning'
+  if (missingEmbeddings > 0 || input.stalledJobs > 0) return 'warning'
   return 'healthy'
 }
 
@@ -125,13 +154,13 @@ export function timelineDeltaLines(
     { label: 'Embeddings', from: previous.metrics.embeddings, to: current.metrics.embeddings },
     {
       label: 'Missing embeddings',
-      from: missingEmbeddingsCount(previous),
-      to: missingEmbeddingsCount(current),
+      from: missingEmbeddingsLabel(previous),
+      to: missingEmbeddingsLabel(current),
     },
     {
       label: 'Compiled truth',
-      from: compiledTruthLabel(stalePagesCount(previous)),
-      to: compiledTruthLabel(stalePagesCount(current)),
+      from: compiledTruthLabel(previous),
+      to: compiledTruthLabel(current),
     },
     { label: 'Queue', from: previous.metrics.queue, to: current.metrics.queue },
     {

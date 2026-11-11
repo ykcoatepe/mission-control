@@ -1004,7 +1004,11 @@ async function testLiveSourcesFallsBackToTextOutput() {
   const sources = await buildLiveGBrainSources({ execFilePromise });
   const serialized = JSON.stringify(sources);
 
-  assert.deepEqual(calls, ['sources list --json', 'sources list']);
+  assert.deepEqual(calls, [
+    'call --source __all__ get_status_snapshot',
+    'sources list --json',
+    'sources list',
+  ]);
   assert.equal(sources.ok, true);
   assert.equal(sources.count, 2);
   assert.equal(sources.warningCount, 1);

@@ -5,6 +5,7 @@ const STATE_RANK = {
   inactive: 2,
   healthy: 1,
 };
+const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
@@ -133,6 +134,15 @@ function schedulerObservedAt(cron, scheduler, generatedAt) {
   return observedAt(getSchedulerProof(cron, scheduler)?.observedAt, generatedAt);
 }
 
+function schedulerStaleCaveat(cron, scheduler, label) {
+  const proof = getSchedulerProof(cron, scheduler);
+  if (proof?.stale !== true) return '';
+  const age = isCount(proof.staleAgeMs)
+    ? ` (${formatAge(Math.round(proof.staleAgeMs / 1000))} old)`
+    : '';
+  return `${label} scheduling evidence is stale${age}.`;
+}
+
 function hasHermesProof(board, generatedAt) {
   const summary = board?.summary;
   return isRecord(board)
@@ -247,6 +257,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const statusUnavailable = !hasStatusProof(status, generatedAt);
   const sessionsUnavailable = !hasSessionsProof(sessions, generatedAt);
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'openclaw');
+  const cronCaveat = cronUnavailable ? '' : schedulerStaleCaveat(cron, 'openclaw', 'OpenClaw');
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -287,6 +298,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
     ...(cronUnavailable ? ['OpenClaw scheduling evidence is unavailable.'] : []),
+    ...(cronCaveat ? [cronCaveat] : []),
     ...(sessionConflict ? [sessionConflictDetail] : []),
     ...(heartbeatStale ? ['Heartbeat proof is stale or unavailable.'] : []),
   ];
@@ -342,6 +354,12 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
       '/automations',
+    ));
+  } else {
+    openclawEvidence.push(evidence(
+      'openclaw:cron', 'openclaw', 'scheduling', cronCaveat ? 'warning' : 'healthy', cronAt,
+      `${cron.jobs.filter((job) => job?.scheduler !== 'hermes').length} OpenClaw scheduled jobs${cronCaveat ? ' (stale)' : ''}`,
+      '/api/cron', '/automations',
     ));
   }
   const attention = [];
@@ -412,7 +430,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       label: 'OpenClaw',
       state: caveats.length ? 'warning' : 'healthy',
       observedAt: at,
-      freshness: statusUnavailable ? 'unavailable' : heartbeatStale ? 'stale' : 'fresh',
+      freshness: statusUnavailable ? 'unavailable' : heartbeatStale || cronCaveat ? 'stale' : 'fresh',
       caveats,
       metrics: {
         activeSessions,
@@ -430,72 +448,161 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   };
 }
 
-function adaptHermes(board, cron, generatedAt) {
-  if (!hasHermesProof(board, generatedAt)) {
+const GATEWAY_STATUSES = ['running', 'stale', 'down'];
+
+function hasGatewayProof(gateway, generatedAt) {
+  return isRecord(gateway)
+    && !gateway.unavailable
+    && gateway.ok !== false
+    && GATEWAY_STATUSES.includes(gateway.status)
+    && Boolean(observedAt(gateway.observedAt, generatedAt));
+}
+
+function formatAge(seconds) {
+  if (seconds < 90) return `${seconds}s`;
+  return `${Math.round(seconds / 60)}m`;
+}
+
+// Gateway liveness is the primary Hermes signal; Kanban is work evidence.
+function adaptHermes(board, cron, generatedAt, gateway) {
+  const gatewayProven = hasGatewayProof(gateway, generatedAt);
+  const kanbanProven = hasHermesProof(board, generatedAt);
+  if (!gatewayProven && !kanbanProven) {
     return unavailableSystem(
       'hermes',
       'Hermes',
       '/work',
       generatedAt,
-      'Hermes Kanban could not be read.',
+      'Hermes gateway and Kanban could not be read.',
     );
   }
 
-  const at = observedAt(board.refreshedAt, generatedAt);
-  const blocked = Number(board?.summary?.blocked || 0);
-  const running = Number(board?.summary?.running || 0);
+  const hermesEvidence = [];
+  const attention = [];
+  const caveats = [];
+  const states = [];
+
+  // Gateway
+  let gatewayAt = null;
+  if (gatewayProven) {
+    gatewayAt = observedAt(gateway.observedAt, generatedAt);
+    const gatewayState = gateway.status === 'down' ? 'critical' : gateway.status === 'stale' ? 'warning' : 'healthy';
+    states.push(gatewayState);
+    const summaries = {
+      running: 'Gateway running',
+      stale: 'Gateway heartbeat is stale',
+      down: 'Gateway is not running',
+    };
+    hermesEvidence.push(evidence(
+      'hermes:gateway', 'hermes', 'gateway', gatewayState, gatewayAt,
+      summaries[gateway.status], 'hermes gateway state', '/work',
+    ));
+    if (gateway.status === 'down') {
+      attention.push({
+        id: 'hermes:gateway-down',
+        system: 'hermes',
+        severity: 'critical',
+        reasonCode: 'hermes_gateway_down',
+        title: 'Hermes gateway is down',
+        detail: 'The Hermes gateway process is not running; Kanban reads do not prove Hermes is serving.',
+        detailHref: '/work',
+        evidenceRefs: ['hermes:gateway'],
+      });
+      caveats.push('Hermes gateway is down.');
+    } else if (gateway.status === 'stale') {
+      attention.push({
+        id: 'hermes:gateway-stale',
+        system: 'hermes',
+        severity: 'warning',
+        reasonCode: 'hermes_gateway_stale',
+        title: 'Hermes gateway heartbeat is stale',
+        detail: 'The gateway process exists but has not refreshed its heartbeat recently.',
+        detailHref: '/work',
+        evidenceRefs: ['hermes:gateway'],
+      });
+      caveats.push('Hermes gateway heartbeat is stale.');
+    }
+  } else {
+    states.push('warning');
+    hermesEvidence.push(evidence(
+      'hermes:gateway', 'hermes', 'gateway', 'unavailable', null,
+      'Hermes gateway liveness unavailable', 'hermes gateway state', '/work',
+    ));
+    attention.push({
+      id: 'hermes:gateway-unverified',
+      system: 'hermes',
+      severity: 'unavailable',
+      reasonCode: 'hermes_gateway_unverified',
+      title: 'Hermes gateway liveness unverified',
+      detail: 'The gateway state could not be read, so Hermes cannot be reported healthy.',
+      detailHref: '/work',
+      evidenceRefs: ['hermes:gateway'],
+    });
+    caveats.push('Hermes gateway liveness is unverified.');
+  }
+
+  // Kanban
+  const blocked = kanbanProven ? Number(board?.summary?.blocked || 0) : 0;
+  const running = kanbanProven ? Number(board?.summary?.running || 0) : 0;
+  const kanbanStale = kanbanProven && board.stale === true;
+  const kanbanAgeSeconds = kanbanStale && Number.isFinite(Number(board.staleAgeMs))
+    ? Math.max(0, Math.round(Number(board.staleAgeMs) / 1000))
+    : null;
+  const at = kanbanProven ? observedAt(board.refreshedAt, generatedAt) : gatewayAt;
+  if (kanbanProven) {
+    const kanbanState = blocked > 0 ? 'warning' : 'healthy';
+    states.push(kanbanState);
+    const proof = evidence(
+      'hermes:kanban', 'hermes', 'work', kanbanState, at,
+      `${running} running, ${blocked} blocked${kanbanStale ? ' (stale)' : ''}`,
+      '/api/hermes-kanban', '/work',
+    );
+    hermesEvidence.push(proof);
+    if (blocked > 0) {
+      attention.push({
+        id: 'hermes:blocked',
+        system: 'hermes',
+        severity: 'warning',
+        reasonCode: 'hermes_tasks_blocked',
+        title: 'Hermes work is blocked',
+        detail: `${blocked} tasks require operator review.`,
+        detailHref: '/work',
+        evidenceRefs: [proof.id],
+      });
+      caveats.push(`${blocked} Hermes tasks are blocked.`);
+    }
+    if (kanbanStale) {
+      caveats.push(`Hermes Kanban data is stale${kanbanAgeSeconds === null ? '' : ` (${formatAge(kanbanAgeSeconds)} old)`}.`);
+    }
+  } else {
+    states.push('warning');
+    hermesEvidence.push(evidence(
+      'hermes:kanban', 'hermes', 'work', 'unavailable', null,
+      'Hermes Kanban could not be read', '/api/hermes-kanban', '/work',
+    ));
+    attention.push({
+      id: 'hermes:kanban-unavailable',
+      system: 'hermes',
+      severity: 'unavailable',
+      reasonCode: 'hermes_kanban_unavailable',
+      title: 'Hermes Kanban could not be read',
+      detail: 'The gateway state is known, but work evidence is unavailable.',
+      detailHref: '/work',
+      evidenceRefs: ['hermes:kanban'],
+    });
+    caveats.push('Hermes Kanban could not be read.');
+  }
+
+  // Scheduling
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'hermes');
   const cronAt = cronUnavailable ? null : schedulerObservedAt(cron, 'hermes', generatedAt);
-  const kanbanState = blocked > 0 ? 'warning' : 'healthy';
-  const state = cronUnavailable ? 'warning' : 'healthy';
-  const proof = evidence(
-    'hermes:kanban',
-    'hermes',
-    'work',
-    kanbanState,
-    at,
-    `${running} running, ${blocked} blocked`,
-    '/api/hermes-kanban',
-    '/work',
-  );
-  const hermesEvidence = [proof];
+  const cronStale = !cronUnavailable && getSchedulerProof(cron, 'hermes')?.stale === true;
   if (cronUnavailable) {
+    states.push('warning');
     hermesEvidence.push(evidence(
-      'hermes:cron',
-      'hermes',
-      'scheduling',
-      'unavailable',
-      cronAt,
-      'Hermes scheduling evidence unavailable',
-      '/api/cron',
-      '/automations',
+      'hermes:cron', 'hermes', 'scheduling', 'unavailable', cronAt,
+      'Hermes scheduling evidence unavailable', '/api/cron', '/automations',
     ));
-  } else {
-    hermesEvidence.push(evidence(
-      'hermes:cron',
-      'hermes',
-      'scheduling',
-      'healthy',
-      cronAt,
-      `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs`,
-      '/api/cron',
-      '/automations',
-    ));
-  }
-  const attention = [];
-  if (blocked > 0) {
-    attention.push({
-      id: 'hermes:blocked',
-      system: 'hermes',
-      severity: 'warning',
-      reasonCode: 'hermes_tasks_blocked',
-      title: 'Hermes work is blocked',
-      detail: `${blocked} tasks require operator review.`,
-      detailHref: '/work',
-      evidenceRefs: [proof.id],
-    });
-  }
-  if (cronUnavailable) {
     attention.push({
       id: 'hermes:cron-unavailable',
       system: 'hermes',
@@ -506,18 +613,31 @@ function adaptHermes(board, cron, generatedAt) {
       detailHref: '/automations',
       evidenceRefs: ['hermes:cron'],
     });
+    caveats.push('Hermes scheduling evidence is unavailable.');
+  } else {
+    hermesEvidence.push(evidence(
+      'hermes:cron', 'hermes', 'scheduling', cronStale ? 'warning' : 'healthy', cronAt,
+      `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
+      '/api/cron', '/automations',
+    ));
+    if (cronStale) caveats.push(schedulerStaleCaveat(cron, 'hermes', 'Hermes'));
   }
+
+  // blocked tasks warn through attention only (state stays as before)
+  const state = states.includes('critical')
+    ? 'critical'
+    : (!gatewayProven || !kanbanProven || cronUnavailable || cronStale || gateway?.status === 'stale')
+      ? 'warning'
+      : 'healthy';
+  const freshness = kanbanStale || cronStale || !kanbanProven ? 'stale' : 'fresh';
   return {
     system: {
       id: 'hermes',
       label: 'Hermes',
       state,
       observedAt: at,
-      freshness: 'fresh',
-      caveats: [
-        ...(blocked > 0 ? [`${blocked} Hermes tasks are blocked.`] : []),
-        ...(cronUnavailable ? ['Hermes scheduling evidence is unavailable.'] : []),
-      ],
+      freshness,
+      caveats,
       metrics: {
         total: Number(board?.summary?.total || 0),
         active: Number(board?.summary?.active || 0),
@@ -526,6 +646,7 @@ function adaptHermes(board, cron, generatedAt) {
         cronJobs: !cronUnavailable && Array.isArray(cron?.jobs)
           ? cron.jobs.filter((job) => job?.scheduler === 'hermes').length
           : null,
+        ...(kanbanAgeSeconds !== null ? { kanbanAgeSeconds } : {}),
       },
       evidence: hermesEvidence,
       detailHref: '/work',
@@ -618,7 +739,7 @@ function adaptGBrain(overview, generatedAt) {
 function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOString() } = {}) {
   const adapted = {
     openclaw: adaptOpenClaw(input.status, input.sessions, input.cron, generatedAt),
-    hermes: adaptHermes(input.hermes, input.cron, generatedAt),
+    hermes: adaptHermes(input.hermes, input.cron, generatedAt, input.hermesGateway),
     gbrain: adaptGBrain(input.gbrain, generatedAt),
   };
   if (input.capabilitiesUnavailable) {
@@ -702,7 +823,7 @@ function createOperationsOverviewService({
   sourceTimeoutMsOverrides = {},
 } = {}) {
   async function getOverview() {
-    const names = ['status', 'sessions', 'cron', 'hermes', 'gbrain'];
+    const names = ['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain'];
     const results = await Promise.allSettled(
       names.map((name) => withTimeout(
         readers[name],
@@ -739,6 +860,7 @@ function createOperationsReaders({
   sessionsService,
   cronService,
   hermesKanbanService,
+  hermesGatewayHealthService,
   gbrainOverviewService,
 } = {}) {
   return {
@@ -757,7 +879,10 @@ function createOperationsReaders({
         },
       };
     },
-    hermes: () => hermesKanbanService.getBoard(),
+    // Soft deadline < sourceTimeoutMs so a slow CLI refresh yields the cached
+    // (stale) board instead of timing the whole system out.
+    hermes: () => hermesKanbanService.getBoard({ softDeadlineMs: HERMES_SOFT_DEADLINE_MS }),
+    hermesGateway: () => hermesGatewayHealthService.getHealth(),
     gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
   };
 }

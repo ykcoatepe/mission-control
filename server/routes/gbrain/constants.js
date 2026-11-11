@@ -10,13 +10,22 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 7000;
 // into flapping "Unavailable" dashboards. Mirrors sourceTimeoutMsOverrides.
 const HEALTH_PROBE_SOFT_TIMEOUT_MS = 30000;
 const HEALTH_PROBE_HARD_KILL_DELAY_MS = 30000;
+// Embed-job probe chain (only when missing embeddings > 0): up to 8 serialized
+// list_jobs children (3 terminal statuses + 1 waiting list per embed job name)
+// sharing ONE total budget; each child's soft window is capped to the budget
+// left, and a budget overrun or soft timeout stops the chain (and the stats
+// backfill after it). Normal cost is ~8 CLI starts (a few seconds each).
+const EMBED_JOB_PROBE_BUDGET_MS = 90_000;
 // Worst probe chain (buildLiveGBrainHealth): up to five sequential successful
 // commands — health, jobs, fallback health, stats backfill and its fallback —
-// can each run just under the soft window, and the last one may instead soft-
-// time out, adding the hard-kill tail. The Operations source deadline must
-// cover that whole budget or the reader discards exactly the loaded-machine
-// evidence the soft timeout exists to capture.
-const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = 5 * HEALTH_PROBE_SOFT_TIMEOUT_MS + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
+// can each run just under the soft window, plus the embed-job chain's total
+// budget, and the last command may instead soft-time out, adding the
+// hard-kill tail (only one tail: every soft timeout stops the chain). The
+// Operations source deadline must cover that whole budget or the reader
+// discards exactly the loaded-machine evidence the soft timeout exists to
+// capture.
+const GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS = 5 * HEALTH_PROBE_SOFT_TIMEOUT_MS + EMBED_JOB_PROBE_BUDGET_MS
+  + HEALTH_PROBE_HARD_KILL_DELAY_MS + 15_000;
 const DEFAULT_SOURCE_FRESHNESS_HOURS = 24;
 const SOURCE_FRESHNESS_THRESHOLDS_HOURS = {
   missioncontrol: 12,
@@ -162,6 +171,7 @@ module.exports = {
   DEFAULT_COMMAND_TIMEOUT_MS,
   HEALTH_PROBE_SOFT_TIMEOUT_MS,
   HEALTH_PROBE_HARD_KILL_DELAY_MS,
+  EMBED_JOB_PROBE_BUDGET_MS,
   GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS,
   DEFAULT_SOURCE_FRESHNESS_HOURS,
   SOURCE_FRESHNESS_THRESHOLDS_HOURS,

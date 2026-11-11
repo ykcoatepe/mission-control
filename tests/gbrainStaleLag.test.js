@@ -1,0 +1,179 @@
+const assert = require('node:assert/strict');
+const test = require('node:test');
+
+const {
+  buildGBrainOverview,
+  buildLiveGBrainHealth,
+} = require('../server/routes/gbrain');
+const {
+  STALE_PAGES_LAG_TOLERANCE_SECONDS,
+  splitStalePages,
+  readStaleRecord,
+} = require('../server/routes/gbrain/liveProbes');
+const { normalizeSnapshot } = require('../server/services/gbrainTimeline');
+
+function execWithHealth(healthPayload) {
+  return async (bin, args) => {
+    assert.equal(bin, 'gbrain');
+    if (args.join(' ') === 'call --source __all__ get_health') {
+      return { stdout: JSON.stringify(healthPayload), stderr: '' };
+    }
+    if (args.join(' ') === 'jobs stats --json') {
+      return { stdout: JSON.stringify({ waiting: 0, active: 0, stalled: 0 }), stderr: '' };
+    }
+    throw new Error(`Unexpected command ${args.join(' ')}`);
+  };
+}
+
+function healthPayload(stalePages, extra = {}) {
+  return {
+    brain_score: 98,
+    page_count: 100,
+    chunk_count: 200,
+    embedded_count: 200,
+    missing_embeddings: 0,
+    embed_coverage: 1,
+    stale_pages: stalePages,
+    ...extra,
+  };
+}
+
+async function overviewFor(payload) {
+  const health = await buildLiveGBrainHealth({ execFilePromise: execWithHealth(payload) });
+  const overview = buildGBrainOverview({ health });
+  const core = overview.nodes.find((node) => node.id === 'gbrain-core');
+  return { health, overview, core };
+}
+
+function assertDegraded({ overview, core }, count) {
+  assert.equal(core.status, 'warning');
+  assert.equal(overview.trust.label, 'Live data stale');
+  assert.match(overview.caveats.join(' '), new RegExp(`${count} stale page`));
+}
+
+test('tolerance is 2 autopilot ticks (600s each)', () => {
+  assert.equal(STALE_PAGES_LAG_TOLERANCE_SECONDS, 1200);
+});
+
+test('splitStalePages: inside tolerance is catching up; beyond it, or without a numeric lag, overdue', () => {
+  assert.deepEqual(splitStalePages(3, 300), { overdue: 0, catchingUp: 3 });
+  assert.deepEqual(splitStalePages(3, 1200), { overdue: 0, catchingUp: 3 });
+  assert.deepEqual(splitStalePages(3, 1201), { overdue: 3, catchingUp: 0 });
+  for (const bad of [null, undefined, -5, NaN, Infinity, '300', '', false, 0n]) {
+    assert.deepEqual(splitStalePages(3, bad), { overdue: 3, catchingUp: 0 }, `lag ${String(bad)}`);
+  }
+  assert.deepEqual(splitStalePages(0, null), { overdue: 0, catchingUp: 0 });
+  assert.deepEqual(splitStalePages(null, 300), { overdue: null, catchingUp: 0 });
+});
+
+test('readStaleRecord reads count and lag together from the single owning record', () => {
+  assert.deepEqual(readStaleRecord({ stale_pages: 3, stale_pages_oldest_lag_seconds: 240 }), { count: 3, lag: 240 });
+  // Nested unrelated lag with no lag on the owning record.
+  assert.deepEqual(readStaleRecord({ stale_pages: 3, details: { stale_pages_oldest_lag_seconds: 30 } }), { count: 3, lag: null });
+  for (const bad of [null, '', false, '240', -1]) {
+    assert.deepEqual(readStaleRecord({ stale_pages: 3, stale_pages_oldest_lag_seconds: bad }), { count: 3, lag: null }, `lag ${String(bad)}`);
+  }
+  // Invalid or missing count is unavailable, never zero (review round 4).
+  for (const bad of [null, false, '', '3', -1, 2.5, NaN]) {
+    assert.deepEqual(readStaleRecord({ stale_pages: bad, stale_pages_oldest_lag_seconds: 30 }), { count: null, lag: null }, `count ${String(bad)}`);
+  }
+  assert.deepEqual(readStaleRecord({ brain_score: 98 }), { count: null, lag: null });
+  // Two owners are ambiguous.
+  assert.deepEqual(readStaleRecord({ a: { stale_pages: 3 }, b: { stale_pages: 3, stale_pages_oldest_lag_seconds: 30 } }), { count: null, lag: null });
+});
+
+test('missing or invalid stale count is a warning, never healthy (review round 4)', async () => {
+  for (const bad of [null, false, '', -1]) {
+    const r = await overviewFor(healthPayload(bad));
+    assert.equal(r.health.metrics.stalePagesUnavailable, true, `count ${JSON.stringify(bad)}`);
+    assert.equal(r.core.status, 'warning');
+    assert.match(r.overview.caveats.join(' '), /did not report a valid stale-page count/);
+  }
+  const absent = healthPayload(0);
+  delete absent.stale_pages;
+  const r = await overviewFor(absent);
+  assert.equal(r.health.metrics.stalePagesUnavailable, true);
+  assert.equal(r.core.status, 'warning');
+});
+
+test('young stale pages: GBrain Core stays healthy, raw count kept and shown as catching up', async () => {
+  const r = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: 240 }));
+  assert.equal(r.health.metrics.stalePages, 3);
+  assert.equal(r.health.metrics.stalePagesOverdue, 0);
+  assert.equal(r.health.metrics.stalePagesCatchingUp, 3);
+  assert.equal(r.health.metrics.stalePagesOldestLagSeconds, 240);
+  assert.equal(r.core.status, 'healthy');
+  assert.notEqual(r.overview.trust.label, 'Live data stale');
+  assert.doesNotMatch(r.overview.caveats.join(' '), /stale page/i);
+  assert.equal(r.core.metrics.find((metric) => metric.label === 'Stale pages')?.value, '3 catching up (oldest 4m)');
+});
+
+test('stale pages older than tolerance degrade GBrain Core', async () => {
+  const r = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: 1500 }));
+  assert.equal(r.health.metrics.stalePagesOverdue, 3);
+  assertDegraded(r, 3);
+  // Mixed-age backlog: the count is the raw stale count, labeled with the oldest age.
+  assert.equal(r.core.metrics.find((metric) => metric.label === 'Stale pages')?.value, '3 (oldest 25m)');
+  assert.match(r.overview.caveats.join(' '), /3 stale pages \(oldest 25m\)/);
+});
+
+test('explicit null / non-number lag degrades end to end (review P1)', async () => {
+  for (const lag of [null, '', false, '240']) {
+    const r = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: lag }));
+    assert.equal(r.health.metrics.stalePagesOverdue, 3, `lag ${JSON.stringify(lag)}`);
+    assertDegraded(r, 3);
+  }
+});
+
+test('nested unrelated lag key cannot make Core healthy (review P2)', async () => {
+  const r = await overviewFor(healthPayload(3, { details: { stale_pages_oldest_lag_seconds: 30 } }));
+  assert.equal(r.health.metrics.stalePagesOverdue, 3);
+  assertDegraded(r, 3);
+});
+
+test('GBrain without the lag field keeps any-stale-degrades behavior', async () => {
+  const r = await overviewFor(healthPayload(3));
+  assert.equal(r.health.metrics.stalePagesOldestLagSeconds, null);
+  assertDegraded(r, 3);
+});
+
+test('zero stale pages with null lag is healthy', async () => {
+  const r = await overviewFor(healthPayload(0, { stale_pages_oldest_lag_seconds: null }));
+  assert.equal(r.health.metrics.stalePagesOverdue, 0);
+  assert.equal(r.core.status, 'healthy');
+});
+
+test('timeline keeps the raw count and scores only overdue pages as a regression', async () => {
+  const young = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: 240 }));
+  const old = await overviewFor(healthPayload(3, { stale_pages_oldest_lag_seconds: 1500 }));
+  const youngEntry = normalizeSnapshot(young.overview, { capturedAt: '2026-09-27T17:00:00.000Z' });
+  const oldEntry = normalizeSnapshot(old.overview, { capturedAt: '2026-09-27T17:20:00.000Z' });
+  assert.equal(youngEntry.metrics.stalePages, 3);
+  assert.equal(youngEntry.metrics.stalePagesOverdue, 0);
+  assert.equal(oldEntry.metrics.stalePagesOverdue, 3);
+});
+
+test('two records owning the same stale count are ambiguous: unavailable, never healthy (review rounds 2+4)', async () => {
+  const payload = {
+    health: healthPayload(3, { stale_pages_oldest_lag_seconds: null }),
+    debug: { stale_pages: 3, stale_pages_oldest_lag_seconds: 30 },
+  };
+  assert.deepEqual(readStaleRecord(payload), { count: null, lag: null });
+  const r = await overviewFor(payload);
+  assert.equal(r.health.metrics.stalePagesUnavailable, true);
+  assert.equal(r.core.status, 'warning');
+  assert.match(r.overview.caveats.join(' '), /did not report a valid stale-page count/);
+});
+
+test('text fallback: only a whole-line integer stale count counts; malformed is unavailable (review round 5)', () => {
+  const { normalizeHealthText } = require('../server/routes/gbrain/liveProbes');
+  const ok = normalizeHealthText('Health score: 9.8/10\nStale pages: 0\n', '', '2026-09-27T18:00:00.000Z');
+  assert.equal(ok.metrics.stalePages, 0);
+  assert.equal(ok.metrics.stalePagesUnavailable, false);
+  for (const bad of ['0.5', '0junk', '0e3', '-1', '']) {
+    const r = normalizeHealthText(`Health score: 9.8/10\nStale pages: ${bad}\n`, '', '2026-09-27T18:00:00.000Z');
+    assert.equal(r.metrics.stalePages, null, `text ${JSON.stringify(bad)}`);
+    assert.equal(r.metrics.stalePagesUnavailable, true);
+    assert.equal(r.status, 'stale');
+  }
+});

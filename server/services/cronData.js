@@ -208,6 +208,12 @@ function createCronService({
   calendarFile,
   homeDir = process.env.MC_USER_HOME || process.env.HOME || '/Users/yordamkocatepe',
   hermesProfile = process.env.HERMES_PROFILE || 'hmudur',
+  now = Date.now,
+  freshMs = 5 * 60 * 1000,
+  maxStaleMs = 10 * 60 * 1000,
+  // Below the Operations source timeout (10s) so one slow scheduler probe
+  // never takes the whole cron reader (and the Hermes proof) down with it.
+  operationsSoftDeadlineMs = 7000,
 }) {
   const openclawCronRunsDir = path.join(homeDir, '.openclaw', 'cron', 'runs');
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
@@ -507,10 +513,64 @@ function createCronService({
     return { jobs: [...openclawJobs, ...hermesJobs] };
   }
 
+  // Per-scheduler evidence cache: shared in-flight probe, last good result,
+  // soft deadline. Fresh while younger than freshMs; stale (flagged) until
+  // maxStaleMs; unavailable only beyond that or with no cache at all.
+  function createEvidenceCache(name, read) {
+    let lastGood = null;
+    let inFlight = null;
+    const unavailableEvidence = () => ({
+      jobs: [],
+      sourceSucceeded: false,
+      provenance: `${name}-cron-unavailable`,
+      observedAt: null,
+    });
+
+    function refresh() {
+      if (!inFlight) {
+        inFlight = Promise.resolve()
+          .then(read)
+          .then((evidence) => {
+            if (evidence?.sourceSucceeded) lastGood = { evidence, at: now() };
+            return evidence;
+          })
+          .catch(() => unavailableEvidence())
+          .finally(() => { inFlight = null; });
+      }
+      return inFlight;
+    }
+
+    function cached() {
+      if (!lastGood) return null;
+      const ageMs = now() - lastGood.at;
+      if (ageMs > maxStaleMs) return null;
+      if (ageMs <= freshMs) return { ...lastGood.evidence, cacheAgeMs: ageMs };
+      return { ...lastGood.evidence, stale: true, staleAgeMs: ageMs };
+    }
+
+    async function get(softDeadlineMs) {
+      const pending = refresh();
+      let timer;
+      const deadline = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), softDeadlineMs);
+        timer.unref?.();
+      });
+      const evidence = await Promise.race([pending, deadline]);
+      clearTimeout(timer);
+      if (evidence?.sourceSucceeded) return evidence;
+      return cached() || evidence || unavailableEvidence();
+    }
+
+    return { get };
+  }
+
+  const openclawEvidenceCache = createEvidenceCache('openclaw', () => fetchOpenclawCronJobsEvidence());
+  const hermesEvidenceCache = createEvidenceCache('hermes', () => readHermesCronJobsEvidence());
+
   async function fetchCronJobsForOperations() {
     const [openclaw, hermes] = await Promise.all([
-      fetchOpenclawCronJobsEvidence(),
-      Promise.resolve(readHermesCronJobsEvidence()),
+      openclawEvidenceCache.get(operationsSoftDeadlineMs),
+      hermesEvidenceCache.get(operationsSoftDeadlineMs),
     ]);
     const observedTimes = [openclaw.observedAt, hermes.observedAt]
       .filter(Boolean)
@@ -519,10 +579,14 @@ function createCronService({
     const observedAt = observedTimes.length
       ? new Date(Math.max(...observedTimes)).toISOString()
       : null;
-    const sourceProof = ({ sourceSucceeded, provenance, observedAt: sourceObservedAt }) => ({
+    const sourceProof = ({
+      sourceSucceeded, provenance, observedAt: sourceObservedAt, stale, staleAgeMs, cacheAgeMs,
+    }) => ({
       sourceSucceeded,
       provenance,
       observedAt: sourceObservedAt,
+      ...(stale ? { stale: true, staleAgeMs } : {}),
+      ...(cacheAgeMs !== undefined ? { cacheAgeMs } : {}),
     });
     return {
       jobs: [...openclaw.jobs, ...hermes.jobs],
