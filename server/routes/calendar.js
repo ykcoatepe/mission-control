@@ -1,31 +1,16 @@
 const express = require('express');
+const { httpError } = require('../core/http');
 
-function buildCalendarRouter({ calendarService, cronCacheTtl = 30000 }) {
+function buildCalendarRouter({ calendarService, automationSource }) {
   const router = express.Router();
 
-  router.get('/api/calendar', async (req, res) => {
-    try {
-      const current = calendarService.readCalendarDataSafe();
-      const lastSyncMs = current.lastCronSyncAt ? Date.parse(current.lastCronSyncAt) : 0;
-      const shouldSync = !lastSyncMs || Number.isNaN(lastSyncMs) || (Date.now() - lastSyncMs > cronCacheTtl);
-
-      if (shouldSync) {
-        try {
-          const synced = await calendarService.syncCalendarWithLiveCron();
-          return res.json(synced);
-        } catch (error) {
-          console.error('[Calendar sync/get]', error.message);
-          return res.json({ ...current, warning: error.message });
-        }
-      }
-
-      return res.json(current);
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
+  router.get('/api/calendar', (req, res, next) => {
+    const snap = automationSource.snapshot();
+    if (!snap.data) throw httpError(503, 'calendar_unavailable', 'Calendar data has not been observed');
+    return res.json({ ...snap.data.calendar, meta: snap.meta });
   });
 
-  router.post('/api/calendar/sync-cron', async (req, res) => {
+  router.post('/api/calendar/sync-cron', async (req, res, next) => {
     try {
       const synced = await calendarService.syncCalendarWithLiveCron();
       return res.json({
@@ -36,24 +21,23 @@ function buildCalendarRouter({ calendarService, cronCacheTtl = 30000 }) {
         lastCronSyncAt: synced.lastCronSyncAt,
       });
     } catch (error) {
-      console.error('[Calendar sync]', error.message);
-      return res.status(500).json({ error: error.message });
+      return next(error);
     }
   });
 
-  router.post('/api/calendar', (req, res) => {
+  router.post('/api/calendar', (req, res, next) => {
     try {
       return res.json(calendarService.createCalendarEntry(req.body || {}));
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ error: error.message });
+      return next(error);
     }
   });
 
-  router.patch('/api/calendar/:id', (req, res) => {
+  router.patch('/api/calendar/:id', (req, res, next) => {
     try {
       return res.json(calendarService.updateCalendarEntry(req.params.id, req.body || {}));
     } catch (error) {
-      return res.status(error.statusCode || 500).json({ error: error.message });
+      return next(error);
     }
   });
 

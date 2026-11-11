@@ -3,11 +3,9 @@ import { useEffect, useMemo, useRef } from 'react'
 import { NavLink } from 'react-router-dom'
 import type { AppRouteDefinition } from '../appRoutes'
 import { useApi } from '../lib/hooks'
-import { blockedCount } from '../lib/overview'
 import { normalizeCronStatus } from '../lib/status'
 import { useNavigation } from '../lib/useNavigation'
 import type { CronApiResponse } from '../pages/cron/types'
-import type { OperationsOverview } from '../pages/brain/types'
 import { MissionControlMark } from './MissionControlMark'
 import { cx } from './ui/cx'
 import styles from './Sidebar.module.css'
@@ -40,7 +38,6 @@ interface Badge {
 /** Abnormal-only counts: nothing is shown when the count is zero or unknown. */
 function useNavBadges(): Record<string, Badge | undefined> {
   const { data: cron } = useApi<CronApiResponse>('/api/cron', 30000)
-  const { data: overview } = useApi<OperationsOverview>('/api/operations/overview', 30000)
   return useMemo(() => {
     const badges: Record<string, Badge | undefined> = {}
     const jobs = cron?.jobs
@@ -48,10 +45,8 @@ function useNavBadges(): Record<string, Badge | undefined> {
       const failed = jobs.filter((job) => normalizeCronStatus(job.status, job.enabled) === 'failed').length
       if (failed > 0) badges['/automations'] = { count: failed, tone: 'critical', word: 'failed' }
     }
-    const blocked = blockedCount(overview)
-    if (blocked !== null && blocked > 0) badges['/work'] = { count: blocked, tone: 'warning', word: 'blocked' }
     return badges
-  }, [cron, overview])
+  }, [cron])
 }
 
 export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }: SidebarProps) {

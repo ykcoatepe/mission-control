@@ -38,7 +38,7 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
   const liveProviders = live.providers?.ok ? live.providers : null;
   const liveHermesProxy = live.hermesProxy?.ok ? live.hermesProxy : null;
   const toolsUnavailable = Boolean(live.tools && !live.tools.ok);
-  const sourcesUnavailable = Boolean(live.sources && !live.sources.ok);
+  const sourcesUnavailable = Boolean(live.sources && (!live.sources.ok || live.sources.meta?.stale));
   const requiredTools = liveTools?.requiredTools || REQUIRED_GBRAIN_TOOLS.map((tool) => ({ ...tool, present: false }));
   const presentTools = requiredTools.filter((tool) => tool.present);
   const missingTools = requiredTools.filter((tool) => !tool.present);
@@ -53,7 +53,8 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
   const baseTools = requiredTools.filter((tool) => GBRAIN_BASE_TOOL_IDS.has(tool.id));
   const presentBaseTools = baseTools.filter((tool) => tool.present);
   const missingBaseTools = baseTools.filter((tool) => !tool.present);
-  const readSmokeStatus = liveHealth && missingBaseTools.length === 0 ? 'healthy' : 'warning';
+  // Core health + discovery establish integration readiness, not a reader call.
+  const readSmokeStatus = 'inactive';
   const thinkTool = requiredTools.find((tool) => tool.id === 'think');
   const thinkConfig = runtime?.think || {};
   const thinkProbeAttempted = Boolean(live.tools || live.providers);
@@ -143,8 +144,8 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
       thinkRuntime,
       readSmoke: {
         status: readSmokeStatus,
-        proof: liveHealth ? 'gbrain call get_health + gbrain --tools-json' : 'health/tool discovery unavailable',
-        checkedAt: liveHealth?.checkedAt || live.tools?.checkedAt || null,
+        proof: 'Reader call not observed; core health and tool discovery are separate evidence',
+        checkedAt: null,
       },
       writeSmoke: {
         status: durableStatus,
@@ -156,7 +157,7 @@ function buildGBrainIntegrationHealth(live = {}, runtime = {}) {
 
   const connectedCount = systems.filter((system) => system.mcp.configured).length;
   const healthyCount = systems.filter((system) => system.status === 'healthy').length;
-  const status = toolsUnavailable
+  const status = toolsUnavailable || Object.values(live).some((p) => p?.meta?.stale) || runtime.meta?.stale
     ? 'warning'
     : missingTools.length > 0 || thinkRuntime.status === 'critical' || thinkRuntime.status === 'warning' || healthyCount < systems.length
     ? 'warning'

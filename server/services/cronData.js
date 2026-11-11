@@ -214,6 +214,7 @@ function createCronService({
   // Below the Operations source timeout (10s) so one slow scheduler probe
   // never takes the whole cron reader (and the Hermes proof) down with it.
   operationsSoftDeadlineMs = 7000,
+  fetchImpl = (...args) => fetch(...args),
 }) {
   const openclawCronRunsDir = path.join(homeDir, '.openclaw', 'cron', 'runs');
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
@@ -444,6 +445,7 @@ function createCronService({
     try {
       const { stdout } = await openclawExec(['cron', 'list'], 15000);
       const jobs = parseCronTableOutput(stdout);
+      if (!jobs.length && !/^\s*No cron jobs\b/im.test(stdout || '')) throw new Error('Unrecognized cron table');
       if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron table');
       return {
         jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
@@ -456,7 +458,7 @@ function createCronService({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
+      const response = await fetchImpl(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -635,19 +637,25 @@ function createCronService({
     });
   }
 
-  function readCalendarDataSafe() {
+  function readCalendarDataSafe({ strict = false } = {}) {
     try {
       if (!fs.existsSync(calendarFile)) {
         return { entries: [], updatedAt: null, lastCronSyncAt: null };
       }
       const parsed = JSON.parse(fs.readFileSync(calendarFile, 'utf8'));
       const payload = Array.isArray(parsed) ? { entries: parsed } : (parsed || {});
+      if (!Array.isArray(payload.entries)) throw new Error('Calendar entries missing');
       return {
         entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
         updatedAt: toIsoOrNull(payload.updatedAt),
         lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
       };
     } catch (error) {
+      if (strict) {
+        const unavailable = new Error('Calendar data unavailable');
+        unavailable.code = 'calendar_unavailable';
+        throw unavailable;
+      }
       console.error('[Calendar read]', error.message);
       return { entries: [], updatedAt: null, lastCronSyncAt: null, error: error.message };
     }
@@ -661,7 +669,7 @@ function createCronService({
       updatedAt: toIsoOrNull(payload.updatedAt) || new Date().toISOString(),
       lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
     };
-    fs.writeFileSync(calendarFile, JSON.stringify(next, null, 2), 'utf8');
+    writeJsonFileAtomic(calendarFile, next);
     return next;
   }
 
@@ -702,15 +710,35 @@ function createCronService({
     };
   }
 
-  async function syncCalendarWithLiveCron() {
-    const current = readCalendarDataSafe();
-    const parsed = await fetchCronJobsLive();
-    const cronJobs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
-    if ((!cronJobs || cronJobs.length === 0) && Array.isArray(current.entries) && current.entries.length > 0) {
-      return { ...current, warning: 'Live cron fetch returned empty; calendar preserved from last known good snapshot.' };
+  function syncCalendarWithCronEvidence(evidence) {
+    const schedulers = evidence?.operationsSource?.schedulers || {};
+    const observed = Object.keys(schedulers).filter(key => schedulers[key].sourceSucceeded && !schedulers[key].stale);
+    if (!Array.isArray(evidence?.jobs) || !observed.length) {
+      const error = new Error('No fresh scheduler evidence for calendar sync');
+      error.code = 'calendar_scheduler_unavailable';
+      throw error;
     }
-    const merged = mergeCalendarEntriesWithCronJobs(current, cronJobs, new Date().toISOString());
+    const stored = readCalendarDataSafe({ strict: true });
+    const current = { ...stored, entries: stored.entries.map(entry => ({
+      ...entry,
+      linkedJobId: entry.source === 'cron' && entry.linkedJobId && !/^(openclaw|hermes):/.test(String(entry.linkedJobId))
+        ? `openclaw:${entry.linkedJobId}` : entry.linkedJobId,
+    })) };
+    // Namespaced IDs prevent two schedulers with the same local ID colliding.
+    const cronJobs = evidence.jobs.filter(job => observed.includes(job.scheduler || 'openclaw'))
+      .map(job => ({ ...job, id: getCronJobApiId(job) }));
+    const preserved = current.entries.filter(entry => {
+      if (entry.source !== 'cron' || !entry.linkedJobId) return false;
+      const scheduler = String(entry.linkedJobId).startsWith('hermes:') ? 'hermes' : 'openclaw';
+      return !observed.includes(scheduler);
+    });
+    const merged = mergeCalendarEntriesWithCronJobs(current, cronJobs, new Date(now()).toISOString());
+    merged.entries.push(...preserved);
     return writeCalendarDataSafe(merged);
+  }
+
+  async function syncCalendarWithLiveCron() {
+    return syncCalendarWithCronEvidence(await fetchCronJobsForOperations());
   }
 
   function createCalendarEntry(payload = {}) {
@@ -824,6 +852,7 @@ function createCronService({
     readCalendarDataSafe,
     writeCalendarDataSafe,
     syncCalendarWithLiveCron,
+    syncCalendarWithCronEvidence,
     createCalendarEntry,
     updateCalendarEntry,
     upsertTaskCalendarEntry,

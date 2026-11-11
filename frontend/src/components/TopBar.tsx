@@ -1,4 +1,4 @@
-import { Bot, Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react'
+import { Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react'
 import { Link, useLocation } from 'react-router-dom'
 import { useApi } from '../lib/hooks'
 import { annunciatorFor, attentionSummary } from '../lib/overview'
@@ -94,7 +94,7 @@ export default function TopBar({ onOpenMenu, onOpenPalette }: TopBarProps) {
       </ul>
 
       {attention && attention.count > 0 && (
-        <Link to="/" className={styles.attention} data-state={attention.state}>
+        <Link to="/attention" className={styles.attention} data-state={attention.state}>
           <StatePill
             state={attention.state}
             label={attention.count === 1 ? '1 needs attention' : `${attention.count} need attention`}
@@ -135,11 +135,6 @@ export default function TopBar({ onOpenMenu, onOpenPalette }: TopBarProps) {
         className={styles.theme}
         icon={theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
         onClick={toggleTheme}
-      />
-      <IconButton
-        label="Open assistant"
-        icon={<Bot size={16} />}
-        onClick={() => window.dispatchEvent(new CustomEvent('open-chat'))}
       />
     </header>
   )

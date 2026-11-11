@@ -104,6 +104,17 @@ function combinedOutput(result) {
   return out ? `${out}${out.endsWith('\n') ? '' : '\n'}${err}` : err;
 }
 
+// CLI channel details sometimes include only a token prefix/suffix; those are
+// credentials too. Preserve status text while removing both previews and values.
+function redactChannelDetail(value) {
+  return String(value || '')
+    .replace(/\btoken\s+(?:config|configured)\s*\([^)]*\)/gi, 'token [redacted]')
+    .replace(/\b(token|api[_ -]?key|secret|password)\s*[:=]\s*[^\s·,;]+/gi, '$1=[redacted]')
+    .replace(/\bBearer\s+[^\s·,;]+/gi, 'Bearer [redacted]')
+    .replace(/\b\d{6,}:[A-Za-z0-9_.…-]{8,}/g, '[redacted]')
+    .replace(/\b(?:sk-|ghp_|xox[baprs]-)[A-Za-z0-9_.…-]{6,}/g, '[redacted]');
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -136,24 +147,29 @@ function createStatusService({
   const statusCacheTtl = 60000;
 
   function buildMinimalStatusResponse() {
-    const modelKey = getOpenclawDefaultModelKey();
     return {
       generatedAt: new Date().toISOString(),
       agent: {
         name: mcConfig.name || 'Mission Control',
-        status: 'active',
-        model: prettyModelName(modelKey),
-        activeSessions: 0,
+        status: null,
+        model: null,
+        modelObserved: false,
+        activeSessions: null,
         activeSessionsObserved: false,
-        totalAgents: 0,
-        memoryFiles: 0,
-        memoryChunks: 0,
-        heartbeatInterval: '1h',
-        channels: [],
+        totalAgents: null,
+        totalAgentsObserved: false,
+        memoryFiles: null,
+        memoryChunks: null,
+        memoryObserved: false,
+        heartbeatInterval: null,
+        heartbeatIntervalObserved: false,
+        channels: null,
+        channelsObserved: false,
       },
       heartbeat: { lastChecks: {}, lastProactiveTasks: {} },
-      recentActivity: [],
-      tokenUsage: { used: 0, limit: 0, percentage: 0 },
+      recentActivity: null,
+      recentActivityObserved: false,
+      tokenUsage: { used: null, limit: null, percentage: null, observed: false, limitObserved: false },
     };
   }
 
@@ -175,59 +191,27 @@ function createStatusService({
     return {
       agent: {
         name: mcConfig.name || 'Mission Control',
-        status: 'active',
-        model: prettyModelName(defaultModelKey || (modelMatch ? modelMatch[1] : '')),
-        activeSessions: sessionsMatch ? Number.parseInt(sessionsMatch[1], 10) : 0,
+        status: cache.operationsSource?.sourceSucceeded ? 'active' : null,
+        model: defaultModelKey || modelMatch ? prettyModelName(defaultModelKey || modelMatch[1]) : null,
+        modelObserved: Boolean(defaultModelKey || modelMatch),
+        activeSessions: sessionsMatch ? Number.parseInt(sessionsMatch[1], 10) : null,
         activeSessionsObserved: Boolean(sessionsMatch),
-        totalAgents: agentsMatch ? Number.parseInt(agentsMatch[1], 10) : 1,
-        memoryFiles: memoryMatch ? Number.parseInt(memoryMatch[1], 10) : 46,
-        memoryChunks: memoryMatch ? Number.parseInt(memoryMatch[2], 10) : 225,
-        heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : '1h',
-        channels: channels || [],
+        totalAgents: agentsMatch ? Number.parseInt(agentsMatch[1], 10) : null,
+        totalAgentsObserved: Boolean(agentsMatch),
+        memoryFiles: memoryMatch ? Number.parseInt(memoryMatch[1], 10) : null,
+        memoryChunks: memoryMatch ? Number.parseInt(memoryMatch[2], 10) : null,
+        memoryObserved: Boolean(memoryMatch),
+        heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : null,
+        heartbeatIntervalObserved: Boolean(heartbeatInterval),
+        channels: channels?.length ? channels : null,
+        channelsObserved: Boolean(channels?.length),
       },
       heartbeat: hb,
-      recentActivity: recentActivity || [],
-      tokenUsage: tokenUsage || { used: 0, limit: 1000000, percentage: 0 },
+      recentActivity: recentActivity ?? null,
+      recentActivityObserved: recentActivity != null,
+      tokenUsage: tokenUsage || { used: null, limit: null, percentage: null, observed: false, limitObserved: false },
       generatedAt: cache.generatedAt || new Date().toISOString(),
     };
-  }
-
-  function buildActivityFromMemory() {
-    const recentActivity = [];
-    for (const dayOffset of [0, 1]) {
-      const date = new Date();
-      date.setDate(date.getDate() - dayOffset);
-      const dateStr = date.toISOString().split('T')[0];
-      try {
-        const memPath = path.join(memoryPath, `${dateStr}.md`);
-        if (!fs.existsSync(memPath)) continue;
-        const memContent = fs.readFileSync(memPath, 'utf8');
-        const sections = memContent.split(/\n## /).slice(1);
-        sections.slice(0, 6).forEach((section) => {
-          const firstLine = section.split('\n')[0].trim();
-          const timeMatch = firstLine.match(/(\d{2}:\d{2})\s*UTC/);
-          const time = timeMatch ? `${dateStr}T${timeMatch[1]}:00Z` : `${dateStr}T12:00:00Z`;
-          const title = firstLine
-            .replace(/\d{2}:\d{2}\s*UTC\s*[-—]\s*/, '')
-            .replace(/\*\*/g, '')
-            .substring(0, 80);
-          const bullets = section.split('\n').filter((line) => /^[-*]\s/.test(line.trim()));
-          const detail = (bullets[0] || '').replace(/^[-*]\s*/, '').replace(/\*\*/g, '').substring(0, 120);
-          let type = 'general';
-          const lower = (title + ' ' + detail).toLowerCase();
-          if (lower.includes('bug') || lower.includes('security')) type = 'security';
-          else if (lower.includes('build') || lower.includes('deploy') || lower.includes('dashboard')) type = 'development';
-          else if (lower.includes('email') || lower.includes('lead')) type = 'business';
-          else if (lower.includes('heartbeat')) type = 'heartbeat';
-          else if (lower.includes('meeting')) type = 'meeting';
-          if (title) recentActivity.push({ time, action: title, detail: detail || 'Activity logged', type });
-        });
-        if (recentActivity.length > 2) break;
-      } catch {}
-    }
-    return recentActivity.length
-      ? recentActivity
-      : [{ time: new Date().toISOString(), action: 'System running', detail: 'Dashboard active', type: 'general' }];
   }
 
   async function doRefreshStatusCache() {
@@ -236,7 +220,7 @@ function createStatusService({
         let settled = false;
         const timer = setTimeout(() => {
           settled = true;
-          resolve({ count: 0, sessions: [] });
+          resolve(null);
         }, sessionRefreshBudgetMs);
         Promise.resolve(fetchSessions(50)).then((value) => {
           if (settled) return;
@@ -247,7 +231,7 @@ function createStatusService({
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve({ count: 0, sessions: [] });
+          resolve(null);
         });
       });
       const [openclawStatus, notionActivity, sessionData, heartbeatEvent] = await Promise.allSettled([
@@ -285,9 +269,9 @@ function createStatusService({
       const statusResult = openclawStatus.status === 'fulfilled'
         ? openclawStatus.value
         : { output: '', commandSucceeded: false };
-      const ocStatus = statusResult.output || '';
+      const ocStatus = statusResult.commandSucceeded ? statusResult.output || '' : '';
       const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
-      const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
+      const sessions = sessionData.status === 'fulfilled' ? sessionData.value : null;
 
       let defaultModelKey = '';
       try {
@@ -309,7 +293,7 @@ function createStatusService({
       const channelRegex = /│\s*(Discord|WhatsApp|Telegram)\s*│\s*(ON|OFF)\s*│\s*(OK|OFF|ERROR)\s*│\s*(.+?)\s*│/g;
       let match;
       while ((match = channelRegex.exec(ocStatus)) !== null) {
-        channels.push({ name: match[1], enabled: match[2], state: match[3], detail: match[4].trim() });
+        channels.push({ name: match[1], enabled: match[2], state: match[3], detail: redactChannelDetail(match[4].trim()) });
       }
 
       const statusShapeObserved = Boolean(
@@ -319,18 +303,18 @@ function createStatusService({
         ? new Date().toISOString()
         : null;
 
-      const sessionList = sessions.sessions || [];
-      const totalTokens = sessionList.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
+      const sessionList = Array.isArray(sessions?.sessions) ? sessions.sessions : null;
+      const tokensObserved = sessionList != null && sessions?.meta?.ok !== false && !sessions?.error && sessionList.every((session) => Number.isFinite(session.totalTokens));
       const tokenUsage = {
-        used: totalTokens,
-        limit: 0,
-        percentage: 0,
+        used: tokensObserved ? sessionList.reduce((sum, session) => sum + session.totalTokens, 0) : null,
+        limit: null,
+        percentage: null,
+        observed: tokensObserved,
+        limitObserved: false,
       };
-
-      let recentActivity = activity;
-      if (!recentActivity || !recentActivity.length) {
-        recentActivity = buildActivityFromMemory();
-      }
+      // Absence of activity is not a synthetic "System running" event. No
+      // memory content is read or forwarded as fallback activity.
+      const recentActivity = Array.isArray(activity) ? activity : null;
 
       let heartbeat = {};
       try {
@@ -384,9 +368,11 @@ function createStatusService({
 
   async function getStatusResponse() {
     const snapshot = readRuntimeSnapshot('status', runtimeSnapshotTtl.status);
-    if (snapshot) {
+    if (snapshot && !statusCache) {
+      const minimal = buildMinimalStatusResponse();
       return {
-        ...snapshot,
+        ...minimal,
+        generatedAt: snapshot.generatedAt || minimal.generatedAt,
         heartbeat: normalizeHeartbeatPayload(snapshot.heartbeat || {}),
       };
     }
@@ -460,4 +446,5 @@ module.exports = {
   heartbeatValueToSeconds,
   mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
+  redactChannelDetail,
 };

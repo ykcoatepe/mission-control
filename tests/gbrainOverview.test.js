@@ -20,7 +20,7 @@ const {
   sanitizeMessage,
 } = require('../server/routes/gbrain');
 
-async function testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture() {
+async function testScheduledRefreshReadsEveryProbeOnceAndOnlyRefreshCapturesTimeline() {
   const checkedAt = '2026-07-10T12:00:00.000Z';
   const counts = {};
   let captureCount = 0;
@@ -47,9 +47,10 @@ async function testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCaptu
     },
   });
 
+  await service.refresh();
   const snapshot = await service.readSnapshot();
 
-  assert.equal(captureCount, 0);
+  assert.equal(captureCount, 1);
   assert.equal(snapshot.overview.ok, true);
   assert.deepEqual(Object.values(counts), [1, 1, 1, 1, 1, 1, 1]);
 
@@ -81,13 +82,14 @@ async function testSharedOverviewBoundsProbeConcurrency() {
     buildIntegrationRuntime: () => ({ systems: {} }),
   });
 
+  await service.refresh();
   const snapshot = await service.readSnapshot();
 
   assert.equal(maxActive, 2);
   assert.ok(Object.values(snapshot.live).every((probe) => probe.ok));
 }
 
-async function testSharedOverviewCoalescesReadsAndBoundsConcurrency() {
+async function testSharedOverviewCoalescesRefreshesAndBoundsConcurrency() {
   let active = 0;
   let maxActive = 0;
   const guarded = (value) => async () => {
@@ -110,7 +112,7 @@ async function testSharedOverviewCoalescesReadsAndBoundsConcurrency() {
     buildIntegrationRuntime: () => ({ systems: {} }),
   });
 
-  const [first, second] = await Promise.all([service.readSnapshot(), service.readSnapshot()]);
+  const [first, second] = await Promise.all([service.refresh(), service.refresh()]);
 
   assert.equal(first, second);
   assert.equal(maxActive, 2);
@@ -118,7 +120,7 @@ async function testSharedOverviewCoalescesReadsAndBoundsConcurrency() {
   assert.equal(first.live.sources.freshness.staleCount, 0);
 }
 
-async function testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot() {
+async function testSharedRefreshWaitsForSiblingProbeWhenAnotherFails() {
   let slowProbeSettled = false;
   const service = createGBrainOverviewService({
     probes: {
@@ -139,10 +141,8 @@ async function testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot() {
     buildIntegrationRuntime: () => ({ systems: {} }),
   });
 
-  await assert.rejects(
-    () => service.readSnapshot(),
-    /health probe failed/,
-  );
+  await service.refresh();
+  assert.equal(service.probeSnapshot('health').meta.error.code, 'gbrain_read_failed');
   assert.equal(slowProbeSettled, true);
 }
 
@@ -150,10 +150,10 @@ async function testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot() {
   const overview = buildGBrainOverview();
 
   assert.equal(overview.ok, true);
-  assert.equal(overview.mode, 'read-only-fixture');
+  assert.equal(overview.mode, 'live-read-only');
   assert.equal(overview.title, 'GBrain');
   assert.equal(overview.trust.status, 'warning');
-  assert.equal(overview.trust.label, 'Trusted');
+  assert.equal(overview.trust.label, 'Health not read');
   assert.ok(overview.nodes.length >= 6);
   assert.ok(overview.edges.length >= 5);
   assert.equal(overview.warnings.length, 0);
@@ -177,26 +177,26 @@ async function testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot() {
   assert.ok(sources);
   assert.ok(googleBridge);
   assert.equal(sources.status, 'warning');
-  assert.equal(googleBridge.status, 'healthy');
-  assert.match(sources.summary, /verified/i);
-  assert.match(googleBridge.proof.label, /proof/i);
+  assert.equal(googleBridge.status, 'inactive');
+  assert.match(sources.summary, /not been read/i);
+  assert.match(googleBridge.proof.label, /Not read/i);
   assert.doesNotMatch(googleBridge.summary, /caveat/i);
   assert.doesNotMatch(googleBridge.proof.detail, /does not represent/i);
   assert.doesNotMatch(sources.nextSafeAction, /missing proof/i);
   assert.doesNotMatch(googleBridge.nextSafeAction, /missing proof/i);
 })();
 
-(function testCoreAuditNumbersArePresent() {
+(function testUnknownMetricsCannotBecomeHistoricalAuditNumbers() {
   const overview = buildGBrainOverview();
   const core = overview.nodes.find((node) => node.id === 'gbrain-core');
   const queues = overview.nodes.find((node) => node.id === 'queues');
 
   assert.ok(core);
   assert.ok(queues);
-  assert.equal(core.metrics.find((metric) => metric.label === 'Pages')?.value, '15,713');
-  assert.equal(core.metrics.find((metric) => metric.label === 'Embedded')?.value, '191,638');
-  assert.equal(queues.metrics.find((metric) => metric.label === 'Missing')?.value, '0');
-  assert.equal(overview.cockpit.embeddings.value, '100%');
+  assert.equal(core.metrics.find((metric) => metric.label === 'Pages')?.value, 'Unavailable');
+  assert.equal(core.metrics.find((metric) => metric.label === 'Embedded')?.value, 'Unavailable');
+  assert.equal(queues.metrics.find((metric) => metric.label === 'Missing')?.value, 'Unavailable');
+  assert.equal(overview.cockpit.embeddings.value, 'Unavailable');
   assert.equal(overview.cockpit.memoryRole.value, 'Shared brain');
 })();
 
@@ -653,8 +653,8 @@ async function testMissingThinkDoesNotFailBaseReadSmoke() {
   assert.equal(integrationHealth.toolContract.basePresentCount, 6);
   assert.equal(integrationHealth.toolContract.baseMissingCount, 0);
   assert.equal(integrationHealth.thinkRuntime.status, 'critical');
-  assert.equal(integrationHealth.systems.find((system) => system.id === 'hermes')?.readSmoke.status, 'healthy');
-  assert.equal(integrationHealth.systems.find((system) => system.id === 'openclaw')?.readSmoke.status, 'healthy');
+  assert.equal(integrationHealth.systems.find((system) => system.id === 'hermes')?.readSmoke.status, 'inactive');
+  assert.equal(integrationHealth.systems.find((system) => system.id === 'openclaw')?.readSmoke.status, 'inactive');
 }
 
 function testIntegrationWarningsAppearAsTopLevelCaveats() {
@@ -842,7 +842,7 @@ async function testLiveSourcesDoNotExposeLocalPaths() {
 
   assert.equal(sources.ok, true);
   assert.equal(sources.count, 3);
-  assert.equal(sources.totalPages, 15);
+  assert.equal(sources.totalPages, null); // One source omitted its page count; the total is unknown.
   assert.equal(sources.healthyCount, 2);
   assert.equal(sources.warningCount, 1);
   assert.equal(sources.freshness.staleCount, 1);
@@ -1323,7 +1323,7 @@ async function testGBrainActionRunsOnlyAllowlistedCommand() {
       };
     };
 
-    const result = await runGBrainAction(action, { execFilePromise });
+    const result = await runGBrainAction(action, { execFilePromise, confirmed: true });
     const serialized = JSON.stringify(result);
 
     assert.equal(result.ok, true);
@@ -1422,7 +1422,7 @@ async function testOverviewShowsLiveAttemptWhenRuntimeUnavailable() {
   assert.equal(core.status, 'warning');
   assert.equal(core.proof.source, 'gbrain call get_health');
   assert.match(core.proof.detail, /unavailable/i);
-  assert.equal(core.metrics.find((metric) => metric.label === 'Version')?.value, '0.40.2.0');
+  assert.equal(core.metrics.find((metric) => metric.label === 'Version')?.value, 'Unavailable');
   assert.equal(core.metrics.find((metric) => metric.label === 'Chunks')?.value, 'Unavailable');
   assert.equal(sources.status, 'warning');
   assert.equal(overview.nodes.find((node) => node.id === 'queues')?.metrics.find((metric) => metric.label === 'Coverage')?.value, 'Unavailable');
@@ -1457,10 +1457,10 @@ function testOverviewAddsTimelineSummaryAndIncidentBanner() {
 }
 
 (async () => {
-  await testSharedOverviewSnapshotReadsEveryProbeOnceWithoutTimelineCapture();
+  await testScheduledRefreshReadsEveryProbeOnceAndOnlyRefreshCapturesTimeline();
   await testSharedOverviewBoundsProbeConcurrency();
-  await testSharedOverviewCoalescesReadsAndBoundsConcurrency();
-  await testSharedOverviewWaitsForSiblingProbeBeforeReleasingSnapshot();
+  await testSharedOverviewCoalescesRefreshesAndBoundsConcurrency();
+  await testSharedRefreshWaitsForSiblingProbeWhenAnotherFails();
   await testLiveHealthNormalizesReadOnlyProbe();
   await testLiveHealthKeepsChildProbesBounded();
   await testLiveHealthClassifiesSubtargetGlobalScoreAsWarning();

@@ -56,7 +56,7 @@ function normalizeFeaturesPayload(payload, checkedAt) {
     mode: 'live-read-only',
     checkedAt,
     version: sanitizeMessage(payload?.version || ''),
-    brainScore: Number.isFinite(Number(payload?.brain_score)) ? Number(payload.brain_score) : null,
+    brainScore: payload?.brain_score != null && payload.brain_score !== '' && Number.isFinite(Number(payload.brain_score)) ? Number(payload.brain_score) : null,
     recommendations: recommendations.map((item) => ({
       id: sanitizeMessage(item?.id || 'feature-gap'),
       priority: Number.isFinite(Number(item?.priority)) ? Number(item.priority) : null,
@@ -220,7 +220,7 @@ function findNumber(payload, keys) {
     for (const [key, value] of Object.entries(item)) {
       if (wanted.has(key.toLowerCase())) {
         const number = Number(value);
-        if (Number.isFinite(number)) return number;
+        if (value !== null && value !== '' && typeof value !== 'boolean' && Number.isFinite(number)) return number;
       }
       if (value && typeof value === 'object') stack.push(value);
     }
@@ -922,7 +922,7 @@ function normalizeSourcesPayload(payload, checkedAt) {
     .filter((source) => source && typeof source === 'object')
     .map((source) => {
       const rawPages = source.pages ?? source.page_count;
-      const pages = Number.isFinite(Number(rawPages)) ? Number(rawPages) : null;
+      const pages = typeof rawPages === 'number' && Number.isInteger(rawPages) && rawPages >= 0 ? rawPages : null;
       const reportedStatus = source.status || source.clone_state || source.cloneState;
       const status = reportedStatus
         || (source.last_sync_at ? 'synced' : source.federated === false ? 'isolated' : 'unknown');
@@ -945,14 +945,15 @@ function normalizeSourcesPayload(payload, checkedAt) {
         status: String(status),
         statusReported: Boolean(reportedStatus),
         pages,
-        chunks: Number.isFinite(Number(rawChunks)) ? Number(rawChunks) : null,
+        chunks: typeof rawChunks === 'number' && Number.isInteger(rawChunks) && rawChunks >= 0 ? rawChunks : null,
         lastSyncAt,
         syncEnabled,
         freshness,
       };
     })
     .filter((source) => source.id && source.id !== 'unknown');
-  const totalPages = sources.reduce((sum, source) => sum + (source.pages || 0), 0);
+  const totalPages = sources.every((source) => source.pages !== null)
+    ? sources.reduce((sum, source) => sum + source.pages, 0) : null;
   const freshness = summarizeSourceFreshness(sources, checkedAt);
   const statusWarningCount = sources.filter(
     (source) => source.freshness?.syncTracked === false
@@ -1001,7 +1002,8 @@ function normalizeSourcesText(output, checkedAt) {
       };
     })
     .filter(Boolean);
-  const totalPages = sources.reduce((sum, source) => sum + (source.pages || 0), 0);
+  const totalPages = sources.every((source) => source.pages !== null)
+    ? sources.reduce((sum, source) => sum + source.pages, 0) : null;
   const freshness = summarizeSourceFreshness(sources, checkedAt);
   const statusWarningCount = sources.filter((source) => isWarningSourceStatus(source.status)).length;
 

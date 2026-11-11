@@ -798,13 +798,160 @@ function withTimeout(reader, timeoutMs, source) {
   });
 }
 
+const OPERATIONS_SOURCE_NAMES = Object.freeze(['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain']);
+
+// Refresh budgets per reader (backend map, 'operations' recommendations):
+// Hermes every 30 s; OpenClaw status/sessions serialized on the openclaw lane
+// every 60 s (sessions gets lane wait on top of its 10 s); cron every 60 s
+// (its own 7 s soft deadline); GBrain every 60 s with the GBrain deadline
+// passed in from the probe constants (the GBrain service runs its own probe
+// schedule; readSnapshot serves its last result). The status reader only
+// reads the status service's memory (the openclaw.status source refreshes it).
+const OPERATIONS_SOURCE_BUDGETS = Object.freeze({
+  status: { intervalMs: 30_000, timeoutMs: 10_000 },
+  sessions: { intervalMs: 60_000, timeoutMs: 30_000 },
+  cron: { intervalMs: 60_000, timeoutMs: 10_000 },
+  hermes: { intervalMs: 30_000, timeoutMs: 10_000 },
+  hermesGateway: { intervalMs: 30_000, timeoutMs: 10_000 },
+  gbrain: { intervalMs: 60_000, timeoutMs: 10_000 },
+});
+
+// One meta for a payload composed from several sources: ok only when every
+// part is ok, stale when any part is, observedAt = the oldest observation.
+function composeMeta(parts, sourceId) {
+  const entries = Object.entries(parts);
+  const metas = entries.filter(([, snap]) => snap && snap.meta);
+  const observed = metas
+    .map(([, snap]) => Date.parse(snap.meta.observedAt))
+    .filter(Number.isFinite);
+  const oldest = observed.length ? Math.min(...observed) : null;
+  const failing = metas.filter(([, snap]) => !snap.meta.ok).map(([name]) => name);
+  const missing = entries.filter(([, snap]) => !snap || !snap.meta).map(([name]) => name);
+  const ages = metas.map(([, snap]) => snap.meta.ageMs).filter(Number.isFinite);
+  return {
+    ok: failing.length === 0 && missing.length === 0 && metas.length > 0,
+    stale: metas.some(([, snap]) => snap.meta.stale) || missing.length > 0 || metas.length === 0,
+    observedAt: oldest == null ? null : new Date(oldest).toISOString(),
+    ageMs: ages.length ? Math.max(...ages) : null,
+    error: failing.length || missing.length
+      ? { code: 'partial', message: `Not current: ${[...failing, ...missing].join(', ')}` }
+      : null,
+    latencyMs: null,
+    source: sourceId,
+    sources: Object.fromEntries(metas.map(([name, snap]) => [name, snap.meta])),
+  };
+}
+
+// A reader result that says it could not read is a failed read: the source
+// keeps its last good value instead of replacing it with an unavailable body.
+function sourceReadFromReader(reader, name) {
+  return async () => {
+    if (typeof reader !== 'function') {
+      throw Object.assign(new Error(`${name} reader unavailable`), { code: `${name}_reader_missing` });
+    }
+    let value;
+    try {
+      value = await reader();
+    } catch (error) {
+      // Reader text may carry child-process output; meta gets a fixed message.
+      const code = typeof error?.code === 'string' && /^[a-z][a-z0-9_]{1,63}$/i.test(error.code)
+        ? error.code
+        : `${name}_read_failed`;
+      throw Object.assign(new Error(`${name} could not be read`), { code });
+    }
+    if (value == null || value.ok === false || value.unavailable === true) {
+      throw Object.assign(new Error(`${name} could not be read`), { code: `${name}_unavailable` });
+    }
+    return value;
+  };
+}
+
+// One scheduled source per Operations reader. The app registers each with
+// the scheduler; GET /api/operations/overview then only composes from them.
+function createOperationsSources({
+  readers = {},
+  createSource,
+  sourceTimeoutMsOverrides = {},
+  budgets = OPERATIONS_SOURCE_BUDGETS,
+  now = Date.now,
+  logger = null,
+} = {}) {
+  if (typeof createSource !== 'function') throw new TypeError('createOperationsSources: createSource required');
+  return Object.fromEntries(OPERATIONS_SOURCE_NAMES.map((name) => {
+    const budget = budgets[name] || { intervalMs: 60_000, timeoutMs: 10_000 };
+    const timeoutMs = sourceTimeoutMsOverrides[name] ?? budget.timeoutMs;
+    return [name, {
+      intervalMs: budget.intervalMs,
+      source: createSource({
+        id: `operations.${name}`,
+        read: sourceReadFromReader(readers[name], name),
+        ttlMs: budget.intervalMs,
+        timeoutMs,
+        staleAfterMs: Math.max(3 * budget.intervalMs, timeoutMs + budget.intervalMs),
+        now,
+        logger,
+      }),
+    }];
+  }));
+}
+
+// Memory-only input: last-good data while it is younger than its source's
+// stale horizon, otherwise the same unavailable marker a failed live read
+// produced. Never a default.
+function inputFromSources(sources) {
+  const input = {};
+  const snapshots = {};
+  for (const name of OPERATIONS_SOURCE_NAMES) {
+    const source = sources[name];
+    const snapshot = typeof source?.snapshot === 'function' ? source.snapshot() : null;
+    snapshots[name] = snapshot;
+    const staleAfterMs = typeof source?.status === 'function' ? source.status().staleAfterMs : null;
+    const agedOut = snapshot?.meta?.ageMs != null && Number.isFinite(staleAfterMs) && snapshot.meta.ageMs > staleAfterMs;
+    input[name] = snapshot?.data != null && !agedOut
+      ? snapshot.data
+      : {
+        ok: false,
+        unavailable: true,
+        error: agedOut ? `${name} evidence is older than its freshness limit` : `${name} has not been observed`,
+      };
+  }
+  return { input, snapshots };
+}
+
 function createOperationsOverviewService({
   readers = {},
+  sources = null,
   listCapabilities = () => [],
   now = () => new Date(),
   sourceTimeoutMs = 10_000,
   sourceTimeoutMsOverrides = {},
 } = {}) {
+  function withCapabilities(input) {
+    try {
+      input.capabilities = buildOperationsCapabilities({
+        gbrainActions: listCapabilities(),
+      });
+    } catch {
+      input.capabilities = [];
+      input.capabilitiesUnavailable = true;
+    }
+    return input;
+  }
+
+  // With scheduled sources the overview is composed from memory only: no
+  // reader runs and nothing waits on an upstream.
+  if (sources) {
+    const missing = OPERATIONS_SOURCE_NAMES.filter((name) => typeof sources[name]?.snapshot !== 'function');
+    if (missing.length) throw new TypeError(`createOperationsOverviewService: sources missing ${missing.join(', ')}`);
+    return {
+      async getOverview() {
+        const { input, snapshots } = inputFromSources(sources);
+        const overview = buildOperationsOverview(withCapabilities(input), { generatedAt: now().toISOString() });
+        return { ...overview, meta: composeMeta(snapshots, 'operations.overview') };
+      },
+    };
+  }
+
   async function getOverview() {
     const names = ['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain'];
     const results = await Promise.allSettled(
@@ -824,17 +971,11 @@ function createOperationsOverviewService({
           error: result.reason?.message || `${names[index]} unavailable`,
         },
     ]));
-    try {
-      input.capabilities = buildOperationsCapabilities({
-        gbrainActions: listCapabilities(),
-      });
-    } catch {
-      input.capabilities = [];
-      input.capabilitiesUnavailable = true;
-    }
-    return buildOperationsOverview(input, { generatedAt: now().toISOString() });
+    return buildOperationsOverview(withCapabilities(input), { generatedAt: now().toISOString() });
   }
 
+  // Live mode (no sources): kept for callers and tests that pass readers
+  // directly. The app wires sources, so no request reaches this path there.
   return { getOverview };
 }
 
@@ -871,10 +1012,14 @@ function createOperationsReaders({
 }
 
 module.exports = {
+  OPERATIONS_SOURCE_BUDGETS,
+  OPERATIONS_SOURCE_NAMES,
   STATE_RANK,
   buildOperationsCapabilities,
   buildOperationsOverview,
+  composeMeta,
   createOperationsOverviewService,
   createOperationsReaders,
+  createOperationsSources,
   deriveOverallStatus,
 };

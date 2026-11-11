@@ -176,8 +176,11 @@ function createApp(deps = {}) {
   });
 
   // --- services ----------------------------------------------------------
+// gbrain area: scheduler owns all probes; the shared runner owns the gbrain lane.
   const gbrainOverviewService = services.gbrainOverviewService
-    || createGBrainOverviewService({ projectRoot, mcConfig });
+    || createGBrainOverviewService({ projectRoot, mcConfig, exec, now });
+  gbrainOverviewService.register?.(scheduler);
+  // end gbrain area
   const hermesKanbanService = services.hermesKanbanService || createHermesKanbanService({ mcConfig });
   const hermesGatewayHealthService = services.hermesGatewayHealthService || createHermesGatewayHealthService({
     profile: hermesKanbanService.profile,
@@ -239,6 +242,27 @@ function createApp(deps = {}) {
     calendarFile: path.join(projectRoot, 'data', 'calendar-entries.json'),
   });
 
+  // --- runtime area: scheduled sources and additive router wiring --------
+  const { createAutomationSource, AUTOMATIONS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/automations');
+  const { createOpenclawModelsSource, MODELS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/models');
+  const { createOpenclawSkillsSource, SKILLS_REFRESH_INTERVAL_MS } = require('./sources/openclaw/skills');
+  const { createOllamaSource } = require('./sources/ollama/telemetry');
+  const automationSource = deps.sources?.automations || createAutomationSource({ cronService, now, logger });
+  const modelsSource = deps.sources?.models || createOpenclawModelsSource({ openclawCli, parseFirstJson, prettyModelName, settingsService, now, logger });
+  const skillsSource = deps.sources?.skills || createOpenclawSkillsSource({ openclawCli, parseFirstJson, settingsService, now, logger });
+  const ollamaSource = deps.sources?.ollama || createOllamaSource({ runner: exec, mcConfig, fetchImpl, now, logger });
+  scheduler.register(automationSource, { intervalMs: AUTOMATIONS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
+  scheduler.register(modelsSource, { intervalMs: MODELS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
+  scheduler.register(skillsSource, { intervalMs: SKILLS_REFRESH_INTERVAL_MS, jitterMs: 1000 });
+  scheduler.register(ollamaSource, { intervalMs: 5000, jitterMs: 250 });
+  // Local adapters leave other authors' mount lines untouched.
+  function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource }); }
+  function buildCalendarRouter(options) { return require('./routes/calendar').buildCalendarRouter({ ...options, automationSource }); }
+  function buildModelsRouter(options) { return require('./routes/models').buildModelsRouter({ ...options, modelsSource }); }
+  function buildSkillsRouter(options) { return require('./routes/skills').buildSkillsRouter({ ...options, skillsSource }); }
+  function buildOllamaRouter(options) { return require('./routes/ollama').buildOllamaRouter({ ...options, ollamaSource }); }
+  // --- end runtime area --------------------------------------------------
+
   const sessionsService = createSessionsService({
     fetchSessions,
     hiddenSessionsPath: path.join(projectRoot, 'hidden-sessions.json'),
@@ -265,6 +289,81 @@ function createApp(deps = {}) {
     // keep other sources isolated at the 10s default.
     sourceTimeoutMsOverrides: { gbrain: GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS },
   });
+  // --- attention area: operations sources, loops, services, signals -------
+  // Every Operations reader becomes a scheduled source; the overview route
+  // and /api/signals compose from memory. New routers mount here (paths are
+  // distinct, all before the JSON 404).
+  const attentionArea = (() => {
+    const { createSource } = require('./core/source');
+    const { createOperationsSources } = require('./services/operationsOverview');
+    const { createMloopSource, MLOOP_REFRESH_INTERVAL_MS } = require('./sources/mloop');
+    const {
+      createLaunchdSource, createReachabilitySource, LAUNCHD_REFRESH_INTERVAL_MS, REACHABILITY_REFRESH_INTERVAL_MS,
+    } = require('./sources/launchd');
+    const { buildLoopsRouter } = require('./routes/loops');
+    const { buildServicesRouter } = require('./routes/services');
+    const { buildSignalsRouter, usageFromSibling } = require('./routes/signals');
+    const operationsSources = createOperationsSources({
+      readers: createOperationsReaders({
+        statusService, sessionsService, cronService, hermesKanbanService, hermesGatewayHealthService, gbrainOverviewService,
+      }),
+      createSource,
+      sourceTimeoutMsOverrides: { gbrain: GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS },
+      now,
+      logger,
+    });
+    const sourcesByName = Object.fromEntries(Object.entries(operationsSources).map(([name, entry]) => [name, entry.source]));
+    for (const entry of Object.values(operationsSources)) {
+      scheduler.register(entry.source, { intervalMs: entry.intervalMs, jitterMs: 2000 });
+    }
+    const overviewService = createOperationsOverviewService({
+      sources: sourcesByName,
+      listCapabilities: () => listGBrainActions(),
+    });
+    const userHome = process.env.MC_USER_HOME || process.env.HOME || os.homedir();
+    const loopsSource = deps.sources?.loops || createMloopSource({ exec, now, logger, bin: path.join(userHome, 'bin', 'mloop') });
+    const launchdSource = deps.sources?.launchd || createLaunchdSource({
+      exec,
+      now,
+      logger,
+      homeDir: userHome,
+      labelPatterns: mcConfig.services?.launchdLabelPatterns || process.env.MC_LAUNCHD_LABELS || undefined,
+    });
+    const reachabilitySource = deps.sources?.reachability || createReachabilitySource({
+      fetchImpl,
+      now,
+      logger,
+      openclawGatewayPort: GATEWAY_PORT,
+      hermesGatewayHealthService,
+      ollamaBaseUrl: `http://${mcConfig.ollama?.host || '127.0.0.1'}:${Number(mcConfig.ollama?.port) || 11434}`,
+    });
+    scheduler.register(loopsSource, { intervalMs: MLOOP_REFRESH_INTERVAL_MS, jitterMs: 5000 });
+    scheduler.register(launchdSource, { intervalMs: LAUNCHD_REFRESH_INTERVAL_MS, jitterMs: 2000 });
+    scheduler.register(reachabilitySource, { intervalMs: REACHABILITY_REFRESH_INTERVAL_MS, jitterMs: 2000 });
+    const sibling = (read) => {
+      try { return read(); } catch { return null; }
+    };
+    app.use(buildLoopsRouter({ loopsSource }));
+    app.use(buildServicesRouter({ launchdSource, reachabilitySource }));
+    app.use(buildSignalsRouter({
+      operationsOverviewService: overviewService,
+      operationsSources: sourcesByName,
+      loopsSource,
+      launchdSource,
+      reachabilitySource,
+      automationsSnapshot: () => sibling(() => automationSource.snapshot()),
+      // usageService is declared by the usage area further down; read lazily.
+      usageSummary: () => usageFromSibling(sibling(() => usageService)),
+      now,
+    }));
+    return { overviewService, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource } };
+  })();
+  // The existing mount line below keeps its text; it now gets the
+  // memory-only overview service.
+  function buildOperationsRouter(options) {
+    return require('./routes/operations').buildOperationsRouter({ ...options, operationsOverviewService: attentionArea.overviewService });
+  }
+  // --- end attention area -------------------------------------------------
   const TASKS_FILE = path.join(projectRoot, 'tasks.json');
   const DECISION_LOG_PATH = path.join(projectRoot, 'data/decision-log.json');
   const OPS_EVENTS_PATH = path.join(projectRoot, 'data/ops-events.json');
@@ -332,7 +431,22 @@ function createApp(deps = {}) {
     s3Bucket: config.aws.bucket,
   }));
   app.use(buildModelsRouter({ openclawExec, parseFirstJson, prettyModelName, settingsService }));
-  app.use(buildCostsRouter({ mcConfig, projectRoot, sessionsService }));
+  // usage area: isolated provider lanes, scheduler reads, and pure legacy routes.
+  const usageService = services.usageService || require('./sources/usage').createUsageService({
+    exec: deps.exec,
+    scheduler,
+    projectRoot,
+    dataDir: config.paths.dataDir,
+    home: config.homeDir,
+    budget: () => mcConfig.budget || {},
+    now,
+    logger,
+  });
+  const killUsageAndCore = exec.killAll.bind(exec);
+  exec.killAll = () => { usageService.dispose?.(); killUsageAndCore(); };
+  app.use(buildCostsRouter({ usageService, now }));
+  // end usage area
+
   app.use(buildSessionsRouter({ sessionsService }));
   app.use(buildSettingsRouter({ settingsService, projectRoot }));
   app.use(buildDocsRouter({ projectRoot }));

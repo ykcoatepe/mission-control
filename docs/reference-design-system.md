@@ -217,10 +217,9 @@ flat. Do not use them in new code; replace them when a page is migrated.
 ```
 
 - **Sidebar.** Brand (mark + name from `/api/config`), then single-line items
-  (icon + label) in groups: Overview (no label), Operate, Know, Run; Settings
+  (icon + label) in groups: Brain (no label), Operate, Know, Run; Settings
   and Audit at the bottom. A count appears on an item only when something there
-  is abnormal: Automations = enabled jobs whose last run failed (red), Work =
-  blocked Hermes tasks (amber, only when the overview reports a number). Collapses
+  is abnormal: Automations = enabled jobs whose last run failed (red). Collapses
   to a 56px icon rail with tooltips (choice persists in `localStorage`
   `mc-sidebar-collapsed`). Under 900px it is an off-canvas drawer opened from the
   top bar's menu button (scrim, Esc, closes on navigation).
@@ -229,37 +228,39 @@ flat. Do not use them in new code; replace them when a page is migrated.
   OpenClaw: dim when healthy, lit in the state colour with the state word when
   not, each links to its `detailHref`; neutral "reading…" until the first load
   completes; a "healthy" system whose reading is stale or unread is lit as
-  stale or not read), the attention pill ("2 need attention", links to `/`,
+  stale or not read), the attention pill ("2 need attention", links to `/attention`,
   hidden at zero), the command palette trigger, data age of the overview with a
-  refresh button (refetches all on-screen API reads), theme toggle (dark/light,
-  `data-theme` on `<html>`, persisted as `mc-theme`, default dark), and the
-  Assistant button (dispatches the `open-chat` window event).
+  refresh button (refetches all on-screen API reads) and theme toggle (dark/light,
+  `data-theme` on `<html>`, persisted as `mc-theme`, default dark). There is no
+  assistant chat.
 - **Command palette (⌘K / Ctrl+K).** Sections: Pages (all nav routes),
-  Automations (`/automations?job=<id>`), Sessions (`/sessions?session=<key>`),
-  Commands (Refresh data, Toggle theme, Open assistant). Substring ranking, at
-  most 8 per section; automations and sessions are fetched only while it is open
+  Automations (`/automations?job=<id>`),
+  Commands (Refresh data, Toggle theme). Substring ranking, at
+  most 8 per section; automations are fetched only while it is open
   and listed only once you type.
 - **Error boundary** around the routed page: a failing page shows `ErrorState`
   inside the shell (Reload page / Try again) instead of a blank app. The Suspense
-  fallback is a `Skeleton`. `/setup` renders without sidebar, top bar or chat.
+  fallback is a `Skeleton`. `/setup` renders without sidebar or top bar.
 
 Navigation (order is pinned by `appRoutes.test.ts`):
 
-| Group | Label | Path | Absorbs |
+| Group | Label | Path | Notes |
 | --- | --- | --- | --- |
-| — | Overview | `/` | old Brain home |
-| Operate | Work | `/work` | link to legacy Workshop |
+| none | Brain | `/` | home; absorbs Knowledge later |
+| Operate | Attention | `/attention` | placeholder until built |
 | Operate | Automations | `/automations` | Calendar as the "Schedule" view |
-| Operate | Sessions | `/sessions` | |
-| Know | Knowledge | `/gbrain` | Memory files and Documents views |
 | Know | Usage | `/usage` | |
-| Run | Agents | `/systems` | Team structure and Desks views, Skills view |
+| Run | Services | `/services` | placeholder until built |
 | Run | Local models | `/ollama` | |
 | Utility | Settings | `/settings` | |
 | Utility | Audit | `/councils` | |
 
+`/gbrain` and `/calendar` stay routed with `nav: false`. Work, Sessions, Agents
+and the hidden pages (`/work`, `/sessions`, `/systems`, `/workshop`, `/office`,
+`/team`, `/diagnostics`) and their legacy aliases redirect to `/`.
+
 Old URLs keep working through redirects. Route `section` is `'operate' | 'know' | 'run'`
-(Overview has none); `description` is a plain-words subtitle used only by the
+(Brain has none); `description` is a plain-words subtitle used only by the
 command palette.
 
 ## 6. Words

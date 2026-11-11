@@ -6,65 +6,49 @@ import {
   utilitySidebarRoutes,
 } from './appRoutes'
 
-const diagnosticsRoute = appRoutes.find((route) => route.path === '/diagnostics')
+const byPath = (path: string) => appRoutes.find((route) => route.path === path)
 
 describe('isRouteEnabled', () => {
-  it('keeps Diagnostics visible when settings is disabled but a diagnostic module is enabled', () => {
-    expect(diagnosticsRoute).toBeDefined()
-    expect(isRouteEnabled(diagnosticsRoute!, {
-      settings: false,
-      docs: true,
-      scout: false,
-      aws: false,
-      skills: false,
-    })).toBe(true)
-  })
-
-  it('hides Diagnostics when settings and all diagnostic modules are disabled', () => {
-    expect(diagnosticsRoute).toBeDefined()
-    expect(isRouteEnabled(diagnosticsRoute!, {
-      settings: false,
-      docs: false,
-      scout: false,
-      aws: false,
-      skills: false,
-    })).toBe(false)
-  })
-
-  it('hides Diagnostics when settings is enabled but all diagnostic modules are disabled', () => {
-    expect(diagnosticsRoute).toBeDefined()
-    expect(isRouteEnabled(diagnosticsRoute!, {
-      settings: true,
-      docs: false,
-      scout: false,
-      aws: false,
-      skills: false,
-    })).toBe(false)
-  })
-
   it('keeps GBrain enabled when the legacy docs module is disabled and no explicit gbrain flag exists', () => {
-    const gbrainRoute = appRoutes.find((route) => route.path === '/gbrain')
+    const gbrainRoute = byPath('/gbrain')
 
     expect(gbrainRoute).toBeDefined()
     expect(gbrainRoute?.module).toBe('gbrain')
     expect(isRouteEnabled(gbrainRoute!, { docs: false })).toBe(true)
   })
+
+  it('gates each menu item on its own module and only an explicit false disables it', () => {
+    for (const [path, module] of [
+      ['/', 'dashboard'],
+      ['/attention', 'attention'],
+      ['/automations', 'cron'],
+      ['/usage', 'costs'],
+      ['/services', 'services'],
+      ['/ollama', 'ollamaMonitor'],
+      ['/settings', 'settings'],
+      ['/councils', 'councils'],
+    ] as const) {
+      const route = byPath(path)
+      expect(route?.module).toBe(module)
+      expect(isRouteEnabled(route!, { [module]: false })).toBe(false)
+      expect(isRouteEnabled(route!, { [module]: true })).toBe(true)
+      expect(isRouteEnabled(route!, {})).toBe(true)
+    }
+  })
 })
 
 describe('navigation hierarchy', () => {
-  it('exposes the approved primary destinations in order, including Ollama runtime monitoring', () => {
+  it('exposes the decided primary destinations in order', () => {
     expect(primarySidebarRoutes.map((route) => route.path)).toEqual([
       '/',
-      '/work',
+      '/attention',
       '/automations',
-      '/sessions',
-      '/gbrain',
       '/usage',
-      '/systems',
+      '/services',
       '/ollama',
     ])
 
-    expect(primarySidebarRoutes.find((route) => route.path === '/ollama')).toMatchObject({
+    expect(byPath('/ollama')).toMatchObject({
       label: 'Local models',
       section: 'run',
       description: 'Ollama health and loaded models',
@@ -73,13 +57,11 @@ describe('navigation hierarchy', () => {
 
   it('labels and groups the primary destinations per the design reference', () => {
     expect(primarySidebarRoutes.map((route) => [route.label, route.section])).toEqual([
-      ['Overview', undefined],
-      ['Work', 'operate'],
+      ['Brain', undefined],
+      ['Attention', 'operate'],
       ['Automations', 'operate'],
-      ['Sessions', 'operate'],
-      ['Knowledge', 'know'],
       ['Usage', 'know'],
-      ['Agents', 'run'],
+      ['Services', 'run'],
       ['Local models', 'run'],
     ])
   })
@@ -88,9 +70,9 @@ describe('navigation hierarchy', () => {
     expect(utilitySidebarRoutes.map((route) => route.path)).toEqual(['/settings', '/councils'])
   })
 
-  it('keeps source-specific Phase 2 pages hidden but reachable', () => {
-    for (const path of ['/workshop', '/calendar', '/office', '/team']) {
-      expect(appRoutes.find((route) => route.path === path)?.nav).toBe(false)
+  it('keeps Knowledge and Calendar routed but out of the menu', () => {
+    for (const path of ['/gbrain', '/calendar']) {
+      expect(byPath(path)?.nav).toBe(false)
     }
   })
 
@@ -99,15 +81,28 @@ describe('navigation hierarchy', () => {
     expect(new Set(paths).size).toBe(paths.length)
   })
 
-  it('keeps only the approved compatibility redirects hidden from navigation', () => {
+  it('keeps the compatibility redirects hidden from navigation', () => {
     for (const [path, module] of [
-      ['/kanban', 'workshop'],
       ['/cron', 'cron'],
-      ['/conversations', 'chat'],
       ['/costs', 'costs'],
-      ['/agents', 'agents'],
     ] as const) {
-      expect(appRoutes.find((route) => route.path === path)).toMatchObject({ module, nav: false })
+      expect(byPath(path)).toMatchObject({ module, nav: false })
+    }
+  })
+
+  it('turns every removed screen into a hidden redirect', () => {
+    const removed = [
+      '/work', '/sessions', '/systems', '/workshop', '/office', '/team', '/diagnostics',
+      '/kanban', '/conversations', '/agents', '/memory', '/scout', '/aws', '/skills',
+    ]
+    const home = byPath('/work')?.component
+    for (const path of removed) {
+      const route = byPath(path)
+      expect(route, path).toBeDefined()
+      expect(route?.nav, path).toBe(false)
+      expect(route?.icon, path).toBeUndefined()
+      expect(route?.component, path).toBe(home)
+      expect(primarySidebarRoutes.concat(utilitySidebarRoutes)).not.toContain(route)
     }
   })
 })

@@ -113,7 +113,7 @@ async function testModernStatusDoesNotTreatTaskCountAsActiveSessions() {
     await service.refreshStatusCache();
     const status = readSnapshot();
 
-    assert.equal(status.agent.activeSessions, 0);
+    assert.equal(status.agent.activeSessions, null);
     assert.equal(status.agent.activeSessionsObserved, false);
   } finally {
     global.fetch = originalFetch;
@@ -145,9 +145,9 @@ async function testGatewayHealthIsFallbackWhenFullStatusFails() {
     const status = readSnapshot();
 
     assert.equal(requestedUrl, 'http://127.0.0.1:19999/health');
-    assert.equal(status.agent.activeSessions, 0);
-    assert.equal(status.agent.totalAgents, 1);
-    assert.equal(status.agent.channels.length, 0);
+    assert.equal(status.agent.activeSessions, null);
+    assert.equal(status.agent.totalAgents, null);
+    assert.equal(status.agent.channels, null);
   } finally {
     global.fetch = originalFetch;
   }
@@ -340,7 +340,55 @@ async function testOperationsStatusUsesFreshCachedProof() {
   releaseStalledRead({ count: 0, sessions: [] });
 }
 
+async function testUnknownStatusNeverInventsNumbersOrActivity() {
+  const { service, readSnapshot } = makeService({
+    fetchNotionActivity: async () => { throw new Error('unavailable'); },
+    fetchSessions: async () => { throw new Error('unavailable'); },
+    execSync: () => 'Agents │ 2',
+  });
+  await service.refreshStatusCache();
+  const status = readSnapshot();
+  assert.equal(status.agent.memoryFiles, null);
+  assert.equal(status.agent.memoryChunks, null);
+  assert.equal(status.agent.memoryObserved, false);
+  assert.equal(status.agent.heartbeatInterval, null);
+  assert.equal(status.agent.heartbeatIntervalObserved, false);
+  assert.deepEqual(status.tokenUsage, { used: null, limit: null, percentage: null, observed: false, limitObserved: false });
+  assert.equal(status.recentActivity, null);
+  assert.equal(status.recentActivityObserved, false);
+  const cold = makeService().service.buildMinimalStatusResponse();
+  assert.equal(cold.agent.memoryFiles, null);
+  assert.equal(cold.agent.heartbeatInterval, null);
+  assert.equal(cold.tokenUsage.limit, null);
+  assert.equal(cold.recentActivity, null);
+}
+
+async function testChannelTokenPreviewsNeverReachSnapshot() {
+  const tokenPreview = '999999999:ABCdef…SENTINEL';
+  const { service, readSnapshot } = makeService({ execSync: () =>
+    `Agents │ 1\n│ Telegram │ ON │ OK │ token config (${tokenPreview} · len 46) · accounts 1/1 │`,
+  });
+  await service.refreshStatusCache();
+  assert.doesNotMatch(JSON.stringify(readSnapshot()), /SENTINEL|999999999/);
+  assert.match(readSnapshot().agent.channels[0].detail, /token \[redacted\]/);
+}
+
+async function testLegacySnapshotDoesNotReviveUnobservedDefaultsOrSecrets() {
+  const { service } = makeService({ readRuntimeSnapshot: () => ({
+    agent: { memoryFiles: 46, memoryChunks: 225, heartbeatInterval: '1h', channels: [{ detail: 'token=secret-sentinel' }] },
+    tokenUsage: { limit: 1000000 }, recentActivity: [{ action: 'System running' }],
+  }) });
+  const status = await service.getStatusResponse();
+  assert.equal(status.agent.memoryFiles, null);
+  assert.equal(status.tokenUsage.limit, null);
+  assert.equal(status.recentActivity, null);
+  assert.doesNotMatch(JSON.stringify(status), /secret-sentinel/);
+}
+
 (async () => {
+  await testUnknownStatusNeverInventsNumbersOrActivity();
+  await testChannelTokenPreviewsNeverReachSnapshot();
+  await testLegacySnapshotDoesNotReviveUnobservedDefaultsOrSecrets();
   testHeartbeatTimestampNormalization();
   testHeartbeatEventRejectsFutureClockSkew();
   testHeartbeatMergeKeepsEventMetadataWithWinningTimestamp();

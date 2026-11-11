@@ -92,7 +92,7 @@ const EXPECTED_ROUTES = [
   'GET /api/ollama/telemetry', 'GET /api/ollama/telemetry/history', 'GET /api/ollama/telemetry/models', 'POST /api/ollama/optimization',
   'GET /api/councils/summary', 'GET /api/councils/decisions', 'GET /api/councils/agents', 'GET /api/councils/governance/scorecard',
   'GET /api/councils/decisions/:decisionId/timeline', 'POST /api/councils/decisions/:decisionId/action',
-  'GET /api/ops/events', 'POST /api/ops/openclaw/self-heal',
+  'GET /api/ops/events',
   'GET /^\\/(?!api(?:\\/|$)).*/',
 ];
 
@@ -115,6 +115,90 @@ const PURE_GET_SWEEP = [
   '/api/gbrain/actions',
   '/api/nope',
 ];
+
+// gbrain area: new read envelopes and all memory-only dashboard GETs.
+EXPECTED_ROUTES.splice(EXPECTED_ROUTES.indexOf('GET /api/gbrain/timeline') + 1, 0,
+  'GET /api/gbrain/synoptic', 'GET /api/gbrain/search', 'GET /api/gbrain/pages/:slug', 'GET /api/gbrain/graph');
+PURE_GET_SWEEP.push('/api/gbrain/overview', '/api/gbrain/health', '/api/gbrain/sources',
+  '/api/gbrain/version', '/api/gbrain/integration-health', '/api/gbrain/timeline',
+  '/api/gbrain/synoptic', '/api/gbrain/graph?around=projects%2Fmission-control');
+// end gbrain area
+
+// usage area: route contract and pure-GET sweep.
+EXPECTED_ROUTES.splice(EXPECTED_ROUTES.indexOf('GET /api/costs/months') + 1, 0, 'GET /api/usage/summary');
+PURE_GET_SWEEP.push('/api/costs', '/api/costs/months', '/api/costs/codexbar', '/api/usage/summary');
+// end usage area
+
+// attention area: loops/services/signals mount with the operations sources
+// (before /api/health); all four are memory-only GETs.
+EXPECTED_ROUTES.unshift('GET /api/loops', 'GET /api/loops/:project', 'GET /api/services', 'GET /api/signals');
+PURE_GET_SWEEP.push('/api/loops', '/api/loops/some-project', '/api/services', '/api/signals');
+test('boot smoke (attention area): sources are scheduled, GETs compose from memory, refresh goes through the runner', async () => {
+  const calls = [];
+  const exec = createExec({
+    execFileImpl(file, args, options, callback) {
+      calls.push([file, ...args]);
+      setImmediate(() => callback(Object.assign(new Error('fake CLI'), { code: 1 }), '', 'unavailable'));
+      return { pid: 0, kill() {} };
+    },
+  });
+  // Own project root, so the shared ROOT's boot-time expectations stay intact.
+  const attentionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-boot-attention-'));
+  for (const name of ['mc-config.json', 'package.json']) fs.copyFileSync(path.join(ROOT, name), path.join(attentionRoot, name));
+  const app = createApp({
+    config: loadConfig({ rootDir: attentionRoot, homeDir: HOME, env: { PORT: '0' } }),
+    exec,
+    logger: { log() {}, warn() {}, error() {} },
+    services: {
+      gbrainOverviewService: { readSnapshot: unavailable },
+      hermesKanbanService: { profile: 'test', getBoard: unavailable, getTask: unavailable, runAction: unavailable },
+      hermesGatewayHealthService: { getHealth: async () => ({ ok: false, unavailable: true }) },
+      notionActivity: { fetchNotionActivity: async () => null },
+    },
+  });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((resolve) => server.once('listening', resolve));
+  const { port } = server.address();
+  app.locals.runtime.setBoundPort(port);
+  const before = { root: treeState(attentionRoot), home: treeState(HOME) };
+  try {
+    const jobIds = app.locals.runtime.scheduler.status().jobs.map((job) => job.id);
+    for (const id of ['operations.status', 'operations.sessions', 'operations.cron', 'operations.hermes',
+      'operations.hermesGateway', 'operations.gbrain', 'mloop.loops', 'launchd.services', 'services.reachability']) {
+      assert.ok(jobIds.includes(id), `${id} is not scheduled`);
+    }
+    const loops = await request(port, { urlPath: '/api/loops' });
+    assert.equal(loops.status, 503);
+    assert.equal(loops.json.data, null);
+    assert.equal(loops.json.meta.source, 'mloop.loops');
+    const services = await request(port, { urlPath: '/api/services' });
+    assert.equal(services.status, 503);
+    const signals = await request(port, { urlPath: '/api/signals' });
+    assert.equal(signals.status, 200);
+    assert.equal(signals.json.data.loops, null);
+    assert.equal(signals.json.data.services, null);
+    assert.equal(signals.json.data.systems.gbrain.state, 'unavailable');
+    const overview = await request(port, { urlPath: '/api/operations/overview' });
+    assert.equal(overview.json.meta.source, 'operations.overview');
+    assert.deepEqual(calls, [], 'a GET started a process');
+
+    await app.locals.runtime.scheduler.runNow('mloop.loops');
+    await app.locals.runtime.scheduler.runNow('launchd.services');
+    assert.deepEqual(calls.map(([file, ...args]) => [path.basename(file), args.join(' ')]), [
+      ['mloop', 'check --all-projects --json'],
+      ['launchctl', 'list'],
+    ]);
+    const after = await request(port, { urlPath: '/api/loops' });
+    assert.equal(after.json.meta.error.code, 'mloop_failed');
+    assert.doesNotMatch(after.body, /fake CLI|unavailable/);
+    assert.deepEqual(treeState(attentionRoot), before.root);
+    assert.deepEqual(treeState(HOME), before.home);
+  } finally {
+    app.locals.runtime.dispose();
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+// end attention area
 
 function treeState(dir) {
   const out = {};
@@ -233,7 +317,19 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
     assert.equal(health.status, 'ok');
     assert.equal(health.service, 'mission-control');
     assert.ok('meanMs' in health.eventLoop);
-    assert.deepEqual(health.scheduler.jobs.map((job) => job.id), ['openclaw.status']);
+    // --- runtime area: source registration and extended pure-GET sweep ----
+    const runtimeSourceIds = ['openclaw.status', 'openclaw.automations', 'openclaw.models', 'openclaw.skills', 'ollama.telemetry'];
+    assert.deepEqual(health.scheduler.jobs.map((job) => job.id).filter(id => runtimeSourceIds.includes(id)), runtimeSourceIds);
+    const runtimeGetBefore = { root: treeState(ROOT), home: treeState(HOME), exec: execCalls.length, network: networkCalls.length };
+    for (const urlPath of ['/api/cron', '/api/calendar', '/api/model', '/api/settings/export', '/api/ollama/telemetry', '/api/ollama/telemetry/history', '/api/ollama/telemetry/models']) {
+      const response = await request(port, { urlPath });
+      assert.ok([200, 503].includes(response.status), `${urlPath} uses a typed unavailable response`);
+    }
+    assert.deepEqual(treeState(ROOT), runtimeGetBefore.root);
+    assert.deepEqual(treeState(HOME), runtimeGetBefore.home);
+    assert.equal(execCalls.length, runtimeGetBefore.exec, 'runtime GET never starts a process');
+    assert.equal(networkCalls.length, runtimeGetBefore.network, 'runtime GET never probes upstream');
+    // --- end runtime area ------------------------------------------------
     assert.equal(health.exec.lanes.openclaw.concurrency, 1);
     assert.equal(health.guard.writeGuardMode, 'report-only');
     assert.doesNotMatch(JSON.stringify(health), /token":\s*"[^"[]/);

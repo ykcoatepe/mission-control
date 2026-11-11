@@ -1,251 +1,29 @@
+'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
-
-// ---------------------------------------------------------------------------
-// /api/costs/codexbar resilience: a failing re-scan must serve the last good
-// result (typed as stale) instead of a user-visible 500, while a failure with
-// no good result to fall back on still surfaces as an error.
-//
-// Root cause being guarded (2026-08-05): `codexbar cost --days 70` measures
-// ~15s warm on this host and exceeded the old 30s exec timeout whenever it
-// queued behind detailed refresh scans, producing repeated 500s in the
-// launchd error log while a perfectly good scan result sat in cache.
-// ---------------------------------------------------------------------------
-
-const FAKE_REPORT = {
-  provider: 'both',
-  updatedAt: '2026-08-01T00:00:00Z',
-  last30DaysCostUSD: 10,
-  last30DaysTokens: 1000,
-  sessionCostUSD: 1,
-  sessionTokens: 100,
-  totals: { totalCost: 10, totalTokens: 1000, inputTokens: 900, outputTokens: 100 },
-  daily: [
-    {
-      date: '2026-08-01',
-      totalCost: 10,
-      totalTokens: 1000,
-      inputTokens: 900,
-      outputTokens: 100,
-      modelBreakdowns: [{ modelName: 'claude-fable-5', cost: 10, totalTokens: 1000 }],
-    },
-  ],
-};
-
-function writeFakeCodexbar(binDir, modeFile, payloadFile) {
-  fs.writeFileSync(payloadFile, JSON.stringify(FAKE_REPORT));
-  fs.writeFileSync(modeFile, 'ok');
-  const script = [
-    '#!/bin/sh',
-    `MODE=$(cat ${JSON.stringify(modeFile)})`,
-    'if [ "$MODE" = "fail" ]; then',
-    '  echo "synthetic codexbar failure" >&2',
-    '  exit 1',
-    'fi',
-    'if [ "$MODE" = "garbage" ]; then',
-    '  echo "this is not json {"',
-    '  exit 0',
-    'fi',
-    'if [ "$MODE" = "semantic" ]; then',
-    '  echo "{\\"error\\":\\"scanner failed\\"}"',
-    '  exit 0',
-    'fi',
-    'if [ "$MODE" = "structured-error" ]; then',
-    '  echo "[{\\"provider\\":\\"codex\\",\\"daily\\":[],\\"error\\":{\\"message\\":\\"auth expired\\"}}]"',
-    '  exit 0',
-    'fi',
-    `cat ${JSON.stringify(payloadFile)}`,
-  ].join('\n');
-  const binPath = path.join(binDir, 'codexbar');
-  fs.writeFileSync(binPath, script);
-  fs.chmodSync(binPath, 0o755);
-}
-
-async function withCodexbarRouter(run, envOverrides = {}) {
-  const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-codexbar-resilience-'));
-  const binDir = path.join(workDir, 'bin');
-  fs.mkdirSync(binDir);
-  const modeFile = path.join(workDir, 'mode');
-  const payloadFile = path.join(workDir, 'payload.json');
-  writeFakeCodexbar(binDir, modeFile, payloadFile);
-
-  const previousEnv = {
-    PATH: process.env.PATH,
-    MC_COSTS_CACHE_DIR: process.env.MC_COSTS_CACHE_DIR,
-    MC_CODEXBAR_SCAN_TTL_MS: process.env.MC_CODEXBAR_SCAN_TTL_MS,
-    MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS: process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS,
-  };
-  process.env.PATH = `${binDir}:${process.env.PATH}`;
-  process.env.MC_COSTS_CACHE_DIR = path.join(workDir, 'cache');
-  // TTL 0 forces every request through a fresh exec, so the failure path is
-  // reachable without waiting out the production 30s reuse window.
-  process.env.MC_CODEXBAR_SCAN_TTL_MS = '0';
-  delete process.env.MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS;
-  Object.entries(envOverrides).forEach(([envKey, envValue]) => {
-    process.env[envKey] = envValue;
-  });
-
-  const express = require('express');
-  const { buildCostsRouter } = require('../server/routes/costs');
-  const app = express();
-  app.use(buildCostsRouter({
-    mcConfig: { budget: { monthly: 0 } },
-    projectRoot: path.join(__dirname, '..'),
-    sessionsService: { listVisibleSessions: async () => ({ sessions: [] }) },
-  }));
-  const server = await new Promise((resolve) => {
-    const created = app.listen(0, '127.0.0.1', () => resolve(created));
-  });
-  const base = `http://127.0.0.1:${server.address().port}`;
-
-  try {
-    await run({ base, modeFile });
-  } finally {
-    await new Promise((resolve) => server.close(resolve));
-    Object.entries(previousEnv).forEach(([key, value]) => {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    });
-    fs.rmSync(workDir, { recursive: true, force: true });
-  }
-}
-
-test('a failing re-scan serves the last good codexbar result, typed as stale', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-    const freshBody = await fresh.json();
-    assert.equal(freshBody.stale, undefined, 'a fresh scan must not be marked stale');
-    assert.equal(freshBody.totals.totalCost, 10);
-
-    fs.writeFileSync(modeFile, 'fail');
-    const fallback = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fallback.status, 200, 'a failing re-scan with a last good result must not 500');
-    const fallbackBody = await fallback.json();
-    assert.equal(fallbackBody.stale, true);
-    assert.equal(fallbackBody.staleReason, 'scan_failed_served_last_good');
-    assert.ok(Number.isFinite(fallbackBody.staleAgeMs));
-    assert.equal(fallbackBody.totals.totalCost, 10, 'the payload must be the last good scan');
-  });
-});
-
-test('an exit-0 scan with garbage output falls back and does NOT poison the last good cache', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-
-    fs.writeFileSync(modeFile, 'garbage');
-    const fallback = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fallback.status, 200, 'garbage output with exit 0 must fall back like a failed scan');
-    const fallbackBody = await fallback.json();
-    assert.equal(fallbackBody.stale, true);
-    assert.equal(fallbackBody.totals.totalCost, 10, 'the served payload must be the last GOOD scan, not the garbage');
-
-    // The recovery request proves the cache held the good scan, not the garbage.
-    fs.writeFileSync(modeFile, 'ok');
-    const recovered = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(recovered.status, 200);
-    const recoveredBody = await recovered.json();
-    assert.equal(recoveredBody.stale, undefined, 'a healthy re-scan must serve fresh again');
-    assert.equal(recoveredBody.totals.totalCost, 10);
-  });
-});
-
-test('exit-0 SEMANTIC garbage (valid JSON, hollow shape) falls back instead of storing zeros', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-
-    // {"error":"scanner failed"} parses fine and merges into a zero-valued
-    // report; without shape validation it would silently replace the last
-    // good scan with zeros.
-    fs.writeFileSync(modeFile, 'semantic');
-    const fallback = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fallback.status, 200);
-    const fallbackBody = await fallback.json();
-    assert.equal(fallbackBody.stale, true, 'a hollow report must be treated as a failed scan');
-    assert.equal(fallbackBody.totals.totalCost, 10, 'the last good totals must survive, not zeros');
-
-    fs.writeFileSync(modeFile, 'ok');
-    const recovered = await fetch(`${base}/api/costs/codexbar`);
-    const recoveredBody = await recovered.json();
-    assert.equal(recoveredBody.stale, undefined);
-    assert.equal(recoveredBody.totals.totalCost, 10);
-  });
-});
-
-test('CodexBar\'s structured error shape (provider + empty daily + error) falls back too', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-
-    // The CLI's error builder emits provider + daily:[] + error; if that ever
-    // exits 0 it must be treated as a failed scan, not a zero-usage report.
-    fs.writeFileSync(modeFile, 'structured-error');
-    const fallback = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fallback.status, 200);
-    const fallbackBody = await fallback.json();
-    assert.equal(fallbackBody.stale, true, 'an error-carrying report must not read as fresh zeros');
-    assert.equal(fallbackBody.totals.totalCost, 10, 'last good totals must survive the structured error');
-
-    fs.writeFileSync(modeFile, 'ok');
-    const recovered = await fetch(`${base}/api/costs/codexbar`);
-    const recoveredBody = await recovered.json();
-    assert.equal(recoveredBody.stale, undefined);
-    assert.equal(recoveredBody.totals.totalCost, 10);
-  });
-});
-
-test('a stale codexbar scan marks month availability partial while keeping its months', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-
-    fs.writeFileSync(modeFile, 'fail');
-    const months = await fetch(`${base}/api/costs/months`);
-    assert.equal(months.status, 200);
-    const body = await months.json();
-    // The stale scan's months are real usage and stay listed…
-    assert.equal(body.sourceStatus.codexbar, 'ready');
-    assert.ok(body.months.some((entry) => entry.sources.includes('codexbar')),
-      'months from the last good scan must remain available');
-    // …but the payload must not claim a fully fresh scan.
-    assert.equal(body.partial, true);
-  });
-});
-
-test('the last good fallback expires at the age ceiling instead of masking a dead scanner forever', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    const fresh = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(fresh.status, 200);
-
-    fs.writeFileSync(modeFile, 'fail');
-    const expired = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(expired.status, 500, 'past the age ceiling the failure must surface, not the frozen result');
-  }, { MC_CODEXBAR_LAST_GOOD_MAX_AGE_MS: '0' });
-});
-
-test('a failure with no last good result still surfaces as an error', async () => {
-  await withCodexbarRouter(async ({ base, modeFile }) => {
-    fs.writeFileSync(modeFile, 'fail');
-    const response = await fetch(`${base}/api/costs/codexbar`);
-    assert.equal(response.status, 500, 'nothing good to serve: the failure must stay visible');
-    const body = await response.json();
-    assert.match(String(body.error || ''), /Failed to load CodexBar cost data/);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Mechanized guard: both codexbar execs must use the shared, env-tunable
-// timeout — a literal 30s ceiling on this seam is the regression under guard.
-// ---------------------------------------------------------------------------
-
-test('codexbar execs use the env-tunable timeout, not a hardcoded ceiling', () => {
-  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
-  assert.match(routeSource, /const codexbarTimeoutMs = Number\(process\.env\.MC_CODEXBAR_TIMEOUT_MS \|\| 120000\);/);
-  assert.match(routeSource, /--provider both --days \$\{scanDays\}`, \{\s*timeout: codexbarTimeoutMs,/);
-  assert.match(routeSource, /--provider claude --days \$\{days\}`, \{\s*timeout: codexbarTimeoutMs,/);
-});
+const { createCodexProvider, codexHomePath } = require('../server/sources/usage/providers/codex');
+const { hermesDbPath, createHermesProvider } = require('../server/sources/usage/providers/hermes');
+const { createUsageService } = require('../server/sources/usage');
+const NOW = Date.parse('2026-08-15T12:00:00Z');
+const bounds = { since: '2026-08-01', until: '2026-08-15' };
+const report = { provider: 'codex', daily: [{
+            date: '2026-08-15', inputTokens: 100, outputTokens: 20, cacheReadTokens: 80, modelBreakdowns: [{ modelName: 'gpt-5.6-sol' }]
+        }] };
+test('Codex fallback uses argv, explicit host home, own lane and configured timeout', async () => { const calls = []; const p = createCodexProvider({
+    exec: { async run(bin, args, opts) { calls.push({ bin, args, opts }); return bin === 'codexbar' ? { ok: true, stdout: JSON.stringify(report) } : { ok: false, stderr: 'PRIVATE' }; } }, projectRoot: '/work tree', home: '/host', env: { MC_CODEXBAR_TIMEOUT_MS: '7654', CODEX_HOME: '/wrong' }, now: () => NOW
+}); const data = await p.read(bounds); assert.equal(data.days[0].inputTokens, 20); assert.equal(data.days[0].billedUsd, null); assert.equal(data.coverage, 'partial'); assert.equal(calls[0].args[0], '/work tree/scripts/openclaw-usage-summary.js'); assert.equal(calls[0].opts.env.MC_CODEX_HOME, '/host/.codex'); assert.equal(calls[1].opts.timeoutMs, 7654); assert.equal(calls[1].opts.lane, 'usage_codex'); assert.deepEqual(calls[1].args.slice(0, 6), ['cost', '--format', 'json', '--provider', 'codex', '--days']); });
+for (const bad of ['garbage', '{}', '{"error":"secret"}', '[{"provider":"codex","daily":[],"error":{"message":"secret"}}]'])
+    test(`bad codexbar observation preserves last good (${bad.slice(0, 12)})`, async () => { let fail = false; const exec = { async run(bin) { if (bin !== 'codexbar')
+            return { ok: false }; return { ok: true, stdout: fail ? bad : JSON.stringify(report) }; } }; const provider = createCodexProvider({
+        exec, home: '/home', env: {}, projectRoot: '/repo', now: () => NOW
+    }); const u = createUsageService({ providers: [provider], now: () => NOW }); await u.refresh(); fail = true; await u.refresh(); const body = u.codexbar(); assert.equal(body.totals.totalTokens, 120); assert.equal(body.stale, true); assert.equal(body.meta.ok, false); assert.equal(JSON.stringify(body).includes('secret'), false); });
+test('cold failed scanner remains warming with null totals', async () => { const p = createCodexProvider({
+    exec: { run: async () => ({ ok: false }) }, home: '/home', env: {}, projectRoot: '/repo'
+}); const u = createUsageService({ providers: [p], now: () => NOW }); await u.refresh(); assert.equal(u.codexbar().totals.totalTokens, null); assert.equal(u.costs().providers[0].state, 'unavailable'); });
+test('explicit missing producer paths cannot fall through to a different profile/home', () => { assert.equal(hermesDbPath({ HERMES_STATE_DB: '/missing/db' }, '/home'), '/missing/db'); assert.equal(hermesDbPath({ HERMES_PROFILE_DIR: '/missing/profile' }, '/home'), '/missing/profile/state.db'); assert.equal(codexHomePath({ MC_USER_HOME: '/user', CODEX_HOME: '/wrong' }), '/user/.codex'); });
+test('Hermes uses read-only argv with short busy timeout and every model, preserving actual billing unknowns', async () => { let call; const names = ['grok-4', 'glm-5.3', 'qwen3', 'custom/qwen']; const p = createHermesProvider({
+    home: '/home', env: { HERMES_STATE_DB: '/path with spaces/state.db' }, now: () => NOW, exec: { async run(bin, args, opts) { call = { bin, args, opts }; return { ok: true, stdout: JSON.stringify(names.map(model => ({
+                date: '2026-08-15', provider: 'local', model, inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, billedUsd: null
+            }))) }; } }
+}); const data = await p.read(bounds); assert.equal(data.days.length, 4); assert.equal(data.days[0].billedUsd, null); assert.deepEqual(call.args.slice(0, 5), ['-readonly', '-json', '-cmd', '.timeout 200', '/path with spaces/state.db']); assert.equal(call.opts.timeoutMs, 5000); assert.equal(call.opts.lane, 'usage_hermes'); assert.match(call.args[5], /actual_cost_usd/); assert.doesNotMatch(call.args[5], /model\s+(IN|LIKE)|system_prompt|title|billing_base_url/i); });
+test('Hermes floors both time bounds and never substitutes estimated cost for billed', async () => { let sql; const p = createHermesProvider({ home: '/home', env: {}, exec: { async run(bin, args) { sql = args.at(-1); return { ok: true, stdout: '[]' }; } } }); await p.read(bounds); assert.ok(sql.includes(String(Math.floor(new Date('2026-08-15T23:59:59.999').getTime() / 1000)))); assert.doesNotMatch(sql, /estimated_cost_usd/); });

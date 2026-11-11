@@ -2,7 +2,6 @@ import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import { appRoutes } from './appRoutes'
 import styles from './App.module.css'
-import ChatWidget from './components/ChatWidget'
 import CommandPalette from './components/CommandPalette'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import Sidebar from './components/Sidebar'
@@ -106,7 +105,6 @@ export default function App() {
           </div>
         </div>
         <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-        <ChatWidget hideLauncher />
       </PageTitleProvider>
     </ToastProvider>
   )

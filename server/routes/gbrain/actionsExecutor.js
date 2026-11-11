@@ -1,6 +1,7 @@
 'use strict';
 
 const { GBrainActionDefinitions, activeGBrainActions } = require('./constants');
+const { requiresExplicitConfirmation } = require('./actionPolicy');
 const {
   defaultExecFilePromise,
   sanitizeMessage,
@@ -39,6 +40,11 @@ async function runGBrainAction(action, options = {}) {
       checkedAt,
       error: `Unsupported GBrain action: ${sanitizeMessage(action)}`,
     };
+  }
+
+  if (requiresExplicitConfirmation(definition, options)) {
+    return { ok: false, action, status: 'confirmation-required', checkedAt,
+      error: 'Explicit confirmation is required for this action.' };
   }
 
   if (activeGBrainActions.size > 0) {

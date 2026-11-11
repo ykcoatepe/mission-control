@@ -155,7 +155,7 @@ source is not equivalent to zero usage.
 | Family | Endpoints | Notes |
 | --- | --- | --- |
 | Councils | `GET /api/councils/summary`, `GET /api/councils/decisions`, `GET /api/councils/agents`, `GET /api/councils/governance/scorecard`, `GET /api/councils/decisions/:decisionId/timeline`, `POST /api/councils/decisions/:decisionId/action` | Action returns `410` unless explicitly enabled |
-| Ops | `GET /api/ops/events`, `POST /api/ops/openclaw/self-heal` | Local event history and a real OpenClaw recovery action |
+| Ops | `GET /api/ops/events` | Local event history (read-only) |
 | Quick | `POST /api/heartbeat/run`, `POST /api/quick/emails`, `POST /api/quick/schedule` | OpenClaw gateway actions |
 
 ## Request boundary

@@ -20,8 +20,8 @@ legacy pages.
 | `anyModule` | Show a grouped surface when any listed module is enabled |
 | `section`, `description` | Navigation metadata |
 
-The tested primary order is `/`, `/work`, `/automations`, `/sessions`,
-`/gbrain`, `/usage`, `/systems`. Utility navigation is `/settings`, then
+The tested primary order is `/`, `/attention`, `/automations`, `/usage`,
+`/services`, `/ollama`. Utility navigation is `/settings`, then
 `/councils`. Direct pages and compatibility redirects are listed in the
 [Operator Surfaces Reference](reference-operator-surfaces.md).
 

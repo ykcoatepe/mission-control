@@ -301,42 +301,6 @@ test('preserves daily model token totals when merged CodexBar reports omit them'
   );
 });
 
-test('cost routes use fixed local Claude and combined provider commands', () => {
-  const routeSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'routes', 'costs.js'), 'utf8');
-  // The Claude scan window is widened for anchored past months, but the value is
-  // always derived server-side by claudeCodeScanDays (bounded 70..400) — never
-  // interpolated from the request.
-  assert.match(routeSource, /codexbar cost --format json --provider claude --days \$\{days\}/);
-  assert.match(routeSource, /const days = claudeCodeScanDays\(monthAnchor\);/);
-  assert.doesNotMatch(routeSource, /req\.query[^\n]*days/);
-  // The combined-provider scan window is anchor-aware too, but the day count
-  // is always derived server-side from the validated anchor — never from the
-  // raw request.
-  assert.match(routeSource, /codexbar cost --format json --provider both --days \$\{scanDays\}/);
-  assert.match(routeSource, /const scanDays = claudeCodeScanDays\(parsedAnchor\.anchor\);/);
-  // The exec ceiling is the shared env-tunable codexbar timeout (a hardcoded
-  // 30s ceiling caused user-visible 500s whenever the scan queued behind the
-  // detailed refreshes — see tests/costsCodexbarResilience.test.js).
-  assert.match(
-    routeSource,
-    /codexbar cost --format json --provider both --days \$\{scanDays\}`, \{\s*timeout: codexbarTimeoutMs,\s*maxBuffer: 20 \* 1024 \* 1024,\s*env: process\.env,\s*\}/,
-  );
-  assert.doesNotMatch(routeSource, /req\.query[^\n]*provider/);
-  // The codexbar child must be reached through the shared scan helper so month
-  // navigation cannot spawn one process per selection (limiter + dedup + TTL).
-  assert.match(routeSource, /const scan = await codexbarScan\(scanDays\);/);
-  assert.match(routeSource, /function codexbarScan\(scanDays\)/);
-  assert.match(routeSource, /const scan = refreshLimiter\.run\(async \(\) => \{/);
-
-  assert.match(routeSource, /existing\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
-  assert.match(routeSource, /dayModel\.reasoning \+= Number\(row\.reasoning \|\| 0\)/);
-  assert.match(routeSource, /out\[`\$\{svc\.name\}_reasoning`\] = b\.reasoning \|\| 0/);
-  assert.match(routeSource, /out\[`\$\{key\}_reasoning`\] = Number\(row\[`\$\{key\}_reasoning`\] \|\| 0\)/);
-  assert.doesNotMatch(routeSource, /cache_write_tokens, 0\) \+ COALESCE\(reasoning_tokens, 0\)\) AS tokens/);
-  assert.doesNotMatch(routeSource, /row\[`\$\{svc\.name\}_apiEquivalentUsd`\] \?\? svc\.apiEquivalentUsd/);
-  assert.doesNotMatch(routeSource, /row\[`\$\{svc\.name\}_apiEquivalentStatus`\] \|\| svc\.apiEquivalentStatus/);
-});
-
 test('preserved source summaries keep every cost and token aggregate', () => {
   const summary = sumUsageSummaries([
     { summary: { periodUsd: 3, previousPeriodUsd: 2, previousPeriodApiEquivalentUsd: 12, todayUsd: 1, yesterdayUsd: 0.5, thisWeekUsd: 4, thisMonthUsd: 5, totalUsd: 6, periodTokens: 30, todayTokens: 10, thisWeekTokens: 40, thisMonthTokens: 50, totalTokens: 60 } },

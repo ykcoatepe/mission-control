@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execFile } = require('child_process');
+const { redact, validateMcConfig } = require('../core/config');
+const { httpError } = require('../core/http');
 
 function normalizeMonthlyBudget(monthly) {
   const normalized = Number(monthly ?? 0);
@@ -25,25 +26,33 @@ function createSettingsService({
   skillsPath,
   bedrockRegion,
   openclawExec,
-  // Core ConfigStore (the only writer of mc-config.json, atomic). Without
-  // one (isolated tests) the legacy direct writes are used.
+  // Missing stores fail closed; tests inject the same core store.
   configStore = null,
+  fsImpl = fs,
+  homeDir = os.homedir(),
+  fetchImpl = (...args) => fetch(...args),
 }) {
-  const openclawConfigPath = path.join(os.homedir(), '.openclaw/openclaw.json');
+  const fs = fsImpl;
+  const openclawConfigPath = path.join(homeDir, '.openclaw/openclaw.json');
 
-  function persistMcConfig() {
-    if (configStore) return configStore.persist(mcConfig);
-    return fs.writeFileSync(missionControlConfigPath, JSON.stringify(mcConfig, null, 2));
+  function persistMcConfig(next) {
+    if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
+    configStore.persist(next);
+    Object.assign(mcConfig, next);
   }
 
   function readOpenclawConfigSafe() {
-    if (!fs.existsSync(openclawConfigPath)) return {};
-    return JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
+    if (!fs.existsSync(openclawConfigPath)) return null;
+    try {
+      return JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
+    } catch {
+      throw httpError(503, 'settings_config_unavailable', 'OpenClaw configuration could not be read');
+    }
   }
 
   async function reloadGatewayConfig() {
     try {
-      await fetch(`http://127.0.0.1:${gatewayPort}/config/reload`, {
+      await fetchImpl(`http://127.0.0.1:${gatewayPort}/config/reload`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${gatewayToken}` },
       });
@@ -53,18 +62,23 @@ function createSettingsService({
   function readMissionControlVersion() {
     try {
       const pkg = JSON.parse(fs.readFileSync(missionControlPackagePath, 'utf8'));
-      return pkg.version || 'unknown';
+      return pkg.version || null;
     } catch {
-      return 'unknown';
+      return null;
     }
   }
 
   function getPublicConfig() {
-    const safe = JSON.parse(JSON.stringify(mcConfig));
-    if (safe.gateway) safe.gateway = { port: safe.gateway.port };
-    if (safe.notion) delete safe.notion.token;
-    if (safe.scout) delete safe.scout.braveApiKey;
-    return safe;
+    // Check names before recursing: secrets may be arrays or objects, and
+    // ConfigStore's scalar redactor cannot preserve that parent-key context.
+    function stripCredentials(value, key = '') {
+      if (/(token|secret|password|api[_-]?key|access[_-]?key|credential|authorization|private[_-]?key|connection[_-]?string|(?:database|db)[_-]?url|dsn)/i.test(key)) return value == null ? null : '[redacted]';
+      if (Array.isArray(value)) return value.map((item) => stripCredentials(item));
+      if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, stripCredentials(item, name)]));
+      if (typeof value === 'string' && /[a-z][a-z0-9+.-]*:\/\/[^/\s]*:[^/\s]*@/i.test(value)) return '[redacted]';
+      return value;
+    }
+    return stripCredentials(redact(mcConfig));
   }
 
   function getSettingsPayload() {
@@ -72,15 +86,14 @@ function createSettingsService({
     const defaultModel = configData?.agents?.defaults?.model?.primary
       || configData?.agents?.defaults?.model?.default
       || configData?.model?.default
-      || configData?.model
-      || 'openai-codex/gpt-5.3-codex';
+      || (typeof configData?.model === 'string' ? configData.model : null);
 
     return {
       model: defaultModel,
-      gateway_port: gatewayPort,
-      memory_path: memoryPath,
-      skills_path: skillsPath,
-      bedrock_region: bedrockRegion,
+      gateway_port: gatewayPort ?? null,
+      memory_path: memoryPath || null,
+      skills_path: skillsPath || null,
+      bedrock_region: bedrockRegion || null,
       system: {
         mission_control_version: readMissionControlVersion(),
         openclaw_version: configData?.meta?.openclawVersion || null,
@@ -92,33 +105,29 @@ function createSettingsService({
   }
 
   async function setDefaultModel(model) {
-    const normalized = String(model || '').trim();
+    const normalized = typeof model === 'string' ? model.trim() : '';
     if (!normalized) {
-      throw new Error('model required');
+      throw httpError(400, 'invalid_model', 'model required');
     }
 
-    const config = readOpenclawConfigSafe();
-    if (!config.agents) config.agents = {};
-    if (!config.agents.defaults) config.agents.defaults = {};
-    if (!config.agents.defaults.model) config.agents.defaults.model = {};
-
-    config.agents.defaults.model.primary = normalized;
-    config.agents.defaults.model.default = normalized;
-
-    fs.writeFileSync(openclawConfigPath, JSON.stringify(config, null, 2));
+    await openclawExec(['config', 'set', 'agents.defaults.model.primary', normalized], 15000);
+    await openclawExec(['config', 'set', 'agents.defaults.model.default', normalized], 15000);
     await reloadGatewayConfig();
     return { ok: true, model: normalized, message: `Model switched to ${normalized}` };
   }
 
   function getModelRouting() {
     const cfg = readOpenclawConfigSafe();
-    const main = cfg?.agents?.defaults?.model?.primary || '';
-    const subagent = cfg?.agents?.defaults?.subagents?.model?.primary || main || '';
-    const heartbeat = cfg?.agents?.defaults?.heartbeat?.model || '';
+    const main = cfg?.agents?.defaults?.model?.primary || null;
+    const subagent = cfg?.agents?.defaults?.subagents?.model?.primary || null;
+    const heartbeat = cfg?.agents?.defaults?.heartbeat?.model || null;
     return { main, subagent, heartbeat };
   }
 
   async function setModelRouting({ main, subagent, heartbeat }) {
+    if ([main, subagent, heartbeat].some((value) => value != null && typeof value !== 'string')) {
+      throw httpError(400, 'invalid_model', 'Model fields must be strings');
+    }
     if (main) {
       await openclawExec(['config', 'set', 'agents.defaults.model.primary', String(main)], 15000);
     }
@@ -139,13 +148,13 @@ function createSettingsService({
 
   function getHeartbeatSettings() {
     const cfg = readOpenclawConfigSafe();
-    return { interval: cfg?.agents?.defaults?.heartbeat?.every || '1h' };
+    return { interval: cfg?.agents?.defaults?.heartbeat?.every || null };
   }
 
   async function setHeartbeatInterval(interval) {
-    const normalized = String(interval || '').trim();
-    if (!normalized) {
-      throw new Error('interval required');
+    const normalized = typeof interval === 'string' ? interval.trim() : '';
+    if (!/^\d+(?:ms|s|m|h|d)$/.test(normalized)) {
+      throw httpError(400, 'invalid_interval', 'interval must be a duration such as 30m');
     }
     await openclawExec(['config', 'set', 'agents.defaults.heartbeat.every', normalized], 15000);
     await reloadGatewayConfig();
@@ -153,27 +162,15 @@ function createSettingsService({
   }
 
   function updateBudget(monthly) {
-    mcConfig.budget = { monthly: normalizeMonthlyBudget(monthly) };
-    persistMcConfig();
+    const next = { ...mcConfig, budget: { monthly: normalizeMonthlyBudget(monthly) } };
+    persistMcConfig(next);
     return { status: 'saved', budget: mcConfig.budget };
   }
 
   async function getSetupStatus() {
-    let gatewayRunning = false;
-    let gatewayVersion = '';
-    try {
-      const response = await fetch(`http://127.0.0.1:${gatewayPort}/status`, {
-        method: 'GET',
-        timeout: 3000,
-      });
-      if (response.ok) {
-        gatewayRunning = true;
-        const status = await response.json();
-        gatewayVersion = status.version || '';
-      }
-    } catch {
-      gatewayRunning = false;
-    }
+    // Gateway reachability has not been measured by this local config reader.
+    const gatewayRunning = null;
+    const gatewayVersion = null;
 
     let needsSetup = !fs.existsSync(missionControlConfigPath);
     if (!needsSetup && fs.existsSync(missionControlDefaultConfigPath)) {
@@ -183,35 +180,35 @@ function createSettingsService({
     }
 
     const detectedConfig = {
-      model: '',
-      channels: [],
-      agentName: '',
-      workspacePath: '',
-      gatewayTokenConfigured: false,
+      model: null,
+      channels: null,
+      agentName: null,
+      workspacePath: null,
+      gatewayTokenConfigured: null,
     };
 
     try {
       if (fs.existsSync(openclawConfigPath)) {
         const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf8'));
-        detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || '';
-        detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || '';
+        detectedConfig.model = openclawConfig.agents?.defaults?.model?.primary || null;
+        detectedConfig.workspacePath = openclawConfig.agents?.defaults?.workspace || null;
         detectedConfig.gatewayTokenConfigured = !!(openclawConfig.gateway?.auth?.token || openclawConfig.gateway?.http?.auth?.token);
 
         if (openclawConfig.channels) {
           detectedConfig.channels = Object.keys(openclawConfig.channels).filter((channel) => openclawConfig.channels[channel]?.enabled !== false);
         }
 
-        const ws = detectedConfig.workspacePath || process.env.HOME;
+        const ws = detectedConfig.workspacePath;
         try {
           const identity = fs.readFileSync(path.join(ws, 'IDENTITY.md'), 'utf8');
           const nameMatch = identity.match(/\*\*Name:\*\*\s*(.+)/);
-          detectedConfig.agentName = nameMatch ? nameMatch[1].trim() : 'OpenClaw Agent';
+          detectedConfig.agentName = nameMatch ? nameMatch[1].trim() : null;
         } catch {
-          detectedConfig.agentName = 'OpenClaw Agent';
+          detectedConfig.agentName = null;
         }
       }
     } catch (error) {
-      console.warn('Could not read OpenClaw config:', error.message);
+      console.warn('OpenClaw setup configuration could not be read');
     }
 
     return {
@@ -224,41 +221,17 @@ function createSettingsService({
   }
 
   function updateSetup({ dashboardName, gateway, modules, scout }) {
+    const next = JSON.parse(JSON.stringify(mcConfig));
     if (dashboardName) {
-      mcConfig.name = dashboardName;
-      mcConfig.subtitle = dashboardName;
+      if (typeof dashboardName !== 'string') throw httpError(400, 'invalid_config', 'dashboardName must be a string');
+      next.name = dashboardName;
+      next.subtitle = dashboardName;
     }
-
-    if (gateway && typeof gateway === 'object') {
-      if (gateway.port) mcConfig.gateway.port = gateway.port;
-      if (gateway.token) mcConfig.gateway.token = gateway.token;
-    }
-
-    if (modules && typeof modules === 'object') {
-      mcConfig.modules = { ...mcConfig.modules, ...modules };
-    }
-
-    if (scout && typeof scout === 'object') {
-      mcConfig.scout = { ...mcConfig.scout, ...scout };
-    }
-
-    persistMcConfig();
-
-    const scoutResultsPath = path.join(missionControlRoot, 'scout-results.json');
-    if (fs.existsSync(scoutResultsPath)) {
-      fs.writeFileSync(scoutResultsPath, JSON.stringify({ results: [], lastScan: null, queries: scout?.queries?.length || 0 }, null, 2));
-      console.log('[Setup] Cleared scout results for fresh scan');
-    }
-
-    if (scout?.enabled && scout?.queries?.length) {
-      setTimeout(() => {
-        execFile('node', [path.join(missionControlRoot, 'scout-engine.js')], { timeout: 60000 }, (error) => {
-          if (error) console.error('[Setup] Scout scan failed:', error.message);
-          else console.log('[Setup] First scout scan completed');
-        });
-      }, 1000);
-    }
-
+    if (gateway != null) next.gateway = { ...next.gateway, ...gateway };
+    if (modules != null) next.modules = { ...next.modules, ...modules };
+    if (scout != null) next.scout = { ...next.scout, ...scout };
+    if (validateMcConfig(next).length) throw httpError(400, 'invalid_config', 'Invalid configuration');
+    persistMcConfig(next);
     return { success: true, config: getPublicConfig() };
   }
 
@@ -268,14 +241,11 @@ function createSettingsService({
 
   function importMissionControlConfig(filePath) {
     const configContent = fs.readFileSync(filePath, 'utf8');
-    JSON.parse(configContent);
-
-    if (configStore) {
-      configStore.importRaw(configContent);
-    } else {
-      fs.copyFileSync(missionControlConfigPath, `${missionControlConfigPath}.backup.${Date.now()}`);
-      fs.writeFileSync(missionControlConfigPath, configContent);
-    }
+    let imported;
+    try { imported = JSON.parse(configContent); } catch { throw httpError(400, 'invalid_config', 'Invalid configuration JSON'); }
+    if (validateMcConfig(imported).length) throw httpError(400, 'invalid_config', 'Invalid configuration');
+    if (!configStore) throw httpError(503, 'config_store_unavailable', 'Configuration store is unavailable');
+    configStore.importRaw(configContent);
     fs.unlinkSync(filePath);
 
     return {

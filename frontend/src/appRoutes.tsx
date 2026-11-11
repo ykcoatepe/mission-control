@@ -5,66 +5,38 @@ import type { LucideIcon } from 'lucide-react'
 import { Navigate } from 'react-router-dom'
 import {
   BrainCircuit,
-  Hammer,
+  Bell,
   DollarSign,
   Clock,
-  MessageCircle,
   Settings,
   CalendarDays,
   Brain,
-  Building2,
   Landmark,
-  Users2,
-  Kanban,
-  Network,
   Search,
-  Wrench,
+  Server,
 } from 'lucide-react'
 
 const BrainHome = lazy(() => import('./pages/BrainHome'))
-const Chat = lazy(() => import('./pages/Chat'))
-const Workshop = lazy(() => import('./pages/Workshop'))
-const HermesKanban = lazy(() => import('./pages/HermesKanban'))
+const Attention = lazy(() => import('./pages/Attention'))
+const Services = lazy(() => import('./pages/Services'))
 const Costs = lazy(() => import('./pages/Costs'))
 const Cron = lazy(() => import('./pages/Cron'))
-const Agents = lazy(() => import('./pages/Agents'))
 const SettingsPage = lazy(() => import('./pages/Settings'))
 const Setup = lazy(() => import('./pages/Setup'))
 const Calendar = lazy(() => import('./pages/Calendar'))
 const OllamaMonitor = lazy(() => import('./pages/OllamaMonitor'))
 const Councils = lazy(() => import('./pages/Councils'))
-const TeamStructure = lazy(() => import('./pages/TeamStructure'))
-const DigitalOffice = lazy(() => import('./pages/DigitalOffice'))
 const GBrain = lazy(() => import('./pages/GBrain'))
-const Diagnostics = lazy(() => import('./pages/Diagnostics'))
 
-// Redirect shims — thin wrappers so old bookmarks keep working
-const RedirectMemory = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/diagnostics?tab=memory" /> })
-)
-const RedirectScout = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/diagnostics?tab=scout" /> })
-)
-const RedirectAWS = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/diagnostics?tab=aws" /> })
-)
-const RedirectSkills = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/diagnostics?tab=skills" /> })
-)
-const RedirectKanban = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/work" /> })
+// Redirect shims: thin wrappers so old bookmarks keep working
+const RedirectHome = lazy(() =>
+  Promise.resolve({ default: () => <Navigate replace to="/" /> })
 )
 const RedirectCron = lazy(() =>
   Promise.resolve({ default: () => <Navigate replace to="/automations" /> })
 )
-const RedirectConversations = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/sessions" /> })
-)
 const RedirectCosts = lazy(() =>
   Promise.resolve({ default: () => <Navigate replace to="/usage" /> })
-)
-const RedirectAgents = lazy(() =>
-  Promise.resolve({ default: () => <Navigate replace to="/systems" /> })
 )
 
 type RouteComponent = LazyExoticComponent<ComponentType>
@@ -86,33 +58,35 @@ export interface AppRouteDefinition {
 
 export const appRoutes: AppRouteDefinition[] = [
   { path: '/setup', label: 'Setup', module: 'settings', component: Setup, nav: false },
-  { path: '/', label: 'Overview', module: 'dashboard', component: BrainHome, icon: BrainCircuit, navPlacement: 'primary', description: 'Does anything need you?' },
-  { path: '/work', label: 'Work', module: 'workshop', component: HermesKanban, icon: Kanban, navPlacement: 'primary', section: 'operate', description: 'What is running and what is stuck' },
+  { path: '/', label: 'Brain', module: 'dashboard', component: BrainHome, icon: BrainCircuit, navPlacement: 'primary', description: 'Is the brain healthy and does anything need you?' },
+  { path: '/attention', label: 'Attention', module: 'attention', component: Attention, icon: Bell, navPlacement: 'primary', section: 'operate', description: 'What is waiting for you' },
   { path: '/automations', label: 'Automations', module: 'cron', component: Cron, icon: Clock, navPlacement: 'primary', section: 'operate', description: 'Scheduled jobs and their last runs' },
-  { path: '/sessions', label: 'Sessions', module: 'chat', component: Chat, icon: MessageCircle, navPlacement: 'primary', section: 'operate', description: 'Conversations with your agents' },
-  { path: '/gbrain', label: 'Knowledge', module: 'gbrain', component: GBrain, icon: Search, navPlacement: 'primary', section: 'know', description: 'Is the brain healthy and in sync' },
   { path: '/usage', label: 'Usage', module: 'costs', component: Costs, icon: DollarSign, navPlacement: 'primary', section: 'know', description: 'What you spent and on what' },
-  { path: '/systems', label: 'Agents', module: 'agents', component: Agents, icon: Network, navPlacement: 'primary', section: 'run', description: 'Which agents exist and are alive' },
+  { path: '/services', label: 'Services', module: 'services', component: Services, icon: Server, navPlacement: 'primary', section: 'run', description: 'Background services and gateways' },
   { path: '/ollama', label: 'Local models', module: 'ollamaMonitor', component: OllamaMonitor, icon: Brain, navPlacement: 'primary', section: 'run', description: 'Ollama health and loaded models' },
   { path: '/settings', label: 'Settings', module: 'settings', component: SettingsPage, icon: Settings, navPlacement: 'utility', description: 'Models, budget and appearance' },
   { path: '/councils', label: 'Audit', module: 'councils', component: Councils, icon: Landmark, navPlacement: 'utility', description: 'Past decisions and their votes' },
-  // Phase 2 source pages remain directly reachable without crowding primary navigation.
-  { path: '/workshop', label: 'Workshop', module: 'workshop', component: Workshop, icon: Hammer, nav: false, section: 'operate', description: 'Tasks' },
+  // Reachable but not in the menu; the home page absorbs Knowledge later.
+  { path: '/gbrain', label: 'Knowledge', module: 'gbrain', component: GBrain, icon: Search, nav: false, section: 'know', description: 'Is the brain healthy and in sync' },
   { path: '/calendar', label: 'Calendar', module: 'calendar', component: Calendar, icon: CalendarDays, nav: false, section: 'operate', description: 'Schedule' },
-  { path: '/office', label: 'Digital Office', module: 'office', component: DigitalOffice, icon: Building2, nav: false, section: 'run', description: 'Live desks' },
-  { path: '/team', label: 'Team Structure', module: 'team', component: TeamStructure, icon: Users2, nav: false, section: 'run', description: 'Agent map' },
-  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', anyModule: ['docs', 'scout', 'aws', 'skills'], component: Diagnostics, icon: Wrench, nav: false, section: 'know', description: 'Memory files, documents and skills' },
-  // Phase 1 compatibility redirects keep existing bookmarks one-to-one.
-  { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectKanban, nav: false },
+  // Compatibility redirects keep existing bookmarks working.
   { path: '/cron', label: 'Cron Jobs', module: 'cron', component: RedirectCron, nav: false },
-  { path: '/conversations', label: 'Conversations', module: 'chat', component: RedirectConversations, nav: false },
   { path: '/costs', label: 'Cost Tracker', module: 'costs', component: RedirectCosts, nav: false },
-  { path: '/agents', label: 'Agent Hub', module: 'agents', component: RedirectAgents, nav: false },
-  // Legacy redirects — nav:false keeps them out of the sidebar
-  { path: '/memory', label: 'Memory', module: 'docs', component: RedirectMemory, nav: false },
-  { path: '/scout', label: 'Scout', module: 'scout', component: RedirectScout, nav: false },
-  { path: '/aws', label: 'AWS', module: 'aws', component: RedirectAWS, nav: false },
-  { path: '/skills', label: 'Skills', module: 'skills', component: RedirectSkills, nav: false },
+  // Removed screens: their paths now land on the home page.
+  { path: '/work', label: 'Work', module: 'workshop', component: RedirectHome, nav: false },
+  { path: '/sessions', label: 'Sessions', module: 'chat', component: RedirectHome, nav: false },
+  { path: '/systems', label: 'Agents', module: 'agents', component: RedirectHome, nav: false },
+  { path: '/workshop', label: 'Workshop', module: 'workshop', component: RedirectHome, nav: false },
+  { path: '/office', label: 'Digital Office', module: 'office', component: RedirectHome, nav: false },
+  { path: '/team', label: 'Team Structure', module: 'team', component: RedirectHome, nav: false },
+  { path: '/diagnostics', label: 'Diagnostics', module: 'settings', component: RedirectHome, nav: false },
+  { path: '/kanban', label: 'Hermes Kanban', module: 'workshop', component: RedirectHome, nav: false },
+  { path: '/conversations', label: 'Conversations', module: 'chat', component: RedirectHome, nav: false },
+  { path: '/agents', label: 'Agent Hub', module: 'agents', component: RedirectHome, nav: false },
+  { path: '/memory', label: 'Memory', module: 'docs', component: RedirectHome, nav: false },
+  { path: '/scout', label: 'Scout', module: 'scout', component: RedirectHome, nav: false },
+  { path: '/aws', label: 'AWS', module: 'aws', component: RedirectHome, nav: false },
+  { path: '/skills', label: 'Skills', module: 'skills', component: RedirectHome, nav: false },
 ]
 
 export const primarySidebarRoutes = appRoutes.filter(

@@ -1,70 +1,40 @@
 const express = require('express');
+const { asyncHandler, httpError } = require('../core/http');
 
-function buildModelsRouter({ openclawExec, parseFirstJson, prettyModelName, settingsService }) {
+function buildModelsRouter({ modelsSource, settingsService }) {
   const router = express.Router();
 
-  router.get('/api/models', async (req, res) => {
-    try {
-      let raw = '';
-      try {
-        const { stdout, stderr } = await openclawExec(['models', 'list', '--json'], 12000);
-        raw = [stdout, stderr].filter(Boolean).join('\n');
-      } catch (error) {
-        // `openclaw models list --json` can emit valid JSON on stdout while exiting
-        // non-zero due optional missing env vars. Prefer usable JSON over a UI 500.
-        raw = [error?.stdout, error?.stderr].filter(Boolean).join('\n');
-        if (!raw.trim()) throw error;
-      }
-      const payload = parseFirstJson(raw, {});
-      const models = payload.models || [];
-      return res.json(models.map((model) => ({
-        id: model.key,
-        name: model.name || prettyModelName(model.key),
-        contextWindow: model.contextWindow,
-        input: model.input,
-        local: !!model.local,
-        available: model.available !== false,
-        tags: model.tags || [],
-      })));
-    } catch (error) {
-      const defaultModel = settingsService.getSettingsPayload().model;
-      const fallbackIds = Array.from(new Set([
-        defaultModel,
-        'gpt-5.5',
-      ].filter(Boolean)));
-      return res.json(fallbackIds.map((id) => ({
-        id,
-        name: prettyModelName(id),
-        contextWindow: null,
-        input: 'text+image',
-        local: id.startsWith('local-') || id.startsWith('ollama/'),
-        available: id === defaultModel,
-        tags: id === defaultModel ? ['default', 'fallback'] : ['fallback'],
-      })));
-    }
-  });
+  function snapshot() {
+    const snap = modelsSource.snapshot();
+    if (snap.data === null) throw httpError(503, 'models_unavailable', 'Models have not been observed yet');
+    return snap;
+  }
 
-  router.get('/api/model', async (req, res) => {
-    try {
-      return res.json({ model: settingsService.getSettingsPayload().model });
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
+  router.get('/api/models', asyncHandler((req, res) => {
+    const snap = snapshot();
+    // This legacy endpoint is a JSON array. Headers carry sibling metadata
+    // without breaking existing array consumers; JSON arrays cannot own it.
+    res.set('X-MC-Source-Meta', JSON.stringify(snap.meta));
+    return res.json(snap.data.models);
+  }));
 
-  router.post('/api/model', async (req, res) => {
-    try {
-      return res.json(await settingsService.setDefaultModel(req.body?.model));
-    } catch (error) {
-      console.error('Model switch error:', error);
-      const status = error.message === 'model required' ? 400 : 500;
-      return res.status(status).json({ error: error.message || 'Failed to switch model' });
+  router.get('/api/model', asyncHandler((req, res) => {
+    const snap = snapshot();
+    return res.json({ model: snap.data.model, meta: snap.meta });
+  }));
+
+  router.post('/api/model', asyncHandler(async (req, res) => {
+    if (typeof req.body?.model !== 'string' || !req.body.model.trim() || req.body.model.length > 500) {
+      throw httpError(400, 'invalid_model', 'model must be a nonempty string');
     }
-  });
+    try {
+      return res.json(await settingsService.setDefaultModel(req.body.model));
+    } catch {
+      throw httpError(503, 'model_update_failed', 'The default model could not be updated');
+    }
+  }));
 
   return router;
 }
 
-module.exports = {
-  buildModelsRouter,
-};
+module.exports = { buildModelsRouter };

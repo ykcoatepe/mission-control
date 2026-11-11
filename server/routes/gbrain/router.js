@@ -2,17 +2,8 @@
 
 const express = require('express');
 const { createGBrainOverviewService } = require('../../services/gbrainOverviewData');
-const {
-  buildLiveGBrainHealth,
-  buildLiveGBrainSources,
-  buildLiveGBrainVersion,
-  buildLiveGBrainTools,
-  buildLiveGBrainFeatures,
-  buildLiveGBrainProviders,
-  buildLiveHermesProxyStatus,
-} = require('./liveProbes');
-const { buildLocalGBrainIntegrationRuntime } = require('./integrationRuntime');
-const { buildGBrainIntegrationHealth } = require('./integrationHealth');
+const { sendEnvelope, httpError } = require('../../core/http');
+const { limitInput, slugInput } = require('../../sources/gbrain/lookups');
 const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
 const { requiresExplicitConfirmation } = require('./actionPolicy');
@@ -20,36 +11,21 @@ const { requiresExplicitConfirmation } = require('./actionPolicy');
 function buildGBrainRouter(options = {}) {
   const router = express.Router();
   const overviewService = options.gbrainOverviewService || createGBrainOverviewService(options);
-  const timelineService = overviewService.timelineService;
-
+  // All dashboard reads are snapshots. Only search/page are explicit lookup exceptions.
   router.get('/api/gbrain/overview', async (_req, res) => {
     res.json(await overviewService.getOverview());
   });
-
-  router.get('/api/gbrain/health', async (req, res) => {
-    res.json(await buildLiveGBrainHealth(options));
+  for (const name of ['health', 'sources', 'version']) {
+    router.get(`/api/gbrain/${name}`, async (_req, res) => {
+      const health = name === 'health' ? (await overviewService.readSnapshot()).live.health : null;
+      const snap = health ? { data: health, meta: health.meta } : overviewService.probeSnapshot(name);
+      res.json({ ...(snap.data || { ok: false, mode: 'live-read-only', status: 'unavailable' }),
+        ...(snap.meta.error ? { ok: false, status: 'unavailable' } : {}), meta: snap.meta });
+    });
+  }
+  router.get('/api/gbrain/integration-health', (_req, res) => {
+    const snap = overviewService.integrationSnapshot(); res.json({ ...snap.data, meta: snap.meta });
   });
-
-  router.get('/api/gbrain/sources', async (req, res) => {
-    res.json(await buildLiveGBrainSources(options));
-  });
-
-  router.get('/api/gbrain/version', async (req, res) => {
-    res.json(await buildLiveGBrainVersion(options));
-  });
-
-  router.get('/api/gbrain/integration-health', async (req, res) => {
-    const [health, sources, tools, features, providers, hermesProxy] = await Promise.all([
-      buildLiveGBrainHealth(options),
-      buildLiveGBrainSources(options),
-      buildLiveGBrainTools(options),
-      buildLiveGBrainFeatures(options),
-      buildLiveGBrainProviders(options),
-      buildLiveHermesProxyStatus(options),
-    ]);
-    res.json(buildGBrainIntegrationHealth({ health, sources, tools, features, providers, hermesProxy }, buildLocalGBrainIntegrationRuntime(options)));
-  });
-
   router.get('/api/gbrain/actions', (req, res) => {
     res.json({
       ok: true,
@@ -72,13 +48,24 @@ function buildGBrainRouter(options = {}) {
         error: 'Explicit confirmation is required for this action.',
       });
     }
-    const result = await runGBrainAction(req.body?.action, options);
+    const result = await runGBrainAction(req.body?.action, { ...options, confirmed: req.body?.confirmed });
     const statusCode = result.ok ? 200 : result.status === 'busy' ? 409 : result.status === 'failed' ? 502 : 400;
     res.status(statusCode).json(result);
   });
 
   router.get('/api/gbrain/timeline', (req, res) => {
-    res.json(timelineService.readTimeline({ limit: req.query.limit }));
+    const snap = overviewService.timelineSnapshot(limitInput(req.query.limit, 50, 200));
+    res.json({ ...(snap.data || { enabled: overviewService.timelineService?.enabled !== false, entries: null,
+      warnings: ['Timeline has not been read'], malformedLineCount: null, retainedEntryCount: null,
+      schemaVersion: 1, truncated: false, limit: limitInput(req.query.limit, 50, 200) }), meta: snap.meta });
+  });
+
+  router.get('/api/gbrain/synoptic', (_req, res) => sendEnvelope(res, overviewService.synopticSnapshot()));
+  router.get('/api/gbrain/search', async (req, res) => sendEnvelope(res, await overviewService.lookups.search(req.query.q, req.query.limit)));
+  router.get('/api/gbrain/pages/:slug', async (req, res) => sendEnvelope(res, await overviewService.lookups.page(req.params.slug)));
+  router.get('/api/gbrain/graph', (req, res) => {
+    if (req.query.around === undefined) throw httpError(400, 'graph_around_required', 'around is required; only neighbourhood graphs are available');
+    return sendEnvelope(res, overviewService.graph.request(slugInput(req.query.around), req.query.limit));
   });
 
   return router;

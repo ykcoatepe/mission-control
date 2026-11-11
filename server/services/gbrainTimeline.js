@@ -113,7 +113,7 @@ function normalizeSnapshot(overview, options = {}) {
     trust: {
       label: sanitizeTimelineText(overview?.trust?.label || 'No trust state'),
       status: normalizeStatus(overview?.trust?.status),
-      score: Number.isFinite(Number(overview?.trust?.score)) ? Number(overview.trust.score) : null,
+      score: overview?.trust?.score != null && Number.isFinite(Number(overview.trust.score)) ? Number(overview.trust.score) : null,
       source: sanitizeTimelineText(overview?.trust?.source || ''),
       lastVerifiedAt: overview?.trust?.lastVerifiedAt || overview?.refreshedAt || now,
     },

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Bot, CornerDownLeft, RefreshCw, Search, SunMoon } from 'lucide-react'
+import { CornerDownLeft, RefreshCw, Search, SunMoon } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent } from 'react'
@@ -18,10 +18,6 @@ import { useModal } from './ui/useModal'
 import styles from './CommandPalette.module.css'
 
 const CAP = 8
-
-interface SessionsPayload {
-  sessions?: Array<{ key?: string; displayName?: string; label?: string }>
-}
 
 interface Entry extends PaletteEntry {
   icon?: LucideIcon
@@ -60,9 +56,8 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
   const navigate = useNavigate()
   const { primary, utility } = useNavigation()
   const { refresh } = useRefreshData()
-  // Automations and sessions are only fetched while the palette is open (it unmounts when closed).
+  // Automations are only fetched while the palette is open (it unmounts when closed).
   const { data: cron } = useQuery(apiQueryOptions<CronApiResponse>('/api/cron'))
-  const { data: sessions } = useQuery(apiQueryOptions<SessionsPayload>('/api/sessions'))
 
   const [query, setQuery] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
@@ -93,30 +88,10 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     [cron, navigate],
   )
 
-  const sessionEntries = useMemo<Entry[]>(
-    () =>
-      (sessions?.sessions ?? [])
-        .filter((session) => session.key)
-        .map((session) => ({
-          id: `session:${session.key}`,
-          label: session.displayName || session.label || String(session.key),
-          subtitle: session.label && session.label !== session.displayName ? session.label : undefined,
-          run: () => navigate(`/sessions?session=${encodeURIComponent(String(session.key))}`),
-        })),
-    [sessions, navigate],
-  )
-
   const commands = useMemo<Entry[]>(
     () => [
       { id: 'cmd:refresh', label: 'Refresh data', subtitle: 'Read everything on screen again', icon: RefreshCw, run: refresh },
       { id: 'cmd:theme', label: 'Toggle theme', subtitle: 'Switch between dark and light', icon: SunMoon, run: toggleTheme },
-      {
-        id: 'cmd:assistant',
-        label: 'Open assistant',
-        subtitle: 'Ask the assistant',
-        icon: Bot,
-        run: () => window.dispatchEvent(new CustomEvent('open-chat')),
-      },
     ],
     [refresh],
   )
@@ -126,11 +101,10 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
     const all: Section[] = [
       { key: 'pages', title: 'Pages', entries: searching ? rankEntries(query, pages, CAP) : pages },
       { key: 'automations', title: 'Automations', entries: searching ? rankEntries(query, automations, CAP) : [] },
-      { key: 'sessions', title: 'Sessions', entries: searching ? rankEntries(query, sessionEntries, CAP) : [] },
       { key: 'commands', title: 'Commands', entries: rankEntries(query, commands, CAP) },
     ]
     return all.filter((section) => section.entries.length > 0)
-  }, [query, searching, pages, automations, sessionEntries, commands])
+  }, [query, searching, pages, automations, commands])
 
   const flat = useMemo(() => sections.flatMap((section) => section.entries), [sections])
   const indexById = useMemo(() => new Map(flat.map((entry, index) => [entry.id, index])), [flat])
@@ -176,8 +150,8 @@ function PaletteBody({ onClose }: { onClose: () => void }) {
             aria-controls={`${baseId}-list`}
             aria-activedescendant={flat[active] ? optionId(flat[active]) : undefined}
             aria-autocomplete="list"
-            aria-label="Search pages, automations and sessions, or run a command"
-            placeholder="Search pages, automations, sessions or commands…"
+            aria-label="Search pages and automations, or run a command"
+            placeholder="Search pages, automations or commands…"
             autoComplete="off"
             spellCheck={false}
             value={query}
