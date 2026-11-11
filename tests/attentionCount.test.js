@@ -56,7 +56,7 @@ const empty = { snapshot: () => ({ data: null, meta: { ok: false, stale: true, o
 
 async function both({ loopsSource, overview }) {
   const app = express();
-  app.use(buildLoopsRouter({ loopsSource, operationsOverviewService: overview }));
+  app.use(buildLoopsRouter({ loopsSource, operationsOverviewService: overview, now: () => NOW }));
   app.use(buildSignalsRouter({
     operationsOverviewService: overview, loopsSource, launchdSource: empty, reachabilitySource: empty, now: () => NOW,
   }));
@@ -96,10 +96,12 @@ const FIXTURES = [
       { project: 'alpha', id: 'T3', unit: 'u3', how: 'h', deadline: '2026-12-01T00:00:00Z', state: 'open', closed: false },
     ],
     attention: SYSTEM_ITEMS,
-    // systems 2; findings: alpha BINDING_DEAD + beta ESCALATED_ROUNDS (TEYIT_STALE is
+    systems: { hermes: { id: 'hermes', state: 'critical', observedAt: null, caveats: [], detailHref: '/services' }, gbrain: { id: 'gbrain', state: 'unavailable', observedAt: null, caveats: [], detailHref: '/' } },
+    // systems 1 (hermes critical; an unavailable reading is not counted, its
+    // 2 reasons are systemReasons, outside the count); findings: alpha BINDING_DEAD + beta ESCALATED_ROUNDS (TEYIT_STALE is
     // the overdue confirmations, info is not operator work); overdue 2; restricted
     // argus: 1 finding + 3 overdue.
-    expected: { count: 10, worst: 'critical', breakdown: { systems: 2, findings: 2, overdueConfirmations: 2, restricted: 4 }, partial: false, missing: [] },
+    expected: { count: 9, worst: 'critical', breakdown: { systems: 1, systemReasons: 2, findings: 2, overdueConfirmations: 2, restricted: 4 }, partial: false, missing: [] },
   },
   {
     name: 'restricted only',
@@ -108,13 +110,13 @@ const FIXTURES = [
       { project: 'argus-live', code: 'DEPLOYED_UNCONFIRMED', subject: 'P2', severity: 'warning', detail: `${SECRET}`, ts: '2026-11-10T00:00:00Z' },
     ],
     attention: [],
-    expected: { count: 2, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 2 }, partial: false, missing: [] },
+    expected: { count: 2, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 2 }, partial: false, missing: [] },
   },
   {
     name: 'nothing needs the operator',
     checkRows: [{ project: 'quiet', code: 'TEYIT_DUE', subject: 'T1', severity: 'info', detail: 'due', ts: '2026-11-10T00:00:00Z' }],
     attention: [],
-    expected: { count: 0, worst: null, breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [] },
+    expected: { count: 0, worst: 'healthy', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [] },
   },
 ];
 
@@ -122,7 +124,7 @@ for (const fixture of FIXTURES) {
   test(`one needs-operator number on /api/signals and /api/loops: ${fixture.name}`, async () => {
     const loopsSource = loopsSourceFor(fixture);
     await loopsSource.refresh();
-    const { loops, signals } = await both({ loopsSource, overview: overviewWith(fixture.attention) });
+    const { loops, signals } = await both({ loopsSource, overview: overviewWith(fixture.attention, fixture.systems) });
     assert.deepEqual(signals.data.attention, fixture.expected);
     assert.deepEqual(loops.data.totals.needsOperator, fixture.expected);
     assert.equal(signals.data.attention.count, loops.data.totals.needsOperator.count);
@@ -131,11 +133,11 @@ for (const fixture of FIXTURES) {
 }
 
 test('without a loop reading the number is partial: unknown parts are null, never zero', async () => {
-  const { signals } = await both({ loopsSource: empty, overview: overviewWith(SYSTEM_ITEMS) });
+  const { signals } = await both({ loopsSource: empty, overview: overviewWith(SYSTEM_ITEMS, FIXTURES[0].systems) });
   assert.deepEqual(signals.data.attention, {
-    count: 2,
+    count: 1,
     worst: 'critical',
-    breakdown: { systems: 2, findings: null, overdueConfirmations: null, restricted: null },
+    breakdown: { systems: 1, systemReasons: 2, findings: null, overdueConfirmations: null, restricted: null },
     partial: true,
     missing: ['findings', 'overdueConfirmations', 'restricted'],
   });
@@ -191,12 +193,13 @@ test('reproduced: a failed confirmation reading plus TEYIT_STALE is never a comp
   await loopsSource.refresh();
   const { loops, signals } = await both({ loopsSource, overview: overviewWith([]) });
   assert.deepEqual(signals.data.attention, {
-    count: 1, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 0, restricted: 1 }, partial: false, missing: [],
+    count: 1, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 1 }, partial: false, missing: [],
   });
   assert.deepEqual(loops.data.totals.needsOperator, signals.data.attention);
 
   // Directly: an unread confirmation list is unknown, never 0.
   const direct = needsOperator({
+    systems: [],
     systemsAttention: [],
     loops: { projects: [openProject('alpha', { findings: [{ code: 'TEYIT_STALE', subject: 'T1', severity: 'warning' }], pendingConfirmations: null })] },
   });
@@ -207,6 +210,7 @@ test('reproduced: a failed confirmation reading plus TEYIT_STALE is never a comp
 
 test('reproduced: a TEYIT_UNRESOLVED finding and an overdue confirmation with the same id count once', () => {
   const result = needsOperator({
+    systems: [],
     systemsAttention: [],
     loops: {
       projects: [openProject('alpha', {
@@ -220,7 +224,7 @@ test('reproduced: a TEYIT_UNRESOLVED finding and an overdue confirmation with th
     },
   });
   assert.deepEqual(result, {
-    count: 1, worst: 'warning', breakdown: { systems: 0, findings: 0, overdueConfirmations: 1, restricted: 0 }, partial: false, missing: [],
+    count: 1, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 1, restricted: 0 }, partial: false, missing: [],
   });
 });
 
@@ -242,14 +246,82 @@ test('unread parts are null and listed; a missing restricted count is null; noth
   assert.equal(needsOperator({ systemsAttention: null, loops: null }), null);
   assert.equal(needsOperator(), null);
   const restricted = needsOperator({
+    systems: [{ id: 'hermes', state: 'warning' }, { id: 'gbrain', state: 'unavailable' }],
     systemsAttention: [{ severity: 'warning' }],
     loops: { projects: [{ id: 'argus-x', restricted: true, operatorFindings: 2 }] },
   });
   assert.deepEqual(restricted, {
-    count: 1, worst: 'warning', breakdown: { systems: 1, findings: 0, overdueConfirmations: 0, restricted: null }, partial: true, missing: ['restricted'],
+    count: 1, worst: 'warning', breakdown: { systems: 1, systemReasons: 1, findings: 0, overdueConfirmations: 0, restricted: null }, partial: true, missing: ['restricted'],
   });
-  const unreadFindings = needsOperator({ systemsAttention: [], loops: { projects: [{ id: 'p', restricted: false, findings: null, pendingConfirmations: [] }] } });
+  const unreadFindings = needsOperator({ systems: [], systemsAttention: [], loops: { projects: [{ id: 'p', restricted: false, findings: null, pendingConfirmations: [] }] } });
   assert.equal(unreadFindings.breakdown.findings, null);
   assert.equal(unreadFindings.breakdown.overdueConfirmations, null, 'confirmation findings are unknown too');
   assert.equal(unreadFindings.partial, true);
+});
+
+// --- one system is one item; a refresh does not move the number ------------
+
+function gbrainReasons(n, severity = 'warning') {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `gbrain:caveat:${i}`, system: 'gbrain', severity, reasonCode: 'gbrain_active_caveat', title: 'GBrain requires attention', detail: `probe ${i} evidence is stale.`,
+  }));
+}
+
+function sourceMetas(gbrain) {
+  const fresh = { ok: true, stale: false, observedAt: '2026-11-11T09:59:00.000Z', ageMs: 1000, error: null, latencyMs: 5 };
+  return { status: fresh, sessions: fresh, cron: fresh, hermes: fresh, hermesGateway: fresh, gbrain: { ...fresh, ...gbrain } };
+}
+
+// A mutable overview service: each call returns the current reading.
+function overviewSequence() {
+  let current = null;
+  return {
+    set(reading) { current = reading; },
+    async getOverview() {
+      const system = (id, state = 'healthy') => ({ id, state, observedAt: '2026-11-11T09:59:00.000Z', caveats: [], detailHref: id === 'gbrain' ? '/' : '/services' });
+      return {
+        systems: { gbrain: system('gbrain', current.gbrain), hermes: system('hermes', current.hermes || 'healthy'), openclaw: system('openclaw') },
+        attention: current.attention,
+        meta: { ok: true, stale: Boolean(current.meta.stale), observedAt: '2026-11-11T09:59:00.000Z', ageMs: 0, error: null, latencyMs: null, source: 'operations.overview', sources: sourceMetas(current.meta) },
+      };
+    },
+  };
+}
+
+test('reproduced spike: one system with 30 reasons contributes 1, the reasons are reported apart', async () => {
+  const loopsSource = loopsSourceFor(FIXTURES[2]);
+  await loopsSource.refresh();
+  const overview = overviewWith(gbrainReasons(30), { gbrain: { id: 'gbrain', state: 'warning', observedAt: null, caveats: [], detailHref: '/' } });
+  const { loops, signals } = await both({ loopsSource, overview });
+  assert.deepEqual(signals.data.attention, {
+    count: 1, worst: 'warning', breakdown: { systems: 1, systemReasons: 30, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [],
+  });
+  assert.deepEqual(loops.data.totals.needsOperator, signals.data.attention);
+});
+
+test('a GBrain refresh in progress does not move the number; a finished reading does', async () => {
+  const loopsSource = loopsSourceFor(FIXTURES[0]);
+  await loopsSource.refresh();
+  const overview = overviewSequence();
+  // Settled and healthy.
+  overview.set({ gbrain: 'healthy', attention: [], meta: { stale: false } });
+  const before = (await both({ loopsSource, overview })).signals.data.attention;
+  // After an action every probe is marked stale until a fresh pass lands:
+  // 30 transient reasons, no error. The last good state is held.
+  overview.set({ gbrain: 'warning', attention: gbrainReasons(30), meta: { stale: true } });
+  const during = await both({ loopsSource, overview });
+  assert.equal(during.signals.data.attention.count, before.count, 'the headline moved during a refresh');
+  assert.equal(during.signals.data.attention.breakdown.systems, before.breakdown.systems);
+  assert.equal(during.signals.data.attention.breakdown.systemReasons, 30, 'the transient reasons stay visible apart');
+  assert.deepEqual(during.loops.data.totals.needsOperator, during.signals.data.attention);
+  // The refresh finished and GBrain really is warning: now it counts, once.
+  overview.set({ gbrain: 'warning', attention: gbrainReasons(30), meta: { stale: false } });
+  const after = (await both({ loopsSource, overview })).signals.data.attention;
+  assert.equal(after.count, before.count + 1);
+  // A failed read is not a refresh: its state is used as is.
+  overview.set({ gbrain: 'healthy', attention: [], meta: { stale: false } });
+  await both({ loopsSource, overview });
+  overview.set({ gbrain: 'critical', attention: gbrainReasons(2, 'critical'), meta: { stale: true, ok: false, error: { code: 'gbrain_refresh_failed', message: 'x' } } });
+  const failed = (await both({ loopsSource, overview })).signals.data.attention;
+  assert.equal(failed.count, before.count + 1);
 });

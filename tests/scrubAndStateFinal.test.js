@@ -347,7 +347,7 @@ test('3: the GBrain state helper and verdict give the fixture result for every p
 test('3: the signals attention aggregate gives the fixture result for every pair', () => {
   const { needsOperator } = require('../server/sources/mloop/attention');
   for (const [a, b, worst] of ORDER.pairs) {
-    const signal = needsOperator({ systemsAttention: [{ severity: a }, { severity: b }] });
+    const signal = needsOperator({ systems: [{ id: 'one', state: a }, { id: 'two', state: b }] });
     assert.equal(signal.worst, worst, `attention ${a} + ${b}`);
   }
 });

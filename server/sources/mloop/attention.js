@@ -4,7 +4,12 @@
 // /api/loops (totals.needsOperator) both call needsOperator(), so the top
 // bar, the sidebar and the Attention page show the same count.
 //
-//   count = systems               Operations overview attention items
+//   count = systems               SYSTEMS (gbrain, hermes, openclaw, any other
+//                                 id) whose state is warning or critical by the
+//                                 shared ordering: at most one per system, however
+//                                 many reasons it carries. While a system's source
+//                                 is being re-read (stale, no error) and a settled
+//                                 reading exists, its last settled state is used.
 //         + findings              manager-loop findings rated warning/error
 //                                 that are not about a confirmation
 //         + overdueConfirmations  confirmations that need the operator: an
@@ -14,12 +19,13 @@
 //         + restricted            counts-only projects (Argus, or not
 //                                 verifiable): the same two kinds, by count
 //
-// Info findings are not operator work. Each part is a number or null (not
+// breakdown.systemReasons (the overview's attention items) is reported apart
+// and never added to the count. Info findings are not operator work. Each part is a number or null (not
 // read). The count is the sum of the known parts; when any part is null the
 // result says `partial: true` and names it in `missing`. Nothing known at all
 // is null, never 0.
 
-const { worstState } = require('../../core/state');
+const { worstState, stateRank } = require('../../core/state');
 
 // Findings that stand for a pending live confirmation (restricted counts).
 const CONFIRMATION_CODES = new Set([
@@ -35,6 +41,47 @@ const CONFIRMATION_ID_CODES = new Set([
 // mloop severity -> state vocabulary (server/core/state.js).
 const LOOP_STATE = Object.freeze({ error: 'critical', warning: 'warning' });
 const PARTS = Object.freeze(['systems', 'findings', 'overdueConfirmations', 'restricted']);
+// Which Operations sources a system's reading comes from (overview meta.sources).
+const SYSTEM_SOURCES = Object.freeze({
+  gbrain: Object.freeze(['gbrain']),
+  hermes: Object.freeze(['hermes', 'hermesGateway']),
+  openclaw: Object.freeze(['status', 'sessions']),
+});
+// A settled state is held through a refresh for at most this long.
+const HOLD_MAX_MS = 10 * 60_000;
+const OPERATOR_RANK = stateRank('warning');
+// Last settled state per system, per overview service (both routes pass the
+// same service, so /api/signals and /api/loops share one memory).
+const settledByService = new WeakMap();
+
+function systemNeedsOperator(state) {
+  return stateRank(state, 'inactive') >= OPERATOR_RANK;
+}
+
+// The overview's systems as [{ id, state, held }] for the count, or null when
+// the overview was not read. A system whose sources are all fresh records its
+// state as settled; while any of them is stale without an error (a refresh in
+// progress, e.g. GBrain's post-action re-read) the settled state is used.
+function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
+  const systems = overview?.systems;
+  if (!systems || typeof systems !== 'object') return null;
+  let settled = memoKey && typeof memoKey === 'object' ? settledByService.get(memoKey) : null;
+  if (!settled) {
+    settled = new Map();
+    if (memoKey && typeof memoKey === 'object') settledByService.set(memoKey, settled);
+  }
+  const nowMs = now();
+  const sources = overview?.meta?.sources || {};
+  return Object.entries(systems).filter(([, system]) => system && typeof system === 'object').map(([id, system]) => {
+    const metas = (SYSTEM_SOURCES[id] || []).map((name) => sources[name]).filter((meta) => meta && typeof meta === 'object');
+    const failed = metas.some((meta) => meta.error);
+    const refreshing = !failed && metas.some((meta) => meta.stale === true);
+    if (metas.length && !failed && !refreshing) settled.set(id, { state: system.state, atMs: nowMs });
+    const last = settled.get(id);
+    if (refreshing && last && nowMs - last.atMs <= HOLD_MAX_MS) return { id, state: last.state, held: true };
+    return { id, state: system.state, held: false };
+  });
+}
 
 function isCount(value) {
   return Number.isInteger(value) && value >= 0;
@@ -80,13 +127,21 @@ function projectNeeds(findings, confirmations) {
   return { findings: findingCount, confirmations: Math.max(ids.size, aggregated), states };
 }
 
-function needsOperator({ systemsAttention = null, loops = null } = {}) {
+// systems: countedSystems() output (null = not read); systemsAttention: the
+// overview's attention items, reported as systemReasons only.
+function needsOperator({ systems = null, systemsAttention = null, loops = null } = {}) {
   const states = [];
-  const breakdown = { systems: null, findings: null, overdueConfirmations: null, restricted: null };
-  if (Array.isArray(systemsAttention)) {
-    breakdown.systems = systemsAttention.length;
-    for (const item of systemsAttention) states.push(item?.severity);
+  const breakdown = { systems: null, systemReasons: null, findings: null, overdueConfirmations: null, restricted: null };
+  if (Array.isArray(systems)) {
+    breakdown.systems = 0;
+    for (const system of systems) {
+      // worst follows the shared ordering over every system read; only
+      // warning/critical systems are counted.
+      states.push(system?.state);
+      if (systemNeedsOperator(system?.state)) breakdown.systems += 1;
+    }
   }
+  if (Array.isArray(systemsAttention)) breakdown.systemReasons = systemsAttention.length;
   if (loops && Array.isArray(loops.projects)) {
     const sums = { findings: 0, overdueConfirmations: 0, restricted: 0 };
     for (const project of loops.projects) {
@@ -115,5 +170,6 @@ function needsOperator({ systemsAttention = null, loops = null } = {}) {
 }
 
 module.exports = {
-  CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, projectNeeds, needsOperator,
+  CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, SYSTEM_SOURCES,
+  countedSystems, needsOperator, projectNeeds, systemNeedsOperator,
 };

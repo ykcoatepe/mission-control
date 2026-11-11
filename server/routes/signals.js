@@ -7,8 +7,10 @@
 //
 // data: {
 //   systems:     { gbrain|hermes|openclaw: { state, observedAt, reason, detailHref } } | null
-//   attention:   { count, worst, breakdown: { systems, findings, overdueConfirmations, restricted },
-//                  partial, missing } | null
+//   attention:   { count, worst, breakdown: { systems, systemReasons, findings,
+//                  overdueConfirmations, restricted }, partial, missing } | null
+//                systems = systems needing the operator, one each, held through
+//                a refresh; systemReasons = overview attention items, not counted
 //                the one needs-the-operator number (sources/mloop/attention.js),
 //                equal to /api/loops totals.needsOperator; a part not read is
 //                null and named in `missing`; null when nothing was read
@@ -23,7 +25,7 @@ const { asyncHandler, sendEnvelope } = require('../core/http');
 const { composeMeta } = require('../services/operationsOverview');
 const { scrubText } = require('../core/scrub');
 const { loopsView } = require('../sources/mloop');
-const { needsOperator } = require('../sources/mloop/attention');
+const { countedSystems, needsOperator } = require('../sources/mloop/attention');
 
 const SYSTEM_LABELS = Object.freeze({ gbrain: 'GBrain', hermes: 'Hermes', openclaw: 'OpenClaw' });
 const MAX_REASON = 200;
@@ -71,8 +73,9 @@ function systemsSignal(overview) {
   return out;
 }
 
-function attentionSignal(overview, loopsData) {
+function attentionSignal(overview, loopsData, { memoKey, now }) {
   return needsOperator({
+    systems: countedSystems(overview, { memoKey, now }),
     systemsAttention: Array.isArray(overview?.attention) ? overview.attention : null,
     loops: loopsData,
   });
@@ -174,7 +177,7 @@ function buildSignalsRouter({
       data: {
         generatedAt: new Date(now()).toISOString(),
         systems: systemsSignal(overview),
-        attention: attentionSignal(overview, loops.data),
+        attention: attentionSignal(overview, loops.data, { memoKey: operationsOverviewService, now }),
         automations: automationsSignal(automations, operationsCron),
         loops: loopsData
           ? { openFindings: loopsData.totals.openFindings, overdueConfirmations: loopsData.totals.overdueConfirmations }

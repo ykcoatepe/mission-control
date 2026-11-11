@@ -6,10 +6,11 @@
 const express = require('express');
 const { asyncHandler, httpError, sendEnvelope } = require('../core/http');
 const { loopsView, loopDetailView, PROJECT_ID_PATTERN } = require('../sources/mloop');
+const { countedSystems } = require('../sources/mloop/attention');
 
 // operationsOverviewService (memory-only) supplies the system attention items
 // for totals.needsOperator, the same number /api/signals reports.
-function buildLoopsRouter({ loopsSource, operationsOverviewService = null } = {}) {
+function buildLoopsRouter({ loopsSource, operationsOverviewService = null, now = Date.now } = {}) {
   if (typeof loopsSource?.snapshot !== 'function') throw new TypeError('buildLoopsRouter: loopsSource required');
   const router = express.Router();
 
@@ -17,7 +18,8 @@ function buildLoopsRouter({ loopsSource, operationsOverviewService = null } = {}
     const snapshot = loopsSource.snapshot();
     const overview = operationsOverviewService ? await operationsOverviewService.getOverview() : null;
     const systemsAttention = Array.isArray(overview?.attention) ? overview.attention : null;
-    return sendEnvelope(res, { data: loopsView(snapshot.data, { systemsAttention }), meta: snapshot.meta });
+    const systems = countedSystems(overview, { memoKey: operationsOverviewService, now });
+    return sendEnvelope(res, { data: loopsView(snapshot.data, { systems, systemsAttention }), meta: snapshot.meta });
   }));
 
   router.get('/api/loops/:project', (req, res) => {

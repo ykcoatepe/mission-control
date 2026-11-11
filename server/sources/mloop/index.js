@@ -507,7 +507,7 @@ function projectSummary(project) {
 
 // systemsAttention: the Operations overview's attention items (null when not
 // supplied); used only for totals.needsOperator, shared with /api/signals.
-function loopsView(data, { systemsAttention = null } = {}) {
+function loopsView(data, { systems = null, systemsAttention = null } = {}) {
   if (!data) return null;
   const projects = data.projects.map(projectSummary);
   const totals = { projects: projects.length, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 };
@@ -522,7 +522,7 @@ function loopsView(data, { systemsAttention = null } = {}) {
       totals.overdueConfirmations += project.pendingConfirmations?.filter((item) => item.overdue).length || 0;
     }
   }
-  totals.needsOperator = needsOperator({ systemsAttention, loops: data });
+  totals.needsOperator = needsOperator({ systems, systemsAttention, loops: data });
   return { observedAt: data.observedAt, totals, projects, attention: data.attention };
 }
 
