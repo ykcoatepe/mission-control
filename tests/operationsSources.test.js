@@ -267,6 +267,94 @@ test('signals prefer the automations source summary when one exists', async () =
   assert.deepEqual(body.data.automations, { failed: 2, nextRunAt: '2026-07-10T14:00:00.000Z' });
 });
 
+const SCHEDULER_LABELS = { openclaw: 'OpenClaw', hermes: 'Hermes' };
+
+function signalsOptions(h) {
+  return {
+    operationsOverviewService: h.service,
+    operationsSources: h.sources,
+    loopsSource: snapshotSource(null),
+    launchdSource: snapshotSource(null),
+    reachabilitySource: snapshotSource(null),
+    now: () => T0,
+  };
+}
+
+for (const scheduler of ['openclaw', 'hermes']) {
+  test(`stale ${scheduler} scheduler evidence is a warning with its age in the memory overview and /api/signals`, async () => {
+    const values = healthyValues();
+    values.cron.operationsSource.schedulers[scheduler] = {
+      ...values.cron.operationsSource.schedulers[scheduler], stale: true, staleAgeMs: 360_000,
+    };
+    const h = harness({ values });
+    await h.refreshAll();
+    const label = SCHEDULER_LABELS[scheduler];
+    const sibling = scheduler === 'openclaw' ? 'hermes' : 'openclaw';
+
+    const overview = await h.service.getOverview();
+    assert.equal(overview.systems[scheduler].state, 'warning');
+    assert.equal(overview.systems[scheduler].freshness, 'stale');
+    assert.ok(overview.systems[scheduler].caveats.includes(`${label} scheduling evidence is stale (6m old).`));
+    assert.equal(overview.systems[scheduler].metrics.cronJobs, 1, 'stale cached jobs are still shown');
+    assert.equal(overview.systems[sibling].state, 'healthy');
+    assert.equal(overview.systems[sibling].freshness, 'fresh');
+
+    const { body } = await getSignals(signalsOptions(h));
+    assert.equal(body.data.systems[scheduler].state, 'warning');
+    assert.equal(body.data.systems[scheduler].reason, `${label} scheduling evidence is stale (6m old).`);
+    assert.equal(body.data.systems[sibling].state, 'healthy');
+    assert.equal(body.data.systems[sibling].reason, null);
+  });
+}
+
+test('a held cron reading keeps aging in memory: fresh turns stale, stale past maxStaleMs turns unavailable', async () => {
+  const values = healthyValues();
+  const { schedulers } = values.cron.operationsSource;
+  // At read time: OpenClaw served fresh from its cache, Hermes already stale.
+  schedulers.openclaw = { ...schedulers.openclaw, cacheAgeMs: 240_000 };
+  schedulers.hermes = { ...schedulers.hermes, stale: true, staleAgeMs: 540_000 };
+  const h = harness({ values });
+  await h.refreshAll();
+  // Held 80 s: every source is still inside its own horizon, but the
+  // scheduler evidence is now 320 s (OpenClaw) and 620 s (Hermes) old.
+  h.setNow(T0 + 80_000);
+
+  const overview = await h.service.getOverview();
+  assert.equal(overview.systems.openclaw.state, 'warning');
+  assert.equal(overview.systems.openclaw.freshness, 'stale');
+  assert.ok(overview.systems.openclaw.caveats.includes('OpenClaw scheduling evidence is stale (5m old).'));
+  assert.equal(overview.systems.openclaw.metrics.cronJobs, 1);
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.ok(overview.systems.hermes.caveats.includes('Hermes scheduling evidence is unavailable.'));
+  assert.ok(!overview.systems.hermes.caveats.some((item) => /scheduling evidence is stale/.test(item)));
+  assert.equal(overview.systems.hermes.metrics.cronJobs, null, 'expired jobs are not shown as current');
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_cron_unavailable'));
+
+  const { body } = await getSignals(signalsOptions(h));
+  assert.equal(body.data.systems.openclaw.state, 'warning');
+  assert.equal(body.data.systems.openclaw.reason, 'OpenClaw scheduling evidence is stale (5m old).');
+  assert.equal(body.data.systems.hermes.state, 'warning');
+  assert.equal(body.data.systems.hermes.reason, 'Hermes scheduling evidence is unavailable.');
+});
+
+test('scheduler limits carried by the proof decide the memory ageing', async () => {
+  const values = healthyValues();
+  const { schedulers } = values.cron.operationsSource;
+  schedulers.openclaw = { ...schedulers.openclaw, freshMs: 30_000, maxStaleMs: 60_000 };
+  schedulers.hermes = { ...schedulers.hermes, freshMs: 30_000, maxStaleMs: 120_000 };
+  const h = harness({ values });
+  await h.refreshAll();
+  h.setNow(T0 + 20_000);
+  let overview = await h.service.getOverview();
+  assert.equal(overview.systems.openclaw.state, 'healthy', 'younger than freshMs is fresh');
+  assert.equal(overview.systems.openclaw.freshness, 'fresh');
+  h.setNow(T0 + 70_000);
+  overview = await h.service.getOverview();
+  assert.ok(overview.systems.openclaw.caveats.includes('OpenClaw scheduling evidence is unavailable.'));
+  assert.ok(overview.systems.hermes.caveats.includes('Hermes scheduling evidence is stale (70s old).'));
+  assert.equal(overview.systems.hermes.state, 'warning');
+});
+
 test('usage lookup is defensive: absent, failing or non-numeric usage is null', () => {
   assert.equal(usageFromSibling(undefined), null);
   assert.equal(usageFromSibling({}), null);

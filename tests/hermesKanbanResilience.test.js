@@ -45,6 +45,70 @@ test('board CLI calls are concurrency-limited', async () => {
   assert.equal(board.stale, undefined);
 });
 
+test('a failed refresh drains its workers before an immediate retry and stops scheduling calls', async () => {
+  const firstError = new Error('first list failed');
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  let calls = 0;
+  let active = 0;
+  let peak = 0;
+  let activeAtSettlement;
+  const exec = async (_bin, args) => {
+    const call = ++calls;
+    active += 1;
+    peak = Math.max(peak, active);
+    try {
+      if (call === 1) throw firstError;
+      await gate;
+      const key = args[3];
+      return { stdout: JSON.stringify(key === 'stats' ? { total: 0 } : []), stderr: '' };
+    } finally {
+      active -= 1;
+    }
+  };
+  const { service } = build(exec);
+  const retry = service.getBoard().then(
+    () => { throw new Error('first refresh must reject'); },
+    (error) => {
+      assert.equal(error, firstError);
+      activeAtSettlement = active;
+      return service.getBoard(); // next request as soon as the first settles
+    },
+  );
+  // A referenced immediate advances the failure handlers without sleeps or
+  // relying on a bare pending promise to keep the event loop alive.
+  try {
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    release();
+  }
+  assert.equal((await retry).ok, true);
+  assert.ok(peak <= 2, `peak across failure and retry was ${peak}`);
+  assert.equal(activeAtSettlement, 0, 'no outstanding CLI call when a refresh settles');
+  assert.equal(calls, 10, 'failed batch stops at two calls; retry performs eight');
+  const callsAtSettlement = calls;
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(calls, callsAtSettlement, 'no detached worker issues calls after settlement');
+  assert.equal(active, 0);
+});
+
+test('a failed refresh preserves the first error while draining another failed worker', async () => {
+  const firstError = new Error('first worker failed');
+  const laterError = new Error('later worker failed');
+  let calls = 0;
+  let siblingSettled = false;
+  const { service } = build(async () => {
+    calls += 1;
+    if (calls === 1) throw firstError;
+    await new Promise((resolve) => setImmediate(resolve));
+    siblingSettled = true;
+    throw laterError;
+  });
+  await assert.rejects(service.getBoard(), (error) => error === firstError);
+  assert.equal(siblingSettled, true);
+  assert.equal(calls, 2, 'no queued call starts after the first failure');
+});
+
 test('a failed refresh serves the last good board as stale with its age', async () => {
   let fail = false;
   const { exec } = makeExec({ failWhen: () => fail });
@@ -86,15 +150,23 @@ test('soft deadline returns the stale cache while the refresh continues, and con
   const callsAfterFirst = state.calls;
   slow = true;
   clock.advance(30_000);
-  const [a, b] = await Promise.all([
-    service.getBoard({ softDeadlineMs: 20 }),
-    service.getBoard({ softDeadlineMs: 20 }),
-  ]);
-  assert.equal(a.ok, true);
-  assert.equal(a.cacheAgeMs, 30_000);
-  assert.equal(b.cacheAgeMs, 30_000);
-  release();
-  await service.getBoard(); // joins/finishes the shared refresh
+  // The fake CLI has no child-process handle. Keep the loop alive while its
+  // gate is closed so the production unref'd soft deadlines can fire. This
+  // interval never releases the gate or determines when an assertion runs.
+  const keepAlive = setInterval(() => {}, 60_000);
+  try {
+    const [a, b] = await Promise.all([
+      service.getBoard({ softDeadlineMs: 20 }),
+      service.getBoard({ softDeadlineMs: 20 }),
+    ]);
+    assert.equal(a.ok, true);
+    assert.equal(a.cacheAgeMs, 30_000);
+    assert.equal(b.cacheAgeMs, 30_000);
+  } finally {
+    release();
+    clearInterval(keepAlive);
+    await service.getBoard(); // joins/finishes the shared refresh, even on failure
+  }
   assert.equal(state.calls - callsAfterFirst, 8, 'only one refresh ran');
 });
 

@@ -657,6 +657,10 @@ function createCronService({
       observedAt: sourceObservedAt,
       ...(stale ? { stale: true, staleAgeMs } : {}),
       ...(cacheAgeMs !== undefined ? { cacheAgeMs } : {}),
+      // The cache limits travel with the proof, so a holder of this reading
+      // (the Operations cron source) ages it against the same limits.
+      freshMs,
+      maxStaleMs,
     });
     return {
       jobs: [...openclaw.jobs, ...hermes.jobs],

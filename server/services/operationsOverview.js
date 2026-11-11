@@ -142,6 +142,15 @@ function schedulerObservedAt(cron, scheduler, generatedAt) {
   return observedAt(getSchedulerProof(cron, scheduler)?.observedAt, generatedAt);
 }
 
+function schedulerStaleCaveat(cron, scheduler, label) {
+  const proof = getSchedulerProof(cron, scheduler);
+  if (proof?.stale !== true) return '';
+  const age = isCount(proof.staleAgeMs)
+    ? ` (${formatAge(Math.round(proof.staleAgeMs / 1000))} old)`
+    : '';
+  return `${label} scheduling evidence is stale${age}.`;
+}
+
 function hasHermesProof(board, generatedAt) {
   const summary = board?.summary;
   return isRecord(board)
@@ -256,6 +265,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
   const statusUnavailable = !hasStatusProof(status, generatedAt);
   const sessionsUnavailable = !hasSessionsProof(sessions, generatedAt);
   const cronUnavailable = !hasCronProof(cron, generatedAt, 'openclaw');
+  const cronCaveat = cronUnavailable ? '' : schedulerStaleCaveat(cron, 'openclaw', 'OpenClaw');
   if (statusUnavailable && sessionsUnavailable) {
     return unavailableSystem(
       'openclaw',
@@ -296,6 +306,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     ...(statusUnavailable ? ['OpenClaw status evidence is unavailable.'] : []),
     ...(sessionsUnavailable ? ['OpenClaw session evidence is unavailable.'] : []),
     ...(cronUnavailable ? ['OpenClaw scheduling evidence is unavailable.'] : []),
+    ...(cronCaveat ? [cronCaveat] : []),
     ...(sessionConflict ? [sessionConflictDetail] : []),
     ...(heartbeatStale ? ['Heartbeat proof is stale or unavailable.'] : []),
   ];
@@ -351,6 +362,12 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
       detailHref('openclaw', 'scheduling'),
+    ));
+  } else {
+    openclawEvidence.push(evidence(
+      'openclaw:cron', 'openclaw', 'scheduling', cronCaveat ? 'warning' : 'healthy', cronAt,
+      `${cron.jobs.filter((job) => job?.scheduler !== 'hermes').length} OpenClaw scheduled jobs${cronCaveat ? ' (stale)' : ''}`,
+      '/api/cron', detailHref('openclaw', 'scheduling'),
     ));
   }
   const attention = [];
@@ -419,9 +436,10 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     system: {
       id: 'openclaw',
       label: 'OpenClaw',
-      state: caveats.length ? 'warning' : 'healthy',
+      // Stale scheduling evidence is a floor, by the one ordering: never better than warning.
+      state: worstState([caveats.length ? 'warning' : 'healthy', cronCaveat ? 'warning' : 'healthy']),
       observedAt: at,
-      freshness: statusUnavailable ? 'unavailable' : heartbeatStale ? 'stale' : 'fresh',
+      freshness: statusUnavailable ? 'unavailable' : heartbeatStale || cronCaveat ? 'stale' : 'fresh',
       caveats,
       metrics: {
         activeSessions,
@@ -609,19 +627,21 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     caveats.push('Hermes scheduling evidence is unavailable.');
   } else {
     hermesEvidence.push(evidence(
-      'hermes:cron', 'hermes', 'scheduling', 'healthy', cronAt,
+      'hermes:cron', 'hermes', 'scheduling', cronStale ? 'warning' : 'healthy', cronAt,
       `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
       '/api/cron', detailHref('hermes', 'scheduling'),
     ));
-    if (cronStale) caveats.push('Hermes scheduling evidence is stale.');
+    if (cronStale) caveats.push(schedulerStaleCaveat(cron, 'hermes', 'Hermes'));
   }
 
-  // blocked tasks warn through attention only (state stays as before)
-  const state = states.includes('critical')
-    ? 'critical'
-    : (!gatewayProven || !kanbanProven || cronUnavailable || gateway?.status === 'stale')
-      ? 'warning'
-      : 'healthy';
+  // blocked tasks warn through attention only (state stays as before).
+  // Unproven or stale evidence is a warning floor, combined by the one
+  // ordering (server/core/state.js); a critical gateway still wins.
+  const state = worstState([
+    states.includes('critical') ? 'critical' : 'healthy',
+    (!gatewayProven || !kanbanProven || cronUnavailable || gateway?.status === 'stale') ? 'warning' : 'healthy',
+    cronStale ? 'warning' : 'healthy',
+  ]);
   const freshness = kanbanStale || cronStale || !kanbanProven ? 'stale' : 'fresh';
   return {
     system: {
@@ -931,6 +951,56 @@ function createOperationsSources({
   }));
 }
 
+// The cron service's scheduler-evidence cache limits (server/services/cronData.js);
+// a proof normally carries its own and these apply only when it does not.
+const SCHEDULER_EVIDENCE_LIMITS = Object.freeze({ freshMs: 5 * 60 * 1000, maxStaleMs: 10 * 60 * 1000 });
+
+// A cron reading held in memory keeps aging after its read. Re-age every
+// scheduler proof by how long the reading has been held, against the limits
+// the proof carries, so memory reports what a read at this moment would:
+// fresh while younger than freshMs, stale (with its age) until maxStaleMs,
+// then unavailable with that scheduler's jobs dropped.
+function ageCronReading(cron, heldMs) {
+  const schedulers = cron?.operationsSource?.schedulers;
+  if (!isRecord(cron) || !isRecord(schedulers) || !Array.isArray(cron.jobs)
+    || !(typeof heldMs === 'number' && Number.isFinite(heldMs) && heldMs > 0)) return cron;
+  const aged = {};
+  const expired = new Set();
+  for (const [name, proof] of Object.entries(schedulers)) {
+    if (!isRecord(proof) || proof.sourceSucceeded !== true) {
+      aged[name] = proof;
+      continue;
+    }
+    const freshMs = isCount(proof.freshMs) ? proof.freshMs : SCHEDULER_EVIDENCE_LIMITS.freshMs;
+    const maxStaleMs = isCount(proof.maxStaleMs) ? proof.maxStaleMs : SCHEDULER_EVIDENCE_LIMITS.maxStaleMs;
+    const readAgeMs = proof.stale === true
+      ? (isCount(proof.staleAgeMs) ? proof.staleAgeMs : freshMs)
+      : (isCount(proof.cacheAgeMs) ? proof.cacheAgeMs : 0);
+    const ageMs = readAgeMs + Math.round(heldMs);
+    if (ageMs > maxStaleMs) {
+      expired.add(name);
+      aged[name] = { sourceSucceeded: false, provenance: `${name}-cron-unavailable`, observedAt: null };
+    } else if (ageMs > freshMs) {
+      const { cacheAgeMs: _fresh, ...rest } = proof;
+      aged[name] = { ...rest, stale: true, staleAgeMs: ageMs };
+    } else {
+      aged[name] = { ...proof, cacheAgeMs: ageMs };
+    }
+  }
+  const remaining = Object.values(aged).filter((proof) => proof?.sourceSucceeded === true);
+  const observedTimes = remaining.map((proof) => Date.parse(proof.observedAt)).filter(Number.isFinite);
+  return {
+    ...cron,
+    jobs: cron.jobs.filter((job) => !expired.has(job?.scheduler === 'hermes' ? 'hermes' : 'openclaw')),
+    operationsSource: {
+      ...cron.operationsSource,
+      sourceSucceeded: remaining.length > 0,
+      observedAt: observedTimes.length ? new Date(Math.max(...observedTimes)).toISOString() : null,
+      schedulers: aged,
+    },
+  };
+}
+
 // Memory-only input: last-good data while it is younger than its source's
 // stale horizon, otherwise the same unavailable marker a failed live read
 // produced. Never a default.
@@ -944,7 +1014,7 @@ function inputFromSources(sources) {
     const staleAfterMs = typeof source?.status === 'function' ? source.status().staleAfterMs : null;
     const agedOut = snapshot?.meta?.ageMs != null && Number.isFinite(staleAfterMs) && snapshot.meta.ageMs > staleAfterMs;
     input[name] = snapshot?.data != null && !agedOut
-      ? snapshot.data
+      ? (name === 'cron' ? ageCronReading(snapshot.data, snapshot.meta?.ageMs) : snapshot.data)
       : {
         ok: false,
         unavailable: true,

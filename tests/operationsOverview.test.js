@@ -927,15 +927,23 @@ test('operations reader set exposes a hermesGateway reader and the service passe
   assert.equal((await service.getOverview()).systems.hermes.state, 'critical');
 });
 
-test('a stale Hermes cron proof keeps Hermes healthy but marks scheduling stale', () => {
-  const input = healthyInput();
-  input.cron.operationsSource.schedulers.hermes = {
-    ...input.cron.operationsSource.schedulers.hermes, stale: true, staleAgeMs: 400_000,
-  };
-  const overview = buildOperationsOverview(input, { generatedAt });
+for (const scheduler of ['openclaw', 'hermes']) {
+  test(`stale ${scheduler} scheduling evidence warns with its age and preserves cached jobs`, () => {
+    const input = healthyInput();
+    input.status.agent.activeSessionsObserved = false;
+    input.cron.operationsSource.schedulers[scheduler] = {
+      ...input.cron.operationsSource.schedulers[scheduler], stale: true, staleAgeMs: 360_000,
+    };
+    const overview = buildOperationsOverview(input, { generatedAt });
+    const system = overview.systems[scheduler];
 
-  assert.equal(overview.systems.hermes.state, 'healthy');
-  assert.equal(overview.systems.hermes.freshness, 'stale');
-  assert.ok(overview.systems.hermes.caveats.some((item) => /scheduling.*stale/i.test(item)));
-  assert.equal(overview.systems.hermes.metrics.cronJobs, 1);
-});
+    assert.equal(system.freshness, 'stale');
+    assert.equal(system.state, 'warning');
+    assert.ok(system.caveats.some((item) => /scheduling.*stale.*6m.*old/i.test(item)));
+    assert.equal(system.metrics.cronJobs, 1);
+    assert.equal(system.evidence.find((item) => item.id === `${scheduler}:cron`).status, 'warning');
+    const sibling = scheduler === 'openclaw' ? 'hermes' : 'openclaw';
+    assert.equal(overview.systems[sibling].state, 'healthy');
+    assert.equal(overview.systems[sibling].freshness, 'fresh');
+  });
+}

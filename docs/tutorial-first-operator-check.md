@@ -6,7 +6,7 @@ confirm that refreshed evidence changed the state.
 
 ## Before you begin
 
-You need Node.js 20.19+ in the Node 20 line or Node.js 22.12+, installed
+You need Node.js 22.12+, installed
 root/frontend dependencies, and a built frontend. OpenClaw, Hermes, and GBrain
 are optional for starting the app but are needed for live evidence from their
 respective systems.

@@ -22,7 +22,7 @@ appearing in primary navigation. Screens that were removed redirect to Brain.
 
 ## Quick start
 
-Requirements: Node.js 20.19+ in the Node 20 line, or Node.js 22.12+. OpenClaw,
+Requirements: Node.js 22.12+ (CI runs Node 24 and 26). OpenClaw,
 Hermes, GBrain, Ollama, CodexBar, AWS, and Notion are optional
 integrations; unavailable sources render as explicit empty, stale, warning, or
 unavailable states.
