@@ -2,20 +2,19 @@ const fs = require('fs');
 const path = require('path');
 const { httpError } = require('../core/http');
 const { randomUUID } = require('node:crypto');
-const { redactString } = require('../core/config');
+const { CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
 
-// Identity/linkage belongs to the scheduler. These presentation fields may
-// be explicitly owned by a user; all other cron fields refresh from evidence.
-const CALENDAR_EDITABLE_FIELDS = ['title', 'schedule', 'startsAt', 'status', 'assignee', 'notes'];
-const CRON_OVERRIDABLE_FIELDS = ['title', 'schedule', 'assignee', 'notes'];
-const CRON_OWNED_FIELDS = ['status', 'startsAt', 'nextRun', 'nextRunAt', 'nextRunAtMs'];
-
-function writeJsonFileAtomic(filePath, value) {
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  const existingMode = fs.existsSync(filePath) ? fs.statSync(filePath).mode & 0o777 : null;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  if (existingMode !== null) fs.chmodSync(tmpPath, existingMode);
-  fs.renameSync(tmpPath, filePath);
+function writeJsonFileAtomic(filePath, value, { fsImpl = fs, mode } = {}) {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  const existingMode = mode ?? (fsImpl.existsSync(filePath) ? fsImpl.statSync(filePath).mode & 0o777 : 0o600);
+  try {
+    fsImpl.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fsImpl.chmodSync(tmpPath, existingMode);
+    fsImpl.renameSync(tmpPath, filePath);
+  } catch (error) {
+    try { fsImpl.rmSync(tmpPath, { force: true }); } catch {}
+    throw error;
+  }
 }
 
 function parseJsonCandidates(raw = '') {
@@ -224,7 +223,9 @@ function createCronService({
   // never takes the whole cron reader (and the Hermes proof) down with it.
   operationsSoftDeadlineMs = 7000,
   fetchImpl = (...args) => fetch(...args),
+  fsImpl = fs,
 }) {
+  const fs = fsImpl;
   const openclawCronRunsDir = path.join(homeDir, '.openclaw', 'cron', 'runs');
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
   const maxHistoryRuns = 10;
@@ -419,7 +420,7 @@ function createCronService({
     const nextJobs = jobs.slice();
     nextJobs[index] = nextJob;
     const output = Array.isArray(parsed) ? nextJobs : { ...parsed, jobs: nextJobs };
-    writeJsonFileAtomic(hermesCronJobsFile, output);
+    writeJsonFileAtomic(hermesCronJobsFile, output, { fsImpl: fs });
     return normalizeHermesCronJob(nextJob);
   }
 
@@ -625,6 +626,7 @@ function createCronService({
   }
 
   function normalizeCalendarEntry(entry = {}, nowIso = new Date().toISOString()) {
+    assertCalendarEntry(entry);
     return {
       id: String(entry.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       title: String(entry.title || 'Untitled').trim() || 'Untitled',
@@ -656,51 +658,29 @@ function createCronService({
     });
   }
 
+  function readCalendarDocument() {
+    let text;
+    try { text = fs.readFileSync(calendarFile, 'utf8'); } catch (error) {
+      if (error.code === 'ENOENT') return { entries: [], updatedAt: null, lastCronSyncAt: null };
+      throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+    }
+    try {
+      const parsed = JSON.parse(text);
+      const payload = Array.isArray(parsed) ? { entries: parsed } : parsed;
+      if (!payload || !Array.isArray(payload.entries)) throw new Error('Invalid calendar document');
+      return payload;
+    } catch {
+      throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+    }
+  }
+
   function readCalendarDataSafe({ strict = false, tolerateEntries = false } = {}) {
     try {
-      const diagnostics = { quarantined: { count: 0, ids: [] }, duplicates: { count: 0, ids: [] } };
-      if (!fs.existsSync(calendarFile)) {
-        return { entries: [], updatedAt: null, lastCronSyncAt: null, diagnostics };
-      }
-      const parsed = JSON.parse(fs.readFileSync(calendarFile, 'utf8'));
-      const payload = Array.isArray(parsed) ? { entries: parsed } : (parsed || {});
-      if (!Array.isArray(payload.entries)) throw new Error('Calendar entries missing');
-      const entries = [];
-      const seen = new Set();
-      const safeId = entry => typeof entry?.id === 'number' && Number.isFinite(entry.id) ? entry.id
-        : typeof entry?.id === 'string' ? redactString(entry.id).slice(0, 256) : null;
-      for (const entry of payload.entries) {
-        const valid = entry && typeof entry === 'object' && !Array.isArray(entry)
-          && typeof entry.id === 'string' && entry.id.trim() && entry.id.length <= 256
-          && ['title', 'schedule', 'status', 'assignee', 'source', 'linkedTaskId', 'linkedJobId', 'notes']
-            .every(field => entry[field] == null || typeof entry[field] === 'string')
-          && ['startsAt', 'createdAt', 'updatedAt', 'lastSyncedAt']
-            .every(field => entry[field] == null || (typeof entry[field] === 'string' && Number.isFinite(Date.parse(entry[field]))))
-          && (entry.cronDerived == null || (typeof entry.cronDerived === 'object' && !Array.isArray(entry.cronDerived)
-            && CRON_OVERRIDABLE_FIELDS.every(field => entry.cronDerived[field] === undefined || typeof entry.cronDerived[field] === 'string')))
-          && (entry.userOverrides === undefined || (Array.isArray(entry.userOverrides)
-            && entry.userOverrides.every(field => CALENDAR_EDITABLE_FIELDS.includes(field)
-              || (entry.source === 'cron' && CRON_OWNED_FIELDS.includes(field)))));
-        if (!valid) {
-          diagnostics.quarantined.count++;
-          diagnostics.quarantined.ids.push(safeId(entry));
-          continue;
-        }
-        if (seen.has(entry.id)) {
-          diagnostics.duplicates.count++;
-          if (!diagnostics.duplicates.ids.includes(safeId(entry))) diagnostics.duplicates.ids.push(safeId(entry));
-          continue;
-        }
-        // Choose the first physical row before sorting by time or title.
-        seen.add(entry.id);
-        try { entries.push(normalizeCalendarEntry(entry)); } catch {
-          diagnostics.quarantined.count++;
-          diagnostics.quarantined.ids.push(safeId(entry));
-        }
-      }
+      const payload = readCalendarDocument();
+      const { valid, diagnostics } = partitionCalendarEntries(payload.entries);
       if (strict && !tolerateEntries && (diagnostics.quarantined.count || diagnostics.duplicates.count)) throw new Error('Calendar entries require correction');
       return {
-        entries: sortCalendarEntries(entries),
+        entries: sortCalendarEntries(valid.map(entry => normalizeCalendarEntry(entry))),
         updatedAt: toIsoOrNull(payload.updatedAt),
         lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
         diagnostics,
@@ -715,15 +695,40 @@ function createCronService({
   }
 
   function writeCalendarDataSafe(payload = {}) {
+    if (!Array.isArray(payload.entries)) throw httpError(400, 'calendar_entry_invalid', 'Calendar entries must be an array');
+    payload.entries.forEach(entry => assertCalendarEntry(entry));
+    const partition = partitionCalendarEntries(payload.entries);
+    if (partition.duplicates.length) throw httpError(400, 'calendar_entry_invalid', 'Calendar entry IDs must be unique');
     const dir = path.dirname(calendarFile);
-    fs.mkdirSync(dir, { recursive: true });
     const next = {
-      entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
+      entries: sortCalendarEntries(payload.entries.map(entry => normalizeCalendarEntry(entry))),
       updatedAt: toIsoOrNull(payload.updatedAt) || new Date().toISOString(),
       lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
     };
-    writeJsonFileAtomic(calendarFile, next);
+    next.entries.forEach(entry => assertCalendarEntry(entry));
+    fs.mkdirSync(dir, { recursive: true });
+    writeJsonFileAtomic(calendarFile, next, { fsImpl: fs });
     return next;
+  }
+
+  function repairCalendarData() {
+    const document = readCalendarDocument();
+    const { valid, quarantined, duplicates } = partitionCalendarEntries(document.entries);
+    const counts = { kept: valid.length, quarantined: quarantined.length, duplicates: duplicates.length };
+    if (!quarantined.length && !duplicates.length) return { ok: true, repaired: false, counts, backupPath: null };
+    const repairedAt = new Date(now()).toISOString();
+    const backup = `${calendarFile}.repair-${repairedAt.replace(/[:.]/g, '-')}-${randomUUID()}.json`;
+    const relative = file => `~/${path.relative(homeDir, file).split(path.sep).join('/')}`;
+    try {
+      const mode = fs.statSync(calendarFile).mode & 0o777;
+      // Commit the complete recovery evidence before replacing the source.
+      // If the source rename fails, retain this backup and the original file.
+      writeJsonFileAtomic(backup, { repairedAt, source: relative(calendarFile), quarantined, duplicates }, { fsImpl: fs, mode });
+      writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt });
+      return { ok: true, repaired: true, counts, backupPath: relative(backup) };
+    } catch {
+      throw httpError(503, 'calendar_repair_failed', 'Calendar repair could not be committed safely');
+    }
   }
 
   function mergeCalendarEntriesWithCronJobs(currentData = {}, cronJobs = [], syncedAtIso = new Date().toISOString()) {
@@ -805,11 +810,9 @@ function createCronService({
   }
 
   function createCalendarEntry(payload = {}) {
+    assertCalendarEntry(payload, 'create');
     const nowIso = new Date().toISOString();
     if (payload.linkedJobId != null) throw httpError(400, 'invalid_calendar_link', 'Scheduler-linked entries are created by cron sync');
-    if (!String(payload.title || '').trim()) {
-      throw httpError(400, 'calendar_title_required', 'title required');
-    }
 
     const current = readCalendarDataSafe({ strict: true });
     const entry = normalizeCalendarEntry({
@@ -833,6 +836,7 @@ function createCronService({
   }
 
   function updateCalendarEntry(id, payload = {}) {
+    assertCalendarEntry(payload, 'patch');
     const current = readCalendarDataSafe({ strict: true });
     const idx = current.entries.findIndex((entry) => entry.id === id);
     if (idx < 0) {
@@ -893,6 +897,7 @@ function createCronService({
     normalizeCalendarEntry,
     readCalendarDataSafe,
     writeCalendarDataSafe,
+    repairCalendarData,
     syncCalendarWithLiveCron,
     syncCalendarWithCronEvidence,
     createCalendarEntry,

@@ -10,6 +10,14 @@ function buildCalendarRouter({ calendarService, calendarSource }) {
     return res.json({ ...snap.data, meta: snap.meta });
   });
 
+  router.post('/api/calendar/repair', (req, res, next) => {
+    try {
+      return res.json(calendarService.repairCalendarData());
+    } catch (error) {
+      return next(error);
+    }
+  });
+
   router.post('/api/calendar/sync-cron', async (req, res, next) => {
     try {
       const synced = await calendarService.syncCalendarWithLiveCron();

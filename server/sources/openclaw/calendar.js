@@ -31,10 +31,12 @@ function createCalendarSource({ cronService, automationSource, now = Date.now, l
   });
   const snapshot = source.snapshot;
   source.snapshot = () => {
-    const snap = snapshot();
+    const stored = snapshot();
+    const diagnostics = stored.data?.diagnostics;
+    const repairAvailable = !stored.meta.error && Boolean(diagnostics?.quarantined.count || diagnostics?.duplicates.count);
+    const snap = { ...stored, meta: { ...stored.meta, repairAvailable } };
     // Preserve a failed read's error even if its last-good payload was partial.
     if (snap.meta.error || !snap.data) return snap;
-    const diagnostics = snap.data.diagnostics;
     const error = diagnostics?.quarantined.count
       ? { code: 'calendar_entries_quarantined', message: 'Malformed calendar entries were quarantined; the file was preserved' }
       : diagnostics?.duplicates.count

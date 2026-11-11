@@ -62,7 +62,9 @@ const EXPECTED_ROUTES = [
   'GET /api/status',
   'GET /api/cron', 'POST /api/cron/:id/toggle', 'POST /api/cron/:id/run', 'POST /api/cron/create', 'DELETE /api/cron/:id',
   'PATCH /api/cron/:id/model',
-  'GET /api/calendar', 'POST /api/calendar/sync-cron', 'POST /api/calendar', 'PATCH /api/calendar/:id',
+  // runtime area: calendar route contract
+  'GET /api/calendar', 'POST /api/calendar/repair', 'POST /api/calendar/sync-cron', 'POST /api/calendar', 'PATCH /api/calendar/:id',
+  // end runtime area: calendar route contract
   'GET /cron-search',
   'GET /api/aws/costs',
   'GET /api/models',
@@ -313,6 +315,13 @@ test('boot smoke: route table, JSON 404, health and pure GETs', async () => {
     assert.deepEqual(treeState(HOME), runtimeGetBefore.home);
     assert.equal(execCalls.length, runtimeGetBefore.exec, 'runtime GET never starts a process');
     assert.equal(networkCalls.length, runtimeGetBefore.network, 'runtime GET never probes upstream');
+    const deniedRepair = await request(port, { method: 'POST', urlPath: '/api/calendar/repair', headers: { Origin: 'https://untrusted.invalid' } });
+    assert.equal(deniedRepair.status, 403, 'repair uses the core write guard');
+    const repair = await request(port, { method: 'POST', urlPath: '/api/calendar/repair', headers: { 'X-MC-Request': '1', Origin: `http://localhost:${port}` } });
+    assert.equal(repair.status, 200);
+    assert.equal(repair.json.repaired, false);
+    assert.deepEqual(repair.json.counts, { kept: 0, quarantined: 0, duplicates: 0 });
+    assert.ok(runtime.auditLog.readEntries().some(entry => entry.method === 'POST' && entry.path === '/api/calendar/repair' && entry.status === 200), 'repair is audited');
     // --- end runtime area ------------------------------------------------
     assert.equal(health.exec.lanes.openclaw.concurrency, 1);
     assert.equal(health.guard.writeGuardMode, 'report-only');
@@ -558,6 +567,9 @@ const CONTRACT_SWEEP = [
   ['DELETE /api/cron/:id', '/api/cron/job-1', { body: {} }],
   ['PATCH /api/cron/:id/model', '/api/cron/job-1/model', { body: { model: 'openai/gpt-5' } }],
   ['GET /api/calendar', '/api/calendar'], ['POST /api/calendar/sync-cron', '/api/calendar/sync-cron', { body: {} }],
+  // runtime area: repair is covered by the same forced-failure contract
+  ['POST /api/calendar/repair', '/api/calendar/repair', { body: {} }],
+  // end runtime area: repair contract
   ['POST /api/calendar', '/api/calendar', { body: { title: 'x' } }], ['PATCH /api/calendar/:id', '/api/calendar/entry-1', { body: { title: 'x' } }],
   ['GET /cron-search', '/cron-search'], ['GET /api/aws/costs', '/api/aws/costs'], ['GET /api/models', '/api/models'],
   ['GET /api/costs', '/api/costs'], ['GET /api/costs/codexbar', '/api/costs/codexbar'], ['GET /api/costs/months', '/api/costs/months'],
