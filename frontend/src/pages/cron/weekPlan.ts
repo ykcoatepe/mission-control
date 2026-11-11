@@ -38,7 +38,9 @@ export interface PlanOptions {
   todayStart: Date
 }
 
+/** Dated one-off entries first, in time order; recurring occurrences after them. */
 function compareEntries(a: PlacedEntry, b: PlacedEntry): number {
+  if (a.recurring !== b.recurring) return a.recurring ? 1 : -1
   if (a.frequent !== b.frequent) return a.frequent ? 1 : -1
   const am = a.firstMinute ?? Number.MAX_SAFE_INTEGER
   const bm = b.firstMinute ?? Number.MAX_SAFE_INTEGER

@@ -143,6 +143,11 @@ export function useGBrainActions({
   useEffect(() => {
     refreshRef.current = refreshReadings
   })
+  // The reading has caught up: the shell's signals (top bar, sidebar) are read again at once, not on their next poll.
+  const resolved = shownStatus?.state === 'verified'
+  useEffect(() => {
+    if (resolved) void refreshRef.current().catch(() => undefined)
+  }, [resolved])
   // The backend refreshes on its own schedule: keep asking until a newer reading arrives.
   useEffect(() => {
     if (!verifying) return

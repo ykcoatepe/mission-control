@@ -227,3 +227,13 @@
     max-width: 100%;
   }
 }
+
+.createdTag {
+  margin-inline-start: var(--sp-2);
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}

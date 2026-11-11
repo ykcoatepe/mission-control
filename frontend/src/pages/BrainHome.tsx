@@ -81,7 +81,8 @@ export default function BrainHome() {
               key.startsWith('/api/gbrain/health') ||
               key.startsWith('/api/gbrain/sources') ||
               key.startsWith('/api/gbrain/timeline') ||
-              key.startsWith('/api/operations/overview'))
+              key.startsWith('/api/operations/overview') ||
+              key.startsWith('/api/signals'))
           )
         },
       }),

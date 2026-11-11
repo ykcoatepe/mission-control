@@ -387,3 +387,49 @@ export function toInputDateTime(iso?: string | null) {
   if (Number.isNaN(d.getTime())) return ''
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
 }
+
+// ── What a write or a sync changed ─────────────────────────────────────────
+
+export interface EntryChanges {
+  added: number
+  updated: number
+  removed: number
+}
+
+const entryFingerprint = (entry: CalendarEntry) =>
+  JSON.stringify([entry.title, entry.schedule, entry.startsAt, entry.status, entry.assignee, entry.notes ?? '', entry.userOverrides ?? []])
+
+/** Entries added, updated (any shown field differs) and removed between two lists, matched by id. */
+export function diffEntries(before: CalendarEntry[], after: CalendarEntry[]): EntryChanges {
+  const previous = new Map(before.map((entry) => [entry.id, entry]))
+  const kept = new Set<string>()
+  let added = 0
+  let updated = 0
+  for (const entry of after) {
+    const old = previous.get(entry.id)
+    if (!old) added++
+    else {
+      kept.add(entry.id)
+      if (entryFingerprint(old) !== entryFingerprint(entry)) updated++
+    }
+  }
+  return { added, updated, removed: before.filter((entry) => !kept.has(entry.id)).length }
+}
+
+/** "3 entries changed: 1 added, 2 updated." or "No entries changed." */
+export function describeEntryChanges(changes: EntryChanges): string {
+  const total = changes.added + changes.updated + changes.removed
+  if (total === 0) return 'No entries changed.'
+  const parts = [
+    ...(changes.added > 0 ? [`${changes.added} added`] : []),
+    ...(changes.updated > 0 ? [`${changes.updated} updated`] : []),
+    ...(changes.removed > 0 ? [`${changes.removed} removed`] : []),
+  ]
+  return `${total} ${total === 1 ? 'entry' : 'entries'} changed: ${parts.join(', ')}.`
+}
+
+/** The week offset (0 = this week) that shows `date`, weeks starting as `startOfWeek` says. */
+export function weekOffsetFor(date: Date, now: Date): number {
+  const week = 7 * 24 * 3600 * 1000
+  return Math.round((startOfWeek(date).getTime() - startOfWeek(now).getTime()) / week)
+}

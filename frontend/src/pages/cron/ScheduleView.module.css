@@ -341,3 +341,23 @@
   color: var(--text-3);
   font-size: var(--fs-micro);
 }
+
+.groupLabel {
+  margin: var(--sp-1) 0 0;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.savedTag {
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.entry[data-just-saved] {
+  border-color: var(--accent);
+}

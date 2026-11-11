@@ -282,10 +282,18 @@ describe('Brain home: maintenance actions', () => {
     await render()
     expect(host.textContent).toContain('Verifying')
 
+    const spy = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
     mocks.synoptic = { data: synoptic(), meta: meta('2026-11-11T08:05:00.000Z') }
     await render()
     expect(host.textContent).toContain('Verified')
     expect(host.textContent).not.toContain('Verifying')
+    // The shell's signals are read again when the reading catches up, not on their next poll.
+    const readsSignals = spy.mock.calls.some(([filters]) => {
+      const predicate = (filters as { predicate?: (query: { queryKey: unknown[] }) => boolean } | undefined)?.predicate
+      return predicate?.({ queryKey: ['api', '/api/signals'] }) === true
+    })
+    expect(readsSignals).toBe(true)
+    spy.mockRestore()
     await act(async () => root.unmount())
   })
 

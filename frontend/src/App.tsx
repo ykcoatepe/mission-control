@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
 import { PageTitleProvider, Skeleton, ToastProvider } from './components/ui'
 import { useApi } from './lib/hooks'
+import { useAfterWriteRefresh } from './lib/writes'
 import { cx } from './components/ui/cx'
 import { useMediaQuery } from './components/ui/useMediaQuery'
 
@@ -32,6 +33,7 @@ function RouteFallback() {
 }
 
 export default function App() {
+  useAfterWriteRefresh()
   const location = useLocation()
   const navigate = useNavigate()
   const mainRef = useRef<HTMLElement>(null)

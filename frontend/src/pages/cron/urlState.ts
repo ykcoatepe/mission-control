@@ -26,6 +26,30 @@ export function useQueryParam(name: string): [string | null, (value: string | nu
   return [value, set]
 }
 
+/**
+ * Several query parameters in one navigation. Separate `useQueryParam` setters called one after the other
+ * each start from the same snapshot, so the last one wins; a change of more than one parameter goes here.
+ */
+export function useQueryParams(): (changes: Record<string, string | null>) => void {
+  const [, setParams] = useSearchParams()
+  return useCallback(
+    (changes) => {
+      setParams(
+        (prev) => {
+          const copy = new URLSearchParams(prev)
+          for (const [name, next] of Object.entries(changes)) {
+            if (next === null || next === '') copy.delete(name)
+            else copy.set(name, next)
+          }
+          return copy
+        },
+        { replace: true },
+      )
+    },
+    [setParams],
+  )
+}
+
 /** `value` when it is one of `allowed`, otherwise `fallback`: a hand-edited URL never produces an unknown filter. */
 export function oneOf<T extends string>(value: string | null, allowed: readonly T[], fallback: T): T {
   return (allowed as readonly string[]).includes(value ?? '') ? (value as T) : fallback

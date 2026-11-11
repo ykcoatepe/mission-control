@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw } from 'lucide-react'
 import {
   Button,
@@ -28,12 +28,15 @@ import { Link } from 'react-router-dom'
 import { scheduleDisplay } from './cronSchedule'
 import { lastRunMarkerDays, planWeek } from './weekPlan'
 import { isInternalKey } from './jobWords'
-import { oneOf, useQueryParam } from './urlState'
+import { oneOf, useQueryParam, useQueryParams } from './urlState'
 import EntryDialog from './EntryDialog'
 import type { EntryChange } from './EntryDialog'
 import type { CalendarEntry, CalendarPayload, CalendarWriteResponse, RepairResult } from './scheduleLib'
 import {
   applyCalendarWrite,
+  describeEntryChanges,
+  diffEntries,
+  weekOffsetFor,
   ASSIGNEE_OPTIONS,
   SOURCE_OPTIONS,
   calendarNotices,
@@ -61,6 +64,16 @@ const MAX_PER_DAY = 8
 
 const MODES = ['week', 'today'] as const
 
+/** How long the "Saved" tag stays on an entry that was just written. */
+const SAVED_TAG_MS = 6000
+
+/** Where an entry that was just written is, for the person looking at the page. */
+type SavedPlace =
+  | { kind: 'visible'; key: string; recurring: boolean }
+  | { kind: 'elsewhere'; date: Date }
+  | { kind: 'filtered'; why: string }
+  | { kind: 'listed' }
+
 const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: 'week', label: 'Week' },
   { value: 'today', label: 'Today' },
@@ -87,12 +100,19 @@ export default function ScheduleView() {
   const [rangeParam, setRangeParam] = useQueryParam('range')
   const [weekParam, setWeekParam] = useQueryParam('week')
   const [findParam, setFindParam] = useQueryParam('find')
+  const setQueryParams = useQueryParams()
   const [disabledParam, setDisabledParam] = useQueryParam('disabled')
   const [sourceParam, setSourceParam] = useQueryParam('source')
   const [assigneeParam, setAssigneeParam] = useQueryParam('assignee')
   const [detailId, setDetailId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [expandedDays, setExpandedDays] = useState<Set<string>>(() => new Set())
+  // The entry that was just written: tagged for a few seconds, scrolled to and focused once it is on screen.
+  const [justSaved, setJustSaved] = useState<{ id: string; key: string } | null>(null)
+  const [focusRequest, setFocusRequest] = useState<{ id: string; key: string; nonce: number } | null>(null)
+  const focused = useRef(0)
+  // A write whose entry is not on the screen right now: said, with a way to it.
+  const [savedNote, setSavedNote] = useState<{ id: string; title: string; place: SavedPlace } | null>(null)
 
   const mode: Mode = oneOf(rangeParam, MODES, 'week')
   const parsedWeek = Number.parseInt(weekParam ?? '', 10)
@@ -141,6 +161,14 @@ export default function ScheduleView() {
     [mode, today, weekDays],
   )
 
+  const matchesFilters = (entry: CalendarEntry) => {
+    const query = searchQuery.trim().toLowerCase()
+    if (sourceFilter && entry.source !== sourceFilter) return false
+    if (assigneeFilter && entry.assignee !== assigneeFilter) return false
+    if (query && !String(entry.title || '').toLowerCase().includes(query)) return false
+    return true
+  }
+
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
     return entries.filter((entry) => {
@@ -180,7 +208,10 @@ export default function ScheduleView() {
   const handleSync = async () => {
     setSyncing(true)
     try {
-      await showCommitted(await postJson<CalendarWriteResponse>('/api/calendar/sync-cron'))
+      const response = await postJson<CalendarWriteResponse>('/api/calendar/sync-cron')
+      const changes = Array.isArray(response?.entries) ? describeEntryChanges(diffEntries(entries, response.entries)) : null
+      await showCommitted(response)
+      if (changes) toast.show('success', `Schedule synced from cron. ${changes}`)
     } catch (err) {
       toast.show('error', writeFailureMessage('Schedule sync failed', err))
     } finally {
@@ -201,7 +232,9 @@ export default function ScheduleView() {
     try {
       const result = await postJson<RepairResult & CalendarWriteResponse>('/api/calendar/repair')
       setRepairOpen(false)
-      toast.show('success', repairResultMessage(result), { duration: 12000 })
+      const changes = Array.isArray(result?.entries) ? diffEntries(entries, result.entries) : null
+      const changed = changes ? changes.added + changes.updated + changes.removed : 0
+      toast.show('success', `${repairResultMessage(result)}${changed > 0 && changes ? ` ${describeEntryChanges(changes)}` : ''}`, { duration: 12000 })
       await showCommitted(result)
     } catch (err) {
       setRepairError(describeApiError(err))
@@ -211,13 +244,85 @@ export default function ScheduleView() {
   }
 
   /** Throws when the server refuses, so the dialog can show its message and stay open. */
-  const saveEntry = async (change: EntryChange) => {
+  const saveEntry = async (change: EntryChange, options: { reveal?: boolean } = {}) => {
     const response =
       change.kind === 'create'
         ? await postJson<CalendarWriteResponse>('/api/calendar', change.payload)
         : await sendJson<CalendarWriteResponse>(`/api/calendar/${encodeURIComponent(change.id)}`, 'PATCH', change.patch)
     await showCommitted(response)
+    const saved = response?.entry ?? entries.find((entry) => change.kind === 'update' && entry.id === change.id)
+    const id = response?.entry?.id ?? (change.kind === 'update' ? change.id : null)
+    if (id && options.reveal !== false) {
+      // The drawer must not reopen over the entry that was just saved.
+      setDetailId(null)
+      showSaved(id, saved ?? null)
+    }
   }
+
+  /** Where the entry is on screen now. A recurring entry lands on the first visible day its schedule runs. */
+  const placeSaved = (entry: CalendarEntry): SavedPlace => {
+    if (!matchesFilters(entry)) return { kind: 'filtered', why: 'the current search or filters' }
+    const placed = planWeek([entry], visibleDays, { hideDisabled, todayStart })
+    const key = visibleDays.map(toDayKey).find((day) => placed.byDay[day]?.length)
+    if (key) return { kind: 'visible', key, recurring: Boolean(placed.byDay[key]?.some((item) => item.recurring)) }
+    if (hideDisabled && isDisabledEntry(entry)) return { kind: 'filtered', why: '"Hide disabled"' }
+    const startsAt = entry.startsAt ? new Date(entry.startsAt) : null
+    if (startsAt && !Number.isNaN(startsAt.getTime()) && !String(entry.schedule ?? '').trim()) return { kind: 'elsewhere', date: startsAt }
+    return { kind: 'listed' }
+  }
+
+  const focusEntry = (id: string, key: string, expand = false) => {
+    // Dated entries are always listed; only a recurring occurrence can sit behind "Show N more".
+    if (expand) setExpandedDays((prev) => new Set(prev).add(key))
+    setJustSaved({ id, key })
+    setFocusRequest({ id, key, nonce: Date.now() + Math.random() })
+  }
+
+  /** After a create or an edit: show the entry (day opened, tagged, focused), or say where it went. */
+  const showSaved = (id: string, entry: CalendarEntry | null) => {
+    setSavedNote(null)
+    if (!entry) return
+    const place = placeSaved(entry)
+    if (place.kind === 'visible') focusEntry(id, place.key, place.recurring)
+    else if (place.kind !== 'listed') setSavedNote({ id, title: entry.title, place })
+  }
+
+  const goToSavedWeek = (note: { id: string; place: SavedPlace }) => {
+    if (note.place.kind !== 'elsewhere') return
+    const date = note.place.date
+    const offset = weekOffsetFor(date, new Date(now))
+    setQueryParams({ range: null, week: offset === 0 ? null : String(offset) })
+    focusEntry(note.id, toDayKey(date))
+    setSavedNote(null)
+  }
+
+  const showSavedAnyway = (note: { id: string; place: SavedPlace }) => {
+    setQueryParams({ find: null, source: null, assignee: null, disabled: 'show' })
+    const entry = entries.find((candidate) => candidate.id === note.id)
+    const placed = entry ? planWeek([entry], visibleDays, { hideDisabled: false, todayStart }) : null
+    const key = placed ? visibleDays.map(toDayKey).find((day) => placed.byDay[day]?.length) : undefined
+    setSavedNote(null)
+    if (key) focusEntry(note.id, key)
+  }
+
+  // The tag goes away by itself.
+  useEffect(() => {
+    if (!justSaved) return
+    const timer = window.setTimeout(() => setJustSaved(null), SAVED_TAG_MS)
+    return () => window.clearTimeout(timer)
+  }, [justSaved])
+
+  // Scroll to the entry and move focus to it, once it is rendered and the dialog that saved it has closed.
+  useEffect(() => {
+    if (!focusRequest || editing || focused.current === focusRequest.nonce) return
+    const target = [...document.querySelectorAll<HTMLElement>('[data-entry-id]')].find(
+      (element) => element.dataset.entryId === focusRequest.id && element.dataset.day === focusRequest.key,
+    )
+    if (!target) return
+    focused.current = focusRequest.nonce
+    target.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    target.focus({ preventScroll: true })
+  })
 
   // Only an entry nobody links to the scheduler has a status of its own. A linked
   // entry's status is the job's: its switch is in Jobs, not here.
@@ -225,7 +330,7 @@ export default function ScheduleView() {
     if (!detailEntry || isLinkedEntry(detailEntry)) return
     const nextStatus = isDisabledEntry(detailEntry) ? 'scheduled' : 'disabled'
     try {
-      await saveEntry({ kind: 'update', id: detailEntry.id, patch: { status: nextStatus } })
+      await saveEntry({ kind: 'update', id: detailEntry.id, patch: { status: nextStatus } }, { reveal: false })
     } catch (err) {
       toast.show('error', writeFailureMessage('Schedule save failed', err))
     }
@@ -274,6 +379,24 @@ export default function ScheduleView() {
   return (
     <div className={styles.view}>
       <StaleWriteNote show={catchingUp} />
+      {savedNote?.place.kind === 'elsewhere' && (
+        <Notice
+          tone="info"
+          title={`Saved for ${formatDayHeader(savedNote.place.date).weekday} ${formatDayHeader(savedNote.place.date).date}`}
+          action={<Button size="sm" onClick={() => goToSavedWeek(savedNote)}>Go to that week</Button>}
+        >
+          “{savedNote.title}” is not in the week you are looking at.
+        </Notice>
+      )}
+      {savedNote?.place.kind === 'filtered' && (
+        <Notice
+          tone="info"
+          title="Saved, but hidden"
+          action={<Button size="sm" onClick={() => showSavedAnyway(savedNote)}>Show it</Button>}
+        >
+          “{savedNote.title}” is hidden by {savedNote.place.why}.
+        </Notice>
+      )}
       <div className={styles.toolbar}>
         <div className={styles.nav}>
           <IconButton
@@ -393,7 +516,46 @@ export default function ScheduleView() {
           const isToday = key === todayKey
           const isPast = day.getTime() < todayStart.getTime()
           const expanded = expandedDays.has(key)
-          const shown = expanded ? list : list.slice(0, MAX_PER_DAY)
+          // Dated one-off entries are always listed, in time order. Only the recurring occurrences collapse.
+          const dated = list.filter((placed) => !placed.recurring)
+          const recurring = list.filter((placed) => placed.recurring)
+          const shownRecurring = expanded ? recurring : recurring.slice(0, MAX_PER_DAY)
+          const renderEntry = (placed: (typeof list)[number]) => {
+            const { entry } = placed
+            const rawState = entryState(entry.status)
+            // A repeating entry's "failed" is its last run's result: shown once, quietly, on the next occurrence.
+            const lastRunFailed = placed.recurring && rawState === 'critical'
+            const showLastRunFailed = lastRunFailed && markerDays.get(entry.id) === key
+            const state = lastRunFailed ? null : rawState
+            const fresh = justSaved?.id === entry.id && justSaved.key === key
+            return (
+              <button
+                key={`${key}:${entry.id}`}
+                type="button"
+                className={styles.entry}
+                data-entry-id={entry.id}
+                data-day={key}
+                data-just-saved={fresh || undefined}
+                data-state={state ?? undefined}
+                data-dim={isDisabledEntry(entry) || undefined}
+                title={entry.schedule ? `Schedule: ${entry.schedule}` : undefined}
+                onClick={() => setDetailId(entry.id)}
+              >
+                <span className={styles.entryTitle}>{entry.title}</span>
+                <span className={styles.entryMeta}>
+                  <Mono muted>{placed.label}</Mono>
+                  {fresh && <span className={styles.savedTag}>Saved</span>}
+                  {state && state !== 'healthy' && (
+                    <span className={styles.entryStatus}>
+                      <StateDot state={state} />
+                      {entryStatusLabel(entry.status)}
+                    </span>
+                  )}
+                  {showLastRunFailed && <span className={styles.lastRun}>Last run failed</span>}
+                </span>
+              </button>
+            )
+          }
           return (
             <section key={key} className={cx(styles.day, isToday && styles.dayToday)} aria-label={`${header.weekday} ${header.date}`}>
               <header className={styles.dayHeader}>
@@ -407,41 +569,16 @@ export default function ScheduleView() {
                 {list.length === 0 ? (
                   <p className={styles.dayEmpty}>{isPast ? 'No dated entries.' : 'Nothing scheduled.'}</p>
                 ) : (
-                  shown.map((placed) => {
-                    const { entry } = placed
-                    const rawState = entryState(entry.status)
-                    // A repeating entry's "failed" is its last run's result: shown once, quietly, on the next occurrence.
-                    const lastRunFailed = placed.recurring && rawState === 'critical'
-                    const showLastRunFailed = lastRunFailed && markerDays.get(entry.id) === key
-                    const state = lastRunFailed ? null : rawState
-                    return (
-                      <button
-                        key={`${key}:${entry.id}`}
-                        type="button"
-                        className={styles.entry}
-                        data-state={state ?? undefined}
-                        data-dim={isDisabledEntry(entry) || undefined}
-                        title={entry.schedule ? `Schedule: ${entry.schedule}` : undefined}
-                        onClick={() => setDetailId(entry.id)}
-                      >
-                        <span className={styles.entryTitle}>{entry.title}</span>
-                        <span className={styles.entryMeta}>
-                          <Mono muted>{placed.label}</Mono>
-                          {state && state !== 'healthy' && (
-                            <span className={styles.entryStatus}>
-                              <StateDot state={state} />
-                              {entryStatusLabel(entry.status)}
-                            </span>
-                          )}
-                          {showLastRunFailed && <span className={styles.lastRun}>Last run failed</span>}
-                        </span>
-                      </button>
-                    )
-                  })
+                  <>
+                    {dated.length > 0 && <p className={styles.groupLabel}>Entries</p>}
+                    {dated.map(renderEntry)}
+                    {dated.length > 0 && recurring.length > 0 && <p className={styles.groupLabel}>Recurring</p>}
+                    {shownRecurring.map(renderEntry)}
+                  </>
                 )}
-                {list.length > MAX_PER_DAY && (
+                {recurring.length > MAX_PER_DAY && (
                   <Button size="sm" variant="ghost" onClick={() => toggleExpanded(key)}>
-                    {expanded ? 'Show fewer' : `Show ${list.length - MAX_PER_DAY} more`}
+                    {expanded ? 'Show fewer' : `Show ${recurring.length - MAX_PER_DAY} more`}
                   </Button>
                 )}
               </div>

@@ -59,7 +59,7 @@ import {
   schedulersIn,
   useLastGoodReadings,
 } from './schedulerReadings'
-import { oneOf, useQueryParam } from './urlState'
+import { oneOf, useQueryParam, useQueryParams } from './urlState'
 import CreateJobDialog from './CreateJobDialog'
 import JobDrawer from './JobDrawer'
 import styles from './JobsView.module.css'
@@ -92,12 +92,19 @@ export default function JobsView() {
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   // The last write succeeded but the server could not confirm its follow-up reading yet.
   const [catchingUp, setCatchingUp] = useState(false)
+  // A job that was just created: tagged for a few seconds, scrolled to and focused once its row is on screen.
+  const [justCreated, setJustCreated] = useState<string | null>(null)
+  const [focusRequest, setFocusRequest] = useState<{ id: string; nonce: number } | null>(null)
+  const focused = useRef(0)
+  // A created job the current search or filters would hide: said, with a way to see it.
+  const [hiddenCreated, setHiddenCreated] = useState<{ id: string; name: string } | null>(null)
   // A confirmation opened from the drawer hides the drawer; when it closes, focus goes back to the button that opened it.
   const returnFocus = useRef<'run' | 'delete' | null>(null)
   // Filters and search live in the URL, so a reload or a shared link keeps them.
   const [stateParam, setStateParam] = useQueryParam('state')
   const [schedulerParam, setSchedulerParam] = useQueryParam('scheduler')
   const [searchParam, setSearchParam] = useQueryParam('q')
+  const setQueryParams = useQueryParams()
   const statusFilter: CronStatusFilter = oneOf(stateParam, STATE_FILTERS, 'all')
   const schedulerFilter: SchedulerFilter = oneOf(schedulerParam, SCHEDULER_FILTERS, 'all')
   const jobSearch = searchParam ?? ''
@@ -171,13 +178,26 @@ export default function JobsView() {
     })
   }, [jobs, jobSearch, overlapState, schedulerFilter, statusFilter])
 
+  /** Whether the current search and filters would list this job (the overlap filter needs the whole list, so it counts as hiding). */
+  const passesFilters = (job: CronJob) => {
+    const query = jobSearch.trim().toLowerCase()
+    if (schedulerFilter !== 'all' && getCronScheduler(job) !== schedulerFilter) return false
+    if (
+      query &&
+      ![job.name, job.id, job.sourceId, job.description, getCronSchedulerLabel(job)].some((value) =>
+        String(value || '').toLowerCase().includes(query),
+      )
+    )
+      return false
+    if (statusFilter === 'overlap') return overlapState.markers.has(job.id)
+    if (statusFilter === 'active') return isJobOn(job)
+    if (statusFilter !== 'all') return normalizeCronStatus(job.status, job.enabled) === statusFilter
+    return true
+  }
+
   const hasActiveFilters = statusFilter !== 'all' || schedulerFilter !== 'all' || jobSearch.trim() !== ''
 
-  const clearFilters = () => {
-    setStatusFilter('all')
-    setSchedulerFilter('all')
-    setJobSearch('')
-  }
+  const clearFilters = () => setQueryParams({ state: null, scheduler: null, q: null })
 
   // ---- selected job (?job=<id>) ----
 
@@ -293,11 +313,47 @@ export default function JobsView() {
     }
   }
 
+  const revealCreated = (id: string) => {
+    setHiddenCreated(null)
+    setJustCreated(id)
+    setFocusRequest({ id, nonce: Date.now() + Math.random() })
+  }
+
+  const showHiddenCreated = () => {
+    if (!hiddenCreated) return
+    clearFilters()
+    revealCreated(hiddenCreated.id)
+  }
+
+  useEffect(() => {
+    if (!justCreated) return
+    const timer = window.setTimeout(() => setJustCreated(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [justCreated])
+
+  // Scroll to the new row and focus it, once it is rendered and the create dialog has closed.
+  useEffect(() => {
+    if (!focusRequest || showCreate || focused.current === focusRequest.nonce) return
+    const mark = [...document.querySelectorAll<HTMLElement>('[data-created-job]')].find(
+      (element) => element.dataset.createdJob === focusRequest.id,
+    )
+    const row = mark?.closest('tr')
+    if (!row) return
+    focused.current = focusRequest.nonce
+    row.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+    row.focus({ preventScroll: true })
+  })
+
   const handleCreateJob = async (job: CreateCronJobPayload) => {
     try {
       const response = await createMutation.mutateAsync(job)
       toast.show('success', `"${job.name}" created`)
       await showCommitted(response, (r) => ({ kind: 'create', response: r }))
+      const created = response?.entity ?? response?.job
+      if (created?.id && created.name) {
+        if (passesFilters(created as CronJob)) revealCreated(created.id)
+        else setHiddenCreated({ id: created.id, name: created.name })
+      }
     } catch (err) {
       toast.show('error', `Create failed: ${errorMessage(err)}`)
       throw err
@@ -334,7 +390,14 @@ export default function JobsView() {
       header: 'Name',
       cell: (job) => (
         <div className={styles.nameCell}>
-          <span className={styles.name}>{job.name}</span>
+          <span className={styles.name}>
+            {job.name}
+            {justCreated === job.id && (
+              <span className={styles.createdTag} data-created-job={job.id}>
+                Created
+              </span>
+            )}
+          </span>
           <span className={styles.meta}>
             {getCronSchedulerLabel(job)} · <Mono muted>{job.sourceId || job.id}</Mono>
           </span>
@@ -485,6 +548,15 @@ export default function JobsView() {
   return (
     <div className={styles.view}>
       <StaleWriteNote show={catchingUp} />
+      {hiddenCreated && (
+        <Notice
+          tone="info"
+          title="Created, hidden by the current filter"
+          action={<Button size="sm" onClick={showHiddenCreated}>Show it</Button>}
+        >
+          “{hiddenCreated.name}” was created, but the current search or filters do not list it.
+        </Notice>
+      )}
       {notices.map((notice) => (
         <Notice key={notice.id} tone={notice.tone} title={notice.title}>
           {notice.body}

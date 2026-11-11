@@ -15,6 +15,31 @@ import { queryOptions, useQuery } from '@tanstack/react-query'
  * appears anywhere else.
  */
 
+type WriteListener = () => void
+const writeListeners = new Set<WriteListener>()
+
+/**
+ * Called once for every write the server accepted (a 2xx to anything but a read). The app subscribes once to
+ * refresh what the whole shell shows (see `useAfterWriteRefresh`), so no page has to remember to. A listener
+ * that throws never turns the write into an error.
+ */
+export function onWriteSucceeded(listener: WriteListener): () => void {
+  writeListeners.add(listener)
+  return () => {
+    writeListeners.delete(listener)
+  }
+}
+
+function notifyWriteSucceeded() {
+  for (const listener of [...writeListeners]) {
+    try {
+      listener()
+    } catch {
+      // A refresh that cannot start must not fail a write that went through.
+    }
+  }
+}
+
 export const WRITE_GUARD_HEADER = 'X-MC-Request'
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -110,6 +135,7 @@ export async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> 
   }
   const res = await fetch(requestUrl, request)
   if (!res.ok) throw await toApiError(res)
+  if (!SAFE_METHODS.has(method)) notifyWriteSucceeded()
   if (res.status === 204) return undefined as T
   const contentType = (res.headers?.get?.('content-type') || '').toLowerCase()
   if (!contentType.includes('application/json')) {

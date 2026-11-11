@@ -1,4 +1,8 @@
+import { useQueryClient } from '@tanstack/react-query'
 import type { QueryClient } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { onWriteSucceeded } from './hooks'
+import { SIGNALS_URL } from './signals'
 
 /**
  * Read-your-writes on the page.
@@ -40,4 +44,19 @@ export async function applyCommitted<T>(
   await client.cancelQueries({ queryKey: key })
   client.setQueryData<T>(key, (current) => (current === undefined ? current : update(current)))
   void client.invalidateQueries({ queryKey: key })
+}
+
+/**
+ * Everything the shell shows that a write can change: the top bar's systems and attention count, and the
+ * sidebar badges, all read `/api/signals`. Refetches it once. A failing refetch is swallowed here: the write
+ * it follows already succeeded.
+ */
+export function afterWrite(client: QueryClient): void {
+  void client.invalidateQueries({ queryKey: apiQueryKey(SIGNALS_URL) }).catch(() => undefined)
+}
+
+/** Mount once, inside the query provider: every accepted write refreshes the shell's signals at once. */
+export function useAfterWriteRefresh(): void {
+  const client = useQueryClient()
+  useEffect(() => onWriteSucceeded(() => afterWrite(client)), [client])
 }
