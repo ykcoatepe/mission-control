@@ -9,6 +9,7 @@ const { createOpenclawExec } = require('./server/services/openclawClient');
 const { createCronService, parseFirstJson } = require('./server/services/cronData');
 const { createStatusService } = require('./server/services/statusData');
 const { createHermesKanbanService } = require('./server/services/hermesKanbanData');
+const { createHermesGatewayHealthService } = require('./server/services/hermesGatewayHealth');
 const { createGBrainOverviewService } = require('./server/services/gbrainOverviewData');
 const {
   createOperationsOverviewService,
@@ -680,6 +681,10 @@ app.get('/api/health', (req, res) => res.json(healthPayload()));
 app.get('/healthz', (req, res) => res.json(healthPayload()));
 const gbrainOverviewService = createGBrainOverviewService({ projectRoot: __dirname, mcConfig });
 const hermesKanbanService = createHermesKanbanService({ mcConfig });
+const hermesGatewayHealthService = createHermesGatewayHealthService({
+  profile: hermesKanbanService.profile,
+  home: process.env.MC_USER_HOME || process.env.HOME || require('os').homedir(),
+});
 app.use(buildGBrainRouter({ projectRoot: __dirname, mcConfig, gbrainOverviewService }));
 app.use(buildHermesKanbanRouter({ mcConfig, hermesKanbanService }));
 
@@ -740,6 +745,7 @@ const operationsOverviewService = createOperationsOverviewService({
     sessionsService,
     cronService,
     hermesKanbanService,
+    hermesGatewayHealthService,
     gbrainOverviewService,
   }),
   listCapabilities: () => listGBrainActions(),

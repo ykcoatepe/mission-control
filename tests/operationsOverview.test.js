@@ -12,6 +12,8 @@ const {
 } = require('../server/services/operationsOverview');
 
 const generatedAt = '2026-07-10T12:00:00.000Z';
+// Kanban-validity cases assert 'unavailable', which needs the gateway proof absent too.
+const NO_GATEWAY = { ok: false, unavailable: true, error: 'gateway state unreadable' };
 
 function healthyInput(overrides = {}) {
   const sourceProof = (provenance) => ({
@@ -54,6 +56,13 @@ function healthyInput(overrides = {}) {
       ok: true,
       refreshedAt: generatedAt,
       summary: { active: 2, running: 1, blocked: 0, total: 63 },
+    },
+    hermesGateway: {
+      ok: true,
+      status: 'running',
+      pid: 4242,
+      observedAt: generatedAt,
+      heartbeatAt: generatedAt,
     },
     gbrain: {
       ok: true,
@@ -197,6 +206,7 @@ test('missing evidence and explicitly failed readers never become healthy', () =
   assert.ok(missing.attention.some((item) => item.reasonCode === 'openclaw_unavailable'));
 
   const failed = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: { ok: false, unavailable: true, error: 'Bearer secret /Users/example/private' },
   }), { generatedAt });
 
@@ -301,6 +311,7 @@ test('bounds reader failures independently and still returns the successful evid
       sessions: () => new Promise(() => {}),
       cron: async () => input.cron,
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => {
         throw new Error('Bearer secret from /Users/example/private');
       },
@@ -327,6 +338,7 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
       sessions: () => new Promise(() => {}),
       cron: async () => input.cron,
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => {
         await new Promise((resolve) => setTimeout(resolve, 11));
         return input.gbrain;
@@ -368,6 +380,7 @@ test('times out only the stalled source and preserves the remaining snapshot', a
       sessions: async () => new Promise(() => {}),
       cron: async () => input.cron,
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => input.gbrain,
     },
     listCapabilities: () => [],
@@ -393,6 +406,7 @@ test('projects a shared cron reader failure into visible system evidence', async
         throw new Error('scheduler output included /Users/example/private');
       },
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => input.gbrain,
     },
     listCapabilities: () => [],
@@ -448,6 +462,7 @@ test('projects raw action definitions through the capability allowlist at the se
       sessions: async () => input.sessions,
       cron: async () => input.cron,
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => input.gbrain,
     },
     listCapabilities: () => [{
@@ -608,6 +623,7 @@ test('marks shape-deficient fulfilled sources unavailable instead of fabricating
   assert.ok(fractionalSessions.attention.some((item) => item.reasonCode === 'openclaw_sessions_unavailable'));
 
   const deficientHermes = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: { ok: true, refreshedAt: generatedAt },
   }), { generatedAt });
   assert.equal(deficientHermes.systems.hermes.state, 'unavailable');
@@ -615,17 +631,20 @@ test('marks shape-deficient fulfilled sources unavailable instead of fabricating
   assert.deepEqual(deficientHermes.systems.hermes.metrics, {});
 
   const unobservedHermes = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: { ok: true, summary: { total: 0, active: 0, running: 0, blocked: 0 } },
   }), { generatedAt });
   assert.equal(unobservedHermes.systems.hermes.state, 'unavailable');
   assert.equal(unobservedHermes.systems.hermes.observedAt, null);
 
   const numericHermesTime = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: { ok: true, refreshedAt: 0, summary: { total: 0, active: 0, running: 0, blocked: 0 } },
   }), { generatedAt });
   assert.equal(numericHermesTime.systems.hermes.state, 'unavailable');
 
   const fractionalHermesSummary = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: { ok: true, refreshedAt: generatedAt, summary: { total: 0, active: 0.5, running: 0, blocked: 0 } },
   }), { generatedAt });
   assert.equal(fractionalHermesSummary.systems.hermes.state, 'unavailable');
@@ -733,6 +752,7 @@ test('rejects normalized but semantically invalid RFC3339 calendar timestamps', 
   assert.equal(invalidStatus.systems.openclaw.state, 'unavailable');
 
   const invalidHermes = buildOperationsOverview(healthyInput({
+    hermesGateway: NO_GATEWAY,
     hermes: {
       ok: true,
       refreshedAt: '2026-07-10T24:00:00.000Z',
@@ -767,6 +787,7 @@ test('isolates synchronous capability enumeration failure from the reader snapsh
       sessions: async () => input.sessions,
       cron: async () => input.cron,
       hermes: async () => input.hermes,
+      hermesGateway: async () => input.hermesGateway,
       gbrain: async () => input.gbrain,
     },
     listCapabilities: () => {
@@ -806,4 +827,101 @@ test('promotes caveatless stale GBrain sources to warning with explicit proof', 
   assert.equal(staleEvidence.status, 'warning');
   assert.equal(staleEvidence.detailHref, '/gbrain');
   assert.match(staleEvidence.summary, /3 stale/i);
+});
+
+test('Hermes gateway down is critical even when Kanban reads fine', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    hermesGateway: {
+      ok: true, status: 'down', pid: 4242, observedAt: generatedAt, heartbeatAt: generatedAt,
+      reason: 'gateway process not running',
+    },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'critical');
+  assert.equal(overview.overall.state, 'critical');
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_gateway_down' && item.severity === 'critical'));
+  assert.ok(overview.systems.hermes.evidence.some((item) => item.id === 'hermes:gateway' && item.status === 'critical'));
+  assert.equal(overview.systems.hermes.metrics.running, 1);
+});
+
+test('Hermes with live gateway and readable Kanban is healthy and carries gateway evidence', () => {
+  const overview = buildOperationsOverview(healthyInput(), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'healthy');
+  assert.equal(overview.systems.hermes.freshness, 'fresh');
+  assert.ok(overview.systems.hermes.evidence.some((item) => item.id === 'hermes:gateway' && item.status === 'healthy'));
+});
+
+test('a stale-but-recent Kanban board is stale, not unavailable', () => {
+  const staleAt = '2026-07-10T11:58:00.000Z';
+  const overview = buildOperationsOverview(healthyInput({
+    hermes: {
+      ok: true, stale: true, refreshedAt: staleAt, staleAgeMs: 120_000,
+      summary: { active: 2, running: 1, blocked: 0, total: 63 },
+    },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'healthy');
+  assert.equal(overview.systems.hermes.freshness, 'stale');
+  assert.equal(overview.systems.hermes.metrics.kanbanAgeSeconds, 120);
+  assert.ok(overview.systems.hermes.caveats.some((item) => /stale/i.test(item)));
+});
+
+test('unreadable Kanban with a live gateway is a warning, not unavailable', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    hermes: { ok: false, unavailable: true, error: 'timed out' },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_kanban_unavailable'));
+});
+
+test('missing gateway proof never reads as healthy', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    hermesGateway: { ok: false, unavailable: true, error: 'read failed' },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_gateway_unverified'));
+
+  const bothMissing = buildOperationsOverview(healthyInput({
+    hermes: { ok: false, unavailable: true },
+    hermesGateway: { ok: false, unavailable: true },
+  }), { generatedAt });
+  assert.equal(bothMissing.systems.hermes.state, 'unavailable');
+});
+
+test('stale gateway heartbeat is a warning', () => {
+  const overview = buildOperationsOverview(healthyInput({
+    hermesGateway: {
+      ok: true, status: 'stale', pid: 4242, observedAt: generatedAt,
+      heartbeatAt: '2026-07-10T11:40:00.000Z', reason: 'gateway heartbeat is stale',
+    },
+  }), { generatedAt });
+
+  assert.equal(overview.systems.hermes.state, 'warning');
+  assert.ok(overview.attention.some((item) => item.reasonCode === 'hermes_gateway_stale'));
+});
+
+test('operations reader set exposes a hermesGateway reader and the service passes it through', async () => {
+  const readers = createOperationsReaders({
+    hermesKanbanService: { getBoard: async () => ({}) },
+    hermesGatewayHealthService: { getHealth: async () => ({ ok: true, status: 'running' }) },
+  });
+  assert.equal(typeof readers.hermesGateway, 'function');
+  assert.equal((await readers.hermesGateway()).status, 'running');
+
+  const input = healthyInput();
+  const service = createOperationsOverviewService({
+    now: () => new Date(generatedAt),
+    readers: {
+      status: async () => input.status,
+      sessions: async () => input.sessions,
+      cron: async () => input.cron,
+      hermes: async () => input.hermes,
+      hermesGateway: async () => ({ ...input.hermesGateway, status: 'down' }),
+      gbrain: async () => input.gbrain,
+    },
+  });
+  assert.equal((await service.getOverview()).systems.hermes.state, 'critical');
 });

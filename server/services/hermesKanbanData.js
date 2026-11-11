@@ -112,6 +112,9 @@ function createHermesKanbanService({
   mcConfig = {},
   execFilePromise = defaultExecFilePromise,
   processEnv = process.env,
+  now = Date.now,
+  maxConcurrency = 2,
+  maxStaleMs = 10 * 60 * 1000,
 } = {}) {
   const profile = processEnv.HERMES_PROFILE || mcConfig?.hermes?.profile || 'hmudur';
   const hermesBin = processEnv.HERMES_BIN || findHermesBin(processEnv);
@@ -131,16 +134,35 @@ function createHermesKanbanService({
     return json ? parseJsonOutput(out, null) : { stdout: out, stderr: String(stderr || '').trim() };
   }
 
-  async function getBoard() {
+  // Bounded-concurrency map: ~8 parallel CLI spawns used to time out together
+  // under machine load and flip the whole board to unavailable.
+  async function mapLimited(items, limit, fn) {
+    const results = new Array(items.length);
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (next < items.length) {
+        const index = next++;
+        results[index] = await fn(items[index]);
+      }
+    });
+    await Promise.all(workers);
+    return results;
+  }
+
+  async function fetchBoard() {
     const columns = {};
-    const [lists, stats, assignees] = await Promise.all([
-      Promise.all(STATUSES.map(async (status) => {
+    const calls = [
+      ...STATUSES.map((status) => async () => {
         const tasks = await hermes(['list', '--status', status, '--json'], { json: true });
         return [status, Array.isArray(tasks) ? tasks.map(normalizeTask) : []];
-      })),
-      hermes(['stats', '--json'], { json: true }).catch(() => null),
-      hermes(['assignees', '--json'], { json: true }).catch(() => []),
-    ]);
+      }),
+      async () => hermes(['stats', '--json'], { json: true }).catch(() => null),
+      async () => hermes(['assignees', '--json'], { json: true }).catch(() => []),
+    ];
+    const settled = await mapLimited(calls, maxConcurrency, (call) => call());
+    const lists = settled.slice(0, STATUSES.length);
+    const stats = settled[STATUSES.length];
+    const assignees = settled[STATUSES.length + 1];
     for (const [status, tasks] of lists) columns[status] = tasks;
     const allTasks = Object.values(columns).flat();
     const active = ['triage', 'todo', 'ready', 'running', 'blocked']
@@ -149,7 +171,7 @@ function createHermesKanbanService({
       ok: true,
       source: 'hermes-kanban-cli',
       profile,
-      refreshedAt: new Date().toISOString(),
+      refreshedAt: new Date(now()).toISOString(),
       statuses: STATUSES,
       columns,
       stats,
@@ -167,6 +189,52 @@ function createHermesKanbanService({
         }, {}),
       },
     };
+  }
+
+  let lastGood = null; // { board, at }
+  let inFlight = null;
+
+  function startRefresh() {
+    if (!inFlight) {
+      inFlight = fetchBoard()
+        .then((board) => {
+          lastGood = { board, at: now() };
+          return board;
+        })
+        .finally(() => { inFlight = null; });
+      inFlight.catch(() => {}); // callers handle rejection; avoid unhandled when detached
+    }
+    return inFlight;
+  }
+
+  function staleBoard() {
+    if (!lastGood) return null;
+    const ageMs = now() - lastGood.at;
+    if (ageMs > maxStaleMs) return null;
+    return { ...lastGood.board, stale: true, staleAgeMs: ageMs };
+  }
+
+  // Fresh board when the refresh succeeds. If it fails, or exceeds the soft
+  // deadline, serve the last good board marked stale (with its age) until it
+  // is older than maxStaleMs. The refresh is shared and keeps running.
+  async function getBoard({ softDeadlineMs } = {}) {
+    const refresh = startRefresh();
+    try {
+      if (!softDeadlineMs) return await refresh;
+      let timer;
+      const deadline = new Promise((resolve) => {
+        timer = setTimeout(() => resolve(null), softDeadlineMs);
+        timer.unref?.();
+      });
+      const fresh = await Promise.race([refresh, deadline]);
+      clearTimeout(timer);
+      if (fresh) return fresh;
+      return staleBoard() || await refresh;
+    } catch (error) {
+      const stale = staleBoard();
+      if (stale) return stale;
+      throw error;
+    }
   }
 
   async function getTaskDetail(taskId) {
