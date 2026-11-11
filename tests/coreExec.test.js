@@ -472,7 +472,7 @@ test('counter-example: an unverifiable exit quarantines the lane; calls fail fas
     verifyGroupGone: (pgid) => (pgid === stuckPid ? verifiable : true) && realGone(pgid),
   });
   const child = trappingChild('/* ignore */');
-  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 150 });
+  const pending = exec.run(process.execPath, child.args, { lane: 'openclaw', timeoutMs: 600 });
   const queued = exec.run(process.execPath, ['-e', '1'], { lane: 'openclaw' });
   const pid = await waitForFile(child.pidFile);
   stuckPid = pid;
@@ -528,4 +528,70 @@ test('a healthy runner reports no quarantine', () => {
   assert.deepEqual(exec.status().quarantined, []);
   assert.equal(exec.status().lanes.openclaw.quarantined, false);
   assert.equal(buildHealthPayload({ exec }).ok, true);
+});
+
+// --- second review: lookup lane with a bounded queue ------------------------
+test('counter-example: the lookup lane is separate from gbrain and fails fast with lane_busy when its queue is full', async () => {
+  const fake = fakeExecFile();
+  const exec = createExec({ execFileImpl: fake.execFileImpl });
+  assert.ok(exec.lanes.includes('lookup'));
+  const lookups = [];
+  for (let i = 0; i < 150; i += 1) lookups.push(exec.run('gbrain', ['search', `q${i}`], { lane: 'lookup' }));
+  await tick();
+  const status = exec.status().lanes;
+  assert.equal(status.lookup.concurrency, 2);
+  assert.equal(status.lookup.running, 2);
+  assert.equal(status.lookup.queued, status.lookup.maxQueue);
+  assert.ok(status.lookup.maxQueue <= 8, 'small bounded queue');
+  assert.equal(fake.calls.length, 2, 'a flood of lookups starts two children, not 100');
+
+  const started = Date.now();
+  const settledNow = await Promise.race([Promise.all(lookups.slice(2 + status.lookup.maxQueue)), sleep(200).then(() => null)]);
+  assert.ok(settledNow, 'overflow calls settle immediately');
+  assert.ok(Date.now() - started < 150);
+  for (const result of settledNow) {
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'lane_busy');
+  }
+
+  // Scheduled probes on the gbrain lane are not starved by the flood.
+  const probe = exec.run('gbrain', ['doctor'], { lane: 'gbrain' });
+  await tick();
+  assert.equal(exec.status().lanes.gbrain.running, 1);
+  assert.equal(exec.status().lanes.gbrain.queued, 0);
+  fake.calls[fake.calls.length - 1].finish(null, 'probe', '');
+  assert.equal((await probe).stdout, 'probe');
+
+  while (fake.calls.some((c) => !c.done)) {
+    fake.calls.filter((c) => !c.done).forEach((c) => c.finish(null, '', ''));
+    await tick();
+  }
+  const done = await Promise.all(lookups);
+  assert.equal(done.filter((r) => r.ok).length, 2 + status.lookup.maxQueue);
+  // Room again after the burst.
+  const again = exec.run('gbrain', ['search', 'later'], { lane: 'lookup' });
+  await tick();
+  fake.calls[fake.calls.length - 1].finish(null, 'ok', '');
+  assert.equal((await again).ok, true);
+});
+
+test('lanes can be added or resized by the caller; unbounded lanes keep queueing; a bad maxQueue throws', async () => {
+  const fake = fakeExecFile();
+  const exec = createExec({ execFileImpl: fake.execFileImpl, lanes: { reports: { concurrency: 1, maxQueue: 0 }, lookup: { concurrency: 3 } } });
+  assert.equal(exec.status().lanes.reports.maxQueue, 0);
+  assert.equal(exec.status().lanes.lookup.concurrency, 3);
+  assert.equal(exec.status().lanes.lookup.maxQueue, 4, 'a partial override keeps the default bound');
+  assert.equal(exec.status().lanes.openclaw.maxQueue, null);
+  const first = exec.run('r', [], { lane: 'reports' });
+  assert.equal((await exec.run('r', [], { lane: 'reports' })).error.code, 'lane_busy');
+  const queued = [];
+  for (let i = 0; i < 50; i += 1) queued.push(exec.run('openclaw', ['x'], { lane: 'openclaw' }));
+  await tick();
+  assert.equal(exec.status().lanes.openclaw.queued, 49);
+  while (fake.calls.some((c) => !c.done)) {
+    fake.calls.filter((c) => !c.done).forEach((c) => c.finish(null, '', ''));
+    await tick();
+  }
+  await Promise.all([first, ...queued]);
+  assert.throws(() => createExec({ lanes: { bad: { concurrency: 1, maxQueue: -1 } } }), TypeError);
 });

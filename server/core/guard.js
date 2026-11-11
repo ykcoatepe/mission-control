@@ -4,10 +4,12 @@
 //
 //   Host guard    every request's Host must be one of the names the server is
 //                 bound to (DNS-rebinding defence).
-//   Origin guard  a mutating request that carries an Origin must come from
-//                 exactly one of the server's own origins (parsed, compared as
-//                 scheme://host:port, never by prefix). A cross-site
-//                 Sec-Fetch-Site is rejected too.
+//   Origin guard  a mutating request, or any request for an API path (GET,
+//                 HEAD and OPTIONS included), that carries an Origin must come
+//                 from exactly one of the server's own origins (parsed,
+//                 compared as scheme://host:port, never by prefix). A
+//                 cross-site Sec-Fetch-Site is rejected too. Requests without
+//                 either header (curl, probes) pass.
 //   Write guard   every non-GET/HEAD/OPTIONS /api request must carry
 //                 `X-MC-Request: 1`. A custom header cannot be sent cross-site
 //                 without a CORS preflight, which this server never grants.
@@ -131,7 +133,17 @@ function createGuard({
       } else {
         const method = String(req.method || 'GET').toUpperCase();
         if (SAFE_METHODS.has(method)) {
-          verdict = () => next();
+          // Reads of the API are guarded too: a page on another site must not
+          // be able to fire GETs at it (each one can start upstream work).
+          // Header-less clients (curl, health probes) and non-API paths pass.
+          const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+          const origin = isApiPath(pathOnly) ? checkOrigin(req) : { ok: true };
+          if (!origin.ok) {
+            counters.originRejected += 1;
+            verdict = () => forbidden(res, origin.code, origin.message);
+          } else {
+            verdict = () => next();
+          }
         } else {
           const origin = checkOrigin(req);
           if (!origin.ok) {

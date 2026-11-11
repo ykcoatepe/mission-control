@@ -258,3 +258,46 @@ test('isApiPath resolves dot segments and every encoding of them; non-API stays 
   assert.equal(normalizeRequestPath('/%zz'), null);
   assert.deepEqual(classifyRequestPath('/a/%00'), { malformed: true, api: true, canonical: null });
 });
+
+// --- second review: cross-site reads of the API ----------------------------
+test('counter-example: cross-site GET/HEAD/OPTIONS of an API path is rejected, whatever the path spelling', async () => {
+  await withGuard({}, async (port, { guard }) => {
+    for (const method of ['GET', 'HEAD', 'OPTIONS']) {
+      for (const urlPath of ['/api/gbrain/search?q=a', '/API/gbrain/search?q=a', '/x/../api/gbrain/search?q=a', '/api%2Fgbrain']) {
+        const response = await request(port, { method, path: urlPath, headers: { ...goodHost, 'Sec-Fetch-Site': 'cross-site' } });
+        assert.equal(response.status, 403, `${method} ${urlPath}`);
+        if (method !== 'HEAD') assert.equal(response.body.error.code, 'forbidden_origin');
+      }
+    }
+    for (const origin of ['http://evil.example', `http://localhost.evil.example:${PORT}`, `http://localhost:${PORT + 1}`, 'null', `http://localhost:${PORT}/`]) {
+      const response = await request(port, { path: '/api/gbrain/search?q=a', headers: { ...goodHost, Origin: origin } });
+      assert.equal(response.status, 403, `Origin ${origin}`);
+      assert.equal(response.body.error.code, 'forbidden_origin');
+    }
+    assert.ok(guard.status().counters.originRejected >= 17);
+  });
+});
+
+test('same-origin, same-site, user-initiated and header-less API reads pass; non-API navigations are untouched', async () => {
+  await withGuard({}, async (port) => {
+    const cases = [
+      {}, // curl, the restart script's health probe
+      { 'Sec-Fetch-Site': 'same-origin' },
+      { 'Sec-Fetch-Site': 'same-site' },
+      { 'Sec-Fetch-Site': 'none' },
+      { Origin: `http://localhost:${PORT}` },
+      { Origin: `http://127.0.0.1:${PORT}`, 'Sec-Fetch-Site': 'same-origin' },
+    ];
+    for (const headers of cases) {
+      for (const method of ['GET', 'HEAD']) {
+        const response = await request(port, { method, path: '/api/health', headers: { ...goodHost, ...headers } });
+        assert.equal(response.status, 200, `${method} ${JSON.stringify(headers)}`);
+      }
+    }
+    // A link from another site to the app itself (not the API) still opens.
+    for (const urlPath of ['/', '/attention', '/apix', '/assets/app.js']) {
+      const response = await request(port, { path: urlPath, headers: { ...goodHost, 'Sec-Fetch-Site': 'cross-site', Origin: 'http://evil.example' } });
+      assert.equal(response.status, 200, urlPath);
+    }
+  });
+});

@@ -13,7 +13,7 @@
 //     quarantined: no new command starts on it, calls fail with
 //     lane_quarantined, drain() is false and /api/health shows it.
 // A call resolves to a typed result and never throws for a non-zero exit, a
-// timeout, a missing binary or a full queue. It throws only for programming
+// timeout, a missing binary, a full queue (lane_busy) or a quarantined lane. It throws only for programming
 // errors (bad argv, unknown lane, shell requested).
 
 const childProcess = require('child_process');
@@ -23,6 +23,10 @@ const DEFAULT_LANES = Object.freeze({
   gbrain: { concurrency: 2, queueTimeoutMs: 60_000 },
   hermes: { concurrency: 2, queueTimeoutMs: 30_000 },
   default: { concurrency: 4, queueTimeoutMs: 60_000 },
+  // User-initiated lookups (search boxes and the like). Kept apart from the
+  // lanes scheduled probes use, with a small bounded queue: when it is full a
+  // call fails at once with lane_busy instead of piling up.
+  lookup: { concurrency: 2, queueTimeoutMs: 10_000, maxQueue: 4 },
 });
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -81,23 +85,33 @@ function createExec({
   stdioGraceMs = 250,
   quarantineRecheckMs = 5_000,
 } = {}) {
-  const laneConfig = { ...DEFAULT_LANES, ...lanes };
+  // `lanes` adds lanes or overrides fields of the built-in ones:
+  //   { name: { concurrency, queueTimeoutMs?, maxQueue? } }
+  // maxQueue bounds the waiting calls (0 = never queue); omitted = unbounded.
+  const laneConfig = { ...DEFAULT_LANES };
+  for (const [name, cfg] of Object.entries(lanes || {})) laneConfig[name] = { ...DEFAULT_LANES[name], ...cfg };
   const laneState = new Map();
   for (const [name, cfg] of Object.entries(laneConfig)) {
     const concurrency = Number(cfg?.concurrency);
     if (!Number.isInteger(concurrency) || concurrency < 1) {
       throw new TypeError(`exec lane ${name}: concurrency must be a positive integer`);
     }
+    const maxQueue = cfg.maxQueue == null ? null : Number(cfg.maxQueue);
+    if (maxQueue !== null && (!Number.isInteger(maxQueue) || maxQueue < 0)) {
+      throw new TypeError(`exec lane ${name}: maxQueue must be a non-negative integer`);
+    }
     laneState.set(name, {
       name,
       concurrency,
       queueTimeoutMs: Number(cfg.queueTimeoutMs) > 0 ? Number(cfg.queueTimeoutMs) : 60_000,
+      maxQueue,
       running: 0,
       queue: [],
       completed: 0,
       failed: 0,
       maxObservedRunning: 0,
       quarantined: new Set(),
+      rejectedBusy: 0,
     });
   }
 
@@ -469,6 +483,12 @@ function createExec({
         resolve(quarantineFailure(lane));
         return;
       }
+      if (lane.maxQueue !== null && lane.running >= lane.concurrency && lane.queue.length >= lane.maxQueue) {
+        lane.failed += 1;
+        lane.rejectedBusy += 1;
+        resolve(failure('lane_busy', `The ${laneName} lane is full (${lane.concurrency} running, ${lane.queue.length} waiting)`));
+        return;
+      }
       const job = {
         file,
         args: args.slice(),
@@ -554,6 +574,8 @@ function createExec({
         completed: lane.completed,
         failed: lane.failed,
         maxObservedRunning: lane.maxObservedRunning,
+        maxQueue: lane.maxQueue,
+        rejectedBusy: lane.rejectedBusy,
         quarantined: lane.quarantined.size > 0,
         unverified: [...lane.quarantined].map((entry) => ({ ...entry })),
       };

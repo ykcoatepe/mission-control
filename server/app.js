@@ -9,6 +9,8 @@
 //   config      result of loadConfig(); default loadConfig({ rootDir })
 //   configStore createConfigStore({ config })
 //   exec        core process runner (createExec())
+//   execLanes   extra or resized runner lanes, { name: { concurrency,
+//               queueTimeoutMs?, maxQueue? } }; used when exec is not given
 //   clock       { now() } for core modules
 //   fetch       fetch implementation for code wired here (sessions, Notion)
 //   logger      console-like
@@ -93,7 +95,7 @@ function createApp(deps = {}) {
   const services = deps.services || {};
   const config = deps.config || loadConfig({ rootDir });
   const configStore = deps.configStore || createConfigStore({ config, logger });
-  const exec = deps.exec || createExec({ now });
+  const exec = deps.exec || createExec({ now, lanes: deps.execLanes });
   const scheduler = deps.scheduler || createScheduler({ now, logger });
 
   // Legacy names kept so the wiring below reads like the old server.js.
