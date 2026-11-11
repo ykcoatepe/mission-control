@@ -114,6 +114,7 @@ function createHermesKanbanService({
   processEnv = process.env,
   now = Date.now,
   maxConcurrency = 2,
+  freshMs = 5 * 60 * 1000,
   maxStaleMs = 10 * 60 * 1000,
 } = {}) {
   const profile = processEnv.HERMES_PROFILE || mcConfig?.hermes?.profile || 'hmudur';
@@ -211,12 +212,15 @@ function createHermesKanbanService({
     if (!lastGood) return null;
     const ageMs = now() - lastGood.at;
     if (ageMs > maxStaleMs) return null;
+    // Younger than freshMs: still fresh (a refresh merely hasn't finished within
+    // the poll interval); carry the age but do not flag it stale.
+    if (ageMs <= freshMs) return { ...lastGood.board, cacheAgeMs: ageMs };
     return { ...lastGood.board, stale: true, staleAgeMs: ageMs };
   }
 
   // Fresh board when the refresh succeeds. If it fails, or exceeds the soft
-  // deadline, serve the last good board marked stale (with its age) until it
-  // is older than maxStaleMs. The refresh is shared and keeps running.
+  // deadline, serve the last good board (fresh with cacheAgeMs while younger than
+  // freshMs, then marked stale with staleAgeMs) until it is older than maxStaleMs. The refresh is shared and keeps running.
   async function getBoard({ softDeadlineMs } = {}) {
     const refresh = startRefresh();
     try {

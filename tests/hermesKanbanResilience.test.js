@@ -51,11 +51,11 @@ test('a failed refresh serves the last good board as stale with its age', async 
   const { service, clock } = build(exec);
   const good = await service.getBoard();
   fail = true;
-  clock.advance(90_000);
+  clock.advance(6 * 60_000);
   const stale = await service.getBoard();
   assert.equal(stale.ok, true);
   assert.equal(stale.stale, true);
-  assert.equal(stale.staleAgeMs, 90_000);
+  assert.equal(stale.staleAgeMs, 6 * 60_000);
   assert.equal(stale.refreshedAt, good.refreshedAt);
   assert.equal(stale.summary.total, good.summary.total);
 });
@@ -90,9 +90,49 @@ test('soft deadline returns the stale cache while the refresh continues, and con
     service.getBoard({ softDeadlineMs: 20 }),
     service.getBoard({ softDeadlineMs: 20 }),
   ]);
-  assert.equal(a.stale, true);
-  assert.equal(b.stale, true);
+  assert.equal(a.ok, true);
+  assert.equal(a.cacheAgeMs, 30_000);
+  assert.equal(b.cacheAgeMs, 30_000);
   release();
   await service.getBoard(); // joins/finishes the shared refresh
   assert.equal(state.calls - callsAfterFirst, 8, 'only one refresh ran');
+});
+
+test('a cache younger than the freshness threshold is served as fresh, still carrying its age', async () => {
+  let fail = false;
+  const { exec } = makeExec({ failWhen: () => fail });
+  const { service, clock } = build(exec);
+  await service.getBoard();
+  fail = true;
+  clock.advance(17_000);
+  const board = await service.getBoard();
+  assert.equal(board.ok, true);
+  assert.equal(board.stale, undefined);
+  assert.equal(board.cacheAgeMs, 17_000);
+});
+
+test('freshness threshold is configurable and separate from maxStaleMs', async () => {
+  let fail = false;
+  const { exec } = makeExec({ failWhen: () => fail });
+  const { service, clock } = build(exec, { freshMs: 10_000, maxStaleMs: 600_000 });
+  await service.getBoard();
+  fail = true;
+  clock.advance(17_000);
+  const board = await service.getBoard();
+  assert.equal(board.stale, true);
+  assert.equal(board.staleAgeMs, 17_000);
+});
+
+test('age 17s fresh, 6min stale, beyond maxStaleMs rejected', async () => {
+  let fail = false;
+  const { exec } = makeExec({ failWhen: () => fail });
+  const { service, clock } = build(exec);
+  await service.getBoard();
+  fail = true;
+  clock.advance(17_000);
+  assert.equal((await service.getBoard()).stale, undefined);
+  clock.advance(343_000); // 6 min total
+  assert.equal((await service.getBoard()).stale, true);
+  clock.advance(5 * 60_000); // 11 min total
+  await assert.rejects(service.getBoard(), /timed out/);
 });
