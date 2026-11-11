@@ -29,7 +29,7 @@ function buildSettingsRouter({ settingsService, projectRoot }) {
   router.post('/api/settings/heartbeat', asyncHandler(async (req, res) => res.json(await settingsService.setHeartbeatInterval(req.body?.interval))));
   router.get('/api/settings/export', (req, res) => {
     res.setHeader('Content-Disposition', 'attachment; filename=mc-config.json');
-    const payload = settingsService.getPublicConfig();
+    const payload = settingsService.getExportConfig();
     res.setHeader('X-MC-Source-Meta', JSON.stringify(localConfigMeta()));
     return res.json(payload);
   });

@@ -3,7 +3,8 @@
 // Configuration: load and validate once, never write at import.
 //
 //   const config = loadConfig({ rootDir });   // frozen
-//   publicView(config)                        // redacted, safe to log or serve
+//   publicView(config)                        // allowlisted fields only, safe to log or serve
+//   publicMcView(mc)                          // the same for an mc-config document (/api/config)
 //   const store = createConfigStore({ config });
 //   store.legacyObject()                      // the one mutable mc-config object existing routers share
 //   store.persist()                           // the only writer of mc-config.json (atomic tmp+rename)
@@ -36,8 +37,9 @@ const BUILTIN_DEFAULTS = Object.freeze({
 });
 
 // --- redaction ---------------------------------------------------------------
-// One implementation for structured data (redact) and for strings
-// (redactString). Two independent layers:
+// redact() serves documents that must stay complete (the settings export)
+// and redactString() free text. The PUBLIC config view uses neither: it is an
+// allowlist (publicView / publicMcView below). Two independent layers:
 //   1. by name: whatever sits under a credential-named key is replaced whole;
 //   2. by value: every remaining string is scanned for credentials, whatever
 //      its key is called (URL userinfo, Bearer tokens, well-known key formats,
@@ -78,31 +80,204 @@ const KEY_FORMATS = [
   /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/g, // JWT
   /\b\d{6,}:[A-Za-z0-9_-]{30,}/g, // Telegram bot token
 ];
-// name=value / name: value inside a string. "Strong" names hide any value;
-// "weak" names (token, key, ...) hide only a long opaque blob, so prose such
-// as "press any key: enter" survives.
-const ASSIGN_VALUE = '("[^"]*"|\'[^\']*\'|[^\\s"\',;&}\\]]+)';
-const STRONG_ASSIGN = new RegExp(`([A-Za-z0-9_.-]*(?:password|passwd|passphrase|pwd|secret)[A-Za-z0-9_.-]*["']?\\s*[:=]\\s*)${ASSIGN_VALUE}`, 'gi');
-const WEAK_ASSIGN = new RegExp(`([A-Za-z0-9_.-]*(?:token|key|auth|authorization|credential|cookie|session|signature)[A-Za-z0-9_.-]*["']?\\s*[:=]\\s*)${ASSIGN_VALUE}`, 'gi');
+// --- redactString: second line of defence for free text ----------------------
+// (log lines, CLI error text, page bodies, the settings export). The public
+// config view does NOT rely on it: that view is an allowlist (see below).
+
+// URL-looking substrings: the userinfo runs through the FINAL "@" of the
+// authority, as the WHATWG URL parser reads it, so "user@tenant:PASS@host" and
+// passwords containing "@" or ":" are covered. A candidate the parser rejects
+// gets the widest reading (through its last "@").
+const URL_CANDIDATE = /\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>`]+/gi;
+const OPAQUE_USER = /^[A-Za-z0-9+/_=.~%-]{20,}$/;
+
+function redactUrlUserinfo(candidate) {
+  const schemeEnd = candidate.indexOf('://') + 3;
+  let parsed = null;
+  try {
+    parsed = new URL(candidate);
+  } catch {}
+  let authorityEnd = candidate.length;
+  if (parsed) {
+    const terminator = candidate.slice(schemeEnd).search(/[/?#]/);
+    if (terminator !== -1) authorityEnd = schemeEnd + terminator;
+  }
+  const at = candidate.lastIndexOf('@', authorityEnd - 1);
+  if (at < schemeEnd) return candidate;
+  const userinfo = candidate.slice(schemeEnd, at);
+  // As the parser reads it: user = up to the first ":", password = the rest
+  // (so "user@tenant:PASS" and "user:p@ss:w0rd" both lose the password).
+  const colon = userinfo.indexOf(':');
+  if (colon === -1) {
+    if (!OPAQUE_USER.test(userinfo)) return candidate; // ssh://git@host
+    return `${candidate.slice(0, schemeEnd)}${REDACTED}${candidate.slice(at)}`;
+  }
+  if (userinfo.slice(colon + 1) === REDACTED) return candidate;
+  return `${candidate.slice(0, schemeEnd)}${userinfo.slice(0, colon + 1)}${REDACTED}${candidate.slice(at)}`;
+}
+
+// name=value / name: value. The COMPLETE name is split into words (separators
+// and camelCase) and each whole word is classified; a credential word inside
+// a longer word (author, tokenizer, keyboard, monkey, secretary) never
+// matches. "Strong" names hide any value; "weak" names (token, key, auth...)
+// hide only a long opaque blob, so "press any key: enter" survives.
+const STRONG_WORDS = new Set(['password', 'passwords', 'passwd', 'passphrase', 'pwd', 'secret', 'secrets']);
+const STRONG_SUFFIXES = ['password', 'passwd', 'passphrase', 'pwd', 'secret'];
+const WEAK_WORDS = new Set(['token', 'tokens', 'key', 'keys', 'auth', 'oauth', 'authorization', 'credential', 'credentials',
+  'cookie', 'cookies', 'session', 'sessions', 'signature', 'bearer', 'apikey', 'apikeys',
+  // run-together compounds (CLIENTKEY, sessionid): listed, never guessed from a "key" suffix
+  'clientkey', 'secretkey', 'accesskey', 'privatekey', 'sessionkey', 'authkey', 'signingkey', 'masterkey',
+  'encryptionkey', 'appkey', 'licensekey', 'sessionid']);
+const WEAK_SUFFIXES = ['token', 'apikey', 'credential', 'credentials'];
+const ASSIGN_NAME = /(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]+)(["']?\s*[:=]\s*)/g;
+const ASSIGN_VALUE = /"[^"]*"|'[^']*'|[^\s"',;&}\]]+/y;
 const OPAQUE_BLOB = /^["']?[A-Za-z0-9+/_=.~%-]{16,}["']?$/;
+
+function nameWords(name) {
+  return name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+    .split(/[^A-Za-z0-9]+/)
+    .filter(Boolean)
+    .map((word) => word.toLowerCase());
+}
+
+// 'strong' | 'weak' | null
+function classifyAssignmentName(name) {
+  const words = nameWords(name);
+  if (words.some((word) => STRONG_WORDS.has(word) || STRONG_SUFFIXES.some((suffix) => word.endsWith(suffix)))) return 'strong';
+  if (words.some((word) => WEAK_WORDS.has(word) || WEAK_SUFFIXES.some((suffix) => word.endsWith(suffix)))) return 'weak';
+  return null;
+}
+
+function redactAssignments(text) {
+  let out = '';
+  let cursor = 0;
+  ASSIGN_NAME.lastIndex = 0;
+  for (let match = ASSIGN_NAME.exec(text); match; match = ASSIGN_NAME.exec(text)) {
+    const valueStart = match.index + match[0].length;
+    const strength = classifyAssignmentName(match[1]);
+    if (!strength) continue; // the value is scanned again: it may hold its own name=value
+    ASSIGN_VALUE.lastIndex = valueStart;
+    const value = ASSIGN_VALUE.exec(text)?.[0];
+    if (!value || text.startsWith(REDACTED, /^["']/.test(value) ? valueStart + 1 : valueStart)) continue;
+    if (strength === 'weak' && !OPAQUE_BLOB.test(value)) continue;
+    out += text.slice(cursor, valueStart) + REDACTED;
+    cursor = valueStart + value.length;
+    ASSIGN_NAME.lastIndex = cursor;
+  }
+  return out + text.slice(cursor);
+}
 
 // Redact credentials inside one string. Idempotent; never throws.
 function redactString(input) {
   if (typeof input !== 'string' || input.length < 6) return input;
-  let text = input;
-  // scheme://user:password@host -> the password only. The password runs to
-  // the last "@" of the authority, so an unencoded "@" or ":" stays hidden.
-  text = text.replace(/\b([a-z][a-z0-9+.-]*:\/\/[^\s/:@?#]*:)[^\s/?#]*@/gi, `$1${REDACTED}@`);
+  let text = input.replace(URL_CANDIDATE, redactUrlUserinfo);
   // Authorization values and Bearer tokens. "Bearer" spelled as the HTTP
   // scheme always hides what follows; other casings need a token-like word.
-  text = text.replace(/(authorization["']?\s*[:=]\s*["']?(?:basic|bearer|token|digest)\s+)[^\s"',;]+/gi, `$1${REDACTED}`);
+  text = text.replace(/(authorization["']?\s*[:=]\s*["']?(?:basic|bearer|token|digest)\s+)(?!\[redacted\])[^\s"',;]+/gi, `$1${REDACTED}`);
   text = text.replace(/\bBearer\s+(?!\[redacted\])[A-Za-z0-9._~+/=-]+/g, `Bearer ${REDACTED}`);
   text = text.replace(/\b(bearer\s+)(?!\[redacted\])([A-Za-z0-9._~+/=-]{8,})/gi,
     (match, lead, token) => (/\d/.test(token) || token.length >= 20 ? `${lead}${REDACTED}` : match));
   for (const pattern of KEY_FORMATS) text = text.replace(pattern, REDACTED);
-  text = text.replace(STRONG_ASSIGN, (match, lead, value) => (value ? `${lead}${REDACTED}` : match));
-  text = text.replace(WEAK_ASSIGN, (match, lead, value) => (OPAQUE_BLOB.test(value) ? `${lead}${REDACTED}` : match));
-  return text;
+  return redactAssignments(text);
+}
+
+// --- public view: an allowlist ---------------------------------------------
+// What may leave the process as "the config" is listed here, path by path.
+// Anything not listed is OMITTED (not redacted): unknown fields, future
+// fields, wrong types. No credential-bearing field may ever be added.
+//
+// Shapes:  'string' | 'number' | 'boolean'
+//          'url'                 parsed with the WHATWG URL parser, username
+//                                and password stripped; omitted if it does
+//                                not parse as scheme://host
+//          { key: shape, ... }   an object; only the listed children
+//          { $array: shape }     an array of that element shape
+//          { $map: shape }       an object with identifier-like keys, every
+//                                value of that shape
+//
+// Derived from the consumers of GET /api/config:
+//   name, subtitle   sidebar / document title (frontend/src/lib/useNavigation.ts)
+//   modules          route and sidebar filtering (appRoutes.tsx isRouteEnabled);
+//                    a map because module names belong to the frontend routes
+//   aws.enabled      Usage page AWS toggle (pages/costs/lib.ts awsIntegrationEnabled)
+const PUBLIC_MC_SCHEMA = deepFreeze({
+  name: 'string',
+  subtitle: 'string',
+  modules: { $map: 'boolean' },
+  aws: { enabled: 'boolean' },
+});
+
+// The loaded config (publicView). server/index.js logs `.server`; the rest is
+// what /api/health already reports.
+const PUBLIC_CONFIG_SCHEMA = deepFreeze({
+  server: { port: 'number', host: 'string' },
+  guard: { writeGuardMode: 'string' },
+  load: { source: 'string', problems: { $array: 'string' } },
+  gatewayTokenCheck: { state: 'string', ok: 'boolean', message: 'string' },
+  mc: PUBLIC_MC_SCHEMA,
+});
+
+const OMIT = Symbol('omit');
+const MAP_KEY = /^[A-Za-z][A-Za-z0-9]{0,63}$/;
+
+function publicUrl(value) {
+  if (typeof value !== 'string') return OMIT;
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    return OMIT;
+  }
+  if (!url.host) return OMIT; // "user:pass@host", mailto:, opaque paths
+  try {
+    url.username = '';
+    url.password = '';
+  } catch {
+    return OMIT;
+  }
+  if (url.username || url.password) return OMIT;
+  return url.href;
+}
+
+function projectValue(value, shape) {
+  if (shape === 'string') return typeof value === 'string' ? value : OMIT;
+  if (shape === 'number') return typeof value === 'number' && Number.isFinite(value) ? value : OMIT;
+  if (shape === 'boolean') return typeof value === 'boolean' ? value : OMIT;
+  if (shape === 'url') return publicUrl(value);
+  if (!isPlainObject(shape)) return OMIT;
+  if (Object.hasOwn(shape, '$array')) {
+    if (!Array.isArray(value)) return OMIT;
+    return value.map((item) => projectValue(item, shape.$array)).filter((item) => item !== OMIT);
+  }
+  if (!isPlainObject(value)) return OMIT;
+  const out = {};
+  if (Object.hasOwn(shape, '$map')) {
+    for (const key of Object.keys(value)) {
+      if (!MAP_KEY.test(key)) continue;
+      const inner = projectValue(value[key], shape.$map);
+      if (inner !== OMIT) out[key] = inner;
+    }
+    return out;
+  }
+  for (const key of Object.keys(shape)) {
+    if (!Object.hasOwn(value, key)) continue;
+    const inner = projectValue(value[key], shape[key]);
+    if (inner !== OMIT) out[key] = inner;
+  }
+  return out;
+}
+
+// Project a value onto an allowlist shape. Always returns a fresh object.
+function projectPublic(value, shape) {
+  const out = projectValue(value, shape);
+  return out === OMIT ? {} : out;
+}
+
+// The public form of an mc-config document (GET /api/config).
+function publicMcView(mc) {
+  return projectPublic(mc, PUBLIC_MC_SCHEMA);
 }
 
 function resolveEnvPlaceholders(value, env = process.env) {
@@ -310,8 +485,9 @@ function redact(value, keyName = '') {
   return value;
 }
 
+// The public form of a loaded config: the allowlist above, nothing else.
 function publicView(config) {
-  return redact(clone(config));
+  return projectPublic(config, PUBLIC_CONFIG_SCHEMA);
 }
 
 // The only writer of mc-config.json. Writes are synchronous (so two writes in
@@ -384,6 +560,10 @@ module.exports = {
   redact,
   isSecretKey,
   redactString,
+  publicMcView,
+  projectPublic,
+  PUBLIC_MC_SCHEMA,
+  PUBLIC_CONFIG_SCHEMA,
   resolveEnvPlaceholders,
   validateMcConfig,
   checkGatewayToken,

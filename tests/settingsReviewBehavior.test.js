@@ -33,7 +33,7 @@ test('R2 export/import restores redacted scalars, containers and embedded forms 
     nested: [{ note: 'Bearer SENTINEL_ARRAY_BEARER' }, 'password=SENTINEL_INLINE'],
   };
   const f = fixture(original);
-  const exported = f.service.getPublicConfig();
+  const exported = f.service.getExportConfig();
   assert.doesNotMatch(JSON.stringify(exported), /SENTINEL/);
   assert.match(exported.prose, /\[redacted\]/);
   f.upload(exported);

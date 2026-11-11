@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { redact, validateMcConfig } = require('../core/config');
+const { redact, publicMcView, validateMcConfig } = require('../core/config');
 const { httpError } = require('../core/http');
 
 function normalizeMonthlyBudget(monthly) {
@@ -110,7 +110,15 @@ function createSettingsService({
     }
   }
 
+  // GET /api/config: the allowlisted public view. Anything not on the core
+  // allowlist (PUBLIC_MC_SCHEMA) is omitted, not redacted.
   function getPublicConfig() {
+    return publicMcView(mcConfig);
+  }
+
+  // GET /api/settings/export: a backup, so the document stays complete and
+  // secrets become redaction placeholders (the import restores them).
+  function getExportConfig() {
     // Check names before recursing: secrets may be arrays or objects, and
     // ConfigStore's scalar redactor cannot preserve that parent-key context.
     function stripCredentials(value, key = '') {
@@ -296,6 +304,7 @@ function createSettingsService({
 
   return {
     getPublicConfig,
+    getExportConfig,
     getSettingsPayload,
     getModelRouting,
     setModelRouting,

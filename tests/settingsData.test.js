@@ -101,7 +101,7 @@ function testExportRecursivelyRedactsSecrets() {
     databaseUrl: 'sentinel-database-url', credentials: { value: 'sentinel-credential' },
     nestedUrl: 'postgres://test:sentinel-pass@localhost/db',
   } });
-  const safe = service.getPublicConfig();
+  const safe = service.getExportConfig();
   assert.equal(safe.name, 'Console');
   assert.doesNotMatch(JSON.stringify(safe), /sentinel/);
   assert.equal(safe.nested.api_key, '[redacted]');
@@ -118,7 +118,7 @@ function testExportRedactsSecretNamedContainersBeforeDescending() {
     client_secret: ['SENTINEL_SNAKE_SECRET'],
   };
   const service = createSettingsService({ mcConfig: { providers: containers, name: 'Console' } });
-  const safe = service.getPublicConfig();
+  const safe = service.getExportConfig();
   assert.equal(safe.name, 'Console');
   assert.doesNotMatch(JSON.stringify(safe), /SENTINEL/);
   for (const key of Object.keys(containers)) assert.equal(safe.providers[key], '[redacted]', key);

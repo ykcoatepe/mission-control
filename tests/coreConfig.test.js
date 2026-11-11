@@ -96,8 +96,9 @@ test('env placeholders resolve; public view redacts every secret', () => {
   const view = publicView(config);
   const text = JSON.stringify(view);
   for (const secret of ['from-env', 'n-secret', 'zz-brave-value']) assert.doesNotMatch(text, new RegExp(secret));
-  assert.equal(view.gateway.token, '[redacted]');
-  assert.equal(view.notion.dbId, 'db');
+  // Allowlist (whole-path decision after review 3): absent, not redacted.
+  for (const key of ['gateway', 'notion', 'aws', 'paths']) assert.equal(Object.hasOwn(view, key), false, key);
+  assert.deepEqual(view.mc, {});
 });
 
 test('ConfigStore writes atomically and updates the frozen view', () => {
@@ -263,8 +264,10 @@ test('counter-example: publicView does not leak CLIENTKEY or URL credentials (re
   const view = publicView(loadConfig({ rootDir: root, homeDir: home, env: {} }));
   const text = JSON.stringify(view);
   assert.doesNotMatch(text, /SECRET|PASS/);
-  assert.equal(view.mc.CLIENTKEY, '[redacted]');
-  assert.equal(view.mc.databaseUrl, 'postgresql://user:[redacted]@localhost/db', 'only the password is removed');
+  // Allowlist (whole-path decision after review 3): unknown fields are omitted.
+  assert.equal(Object.hasOwn(view.mc, 'CLIENTKEY'), false);
+  assert.equal(Object.hasOwn(view.mc, 'databaseUrl'), false);
+  assert.equal(redactString('postgresql://user:PASS@localhost/db'), 'postgresql://user:[redacted]@localhost/db', 'free text: only the password is removed');
 });
 
 test('isSecretKey is case-insensitive across caps, snake, kebab and camel variants', () => {
