@@ -1,41 +1,19 @@
 const express = require('express');
+const { httpError } = require('../core/http');
 
 function buildSessionsRouter({ sessionsService }) {
   const router = express.Router();
 
-  router.get('/api/sessions', async (req, res) => {
+  // { count, sessions, meta } from the scheduled sessions source. A failure to
+  // compose it is the error contract (503), never a 200 with an error string.
+  router.get('/api/sessions', async (req, res, next) => {
+    let payload;
     try {
-      return res.json(await sessionsService.listVisibleSessions(25));
-    } catch (error) {
-      console.error('[Sessions API]', error.message);
-      return res.json({ count: 0, sessions: [], error: error.message });
+      payload = await sessionsService.listVisibleSessions(25);
+    } catch {
+      return next(httpError(503, 'sessions_unavailable', 'OpenClaw sessions could not be read'));
     }
-  });
-
-  router.get('/api/sessions/:sessionKey/history', async (req, res) => {
-    try {
-      return res.json(await sessionsService.getSessionHistory(req.params.sessionKey));
-    } catch (error) {
-      return res.json({ messages: [], error: error.message });
-    }
-  });
-
-  router.post('/api/sessions/:sessionKey/send', async (req, res) => {
-    try {
-      const { message } = req.body;
-      if (!message) return res.status(400).json({ error: 'message required' });
-      return res.json(await sessionsService.sendSessionMessage(req.params.sessionKey, message));
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
-  });
-
-  router.delete('/api/sessions/:key/close', async (req, res) => {
-    try {
-      return res.json(sessionsService.hideSession(req.params.key));
-    } catch (error) {
-      return res.status(500).json({ error: error.message });
-    }
+    return res.json(payload);
   });
 
   return router;

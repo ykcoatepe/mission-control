@@ -1,9 +1,11 @@
-function createNotionActivityService({ notionDbId, notionToken }) {
+// Notion activity feed for /api/status (moved out of server.js; this module
+// was the unused duplicate and is now the one implementation).
+function createNotionActivityService({ notionDbId, notionToken, fetchImpl = (...args) => fetch(...args) }) {
   async function fetchNotionActivity(pageSize = 5) {
     if (!notionDbId || !notionToken) return null;
 
     try {
-      const res = await fetch(`https://api.notion.com/v1/databases/${notionDbId}/query`, {
+      const res = await fetchImpl(`https://api.notion.com/v1/databases/${notionDbId}/query`, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${notionToken}`,
@@ -18,7 +20,7 @@ function createNotionActivityService({ notionDbId, notionToken }) {
 
       if (!res.ok) return null;
       const data = await res.json();
-      if (!data.results || !data.results.length) return null;
+      if (!Array.isArray(data.results) || data.results.length === 0) return null;
 
       return data.results.map((page) => {
         const props = page.properties || {};

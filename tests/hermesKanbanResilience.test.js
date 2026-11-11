@@ -27,7 +27,7 @@ function build(exec, extra = {}) {
   let t = 1_000_000;
   const clock = { advance: (ms) => { t += ms; }, now: () => t };
   const service = createHermesKanbanService({
-    execFilePromise: exec,
+    runner: { run: async (...args) => ({ ok: true, ...await exec(...args) }) },
     processEnv: { HOME: '/tmp/home', HERMES_PROFILE: 'hmudur' },
     now: clock.now,
     ...extra,

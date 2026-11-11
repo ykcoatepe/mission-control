@@ -1,41 +1,31 @@
+const os = require('os');
 const express = require('express');
-const {
-  STATUSES,
-  createHermesKanbanService,
-} = require('../services/hermesKanbanData');
+const { httpError } = require('../core/http');
+const { homeRelativePath } = require('../core/scrub');
 
-function buildHermesKanbanRouter({ mcConfig, hermesKanbanService } = {}) {
+// Task workspace paths are shown home-relative (no absolute home path in a
+// response). Task text (titles, bodies) is the operator's own content and is
+// returned as written.
+function homeRelativeBoard(board, homeDir) {
+  if (!board?.columns || typeof board.columns !== 'object') return board;
+  const shorten = (value) => homeRelativePath(value, { homeDir });
+  const columns = Object.fromEntries(Object.entries(board.columns).map(([status, tasks]) => [status,
+    Array.isArray(tasks) ? tasks.map((task) => (task && typeof task === 'object' && 'workspace_path' in task
+      ? { ...task, workspace_path: shorten(task.workspace_path) } : task)) : tasks]));
+  return { ...board, columns };
+}
+
+// GET /api/hermes-kanban — the read-only Hermes board, served from the
+// scheduled Operations `hermes` source (the board the overview already
+// reads). The request never runs the Hermes CLI.
+function buildHermesKanbanRouter({ hermesSource, homeDir = os.homedir() } = {}) {
+  if (typeof hermesSource?.snapshot !== 'function') throw new TypeError('buildHermesKanbanRouter: hermesSource required');
   const router = express.Router();
-  const service = hermesKanbanService || createHermesKanbanService({ mcConfig });
 
-  router.get('/api/hermes-kanban', async (_req, res) => {
-    try {
-      res.json(await service.getBoard());
-    } catch (error) {
-      res.status(503).json({
-        ok: false,
-        error: error.message,
-        profile: service.profile,
-        columns: Object.fromEntries(STATUSES.map((status) => [status, []])),
-        statuses: STATUSES,
-      });
-    }
-  });
-
-  router.get('/api/hermes-kanban/tasks/:taskId', async (req, res) => {
-    try {
-      res.json(await service.getTaskDetail(req.params.taskId));
-    } catch (error) {
-      res.status(500).json({ ok: false, error: error.message, taskId: req.params.taskId });
-    }
-  });
-
-  router.post('/api/hermes-kanban/actions', async (req, res) => {
-    try {
-      res.json(await service.runAction(req.body || {}));
-    } catch (error) {
-      res.status(error.statusCode || 500).json(error.responseBody || { ok: false, error: error.message });
-    }
+  router.get('/api/hermes-kanban', (_req, res) => {
+    const snapshot = hermesSource.snapshot();
+    if (!snapshot?.data) throw httpError(503, 'hermes_kanban_unavailable', 'The Hermes board has not been read');
+    return res.json({ ...homeRelativeBoard(snapshot.data, homeDir), meta: snapshot.meta });
   });
 
   return router;

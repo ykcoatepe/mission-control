@@ -1,0 +1,167 @@
+/*
+ * Mission Control design tokens — "Dark cockpit".
+ *
+ * Rule of the system: the screen is quiet when everything is normal.
+ * Colour is reserved for state and for things the operator can act on.
+ * See docs/reference-design-system.md before adding a token.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces: elevation is a step in lightness, never a shadow or blur. */
+  --bg: #0b0d10;
+  --surface-1: #101317;
+  --surface-2: #161a1f;
+  --surface-3: #1d2228;
+  --line: #22272e;
+  --line-strong: #2f3640;
+  --scrim: rgba(4, 6, 8, 0.62);
+
+  /* Text */
+  --text-1: #e9ebee;
+  --text-2: #a7aeb8;
+  --text-3: #8b939f;
+  --text-disabled: #4a525c;
+  --text-on-accent: #06222c;
+
+  /* State. healthy = confirmed normal, warning = caution, critical = act now,
+     unavailable = could not be read, inactive = intentionally off. */
+  --state-healthy: #3dd68c;
+  --state-warning: #ffb224;
+  --state-critical: #ff5c5c;
+  --state-unavailable: #7a8490;
+  --state-inactive: #555e69;
+
+  --state-healthy-bg: rgba(61, 214, 140, 0.1);
+  --state-warning-bg: rgba(255, 178, 36, 0.1);
+  --state-critical-bg: rgba(255, 92, 92, 0.11);
+  --state-unavailable-bg: rgba(122, 132, 144, 0.12);
+  --state-inactive-bg: rgba(85, 94, 105, 0.12);
+
+  --state-healthy-line: rgba(61, 214, 140, 0.32);
+  --state-warning-line: rgba(255, 178, 36, 0.36);
+  --state-critical-line: rgba(255, 92, 92, 0.4);
+  --state-unavailable-line: rgba(122, 132, 144, 0.34);
+  --state-inactive-line: rgba(85, 94, 105, 0.34);
+
+  /* Action: the only non-state colour. Links, primary buttons, focus, selection. */
+  --accent: #4cc9f0;
+  --accent-hover: #74d6f4;
+  --accent-bg: rgba(76, 201, 240, 0.1);
+  --accent-line: rgba(76, 201, 240, 0.38);
+  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+
+  /* Categorical series for charts only (never for state). */
+  --series-1: #4cc9f0;
+  --series-2: #9d8cf5;
+  --series-3: #f0a35e;
+  --series-4: #6ad0a8;
+  --series-5: #e58fb1;
+  --series-6: #8f9bab;
+
+  /* Type */
+  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+    'Helvetica Neue', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
+    monospace;
+
+  --fs-micro: 11px;
+  --fs-small: 12px;
+  --fs-body: 13px;
+  --fs-lead: 14px;
+  --fs-h3: 16px;
+  --fs-h2: 20px;
+  --fs-h1: 28px;
+
+  --lh-tight: 1.2;
+  --lh-body: 1.45;
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  /* Space: 4px grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-12: 48px;
+
+  /* Shape */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-full: 999px;
+
+  /* Motion: opacity and transform only, short. */
+  --dur-fast: 120ms;
+  --dur-base: 180ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layout */
+  --sidebar-w: 232px;
+  --sidebar-w-collapsed: 56px;
+  --topbar-h: 48px;
+  --content-max: 1480px;
+  --control-h: 32px;
+  --control-h-sm: 26px;
+
+  /* Layers */
+  --z-sticky: 10;
+  --z-drawer: 40;
+  --z-overlay: 60;
+  --z-palette: 80;
+  --z-toast: 100;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bg: #f5f6f7;
+  --surface-1: #ffffff;
+  --surface-2: #f0f1f3;
+  --surface-3: #e7e9ec;
+  --line: #e1e4e8;
+  --line-strong: #cbd0d6;
+  --scrim: rgba(20, 23, 26, 0.32);
+
+  --text-1: #14171a;
+  --text-2: #4b5560;
+  --text-3: #5b646f;
+  --text-disabled: #b1b8c0;
+  --text-on-accent: #ffffff;
+
+  --state-healthy: #107242;
+  --state-warning: #905500;
+  --state-critical: #bd2828;
+  --state-unavailable: #6b7480;
+  --state-inactive: #98a1ab;
+
+  --state-healthy-bg: rgba(16, 114, 66, 0.09);
+  --state-warning-bg: rgba(144, 85, 0, 0.1);
+  --state-critical-bg: rgba(189, 40, 40, 0.08);
+  --state-unavailable-bg: rgba(107, 116, 128, 0.1);
+  --state-inactive-bg: rgba(152, 161, 171, 0.12);
+
+  --state-healthy-line: rgba(16, 114, 66, 0.3);
+  --state-warning-line: rgba(144, 85, 0, 0.32);
+  --state-critical-line: rgba(189, 40, 40, 0.32);
+  --state-unavailable-line: rgba(107, 116, 128, 0.3);
+  --state-inactive-line: rgba(152, 161, 171, 0.34);
+
+  --accent: #096c8f;
+  --accent-hover: #096585;
+  --accent-bg: rgba(9, 108, 143, 0.08);
+  --accent-line: rgba(9, 108, 143, 0.34);
+
+  --series-1: #096c8f;
+  --series-2: #6a57d6;
+  --series-3: #c2702a;
+  --series-4: #2f9a72;
+  --series-5: #c25583;
+  --series-6: #6b7480;
+}

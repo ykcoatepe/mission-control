@@ -1,0 +1,254 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+  container: jobs / inline-size;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.divider {
+  align-self: stretch;
+  width: 1px;
+  margin: var(--sp-1) 0;
+  background: var(--line-strong);
+}
+
+.toolbarEnd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+.search {
+  width: 200px;
+}
+
+.count {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.nameCell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.name {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.scheduleCell {
+  white-space: nowrap;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+}
+
+.overlap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}
+
+.stateCell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.model {
+  display: block;
+  max-width: 160px;
+  overflow: hidden;
+  color: var(--text-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Row actions: shown on hover, keyboard focus and the selected row only. */
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.table tr:hover .rowActions,
+.table tr:focus-within .rowActions,
+.table tr[aria-selected='true'] .rowActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowActions {
+    opacity: 1;
+  }
+}
+
+@media (max-width: 700px) {
+  .rowActions {
+    opacity: 1;
+  }
+
+  .search {
+    width: 100%;
+  }
+
+  .toolbarEnd {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .divider {
+    display: none;
+  }
+}
+
+.time {
+  white-space: nowrap;
+}
+
+.unknown {
+  color: var(--text-3);
+}
+
+/*
+ * Wide enough for a table: the name column keeps a real width instead of being squeezed to a few characters.
+ * Narrower than that, each job is a stacked card (below), at any viewport width.
+ */
+@container jobs (min-width: 981px) {
+  .view .table td:first-child {
+    min-width: 240px;
+  }
+}
+
+@container jobs (max-width: 980px) {
+  .view .table table,
+  .view .table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .view .table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .view .table tbody tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--sp-2) var(--sp-4);
+    width: 100%;
+    padding: var(--sp-3);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .view .table tbody tr:last-child {
+    border-bottom: 0;
+  }
+
+  .view .table tbody tr:hover {
+    background: var(--surface-2);
+  }
+
+  .view .table tbody tr[aria-selected='true'] {
+    background: var(--accent-bg);
+  }
+
+  .view .table tbody tr:hover td,
+  .view .table tbody tr[aria-selected='true'] td {
+    background: transparent;
+  }
+
+  .view .table td {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    gap: var(--sp-1);
+    min-width: 0;
+    padding: 0;
+    border-bottom: 0;
+    text-align: start;
+  }
+
+  .view .table td::before {
+    content: attr(data-label);
+    color: var(--text-3);
+    font-size: var(--fs-small);
+  }
+
+  /* The name and the actions need no label and take the whole card width. */
+  .view .table td:first-child,
+  .view .table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .view .table td:first-child::before,
+  .view .table td:last-child::before {
+    display: none;
+  }
+
+  .view .table td:last-child {
+    align-items: flex-end;
+  }
+
+  .rowActions {
+    opacity: 1;
+  }
+
+  .model {
+    max-width: 100%;
+  }
+}
+
+.createdTag {
+  margin-inline-start: var(--sp-2);
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-sm);
+  color: var(--accent);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+}
+
+.unconfirmed {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}
+
+.refusal {
+  flex-basis: 100%;
+  color: var(--state-critical);
+  font-size: var(--fs-small);
+}

@@ -21,18 +21,18 @@ the public projection.
 | Field | Default | Meaning |
 | --- | --- | --- |
 | `name`, `subtitle` | `Mission Control` | Product labels |
-| `modules` | mixed | Navigation and Diagnostics presentation flags |
+| `modules` | mixed | Navigation presentation flags |
 | `gateway.port` | `18789` | OpenClaw gateway port |
 | `gateway.token` | empty | Local fallback token; OpenClaw config is auto-detected first |
-| `workspace` | auto-detected or `~/clawd` | Workspace used by task and agent features |
-| `skillsPath` | `<workspace>/skills` | Skills directory |
-| `memoryPath` | `<workspace>/memory` | Memory directory |
-| `aws` | disabled | Bedrock/S3 enablement, bucket, and region; prefer environment credentials |
+| `workspace` | auto-detected or `~/clawd` | OpenClaw workspace; base for the default `skillsPath` and `memoryPath` |
+| `skillsPath` | `<workspace>/skills` | Skills directory, shown read-only on Settings |
+| `memoryPath` | `<workspace>/memory` | Memory directory, shown read-only on Settings |
+| `aws` | disabled | AWS cost read enablement and region; prefer environment credentials |
 | `notion` | disabled | Optional activity source |
-| `scout` | disabled | Brave Search key, queries, and schedule |
+| `scout` | disabled | Still written by the Setup wizard; no server feature reads it any more |
 
 Module flags are presentation controls. An explicit `false` hides an eligible
-sidebar item or Diagnostics tab; a missing flag generally means enabled. Routes
+sidebar item; a missing flag generally means enabled. Routes
 are still mounted, so these flags are not authorization controls. In particular,
 `gbrainTimeline` controls timeline collection while the `/gbrain` route uses its
 own implicit module behavior.
@@ -45,7 +45,6 @@ own implicit module behavior.
 | --- | --- | --- |
 | `PORT` | `3333` | Express port |
 | `MISSION_CONTROL_HOST` | `127.0.0.1` | Bind host; changing this can expose an unauthenticated control surface |
-| `MC_GATEWAY_TOKEN` | empty | Fallback used by session helpers only; not a global gateway-token override |
 | `MC_USER_HOME` | `HOME` | Home used for OpenClaw/Hermes usage and cron discovery |
 | `HERMES_PROFILE` | `hmudur` | Hermes profile used by cron and usage readers |
 | `HERMES_STATE_DB` | profile state DB | Explicit Hermes usage database |
@@ -54,7 +53,7 @@ own implicit module behavior.
 | `AWS_ACCESS_KEY_ID` | empty | AWS credential fallback |
 | `AWS_SECRET_ACCESS_KEY` | empty | AWS credential fallback |
 
-### Usage and task execution
+### Usage
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -63,10 +62,6 @@ own implicit module behavior.
 | `MC_OPENCLAW_DEFAULT_MODEL` | `openai/gpt-5.5` | Fallback model label for incomplete usage records |
 | `MC_CODEX_HOME` | `~/.codex` (host user) | Codex home whose `sessions/` rollouts feed the Codex App / Codex CLI buckets; pinned into the usage-script env so an inherited `CODEX_HOME` cannot redirect the scan |
 | `MC_COSTS_CACHE_DIR` | OS temp | Directory for `costs-cache.json` |
-| `MC_EXECUTE_RECONCILE_TIMEOUT_MS` | `120000` | Task execution reconciliation timeout |
-| `MC_EXECUTE_RECONCILE_MIN_MS` | `30000` | Minimum reconciliation timeout |
-| `MC_EXECUTE_RECONCILE_MAX_MS` | `300000` | Maximum reconciliation timeout |
-| `MC_EXECUTE_RECONCILE_GRACE_MS` | `15000` | Post-execution reconciliation grace |
 
 ### Feature and verification switches
 
@@ -82,9 +77,7 @@ Mission Control.
 
 For all gateway-backed routes, configure the token in OpenClaw's gateway auth
 configuration or in `mc-config.gateway.token`. The latter can use an `${ENV}`
-placeholder. Setting only `MC_GATEWAY_TOKEN` does not configure chat, cron,
-tasks, quick actions, or settings because that environment fallback is read
-only by the session helpers.
+placeholder.
 
 ## Runtime files
 
@@ -95,10 +88,8 @@ only by the session helpers.
 | `data/calendar-entries.json` | Local calendar entries |
 | `data/decision-log.json` | Governance decision archive |
 | `data/ops-events.json` | Operator event history |
-| `data/agent-registry.json` | Local agent registry |
-| `tasks.json` | Workshop task state |
-| `hidden-sessions.json` | Sessions hidden from this UI; not closed in OpenClaw |
-| `documents/` | Local uploaded documents and temporary imports |
+| `hidden-sessions.json` | Session keys left out of `GET /api/sessions`; read only, nothing writes it any more |
+| `documents/.tmp-settings/` | Temporary directory for settings import |
 | `$MC_COSTS_CACHE_DIR/costs-cache.json` | Usage fallback cache |
 
 OpenClaw session metadata and transcripts remain under the local OpenClaw home.
@@ -109,7 +100,7 @@ Control normalizes those sources; it does not migrate them into the repository.
 
 The server can call `openclaw`, `hermes`, `gbrain`, `ollama`, `sqlite3`,
 `codexbar`, `aws`, and macOS `launchctl`. It can also use OpenClaw gateway HTTP,
-Ollama, a Hermes proxy, Notion, Brave Search, AWS Bedrock, and S3. Missing
+Ollama, a Hermes proxy, Notion, and AWS Cost Explorer. Missing
 optional dependencies should produce explicit unavailable or empty states.
 
 ## Security boundary

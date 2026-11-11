@@ -1,3 +1,47 @@
+const { readOperationsSource } = require('./sessionsData');
+const MAX_STATUS_CHARS = 256 * 1024;
+const MAX_STATUS_LINE_CHARS = 4096;
+
+// Status is a line/table protocol. Never let whitespace cross row boundaries,
+// and never scan an unbounded field looking for a later delimiter. Whole-output
+// overflow fails the read (the source retains last-good); overlong rows are
+// ignored rather than truncated into apparently valid evidence.
+function parseStatusOutput(output) {
+  const text = typeof output === 'string' ? output : '';
+  if (text.length > MAX_STATUS_CHARS) {
+    throw Object.assign(new Error('OpenClaw status output exceeded the parsing limit'), { code: 'status_output_too_large' });
+  }
+  let sessionsMatch = null, modelMatch = null, memoryMatch = null, heartbeatInterval = null, agentsMatch = null;
+  const channels = [];
+  for (const raw of text.split('\n')) {
+    if (!raw || raw.length > MAX_STATUS_LINE_CHARS) continue;
+    const line = raw.trim();
+    if (!line) continue;
+    sessionsMatch ||= line.match(/^(\d{1,12})[ \t]{1,64}active sessions\b/i);
+    const cells = line.split('│').map(cell => cell.trim());
+    if (!cells[0]) cells.shift();
+    if (cells[0] === 'Agents') agentsMatch ||= cells[1]?.match(/^(\d{1,12})\b/) ?? null;
+    if (cells[0] === 'Heartbeat') heartbeatInterval ||= cells[1]?.match(/^([A-Za-z0-9_]{1,64})(?:[ \t·]|$)/) ?? null;
+    const words = line.split(/[ \t│·]+/);
+    const modelIndex = words.indexOf('default');
+    if (!modelMatch && modelIndex >= 0) {
+      const candidate = words[modelIndex + 1]?.split('(')[0];
+      if (candidate && /^[^\s(]{1,256}$/.test(candidate)) modelMatch = [null, candidate];
+    }
+    if (!memoryMatch) {
+      const files = words.indexOf('files'), chunks = words.indexOf('chunks');
+      if (files > 0 && chunks > files && /^\d{1,12}$/.test(words[files - 1]) && /^\d{1,12}$/.test(words[chunks - 1])) {
+        memoryMatch = [null, words[files - 1], words[chunks - 1]];
+      }
+    }
+    if (['Discord', 'WhatsApp', 'Telegram'].includes(cells[0])
+        && ['ON', 'OFF'].includes(cells[1]) && ['OK', 'OFF', 'ERROR'].includes(cells[2]) && cells[3]) {
+      channels.push({ name: cells[0], enabled: cells[1], state: cells[2], detail: redactChannelDetail(cells[3]) });
+    }
+  }
+  return { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels };
+}
+
 function heartbeatValueToSeconds(value) {
   if (typeof value === 'number' && Number.isFinite(value)) {
     return value > 1e12 ? Math.floor(value / 1000) : value;
@@ -47,9 +91,9 @@ function heartbeatEventToPayload(value, {
 
   const lastHeartbeat = heartbeatValueToSeconds(event.ts);
   if (lastHeartbeat == null) return {};
-  const observed = new Date(lastHeartbeat * 1000);
-  const observedMs = observed.getTime();
-  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  const observedMs = lastHeartbeat * 1000;
+  if (!Number.isFinite(observedMs) || Math.abs(observedMs) > 8.64e15 || observedMs > now() + maxFutureSkewMs) return {};
+  const observed = new Date(observedMs);
 
   const payload = {
     lastHeartbeat,
@@ -75,7 +119,7 @@ function boundHeartbeatPayload(heartbeat, {
   const lastHeartbeat = heartbeatValueToSeconds(normalized.lastHeartbeat);
   if (lastHeartbeat == null) return normalized;
   const observedMs = lastHeartbeat * 1000;
-  if (!Number.isFinite(observedMs) || observedMs > now() + maxFutureSkewMs) return {};
+  if (!Number.isFinite(observedMs) || Math.abs(observedMs) > 8.64e15 || observedMs > now() + maxFutureSkewMs) return {};
   return normalized;
 }
 
@@ -96,6 +140,35 @@ function mergeHeartbeatPayloads(primary = {}, fallback = {}, options = {}) {
   return merged;
 }
 
+// Combine stdout and stderr the way `openclaw status 2>&1` used to.
+function combinedOutput(result) {
+  const out = String(result?.stdout || '');
+  const err = String(result?.stderr || '');
+  if (!err) return out;
+  return out ? `${out}${out.endsWith('\n') ? '' : '\n'}${err}` : err;
+}
+
+// CLI channel details sometimes include only a token prefix/suffix; those are
+// credentials too. Preserve status text while removing both previews and values.
+function redactChannelDetail(value) {
+  const bounded = String(value || '').slice(0, MAX_STATUS_LINE_CHARS);
+  const preview = /\btoken[ \t]{1,4096}(?:configured|config)[ \t]{0,4096}\(/gi;
+  let cursor = 0, text = '', match;
+  while ((match = preview.exec(bounded)) !== null) {
+    const closing = bounded.indexOf(')', preview.lastIndex);
+    text += bounded.slice(cursor, match.index) + 'token [redacted]';
+    // A cut/unfinished preview is still a credential. Consume it once and
+    // advance past it; never retry a suffix from every embedded "token".
+    cursor = closing < 0 ? bounded.length : closing + 1;
+    preview.lastIndex = cursor;
+  }
+  return (text + bounded.slice(cursor))
+    .replace(/\b(token|api[_ -]?key|secret|password)\s*[:=]\s*[^\s·,;]+/gi, '$1=[redacted]')
+    .replace(/\bBearer\s+[^\s·,;]+/gi, 'Bearer [redacted]')
+    .replace(/\b\d{6,}:[A-Za-z0-9_.…-]{8,}/g, '[redacted]')
+    .replace(/\b(?:sk-|ghp_|xox[baprs]-)[A-Za-z0-9_.…-]{6,}/g, '[redacted]');
+}
+
 function createStatusService({
   mcConfig,
   memoryPath,
@@ -107,36 +180,50 @@ function createStatusService({
   writeRuntimeSnapshot,
   runtimeSnapshotTtl,
   gatewayPort,
-  execSync,
+  // (args, timeoutMs) => Promise<{ ok, stdout, stderr, ... }> on the core
+  // runner's `openclaw` lane. Never blocks the event loop; never throws for a
+  // failed command.
+  openclawCli,
   fs,
   path,
   sessionRefreshBudgetMs = 1500,
   processEnv = process.env,
+  // When a scheduler owns refresh, reads must not start one (GET is pure).
+  refreshOnRead = true,
+  statusTimeoutMs = 15000,
+  heartbeatTimeoutMs = 10000,
 }) {
+  if (typeof openclawCli !== 'function') throw new TypeError('createStatusService: openclawCli is required');
   let statusCache = null;
   let statusCacheTime = 0;
   let refreshInFlight = null;
+  let completedRefreshes = 0;
   const statusCacheTtl = 60000;
 
   function buildMinimalStatusResponse() {
-    const modelKey = getOpenclawDefaultModelKey();
     return {
       generatedAt: new Date().toISOString(),
       agent: {
         name: mcConfig.name || 'Mission Control',
-        status: 'active',
-        model: prettyModelName(modelKey),
-        activeSessions: 0,
+        status: null,
+        model: null,
+        modelObserved: false,
+        activeSessions: null,
         activeSessionsObserved: false,
-        totalAgents: 0,
-        memoryFiles: 0,
-        memoryChunks: 0,
-        heartbeatInterval: '1h',
-        channels: [],
+        totalAgents: null,
+        totalAgentsObserved: false,
+        memoryFiles: null,
+        memoryChunks: null,
+        memoryObserved: false,
+        heartbeatInterval: null,
+        heartbeatIntervalObserved: false,
+        channels: null,
+        channelsObserved: false,
       },
       heartbeat: { lastChecks: {}, lastProactiveTasks: {} },
-      recentActivity: [],
-      tokenUsage: { used: 0, limit: 0, percentage: 0 },
+      recentActivity: null,
+      recentActivityObserved: false,
+      tokenUsage: { used: null, limit: null, percentage: null, observed: false, limitObserved: false },
     };
   }
 
@@ -158,59 +245,27 @@ function createStatusService({
     return {
       agent: {
         name: mcConfig.name || 'Mission Control',
-        status: 'active',
-        model: prettyModelName(defaultModelKey || (modelMatch ? modelMatch[1] : '')),
-        activeSessions: sessionsMatch ? Number.parseInt(sessionsMatch[1], 10) : 0,
+        status: cache.operationsSource?.sourceSucceeded ? 'active' : null,
+        model: defaultModelKey || modelMatch ? prettyModelName(defaultModelKey || modelMatch[1]) : null,
+        modelObserved: Boolean(defaultModelKey || modelMatch),
+        activeSessions: sessionsMatch ? Number.parseInt(sessionsMatch[1], 10) : null,
         activeSessionsObserved: Boolean(sessionsMatch),
-        totalAgents: agentsMatch ? Number.parseInt(agentsMatch[1], 10) : 1,
-        memoryFiles: memoryMatch ? Number.parseInt(memoryMatch[1], 10) : 46,
-        memoryChunks: memoryMatch ? Number.parseInt(memoryMatch[2], 10) : 225,
-        heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : '1h',
-        channels: channels || [],
+        totalAgents: agentsMatch ? Number.parseInt(agentsMatch[1], 10) : null,
+        totalAgentsObserved: Boolean(agentsMatch),
+        memoryFiles: memoryMatch ? Number.parseInt(memoryMatch[1], 10) : null,
+        memoryChunks: memoryMatch ? Number.parseInt(memoryMatch[2], 10) : null,
+        memoryObserved: Boolean(memoryMatch),
+        heartbeatInterval: heartbeatInterval ? heartbeatInterval[1] : null,
+        heartbeatIntervalObserved: Boolean(heartbeatInterval),
+        channels: channels?.length ? channels : null,
+        channelsObserved: Boolean(channels?.length),
       },
       heartbeat: hb,
-      recentActivity: recentActivity || [],
-      tokenUsage: tokenUsage || { used: 0, limit: 1000000, percentage: 0 },
+      recentActivity: recentActivity ?? null,
+      recentActivityObserved: recentActivity != null,
+      tokenUsage: tokenUsage || { used: null, limit: null, percentage: null, observed: false, limitObserved: false },
       generatedAt: cache.generatedAt || new Date().toISOString(),
     };
-  }
-
-  function buildActivityFromMemory() {
-    const recentActivity = [];
-    for (const dayOffset of [0, 1]) {
-      const date = new Date();
-      date.setDate(date.getDate() - dayOffset);
-      const dateStr = date.toISOString().split('T')[0];
-      try {
-        const memPath = path.join(memoryPath, `${dateStr}.md`);
-        if (!fs.existsSync(memPath)) continue;
-        const memContent = fs.readFileSync(memPath, 'utf8');
-        const sections = memContent.split(/\n## /).slice(1);
-        sections.slice(0, 6).forEach((section) => {
-          const firstLine = section.split('\n')[0].trim();
-          const timeMatch = firstLine.match(/(\d{2}:\d{2})\s*UTC/);
-          const time = timeMatch ? `${dateStr}T${timeMatch[1]}:00Z` : `${dateStr}T12:00:00Z`;
-          const title = firstLine
-            .replace(/\d{2}:\d{2}\s*UTC\s*[-—]\s*/, '')
-            .replace(/\*\*/g, '')
-            .substring(0, 80);
-          const bullets = section.split('\n').filter((line) => /^[-*]\s/.test(line.trim()));
-          const detail = (bullets[0] || '').replace(/^[-*]\s*/, '').replace(/\*\*/g, '').substring(0, 120);
-          let type = 'general';
-          const lower = (title + ' ' + detail).toLowerCase();
-          if (lower.includes('bug') || lower.includes('security')) type = 'security';
-          else if (lower.includes('build') || lower.includes('deploy') || lower.includes('dashboard')) type = 'development';
-          else if (lower.includes('email') || lower.includes('lead')) type = 'business';
-          else if (lower.includes('heartbeat')) type = 'heartbeat';
-          else if (lower.includes('meeting')) type = 'meeting';
-          if (title) recentActivity.push({ time, action: title, detail: detail || 'Activity logged', type });
-        });
-        if (recentActivity.length > 2) break;
-      } catch {}
-    }
-    return recentActivity.length
-      ? recentActivity
-      : [{ time: new Date().toISOString(), action: 'System running', detail: 'Dashboard active', type: 'general' }];
   }
 
   async function doRefreshStatusCache() {
@@ -219,7 +274,7 @@ function createStatusService({
         let settled = false;
         const timer = setTimeout(() => {
           settled = true;
-          resolve({ count: 0, sessions: [] });
+          resolve(null);
         }, sessionRefreshBudgetMs);
         Promise.resolve(fetchSessions(50)).then((value) => {
           if (settled) return;
@@ -230,7 +285,7 @@ function createStatusService({
           if (settled) return;
           settled = true;
           clearTimeout(timer);
-          resolve({ count: 0, sessions: [] });
+          resolve(null);
         });
       });
       const [openclawStatus, notionActivity, sessionData, heartbeatEvent] = await Promise.allSettled([
@@ -249,37 +304,28 @@ function createStatusService({
           }
 
           try {
-            resolve({
-              output: execSync('openclaw status 2>&1', { timeout: 8000, encoding: 'utf8' }),
-              commandSucceeded: true,
-            });
-          } catch (error) {
-            resolve({
-              output: error.stdout || gatewayHealth,
-              commandSucceeded: false,
-            });
+            const result = await openclawCli(['status'], statusTimeoutMs);
+            resolve(result?.ok
+              ? { output: combinedOutput(result), commandSucceeded: true }
+              : { output: combinedOutput(result) || gatewayHealth, commandSucceeded: false });
+          } catch {
+            resolve({ output: gatewayHealth, commandSucceeded: false });
           }
         }),
         fetchNotionActivity(8).catch(() => null),
         sessionRead,
-        Promise.resolve().then(() => {
-          try {
-            return heartbeatEventToPayload(execSync('openclaw system heartbeat last --json', {
-              timeout: 8000,
-              encoding: 'utf8',
-            }));
-          } catch {
-            return {};
-          }
-        }),
+        Promise.resolve()
+          .then(() => openclawCli(['system', 'heartbeat', 'last', '--json'], heartbeatTimeoutMs))
+          .then((result) => (result?.ok ? heartbeatEventToPayload(result.stdout) : {}))
+          .catch(() => ({})),
       ]);
 
       const statusResult = openclawStatus.status === 'fulfilled'
         ? openclawStatus.value
         : { output: '', commandSucceeded: false };
-      const ocStatus = statusResult.output || '';
+      const ocStatus = statusResult.commandSucceeded ? statusResult.output || '' : '';
       const activity = notionActivity.status === 'fulfilled' ? notionActivity.value : null;
-      const sessions = sessionData.status === 'fulfilled' ? sessionData.value : { count: 0, sessions: [] };
+      const sessions = sessionData.status === 'fulfilled' ? sessionData.value : null;
 
       let defaultModelKey = '';
       try {
@@ -291,18 +337,7 @@ function createStatusService({
           || '';
       } catch {}
 
-      const sessionsMatch = ocStatus.match(/(?:^|\n)\s*(\d+)\s+active sessions\b/i);
-      const modelMatch = ocStatus.match(/default\s+([^\s(]+)/);
-      const memoryMatch = ocStatus.match(/(\d+)\s*files.*?(\d+)\s*chunks/);
-      const heartbeatInterval = ocStatus.match(/Heartbeat\s*│\s*(\w+)/);
-      const agentsMatch = ocStatus.match(/Agents\s*│\s*(\d+)/);
-
-      const channels = [];
-      const channelRegex = /│\s*(Discord|WhatsApp|Telegram)\s*│\s*(ON|OFF)\s*│\s*(OK|OFF|ERROR)\s*│\s*(.+?)\s*│/g;
-      let match;
-      while ((match = channelRegex.exec(ocStatus)) !== null) {
-        channels.push({ name: match[1], enabled: match[2], state: match[3], detail: match[4].trim() });
-      }
+      const { sessionsMatch, modelMatch, memoryMatch, heartbeatInterval, agentsMatch, channels } = parseStatusOutput(ocStatus);
 
       const statusShapeObserved = Boolean(
         sessionsMatch || modelMatch || memoryMatch || heartbeatInterval || agentsMatch || channels.length,
@@ -311,18 +346,23 @@ function createStatusService({
         ? new Date().toISOString()
         : null;
 
-      const sessionList = sessions.sessions || [];
-      const totalTokens = sessionList.reduce((sum, session) => sum + (session.totalTokens || 0), 0);
+      // Token usage counts as observed only when the sessions read itself
+      // succeeded (provenance sourceSucceeded === true). A failed read comes
+      // back as an empty list, which would otherwise pass every() and report
+      // "used: 0, observed: true".
+      const sessionsSucceeded = readOperationsSource(sessions)?.sourceSucceeded === true;
+      const sessionList = sessionsSucceeded && Array.isArray(sessions?.sessions) ? sessions.sessions : null;
+      const tokensObserved = sessionList != null && sessions?.meta?.ok !== false && !sessions?.error && sessionList.every((session) => Number.isFinite(session.totalTokens));
       const tokenUsage = {
-        used: totalTokens,
-        limit: 0,
-        percentage: 0,
+        used: tokensObserved ? sessionList.reduce((sum, session) => sum + session.totalTokens, 0) : null,
+        limit: null,
+        percentage: null,
+        observed: tokensObserved,
+        limitObserved: false,
       };
-
-      let recentActivity = activity;
-      if (!recentActivity || !recentActivity.length) {
-        recentActivity = buildActivityFromMemory();
-      }
+      // Absence of activity is not a synthetic "System running" event. No
+      // memory content is read or forwarded as fallback activity.
+      const recentActivity = Array.isArray(activity) ? activity : null;
 
       let heartbeat = {};
       try {
@@ -352,6 +392,7 @@ function createStatusService({
         heartbeat,
       };
       statusCacheTime = Date.now();
+      completedRefreshes += 1;
       writeRuntimeSnapshot('status', buildStatusResponseFromCache(statusCache, heartbeat));
     } catch (error) {
       console.error('[StatusCache] refresh failed:', error.message);
@@ -375,14 +416,16 @@ function createStatusService({
 
   async function getStatusResponse() {
     const snapshot = readRuntimeSnapshot('status', runtimeSnapshotTtl.status);
-    if (snapshot) {
+    if (snapshot && !statusCache) {
+      const minimal = buildMinimalStatusResponse();
       return {
-        ...snapshot,
+        ...minimal,
+        generatedAt: snapshot.generatedAt || minimal.generatedAt,
         heartbeat: normalizeHeartbeatPayload(snapshot.heartbeat || {}),
       };
     }
 
-    if (Date.now() - statusCacheTime > statusCacheTtl) {
+    if (refreshOnRead && Date.now() - statusCacheTime > statusCacheTtl) {
       refreshStatusCache();
     }
 
@@ -396,13 +439,12 @@ function createStatusService({
       heartbeat = mergeHeartbeatPayloads(fileHeartbeat, heartbeat);
     } catch {}
 
-    const response = buildStatusResponseFromCache(statusCache, heartbeat);
-    writeRuntimeSnapshot('status', response);
-    return response;
+    // GET is pure: the snapshot file is written only by the refresh.
+    return buildStatusResponseFromCache(statusCache, heartbeat);
   }
 
   async function getOperationsStatusResponse() {
-    if (!statusCache || Date.now() - statusCacheTime > statusCacheTtl) {
+    if (refreshOnRead && (!statusCache || Date.now() - statusCacheTime > statusCacheTtl)) {
       await refreshStatusCache();
     }
     const response = statusCache
@@ -418,10 +460,31 @@ function createStatusService({
     };
   }
 
+  // Source read (see server/sources/openclaw/status.js): one refresh, and the
+  // status payload only when the OpenClaw status CLI was actually observed.
+  // Throws otherwise, so the caller keeps its last-good value.
+  async function readObservedStatus() {
+    const before = completedRefreshes;
+    await refreshStatusCache();
+    if (completedRefreshes === before || !statusCache) {
+      const error = new Error('Status refresh did not complete');
+      error.code = 'refresh_failed';
+      throw error;
+    }
+    if (!statusCache.operationsSource?.sourceSucceeded) {
+      const error = new Error('OpenClaw status CLI produced no observable status');
+      error.code = 'openclaw_status_unavailable';
+      throw error;
+    }
+    return buildStatusResponseFromCache(statusCache, statusCache.heartbeat || {});
+  }
+
   return {
     refreshStatusCache,
     getStatusResponse,
     getOperationsStatusResponse,
+    readObservedStatus,
+    buildMinimalStatusResponse,
   };
 }
 
@@ -431,4 +494,8 @@ module.exports = {
   heartbeatValueToSeconds,
   mergeHeartbeatPayloads,
   normalizeHeartbeatPayload,
+  redactChannelDetail,
+  parseStatusOutput,
+  MAX_STATUS_CHARS,
+  MAX_STATUS_LINE_CHARS,
 };

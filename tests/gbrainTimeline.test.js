@@ -151,7 +151,7 @@ function overview(overrides = {}) {
   assert.equal(fingerprintSnapshot(first), fingerprintSnapshot(second));
 })();
 
-async function testCaptureSkipsDuplicateAndWritesHeartbeat() {
+async function testCaptureSkipsDuplicateEvenAfterFormerHeartbeatInterval() {
   const dir = tempDir();
   const ledgerPath = path.join(dir, 'evidence-timeline.jsonl');
 
@@ -176,9 +176,9 @@ async function testCaptureSkipsDuplicateAndWritesHeartbeat() {
   assert.equal(first.reason, 'changed');
   assert.equal(duplicate.captured, false);
   assert.equal(duplicate.reason, 'skipped-duplicate');
-  assert.equal(heartbeat.captured, true);
-  assert.equal(heartbeat.reason, 'heartbeat');
-  assert.equal(read.retainedEntryCount, 2);
+  assert.equal(heartbeat.captured, false);
+  assert.equal(heartbeat.reason, 'skipped-duplicate');
+  assert.equal(read.retainedEntryCount, 1);
 }
 
 (function testMalformedLedgerReturnsValidEntriesWithWarning() {
@@ -343,7 +343,7 @@ async function testSourceWarningsAreNotReportedAsStaleSources() {
   assert.doesNotMatch(timeline.incidentBanner.detail, /stale source/i);
 }
 
-async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
+async function testRegressionAcknowledgementKeySurvivesDuplicateRefresh() {
   const dir = tempDir();
   const service = createGBrainTimelineService({ projectRoot: dir, heartbeatMs: 60 * 60 * 1000 });
 
@@ -373,9 +373,8 @@ async function testRegressionAcknowledgementKeySurvivesHeartbeat() {
   const timeline = service.readTimeline({ limit: 50 });
   const regressionEntries = timeline.entries.filter((entry) => entry.trust.status === 'warning');
 
-  assert.equal(regressionEntries.length, 2);
-  assert.notEqual(regressionEntries[0].id, regressionEntries[1].id);
-  assert.equal(regressionEntries[0].fingerprint, regressionEntries[1].fingerprint);
+  assert.equal(regressionEntries.length, 1);
+  assert.ok(regressionEntries[0].fingerprint);
   assert.equal(timeline.incidentBanner.snapshotId, regressionEntries[0].fingerprint);
 }
 
@@ -471,14 +470,14 @@ async function testRecoveredQueueRegressionStaysAcknowledgeable() {
 }
 
 (async () => {
-  await testCaptureSkipsDuplicateAndWritesHeartbeat();
+  await testCaptureSkipsDuplicateEvenAfterFormerHeartbeatInterval();
   testPruneTimelineKeepsNewestEntries();
   await testCaptureFailureIsWarningNotThrow();
   await testServiceDisabledContract();
   await testServiceSummaryDiffAndIncident();
   await testWorstRecentRegressionSurvivesCleanSnapshot();
   await testSourceWarningsAreNotReportedAsStaleSources();
-  await testRegressionAcknowledgementKeySurvivesHeartbeat();
+  await testRegressionAcknowledgementKeySurvivesDuplicateRefresh();
   await testCurrentRegressionIsNotAcknowledgeableHistory();
   await testRecoveredRegressionListKeepsLaterIncidentsVisible();
   await testRecoveredQueueRegressionStaysAcknowledgeable();

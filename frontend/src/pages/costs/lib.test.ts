@@ -3,9 +3,12 @@ import {
   formatCurrency,
   formatPreciseCurrency,
   formatTokens,
+  formatTokenPhrase,
   formatCompactTokenValue,
   formatComparisonValue,
   parseMonthlyBudgetInput,
+  parseBudgetDraft,
+  savedBudgetCap,
   canonicalModelName,
   formatSessionName,
   hashColor,
@@ -39,9 +42,9 @@ import {
   monthPickerYearBounds,
   nextSelectableIndex,
   previousMonthKey,
+  previousWindowDays,
   shouldClearMonthAnchor,
   shiftMonthKey,
-  estimateCost,
 } from './lib'
 
 // ---------------------------------------------------------------------------
@@ -61,11 +64,8 @@ describe('formatCurrency', () => {
   it('formats negative values', () => {
     expect(formatCurrency(-5.75)).toBe('-$5.75')
   })
-  it('treats Infinity as 0', () => {
-    expect(formatCurrency(Infinity)).toBe('$0.00')
-  })
-  it('treats NaN as 0', () => {
-    expect(formatCurrency(NaN)).toBe('$0.00')
+  it('shows a dash, never $0.00, for a value that was not read', () => {
+    for (const missing of [Infinity, -Infinity, NaN, null, undefined]) expect(formatCurrency(missing)).toBe('—')
   })
 })
 
@@ -88,8 +88,8 @@ describe('formatPreciseCurrency', () => {
     // Math.abs(0) > 0 is false, so falls through to formatCurrency
     expect(formatPreciseCurrency(0)).toBe('$0.00')
   })
-  it('treats NaN as 0', () => {
-    expect(formatPreciseCurrency(NaN)).toBe('$0.00')
+  it('shows a dash, never $0.00, for a value that was not read', () => {
+    for (const missing of [NaN, Infinity, null, undefined]) expect(formatPreciseCurrency(missing)).toBe('—')
   })
 })
 
@@ -107,11 +107,13 @@ describe('formatTokens', () => {
   it('formats zero', () => {
     expect(formatTokens(0)).toBe('0')
   })
-  it('treats NaN as 0', () => {
-    expect(formatTokens(NaN)).toBe('0')
+  it('shows a dash, never 0, for a count that was not read', () => {
+    for (const missing of [NaN, Infinity, null, undefined]) expect(formatTokens(missing)).toBe('—')
   })
-  it('treats Infinity as 0', () => {
-    expect(formatTokens(Infinity)).toBe('0')
+  it('phrases a count without printing "— tokens" for a missing one', () => {
+    expect(formatTokenPhrase(1500)).toBe('1,500 tokens')
+    expect(formatTokenPhrase(null)).toBe('—')
+    expect(formatTokenPhrase(undefined, 'tok')).toBe('—')
   })
 })
 
@@ -130,8 +132,9 @@ describe('formatCompactTokenValue', () => {
   it('formats small numbers without suffix', () => {
     expect(formatCompactTokenValue(42)).toBe('42')
   })
-  it('treats NaN as 0', () => {
-    expect(formatCompactTokenValue(NaN)).toBe('0')
+  it('shows a dash, never 0, for a count that was not read', () => {
+    for (const missing of [NaN, null, undefined]) expect(formatCompactTokenValue(missing)).toBe('—')
+    expect(formatCompactTokenValue(0)).toBe('0')
   })
 })
 
@@ -217,7 +220,7 @@ describe('trackedSpendPresentation', () => {
     })).toEqual({
       isPartial: true,
       valueQualifier: 'Tracked spend from available billing data',
-      coverageLabel: '2 billing sources unknown',
+      coverageLabel: '2 billing sources not read',
       projectionAvailable: false,
     })
   })
@@ -381,6 +384,40 @@ describe('parseMonthlyBudgetInput', () => {
   it('rejects negative and invalid values', () => {
     expect(parseMonthlyBudgetInput('-10')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
     expect(parseMonthlyBudgetInput('nope')).toEqual({ monthly: null, error: 'Budget must be zero or positive.' })
+  })
+})
+
+describe('parseBudgetDraft', () => {
+  it('"No monthly budget" sends null whatever the input holds', () => {
+    expect(parseBudgetDraft('', true)).toEqual({ ok: true, monthly: null })
+    expect(parseBudgetDraft('123', true)).toEqual({ ok: true, monthly: null })
+  })
+
+  it('a typed amount sends that finite, non-negative number', () => {
+    expect(parseBudgetDraft('150', false)).toEqual({ ok: true, monthly: 150 })
+    expect(parseBudgetDraft('0', false)).toEqual({ ok: true, monthly: 0 })
+  })
+
+  it('blank input is never turned into 0 or null: there is nothing to save', () => {
+    expect(parseBudgetDraft('', false)).toEqual({ ok: false, error: null })
+    expect(parseBudgetDraft('   ', false)).toEqual({ ok: false, error: null })
+  })
+
+  it('rejects negative, non-numeric and non-finite amounts with a message', () => {
+    for (const bad of ['-1', 'abc', '1e999', 'Infinity', 'NaN']) {
+      expect(parseBudgetDraft(bad, false)).toEqual({ ok: false, error: 'Budget must be zero or positive.' })
+    }
+  })
+})
+
+describe('savedBudgetCap', () => {
+  it('only a positive finite number is a cap; null and 0 mean no budget', () => {
+    expect(savedBudgetCap(200)).toBe(200)
+    expect(savedBudgetCap(null)).toBeNull()
+    expect(savedBudgetCap(undefined)).toBeNull()
+    expect(savedBudgetCap(0)).toBeNull()
+    expect(savedBudgetCap('50')).toBeNull()
+    expect(savedBudgetCap(Number.NaN)).toBeNull()
   })
 })
 
@@ -669,27 +706,51 @@ describe('anchored CodexBar month rows', () => {
       .toEqual(previousCodexbarRows(rows, 'day', now))
   })
 
-  it('names the previous month in anchored comparison labels', () => {
-    expect(comparisonLabels('month', '2026-07', now)).toEqual({
+  it('builds the comparison label from the dates the server compared', () => {
+    const win = (previousStart: string, previousEnd: string, previousIsPartial = false, anchor: string | null = null) => ({
+      anchor,
+      previousStart,
+      previousEnd,
+      previousIsPartial,
+    })
+    // A past month (anchored) carries its year; the live month does not.
+    expect(comparisonLabels('month', win('2026-06-01', '2026-06-30', false, '2026-07'))).toEqual({
       period: 'vs June 2026',
       daily: 'vs June 2026 avg',
     })
-    expect(comparisonLabels('month', '2026-01', now)).toEqual({
-      period: 'vs December 2025',
-      daily: 'vs December 2025 avg',
+    expect(comparisonLabels('month', win('2025-12-01', '2025-12-31', false, '2026-01')).period).toBe('vs December 2025')
+    // The live month is compared with the same elapsed days of the month before, and says so.
+    expect(comparisonLabels('month', win('2026-10-01', '2026-10-11', true))).toEqual({
+      period: 'vs the first 11 days of October',
+      daily: 'vs the first 11 days of October avg',
     })
-    expect(comparisonLabels('month', null, now)).toEqual({
-      period: 'vs previous month',
-      daily: 'vs previous month avg',
-    })
-    expect(comparisonLabels('month', '2026-08', now)).toEqual({
-      period: 'vs previous month',
-      daily: 'vs previous month avg',
-    })
-    expect(comparisonLabels('7d', '2026-07', now)).toEqual({
+    expect(comparisonLabels('month', win('2026-10-01', '2026-10-01', true)).period).toBe('vs 1 October')
+    expect(comparisonLabels('month', win('2026-10-07', '2026-10-11', true)).period).toBe('vs 7–11 October')
+    // A complete previous month is simply that month; incomplete evidence behind it is said.
+    expect(comparisonLabels('month', win('2026-11-01', '2026-11-30', false)).period).toBe('vs November')
+    expect(comparisonLabels('month', win('2026-11-01', '2026-11-30', true)).period).toBe('vs November (incomplete data)')
+    expect(comparisonLabels('7d', win('2026-11-01', '2026-11-07'))).toEqual({
       period: 'vs previous 7 days',
       daily: 'vs previous 7d avg',
     })
+    expect(comparisonLabels('7d', win('2026-11-01', '2026-11-07', true)).period).toBe('vs previous 7 days (incomplete data)')
+    expect(comparisonLabels('day', win('2026-11-10', '2026-11-10')).period).toBe('vs previous day')
+  })
+
+  it('does not work out a span without the server dates', () => {
+    for (const window of [null, {}, { previousStart: '2026-10-01' }, { previousStart: 'x', previousEnd: 'y' }, { previousStart: '2026-10-09', previousEnd: '2026-10-01' }]) {
+      expect(comparisonLabels('month', window)).toEqual({ period: 'vs the previous month', daily: 'vs previous month avg' })
+    }
+    // A window across two months is not a month span either.
+    expect(comparisonLabels('month', { previousStart: '2026-09-25', previousEnd: '2026-10-05' }).period).toBe('vs the previous month')
+  })
+
+  it('counts the days of the comparison window as the server dated it', () => {
+    expect(previousWindowDays({ previousStart: '2026-10-01', previousEnd: '2026-10-11' })).toBe(11)
+    expect(previousWindowDays({ previousStart: '2026-10-07', previousEnd: '2026-10-07' })).toBe(1)
+    expect(previousWindowDays({ previousStart: '2026-02-26', previousEnd: '2026-03-02' })).toBe(5)
+    expect(previousWindowDays({})).toBeNull()
+    expect(previousWindowDays(null)).toBeNull()
   })
 
   it('reports a finished month as a total instead of a projection', () => {
@@ -952,13 +1013,5 @@ describe('server month anchor clearing', () => {
     expect(shouldClearMonthAnchor('2026-08', '2026-08')).toBe(true)
     expect(shouldClearMonthAnchor('2026-07', '2026-08')).toBe(false)
     expect(shouldClearMonthAnchor(null, '2026-08')).toBe(false)
-  })
-})
-
-describe('newer model pricing', () => {
-  it('prices gpt-6-astra, glm-5.3-flash, and glm-5.3 instead of returning 0', () => {
-    expect(estimateCost(1_000_000, 'openai/gpt-6-astra')).toBeCloseTo(50)
-    expect(estimateCost(1_000_000, 'Hermes / glm-5.3-flash')).toBeCloseTo(0.5)
-    expect(estimateCost(1_000_000, 'zai-coding-plan/glm-5.3')).toBeCloseTo(4.4)
   })
 })

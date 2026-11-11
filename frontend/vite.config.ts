@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api': 'http://localhost:3333'
+      '/api': process.env.MC_API_TARGET || 'http://localhost:3333'
     }
   }
 })

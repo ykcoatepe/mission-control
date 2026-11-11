@@ -1,26 +1,34 @@
-const STATE_RANK = {
-  critical: 5,
-  warning: 4,
-  unavailable: 3,
-  inactive: 2,
-  healthy: 1,
-};
+const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
+const { STATE_RANK, worstState, stateRank } = require('../core/state');
+const { scrubText } = require('../core/scrub');
 const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
+// The one place screen links are chosen. Every value must be a screen that
+// renders (frontend/src/appRoutes.tsx primary/utility routes); a test reads
+// that file and checks every detailHref the backend emits.
+const DETAIL_HREFS = Object.freeze({
+  gbrain: Object.freeze({ default: '/' }),
+  openclaw: Object.freeze({ default: '/services', scheduling: '/automations' }),
+  // blocked or stuck tasks and loop findings are operator work: Attention.
+  hermes: Object.freeze({ default: '/services', scheduling: '/automations', work: '/attention' }),
+});
+
+function detailHref(system, topic = 'default') {
+  const hrefs = DETAIL_HREFS[system];
+  return hrefs[topic] || hrefs.default;
+}
+
 const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|([+-])(\d{2}):(\d{2}))$/i;
 
+// The worst system state by the one ordering (server/core/state.js); with no
+// system it is healthy, as before.
 function deriveOverallStatus(systems) {
-  return Object.values(systems).reduce((worst, system) => (
-    STATE_RANK[system.state] > STATE_RANK[worst] ? system.state : worst
-  ), 'healthy');
+  return worstState(Object.values(systems).map((system) => system.state), { empty: 'healthy' });
 }
 
 function cleanText(value, fallback = '') {
   if (typeof value !== 'string') return fallback;
-  return value
-    .replace(/Bearer\s+[^\s]+/gi, 'Bearer [redacted]')
-    .replace(/\bsk-[A-Za-z0-9_-]+\b/g, '[redacted]')
-    .replace(/\/(?:Users|home)\/[^/\s]+/g, '~');
+  return scrubText(value);
 }
 
 function buildOperationsCapabilities({ gbrainActions = [] } = {}) {
@@ -262,7 +270,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     return unavailableSystem(
       'openclaw',
       'OpenClaw',
-      '/systems',
+      detailHref('openclaw'),
       generatedAt,
       'OpenClaw status and sessions could not be read.',
     );
@@ -315,7 +323,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           ? 'Status does not expose a comparable active-session count'
         : `${statusSessions} active sessions reported by status`,
       '/api/status',
-      '/systems',
+      detailHref('openclaw'),
     ),
     evidence(
       'openclaw:sessions',
@@ -327,7 +335,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
         ? `Session evidence unavailable; status reports ${activeSessions} active sessions`
         : `${activeSessions} active sessions`,
       '/api/sessions',
-      '/sessions',
+      detailHref('openclaw'),
     ),
     evidence(
       'openclaw:heartbeat',
@@ -341,7 +349,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           ? 'Heartbeat stale or unavailable'
           : 'Heartbeat current',
       '/api/status',
-      '/systems',
+      detailHref('openclaw'),
     ),
   ];
   if (cronUnavailable) {
@@ -353,13 +361,13 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       cronAt,
       'OpenClaw scheduling evidence unavailable',
       '/api/cron',
-      '/automations',
+      detailHref('openclaw', 'scheduling'),
     ));
   } else {
     openclawEvidence.push(evidence(
       'openclaw:cron', 'openclaw', 'scheduling', cronCaveat ? 'warning' : 'healthy', cronAt,
       `${cron.jobs.filter((job) => job?.scheduler !== 'hermes').length} OpenClaw scheduled jobs${cronCaveat ? ' (stale)' : ''}`,
-      '/api/cron', '/automations',
+      '/api/cron', detailHref('openclaw', 'scheduling'),
     ));
   }
   const attention = [];
@@ -371,7 +379,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_status_unavailable',
       title: 'OpenClaw status evidence unavailable',
       detail: 'The status reader did not return evidence; session evidence remains available.',
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:status-sessions', 'openclaw:heartbeat'],
     });
   }
@@ -383,7 +391,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_sessions_unavailable',
       title: 'OpenClaw session evidence unavailable',
       detail: 'The session reader did not return evidence; status evidence remains available.',
-      detailHref: '/sessions',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:sessions'],
     });
   }
@@ -395,7 +403,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_cron_unavailable',
       title: 'OpenClaw scheduling evidence unavailable',
       detail: 'The cron reader did not return OpenClaw scheduling evidence.',
-      detailHref: '/automations',
+      detailHref: detailHref('openclaw', 'scheduling'),
       evidenceRefs: ['openclaw:cron'],
     });
   }
@@ -407,7 +415,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_session_count_conflict',
       title: 'OpenClaw session evidence conflicts',
       detail: sessionConflictDetail,
-      detailHref: '/sessions',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:status-sessions', 'openclaw:sessions'],
     });
   }
@@ -419,7 +427,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
       reasonCode: 'openclaw_heartbeat_stale',
       title: 'OpenClaw heartbeat needs fresh proof',
       detail: 'The last verified heartbeat is older than two hours or unavailable.',
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
       evidenceRefs: ['openclaw:heartbeat'],
     });
   }
@@ -428,7 +436,8 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
     system: {
       id: 'openclaw',
       label: 'OpenClaw',
-      state: caveats.length ? 'warning' : 'healthy',
+      // Stale scheduling evidence is a floor, by the one ordering: never better than warning.
+      state: worstState([caveats.length ? 'warning' : 'healthy', cronCaveat ? 'warning' : 'healthy']),
       observedAt: at,
       freshness: statusUnavailable ? 'unavailable' : heartbeatStale || cronCaveat ? 'stale' : 'fresh',
       caveats,
@@ -442,7 +451,7 @@ function adaptOpenClaw(status, sessions, cron, generatedAt) {
           : null,
       },
       evidence: openclawEvidence,
-      detailHref: '/systems',
+      detailHref: detailHref('openclaw'),
     },
     attention,
   };
@@ -471,7 +480,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     return unavailableSystem(
       'hermes',
       'Hermes',
-      '/work',
+      detailHref('hermes'),
       generatedAt,
       'Hermes gateway and Kanban could not be read.',
     );
@@ -481,6 +490,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
   const attention = [];
   const caveats = [];
   const states = [];
+  let blockedCaveat = null;
 
   // Gateway
   let gatewayAt = null;
@@ -495,7 +505,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     };
     hermesEvidence.push(evidence(
       'hermes:gateway', 'hermes', 'gateway', gatewayState, gatewayAt,
-      summaries[gateway.status], 'hermes gateway state', '/work',
+      summaries[gateway.status], 'hermes gateway state', detailHref('hermes'),
     ));
     if (gateway.status === 'down') {
       attention.push({
@@ -505,7 +515,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_gateway_down',
         title: 'Hermes gateway is down',
         detail: 'The Hermes gateway process is not running; Kanban reads do not prove Hermes is serving.',
-        detailHref: '/work',
+        detailHref: detailHref('hermes'),
         evidenceRefs: ['hermes:gateway'],
       });
       caveats.push('Hermes gateway is down.');
@@ -517,7 +527,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_gateway_stale',
         title: 'Hermes gateway heartbeat is stale',
         detail: 'The gateway process exists but has not refreshed its heartbeat recently.',
-        detailHref: '/work',
+        detailHref: detailHref('hermes'),
         evidenceRefs: ['hermes:gateway'],
       });
       caveats.push('Hermes gateway heartbeat is stale.');
@@ -526,7 +536,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:gateway', 'hermes', 'gateway', 'unavailable', null,
-      'Hermes gateway liveness unavailable', 'hermes gateway state', '/work',
+      'Hermes gateway liveness unavailable', 'hermes gateway state', detailHref('hermes'),
     ));
     attention.push({
       id: 'hermes:gateway-unverified',
@@ -535,7 +545,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_gateway_unverified',
       title: 'Hermes gateway liveness unverified',
       detail: 'The gateway state could not be read, so Hermes cannot be reported healthy.',
-      detailHref: '/work',
+      detailHref: detailHref('hermes'),
       evidenceRefs: ['hermes:gateway'],
     });
     caveats.push('Hermes gateway liveness is unverified.');
@@ -555,7 +565,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     const proof = evidence(
       'hermes:kanban', 'hermes', 'work', kanbanState, at,
       `${running} running, ${blocked} blocked${kanbanStale ? ' (stale)' : ''}`,
-      '/api/hermes-kanban', '/work',
+      '/api/hermes-kanban', detailHref('hermes', blocked > 0 ? 'work' : 'default'),
     );
     hermesEvidence.push(proof);
     if (blocked > 0) {
@@ -566,10 +576,11 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         reasonCode: 'hermes_tasks_blocked',
         title: 'Hermes work is blocked',
         detail: `${blocked} tasks require operator review.`,
-        detailHref: '/work',
+        detailHref: detailHref('hermes', 'work'),
         evidenceRefs: [proof.id],
       });
       caveats.push(`${blocked} Hermes tasks are blocked.`);
+      blockedCaveat = caveats[caveats.length - 1];
     }
     if (kanbanStale) {
       caveats.push(`Hermes Kanban data is stale${kanbanAgeSeconds === null ? '' : ` (${formatAge(kanbanAgeSeconds)} old)`}.`);
@@ -578,7 +589,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:kanban', 'hermes', 'work', 'unavailable', null,
-      'Hermes Kanban could not be read', '/api/hermes-kanban', '/work',
+      'Hermes Kanban could not be read', '/api/hermes-kanban', detailHref('hermes'),
     ));
     attention.push({
       id: 'hermes:kanban-unavailable',
@@ -587,7 +598,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_kanban_unavailable',
       title: 'Hermes Kanban could not be read',
       detail: 'The gateway state is known, but work evidence is unavailable.',
-      detailHref: '/work',
+      detailHref: detailHref('hermes'),
       evidenceRefs: ['hermes:kanban'],
     });
     caveats.push('Hermes Kanban could not be read.');
@@ -601,7 +612,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     states.push('warning');
     hermesEvidence.push(evidence(
       'hermes:cron', 'hermes', 'scheduling', 'unavailable', cronAt,
-      'Hermes scheduling evidence unavailable', '/api/cron', '/automations',
+      'Hermes scheduling evidence unavailable', '/api/cron', detailHref('hermes', 'scheduling'),
     ));
     attention.push({
       id: 'hermes:cron-unavailable',
@@ -610,7 +621,7 @@ function adaptHermes(board, cron, generatedAt, gateway) {
       reasonCode: 'hermes_cron_unavailable',
       title: 'Hermes scheduling evidence unavailable',
       detail: 'The cron reader did not return Hermes scheduling evidence.',
-      detailHref: '/automations',
+      detailHref: detailHref('hermes', 'scheduling'),
       evidenceRefs: ['hermes:cron'],
     });
     caveats.push('Hermes scheduling evidence is unavailable.');
@@ -618,17 +629,19 @@ function adaptHermes(board, cron, generatedAt, gateway) {
     hermesEvidence.push(evidence(
       'hermes:cron', 'hermes', 'scheduling', cronStale ? 'warning' : 'healthy', cronAt,
       `${cron.jobs.filter((job) => job?.scheduler === 'hermes').length} Hermes scheduled jobs${cronStale ? ' (stale)' : ''}`,
-      '/api/cron', '/automations',
+      '/api/cron', detailHref('hermes', 'scheduling'),
     ));
     if (cronStale) caveats.push(schedulerStaleCaveat(cron, 'hermes', 'Hermes'));
   }
 
-  // blocked tasks warn through attention only (state stays as before)
-  const state = states.includes('critical')
-    ? 'critical'
-    : (!gatewayProven || !kanbanProven || cronUnavailable || cronStale || gateway?.status === 'stale')
-      ? 'warning'
-      : 'healthy';
+  // blocked tasks warn through attention only (state stays as before).
+  // Unproven or stale evidence is a warning floor, combined by the one
+  // ordering (server/core/state.js); a critical gateway still wins.
+  const state = worstState([
+    states.includes('critical') ? 'critical' : 'healthy',
+    (!gatewayProven || !kanbanProven || cronUnavailable || gateway?.status === 'stale') ? 'warning' : 'healthy',
+    cronStale ? 'warning' : 'healthy',
+  ]);
   const freshness = kanbanStale || cronStale || !kanbanProven ? 'stale' : 'fresh';
   return {
     system: {
@@ -649,18 +662,37 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         ...(kanbanAgeSeconds !== null ? { kanbanAgeSeconds } : {}),
       },
       evidence: hermesEvidence,
-      detailHref: '/work',
+      // The system links where its leading reason is handled.
+      detailHref: detailHref('hermes', caveats[0] && caveats[0] === blockedCaveat ? 'work' : 'default'),
     },
     attention,
   };
 }
 
 function adaptGBrain(overview, generatedAt) {
+  // The GBrain producer owns this verdict; do not reconstruct it from score/caveats.
+  if (overview?.verdict) {
+    if (!isGBrainVerdict(overview.verdict)) return unavailableSystem('gbrain', 'GBrain', detailHref('gbrain'), generatedAt, 'GBrain verdict invalid.');
+    const { state } = overview.verdict;
+    const caveats = verdictCaveats(overview.verdict);
+    const at = observedAt(overview.meta?.observedAt || overview.trust?.lastVerifiedAt, generatedAt);
+    const proof = evidence('gbrain:trust', 'gbrain', 'trust', state, at,
+      overview.trust?.label || `GBrain ${state}`, '/api/gbrain/overview', detailHref('gbrain'));
+    return { system: { id: 'gbrain', label: 'GBrain', state, observedAt: at,
+      freshness: state === 'unavailable' ? 'unavailable' : overview.meta?.stale || overview.live?.sources?.freshness?.staleCount > 0 ? 'stale' : 'fresh',
+      caveats, metrics: { trustScore: overview.trust?.score ?? null,
+        staleSources: overview.live?.sources?.freshness?.staleCount ?? null, caveats: caveats.length },
+      evidence: [proof], detailHref: detailHref('gbrain') },
+    attention: overview.verdict.reasons.filter((r) => ['warning', 'critical', 'unavailable'].includes(r.state)).map((r, index) => ({
+      id: `gbrain:caveat:${index}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
+      title: 'GBrain requires attention', detail: r.text, detailHref: detailHref('gbrain'), evidenceRefs: [proof.id],
+    })) };
+  }
   if (!hasGBrainProof(overview, generatedAt)) {
     return unavailableSystem(
       'gbrain',
       'GBrain',
-      '/gbrain',
+      detailHref('gbrain'),
       generatedAt,
       'GBrain overview could not be read.',
     );
@@ -671,9 +703,7 @@ function adaptGBrain(overview, generatedAt) {
   const caveats = overview.caveats.map((item) => cleanText(String(item)));
   const staleSources = overview.live.sources.freshness.staleCount;
   const sourceStale = staleSources > 0;
-  const state = trustState === 'healthy' && (caveats.length || sourceStale)
-    ? 'warning'
-    : trustState;
+  const state = buildGBrainVerdict({ legacyOverview: overview }).state;
   const proof = evidence(
     'gbrain:trust',
     'gbrain',
@@ -682,7 +712,7 @@ function adaptGBrain(overview, generatedAt) {
     at,
     `${cleanText(overview?.trust?.label, 'GBrain trust unavailable')} · ${Number(overview?.trust?.score || 0)}/100`,
     '/api/gbrain/overview',
-    '/gbrain',
+    detailHref('gbrain'),
   );
   const staleProof = sourceStale ? evidence(
     'gbrain:source-freshness',
@@ -692,7 +722,7 @@ function adaptGBrain(overview, generatedAt) {
     at,
     `${staleSources} stale GBrain sources`,
     '/api/gbrain/overview',
-    '/gbrain',
+    detailHref('gbrain'),
   ) : null;
   const attention = caveats.map((detail, index) => ({
     id: `gbrain:caveat:${index}`,
@@ -701,7 +731,7 @@ function adaptGBrain(overview, generatedAt) {
     reasonCode: 'gbrain_active_caveat',
     title: 'GBrain has an active caveat',
     detail,
-    detailHref: '/gbrain',
+    detailHref: detailHref('gbrain'),
     evidenceRefs: [proof.id],
   }));
   if (staleProof) {
@@ -712,7 +742,7 @@ function adaptGBrain(overview, generatedAt) {
       reasonCode: 'gbrain_stale_sources',
       title: 'GBrain source evidence is stale',
       detail: `${staleSources} sources require a fresh verification signal.`,
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
       evidenceRefs: [staleProof.id],
     });
   }
@@ -730,7 +760,7 @@ function adaptGBrain(overview, generatedAt) {
         caveats: caveats.length,
       },
       evidence: staleProof ? [proof, staleProof] : [proof],
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
     },
     attention,
   };
@@ -751,7 +781,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
       generatedAt,
       'GBrain capability metadata unavailable',
       'GBrain capability registry',
-      '/gbrain',
+      detailHref('gbrain'),
     );
     adapted.gbrain.system.evidence.push(capabilityProof);
     adapted.gbrain.attention.push({
@@ -761,7 +791,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
       reasonCode: 'gbrain_capabilities_unavailable',
       title: 'GBrain capability metadata unavailable',
       detail: 'Read evidence remains available, but the safe action catalog could not be read.',
-      detailHref: '/gbrain',
+      detailHref: detailHref('gbrain'),
       evidenceRefs: [capabilityProof.id],
     });
   }
@@ -774,7 +804,7 @@ function buildOperationsOverview(input = {}, { generatedAt = new Date().toISOStr
   const attention = Object.values(adapted)
     .flatMap((value) => value.attention)
     .sort((a, b) => (
-      STATE_RANK[b.severity] - STATE_RANK[a.severity] || a.id.localeCompare(b.id)
+      stateRank(b.severity) - stateRank(a.severity) || a.id.localeCompare(b.id)
     ));
   const state = deriveOverallStatus(systems);
   return {
@@ -815,13 +845,219 @@ function withTimeout(reader, timeoutMs, source) {
   });
 }
 
+const OPERATIONS_SOURCE_NAMES = Object.freeze(['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain']);
+
+// Refresh budgets per reader (backend map, 'operations' recommendations):
+// Hermes every 30 s; OpenClaw status/sessions serialized on the openclaw lane
+// every 60 s (sessions gets lane wait on top of its 10 s); cron every 60 s
+// (its own 7 s soft deadline); GBrain every 60 s with the GBrain deadline
+// passed in from the probe constants (the GBrain service runs its own probe
+// schedule; readSnapshot serves its last result). The status reader only
+// reads the status service's memory (the openclaw.status source refreshes it).
+const OPERATIONS_SOURCE_BUDGETS = Object.freeze({
+  status: { intervalMs: 30_000, timeoutMs: 10_000 },
+  sessions: { intervalMs: 60_000, timeoutMs: 30_000 },
+  cron: { intervalMs: 60_000, timeoutMs: 10_000 },
+  hermes: { intervalMs: 30_000, timeoutMs: 10_000 },
+  hermesGateway: { intervalMs: 30_000, timeoutMs: 10_000 },
+  gbrain: { intervalMs: 60_000, timeoutMs: 10_000 },
+});
+
+// One meta for a payload composed from several sources: ok only when every
+// part is ok, stale when any part is, observedAt = the oldest observation.
+function composeMeta(parts, sourceId) {
+  const entries = Object.entries(parts);
+  const metas = entries.filter(([, snap]) => snap && snap.meta);
+  const observed = metas
+    .map(([, snap]) => Date.parse(snap.meta.observedAt))
+    .filter(Number.isFinite);
+  const oldest = observed.length ? Math.min(...observed) : null;
+  const failing = metas.filter(([, snap]) => !snap.meta.ok).map(([name]) => name);
+  const missing = entries.filter(([, snap]) => !snap || !snap.meta).map(([name]) => name);
+  const ages = metas.map(([, snap]) => snap.meta.ageMs).filter(Number.isFinite);
+  return {
+    ok: failing.length === 0 && missing.length === 0 && metas.length > 0,
+    stale: metas.some(([, snap]) => snap.meta.stale) || missing.length > 0 || metas.length === 0,
+    observedAt: oldest == null ? null : new Date(oldest).toISOString(),
+    ageMs: ages.length ? Math.max(...ages) : null,
+    error: failing.length || missing.length
+      ? { code: 'partial', message: `Not current: ${[...failing, ...missing].join(', ')}` }
+      : null,
+    latencyMs: null,
+    source: sourceId,
+    sources: Object.fromEntries(metas.map(([name, snap]) => [name, snap.meta])),
+  };
+}
+
+// A reader result that says it could not read is a failed read: the source
+// keeps its last good value instead of replacing it with an unavailable body.
+function sourceReadFromReader(reader, name) {
+  return async () => {
+    if (typeof reader !== 'function') {
+      throw Object.assign(new Error(`${name} reader unavailable`), { code: `${name}_reader_missing` });
+    }
+    let value;
+    try {
+      value = await reader();
+    } catch (error) {
+      // Reader text may carry child-process output; meta gets a fixed message.
+      const code = typeof error?.code === 'string' && /^[a-z][a-z0-9_]{1,63}$/i.test(error.code)
+        ? error.code
+        : `${name}_read_failed`;
+      throw Object.assign(new Error(`${name} could not be read`), { code });
+    }
+    if (value == null || value.ok === false || value.unavailable === true) {
+      throw Object.assign(new Error(`${name} could not be read`), { code: `${name}_unavailable` });
+    }
+    return value;
+  };
+}
+
+// One scheduled source per Operations reader. The app registers each with
+// the scheduler; GET /api/operations/overview then only composes from them.
+function createOperationsSources({
+  readers = {},
+  createSource,
+  sourceTimeoutMsOverrides = {},
+  budgets = OPERATIONS_SOURCE_BUDGETS,
+  now = Date.now,
+  logger = null,
+} = {}) {
+  if (typeof createSource !== 'function') throw new TypeError('createOperationsSources: createSource required');
+  return Object.fromEntries(OPERATIONS_SOURCE_NAMES.map((name) => {
+    const budget = budgets[name] || { intervalMs: 60_000, timeoutMs: 10_000 };
+    const timeoutMs = sourceTimeoutMsOverrides[name] ?? budget.timeoutMs;
+    // GBrain is already a scheduled last-good source. Project its current memory
+    // instead of caching a second verdict for another 60 seconds.
+    if (name === 'gbrain' && typeof readers[name]?.snapshot === 'function') {
+      const snapshot = () => readers[name].snapshot();
+      return [name, { intervalMs: budget.intervalMs, source: {
+        id: 'operations.gbrain', snapshot, refresh: async () => snapshot(),
+        status: () => ({ id: 'operations.gbrain', ...snapshot().meta, staleAfterMs: Infinity }),
+      } }];
+    }
+    return [name, {
+      intervalMs: budget.intervalMs,
+      source: createSource({
+        id: `operations.${name}`,
+        read: sourceReadFromReader(readers[name], name),
+        ttlMs: budget.intervalMs,
+        timeoutMs,
+        staleAfterMs: Math.max(3 * budget.intervalMs, timeoutMs + budget.intervalMs),
+        now,
+        logger,
+      }),
+    }];
+  }));
+}
+
+// The cron service's scheduler-evidence cache limits (server/services/cronData.js);
+// a proof normally carries its own and these apply only when it does not.
+const SCHEDULER_EVIDENCE_LIMITS = Object.freeze({ freshMs: 5 * 60 * 1000, maxStaleMs: 10 * 60 * 1000 });
+
+// A cron reading held in memory keeps aging after its read. Re-age every
+// scheduler proof by how long the reading has been held, against the limits
+// the proof carries, so memory reports what a read at this moment would:
+// fresh while younger than freshMs, stale (with its age) until maxStaleMs,
+// then unavailable with that scheduler's jobs dropped.
+function ageCronReading(cron, heldMs) {
+  const schedulers = cron?.operationsSource?.schedulers;
+  if (!isRecord(cron) || !isRecord(schedulers) || !Array.isArray(cron.jobs)
+    || !(typeof heldMs === 'number' && Number.isFinite(heldMs) && heldMs > 0)) return cron;
+  const aged = {};
+  const expired = new Set();
+  for (const [name, proof] of Object.entries(schedulers)) {
+    if (!isRecord(proof) || proof.sourceSucceeded !== true) {
+      aged[name] = proof;
+      continue;
+    }
+    const freshMs = isCount(proof.freshMs) ? proof.freshMs : SCHEDULER_EVIDENCE_LIMITS.freshMs;
+    const maxStaleMs = isCount(proof.maxStaleMs) ? proof.maxStaleMs : SCHEDULER_EVIDENCE_LIMITS.maxStaleMs;
+    const readAgeMs = proof.stale === true
+      ? (isCount(proof.staleAgeMs) ? proof.staleAgeMs : freshMs)
+      : (isCount(proof.cacheAgeMs) ? proof.cacheAgeMs : 0);
+    const ageMs = readAgeMs + Math.round(heldMs);
+    if (ageMs > maxStaleMs) {
+      expired.add(name);
+      aged[name] = { sourceSucceeded: false, provenance: `${name}-cron-unavailable`, observedAt: null };
+    } else if (ageMs > freshMs) {
+      const { cacheAgeMs: _fresh, ...rest } = proof;
+      aged[name] = { ...rest, stale: true, staleAgeMs: ageMs };
+    } else {
+      aged[name] = { ...proof, cacheAgeMs: ageMs };
+    }
+  }
+  const remaining = Object.values(aged).filter((proof) => proof?.sourceSucceeded === true);
+  const observedTimes = remaining.map((proof) => Date.parse(proof.observedAt)).filter(Number.isFinite);
+  return {
+    ...cron,
+    jobs: cron.jobs.filter((job) => !expired.has(job?.scheduler === 'hermes' ? 'hermes' : 'openclaw')),
+    operationsSource: {
+      ...cron.operationsSource,
+      sourceSucceeded: remaining.length > 0,
+      observedAt: observedTimes.length ? new Date(Math.max(...observedTimes)).toISOString() : null,
+      schedulers: aged,
+    },
+  };
+}
+
+// Memory-only input: last-good data while it is younger than its source's
+// stale horizon, otherwise the same unavailable marker a failed live read
+// produced. Never a default.
+function inputFromSources(sources) {
+  const input = {};
+  const snapshots = {};
+  for (const name of OPERATIONS_SOURCE_NAMES) {
+    const source = sources[name];
+    const snapshot = typeof source?.snapshot === 'function' ? source.snapshot() : null;
+    snapshots[name] = snapshot;
+    const staleAfterMs = typeof source?.status === 'function' ? source.status().staleAfterMs : null;
+    const agedOut = snapshot?.meta?.ageMs != null && Number.isFinite(staleAfterMs) && snapshot.meta.ageMs > staleAfterMs;
+    input[name] = snapshot?.data != null && !agedOut
+      ? (name === 'cron' ? ageCronReading(snapshot.data, snapshot.meta?.ageMs) : snapshot.data)
+      : {
+        ok: false,
+        unavailable: true,
+        error: agedOut ? `${name} evidence is older than its freshness limit` : `${name} has not been observed`,
+      };
+  }
+  return { input, snapshots };
+}
+
 function createOperationsOverviewService({
   readers = {},
+  sources = null,
   listCapabilities = () => [],
   now = () => new Date(),
   sourceTimeoutMs = 10_000,
   sourceTimeoutMsOverrides = {},
 } = {}) {
+  function withCapabilities(input) {
+    try {
+      input.capabilities = buildOperationsCapabilities({
+        gbrainActions: listCapabilities(),
+      });
+    } catch {
+      input.capabilities = [];
+      input.capabilitiesUnavailable = true;
+    }
+    return input;
+  }
+
+  // With scheduled sources the overview is composed from memory only: no
+  // reader runs and nothing waits on an upstream.
+  if (sources) {
+    const missing = OPERATIONS_SOURCE_NAMES.filter((name) => typeof sources[name]?.snapshot !== 'function');
+    if (missing.length) throw new TypeError(`createOperationsOverviewService: sources missing ${missing.join(', ')}`);
+    return {
+      async getOverview() {
+        const { input, snapshots } = inputFromSources(sources);
+        const overview = buildOperationsOverview(withCapabilities(input), { generatedAt: now().toISOString() });
+        return { ...overview, meta: composeMeta(snapshots, 'operations.overview') };
+      },
+    };
+  }
+
   async function getOverview() {
     const names = ['status', 'sessions', 'cron', 'hermes', 'hermesGateway', 'gbrain'];
     const results = await Promise.allSettled(
@@ -841,17 +1077,11 @@ function createOperationsOverviewService({
           error: result.reason?.message || `${names[index]} unavailable`,
         },
     ]));
-    try {
-      input.capabilities = buildOperationsCapabilities({
-        gbrainActions: listCapabilities(),
-      });
-    } catch {
-      input.capabilities = [];
-      input.capabilitiesUnavailable = true;
-    }
-    return buildOperationsOverview(input, { generatedAt: now().toISOString() });
+    return buildOperationsOverview(withCapabilities(input), { generatedAt: now().toISOString() });
   }
 
+  // Live mode (no sources): kept for callers and tests that pass readers
+  // directly. The app wires sources, so no request reaches this path there.
   return { getOverview };
 }
 
@@ -863,6 +1093,8 @@ function createOperationsReaders({
   hermesGatewayHealthService,
   gbrainOverviewService,
 } = {}) {
+  const gbrainReader = async () => (await gbrainOverviewService.readSnapshot()).overview;
+  if (typeof gbrainOverviewService?.overviewSnapshot === 'function') gbrainReader.snapshot = () => gbrainOverviewService.overviewSnapshot();
   return {
     status: () => statusService.getOperationsStatusResponse(),
     sessions: () => sessionsService.getOperationsSessions(25),
@@ -883,15 +1115,20 @@ function createOperationsReaders({
     // (stale) board instead of timing the whole system out.
     hermes: () => hermesKanbanService.getBoard({ softDeadlineMs: HERMES_SOFT_DEADLINE_MS }),
     hermesGateway: () => hermesGatewayHealthService.getHealth(),
-    gbrain: async () => (await gbrainOverviewService.readSnapshot()).overview,
+    gbrain: gbrainReader,
   };
 }
 
 module.exports = {
+  DETAIL_HREFS,
+  OPERATIONS_SOURCE_BUDGETS,
+  OPERATIONS_SOURCE_NAMES,
   STATE_RANK,
   buildOperationsCapabilities,
   buildOperationsOverview,
+  composeMeta,
   createOperationsOverviewService,
   createOperationsReaders,
+  createOperationsSources,
   deriveOverallStatus,
 };

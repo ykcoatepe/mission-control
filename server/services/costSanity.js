@@ -1,59 +1,4 @@
-const FALLBACK_PRICING = {
-  'openai-codex/gpt-5.4-mini': 4.5,
-  'openai-codex/gpt-5.4': 15,
-  'openai-codex/gpt-5.3-codex-spark': 14,
-  'anthropic/claude-opus-4-6': 25,
-  'anthropic/claude-sonnet-4-6': 15,
-  'anthropic/claude-haiku': 5,
-  'nvidia/llama-3.3-nemotron-super-49b-v1.5': 0.4,
-  'nvidia/nemotron-3-super-120b-a12b': 0.5,
-  'minimax/minimax-m2.7': 1.2,
-  'minimax/minimax-m2.5': 1.25,
-  'minimax/minimax-m2.1': 0.95,
-  'minimax/minimax-m2': 1.0,
-  'minimax/minimax-m2-her': 1.2,
-  'xiaomi/mimo-v2-omni': 2.0,
-  'xiaomi/mimo-v2-pro': 3.0,
-  'xiaomi/mimo-v2-flash': 0.29,
-};
-
-// Standard API list prices per 1M tokens. These are comparison rates only:
-// subscription-included and local usage remains $0 tracked spend.
-// Sources reviewed 2026-09-13: OpenAI and Z.ai public rate cards
-// (gpt-6-astra, gpt-5.3-codex-spark, glm-5.3-flash added then).
-const API_RATE_CARDS = [
-  { match: 'gpt-6-astra', input: 10, cachedInput: 1, output: 50, cacheWrite: 12.5 },
-  { match: 'gpt-5.6-sol', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 6.25 },
-  { match: 'gpt-5.6-terra', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 3.125 },
-  { match: 'gpt-5.6-luna', input: 1, cachedInput: 0.1, output: 6, cacheWrite: 1.25 },
-  { match: 'gpt-5.6', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 6.25 },
-  { match: 'gpt-5.5', input: 5, cachedInput: 0.5, output: 30, cacheWrite: 5 },
-  { match: 'gpt-5.4-mini', input: 0.75, cachedInput: 0.075, output: 4.5, cacheWrite: 0.75 },
-  { match: 'gpt-5.4-nano', input: 0.2, cachedInput: 0.02, output: 1.25, cacheWrite: 0.2 },
-  { match: 'gpt-5.4', input: 2.5, cachedInput: 0.25, output: 15, cacheWrite: 2.5 },
-  { match: 'gpt-5.3-codex-spark', input: 1.75, cachedInput: 0.175, output: 14, cacheWrite: 2.1875 },
-  { match: 'claude-fable-5', input: 10, cachedInput: 1, output: 50, cacheWrite: 12.5 },
-  { match: 'claude-opus-4-8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
-  { match: 'claude-opus-4.8', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
-  { match: 'claude-opus-4-6', input: 5, cachedInput: 0.5, output: 25, cacheWrite: 6.25 },
-  { match: 'claude-sonnet-5', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
-  { match: 'claude-sonnet-4-6', input: 3, cachedInput: 0.3, output: 15, cacheWrite: 3.75 },
-  { match: 'glm-5.3-flash', input: 0.15, cachedInput: 0.03, output: 0.5, cacheWrite: 0.1875 },
-  // Must stay AFTER the flash card: includes-matching would otherwise catch
-  // 'glm-5.3-flash' rows at the larger model's rates.
-  { match: 'glm-5.3', input: 1.4, cachedInput: 0.26, output: 4.4, cacheWrite: 1.75 },
-  // Known free tiers must zero-price before the generic default tier can
-  // fabricate a cost for them (mirrors the frontend pricing registry).
-  { match: 'qwen3-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
-  { match: 'qwen3.6-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
-  { match: 'nemotron-free', input: 0, cachedInput: 0, output: 0, cacheWrite: 0, free: true },
-];
-
-// Rows matching no known card are priced at this generic premium-cloud tier so
-// the dashboard shows a documented partial estimate instead of dropping the
-// total to unavailable when a new model appears. Cache-write rates follow the
-// file's 1.25x-input convention where providers do not bill writes separately.
-const API_DEFAULT_RATE = { input: 2.5, cachedInput: 0.25, output: 10, cacheWrite: 3.125 };
+const { fallbackPricing: FALLBACK_PRICING, apiRateCards: API_RATE_CARDS, defaultRate: API_DEFAULT_RATE, lastReviewed } = require('../sources/usage/rate-cards.json');
 
 const SUMMARY_COST_FIELDS = ['periodUsd', 'todayUsd', 'yesterdayUsd', 'thisWeekUsd', 'thisMonthUsd', 'totalUsd'];
 
@@ -475,6 +420,7 @@ function normalizeUsageCosts(usage) {
 }
 
 module.exports = {
+  lastReviewed,
   FALLBACK_PRICING,
   API_RATE_CARDS,
   displayCostLabel,

@@ -1,0 +1,169 @@
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-6);
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.heading {
+  color: var(--text-1);
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.meta {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.list > li + li {
+  border-top: 1px solid var(--line);
+}
+
+.participant {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+}
+
+.alive {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 72px;
+  justify-content: flex-end;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-2) var(--sp-3);
+  min-width: 0;
+}
+
+.itemHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.itemTitle {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.itemMeta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  font-size: var(--fs-small);
+}
+
+.detail {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.time {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.overdue {
+  flex: none;
+  color: var(--state-critical);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.groupName {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+  margin-right: auto;
+}
+
+.groupLabel {
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+}
+
+/* Codes break only after an underscore, never in the middle of a word. */
+.code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.status {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A raw command: its own block, wrapped, never mixed into the sentence above it. */
+.command {
+  margin: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  line-height: var(--lh-body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

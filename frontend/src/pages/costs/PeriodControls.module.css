@@ -1,0 +1,213 @@
+.controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+
+.monthNav {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.monthPickerAnchor {
+  position: relative;
+}
+
+.monthNavLabel {
+  min-width: 148px;
+  height: var(--control-h);
+  padding: 0 var(--sp-3);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  text-align: center;
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.monthNavLabel:hover {
+  background: var(--surface-2);
+  border-color: var(--line-strong);
+}
+
+.monthNavLabel:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.monthPicker {
+  position: absolute;
+  z-index: var(--z-drawer);
+  top: calc(100% + var(--sp-2));
+  left: 50%;
+  width: 292px;
+  max-width: min(292px, calc(100vw - 32px));
+  translate: -50% 0;
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+}
+
+.pickerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
+
+.pickerStep {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  color: var(--text-2);
+  border-radius: var(--r-md);
+}
+
+.pickerStep:hover:not(:disabled),
+.pickerStep:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.pickerStep:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.pickerStep:disabled {
+  color: var(--text-disabled);
+}
+
+.pickerTitle,
+.pickerYear {
+  flex: 1;
+  height: var(--control-h-sm);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+  text-align: center;
+  border-radius: var(--r-md);
+}
+
+.pickerTitle:hover,
+.pickerTitle:focus-visible {
+  background: var(--surface-3);
+  outline: none;
+}
+
+.pickerTitle:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.pickerYear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.monthGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-1);
+}
+
+.monthCell {
+  height: var(--control-h);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  border-radius: var(--r-md);
+}
+
+.monthCell:hover:not(:disabled),
+.monthCell:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.monthCell:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.monthCell:disabled {
+  color: var(--text-disabled);
+}
+
+.monthCellSelected {
+  color: var(--accent);
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
+}
+
+.weekHeader,
+.dayGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--sp-1);
+}
+
+.weekHeader {
+  margin-bottom: var(--sp-1);
+}
+
+.weekday {
+  color: var(--text-3);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-medium);
+  text-align: center;
+}
+
+.day {
+  height: var(--control-h);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+  border-radius: var(--r-sm);
+}
+
+/* Usage heat: the accent tint scales with the day's share of the month's peak. */
+.day[data-heat='true'] {
+  background: color-mix(in srgb, var(--accent) calc(var(--heat) * 100%), transparent);
+  color: var(--text-1);
+}
+
+.day:hover:not(:disabled),
+.day:focus-visible {
+  color: var(--text-1);
+  background: var(--surface-3);
+  outline: none;
+}
+
+.day:focus-visible {
+  box-shadow: var(--focus-ring);
+}
+
+.day:disabled {
+  color: var(--text-disabled);
+}
+
+.dayToday {
+  box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+
+.daySelected,
+.daySelected[data-heat='true'] {
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.hint {
+  margin-top: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}

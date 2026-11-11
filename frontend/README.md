@@ -30,8 +30,7 @@ is the surface that exercises the Express API and SPA fallback together.
 - `src/index.css` defines global tokens and shared macOS-style primitives;
   page-specific styles live in CSS Modules.
 
-Module flags control whether destinations appear in navigation or Diagnostics;
-they are not an authorization boundary and do not prevent direct route access.
+Module flags control whether destinations appear in navigation; they are not an authorization boundary and do not prevent direct route access.
 
 See the canonical [frontend conventions](../docs/reference-frontend-conventions.md),
 [operator surfaces reference](../docs/reference-operator-surfaces.md), and

@@ -1,10 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import {
   calcSuccessRate,
-  successRateColor,
   getCronScheduler,
   getCronSchedulerLabel,
-  getCronSchedulerColor,
   isDisallowedCloudModel,
   normalizeCronModelValue,
   formatCronModelLabel,
@@ -13,9 +11,10 @@ import {
   formatOverlapMinute,
   rowStaggerDelay,
   errorMessage,
-  cronFetch,
+  cronRequest,
   CLOUD_AGENT_MODEL,
 } from './lib'
+import { ApiError } from '../../lib/hooks'
 import type { CronJob } from './types'
 
 function makeJob(overrides: Partial<CronJob> = {}): CronJob {
@@ -68,15 +67,6 @@ describe('calcSuccessRate', () => {
   })
 })
 
-describe('successRateColor', () => {
-  it('maps percentage bands to colors', () => {
-    expect(successRateColor(100)).toBe('#32D74B')
-    expect(successRateColor(80)).toBe('#FFD60A')
-    expect(successRateColor(60)).toBe('#FF9500')
-    expect(successRateColor(10)).toBe('#FF453A')
-  })
-})
-
 // ---------------------------------------------------------------------------
 // scheduler helpers
 // ---------------------------------------------------------------------------
@@ -94,10 +84,6 @@ describe('scheduler helpers', () => {
     expect(getCronSchedulerLabel(undefined)).toBe('OpenClaw')
   })
 
-  it('returns the scheduler accent color', () => {
-    expect(getCronSchedulerColor({ scheduler: 'hermes' })).toBe('#64D2FF')
-    expect(getCronSchedulerColor(undefined)).toBe('#BF5AF2')
-  })
 })
 
 // ---------------------------------------------------------------------------
@@ -238,11 +224,20 @@ describe('buildCronOverlapMarkers', () => {
     expect(state.windows).toBe(1)
   })
 
+  it('does not bucket an interval job by the words of its display text', () => {
+    const a = makeJob({ id: 'a', schedule: 'every 30m', scheduleKind: 'interval', everyMs: 1_800_000 })
+    const b = makeJob({ id: 'b', schedule: 'every 30m', scheduleKind: 'interval', everyMs: 1_800_000 })
+    const c = makeJob({ id: 'c', schedule: null, scheduleKind: 'interval_unknown' })
+    expect(buildCronOverlapMarkers([a, b, c]).markers.size).toBe(0)
+    // Without a kind (older payload) the old reading of the text remains.
+    expect(buildCronOverlapMarkers([makeJob({ id: 'x', schedule: '30 9 * * *' }), makeJob({ id: 'y', schedule: '30 9 * * 1' })]).markers.size).toBe(2)
+  })
+
   it('falls back to cron hour|minute buckets when nextRun is missing', () => {
     const a = makeJob({ id: 'a', schedule: '30 9 * * *' })
     const b = makeJob({ id: 'b', schedule: '30 9 * * 1' })
     const state = buildCronOverlapMarkers([a, b])
-    expect(state.markers.get('a')?.label).toBe('Overlap 09:30')
+    expect(state.markers.get('a')?.label).toBe('Same time slot at 09:30')
     expect(state.markers.get('b')?.detail).toContain('2 enabled jobs')
   })
 
@@ -250,7 +245,7 @@ describe('buildCronOverlapMarkers', () => {
     const a = makeJob({ id: 'a', schedule: '15 * * * *' })
     const b = makeJob({ id: 'b', schedule: '15 * * * *' })
     const state = buildCronOverlapMarkers([a, b])
-    expect(state.markers.get('a')?.label).toBe('Overlap :15')
+    expect(state.markers.get('a')?.label).toBe('Same time slot at :15')
   })
 
   it('ignores disabled jobs and wildcard minutes', () => {
@@ -297,50 +292,61 @@ describe('rowStaggerDelay', () => {
 })
 
 // ---------------------------------------------------------------------------
-// errorMessage + cronFetch
+// errorMessage + cronRequest
 // ---------------------------------------------------------------------------
+
+const jsonResponse = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
 
 describe('errorMessage', () => {
   it('unwraps Error instances and stringifies the rest', () => {
     expect(errorMessage(new Error('boom'))).toBe('boom')
     expect(errorMessage('plain')).toBe('plain')
   })
+
+  it('uses the server message for validation and conflict, and says busy for 429', () => {
+    expect(errorMessage(new ApiError({ status: 400, code: 'invalid_schedule', message: 'Invalid job schedule' }))).toBe('Invalid job schedule')
+    expect(errorMessage(new ApiError({ status: 429, code: 'x', message: 'busy', retryAfterMs: 2000 }))).toBe('The server is busy, try again in 2 seconds.')
+  })
 })
 
-describe('cronFetch', () => {
+describe('cronRequest', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
   })
 
-  it('resolves silently on 2xx', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }))
-    await expect(cronFetch('/api/cron/x/run', { method: 'POST' })).resolves.toBeUndefined()
+  it('resolves silently on 2xx and sends the write header with a JSON body', async () => {
+    const mock = vi.fn().mockResolvedValue(jsonResponse({ ok: true }))
+    vi.stubGlobal('fetch', mock)
+    await expect(cronRequest('/api/cron/x/run', 'POST', { scheduler: 'openclaw' })).resolves.toBeUndefined()
+    const [, init] = mock.mock.calls[0] as [string, RequestInit]
+    expect(new Headers(init.headers).get('x-mc-request')).toBe('1')
+    expect(init.body).toBe('{"scheduler":"openclaw"}')
   })
 
-  it('throws the server error message from a JSON body', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 422,
-      json: () => Promise.resolve({ error: 'bad cron expression' }),
-    }))
-    await expect(cronFetch('/api/cron/create', { method: 'POST' })).rejects.toThrow('bad cron expression')
+  it('throws the server message from { error: { code, message } }', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: { code: 'invalid_schedule', message: 'Invalid job schedule' } }, 400)))
+    await expect(cronRequest('/api/cron/create', 'POST', {})).rejects.toMatchObject({ status: 400, code: 'invalid_schedule', message: 'Invalid job schedule' })
   })
 
-  it('falls back to the HTTP status when the JSON body has no string error', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 500,
-      json: () => Promise.resolve({ error: 42, detail: 'nope' }),
-    }))
-    await expect(cronFetch('/api/cron/x', { method: 'DELETE' })).rejects.toThrow('HTTP 500')
+  it('falls back to the HTTP status when the body is not an error object', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ detail: 'nope' }, 500)))
+    await expect(cronRequest('/api/cron/x', 'DELETE', {})).rejects.toThrow('HTTP 500')
   })
 
   it('falls back to the HTTP status for non-JSON error bodies', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
-      ok: false,
-      status: 502,
-      json: () => Promise.reject(new Error('not json')),
-    }))
-    await expect(cronFetch('/api/cron/x', { method: 'DELETE' })).rejects.toThrow('HTTP 502')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('bad gateway', { status: 502 })))
+    await expect(cronRequest('/api/cron/x', 'DELETE', {})).rejects.toThrow('HTTP 502')
+  })
+})
+
+describe('model list labels', () => {
+  it('never lists two identical lines: models with the same name show their id', () => {
+    const options = buildCronModelOptions([{ id: 'openai/gpt-5.5', name: 'GPT-5.5' }, { id: 'openai/gpt-6-astra', name: 'GPT-6-Astra' }], [])
+    const labels = options.map((option) => option.label)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(labels).toContain('GPT-5.5 (openai/gpt-5.5)')
+    expect(labels).toContain('GPT-5.5 (openai-codex/gpt-5.5)')
+    expect(labels).toContain('GPT-6-Astra')
   })
 })

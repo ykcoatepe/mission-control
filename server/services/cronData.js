@@ -1,12 +1,62 @@
 const fs = require('fs');
 const path = require('path');
+const { httpError } = require('../core/http');
+const { randomUUID } = require('node:crypto');
+const { homeRelativePath } = require('../core/scrub');
+const { redactString } = require('../core/config');
+const { SCHEDULE_KINDS, CALENDAR_EDITABLE_FIELDS, CRON_OVERRIDABLE_FIELDS, CRON_OWNED_FIELDS, entryIssue, assertCalendarEntry, partitionCalendarEntries } = require('./calendarEntrySchema');
 
-function writeJsonFileAtomic(filePath, value) {
-  const tmpPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  const existingMode = fs.existsSync(filePath) ? fs.statSync(filePath).mode & 0o777 : null;
-  fs.writeFileSync(tmpPath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-  if (existingMode !== null) fs.chmodSync(tmpPath, existingMode);
-  fs.renameSync(tmpPath, filePath);
+function writeFileAtomic(filePath, content, { fsImpl = fs, mode } = {}) {
+  const tmpPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  const existingMode = mode ?? (fsImpl.existsSync(filePath) ? fsImpl.statSync(filePath).mode & 0o777 : 0o600);
+  try {
+    fsImpl.writeFileSync(tmpPath, content, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    fsImpl.chmodSync(tmpPath, existingMode);
+    fsImpl.renameSync(tmpPath, filePath);
+  } catch (error) {
+    try { fsImpl.rmSync(tmpPath, { force: true }); } catch {}
+    throw error;
+  }
+}
+
+function writeJsonFileAtomic(filePath, value, options) {
+  writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`, options);
+}
+
+// Date's finite domain is smaller than Number's. Never coerce arrays, booleans
+// or objects into upstream timestamps, and check numeric bounds before Date.
+function dateMsOrNull(value) {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || Math.abs(value) > 8.64e15) return null;
+  } else if (typeof value !== 'string' || !value.trim()) return null;
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function dateIsoOrNull(value) {
+  const ms = dateMsOrNull(value);
+  return ms === null ? null : new Date(ms).toISOString();
+}
+
+function completeCronInventoryJobs(inventory) {
+  const jobs = Array.isArray(inventory) ? inventory : inventory?.jobs;
+  if (!Array.isArray(jobs)) throw new Error('Invalid cron inventory');
+  // The installed OpenClaw CLI collects Gateway pages before JSON output.
+  // Never interpret a nonterminal/truncated page as proof a job was deleted.
+  if (!Array.isArray(inventory) && (
+    (inventory.hasMore !== undefined && inventory.hasMore !== false)
+    || (inventory.nextOffset !== undefined && inventory.nextOffset !== null)
+    || (inventory.offset !== undefined && inventory.offset !== 0)
+    || (inventory.total !== undefined && (!Number.isSafeInteger(inventory.total) || inventory.total !== jobs.length))
+    || (inventory.scope !== undefined && inventory.scope !== 'gateway')
+    || inventory.truncated === true
+  )) throw Object.assign(new Error('Incomplete cron inventory'), { code: 'cron_inventory_incomplete' });
+  return jobs;
+}
+
+function normalizeOpenclawCronJob(job) {
+  if (!job || typeof job !== 'object' || Array.isArray(job)) return { scheduler: 'openclaw', id: null, sourceId: null };
+  return { ...job, scheduler: 'openclaw', sourceId: job.id };
 }
 
 function parseJsonCandidates(raw = '') {
@@ -169,14 +219,14 @@ function parseCronTableOutput(output) {
         const amount = Number.parseInt(future[1], 10);
         const unit = future[2];
         const offset = unit === 'm' ? amount * 60000 : unit === 'h' ? amount * 3600000 : amount * 86400000;
-        return new Date(now + offset).toISOString();
+        return dateIsoOrNull(now + offset);
       }
       const past = value.match(/^(\d+)([mhd])\s+ago$/);
       if (past) {
         const amount = Number.parseInt(past[1], 10);
         const unit = past[2];
         const offset = unit === 'm' ? amount * 60000 : unit === 'h' ? amount * 3600000 : amount * 86400000;
-        return new Date(now - offset).toISOString();
+        return dateIsoOrNull(now - offset);
       }
       return null;
     };
@@ -200,8 +250,72 @@ function parseCronTableOutput(output) {
   return jobs;
 }
 
+// Live structure inventory (2026-11-11): Hermes cron(expr/display),
+// interval(minutes/display), once(run_at/display); OpenClaw cron(expr with
+// optional tz/staggerMs), every(everyMs/anchorMs). Other supported units are
+// explicit conversions; unrecognised kinds never become a made-up cron kind.
+// Conservative parser for the standard five/six-field cron grammar. An
+// unlabelled scheduler display must pass syntax AND field ranges before it
+// can be described as cron. Unsupported extensions remain honest unknowns.
+function isCronExpression(expression) {
+  if (expression.length > 1024) return false;
+  if (['@yearly', '@annually', '@monthly', '@weekly', '@daily', '@midnight', '@hourly'].includes(expression.toLowerCase())) return true;
+  const fields = expression.trim().split(/\s+/);
+  if (fields.length !== 5 && fields.length !== 6) return false;
+  const specs = [[0, 59], [0, 23], [1, 31], [1, 12, ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']], [0, 7, ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT']]];
+  if (fields.length === 6) specs.unshift([0, 59]);
+  return fields.every((field, index) => {
+    const [min, max, names] = specs[index];
+    const number = token => {
+      if (names?.includes(token)) return names.indexOf(token) + min;
+      return /^\d{1,2}$/.test(token) ? Number(token) : NaN;
+    };
+    return field.toUpperCase().split(',').every(part => {
+      const split = part.split('/');
+      if (split.length > 2) return false;
+      if (split.length === 2 && (!/^\d{1,2}$/.test(split[1]) || Number(split[1]) < 1 || Number(split[1]) > max - min + 1)) return false;
+      if (split[0] === '*') return true;
+      const range = split[0].split('-');
+      if (range.length > 2) return false;
+      const start = number(range[0]), end = number(range.at(-1));
+      return Number.isFinite(start) && Number.isFinite(end) && start >= min && end <= max && start <= end;
+    });
+  });
+}
+
+function describeCronSchedule(job = {}) {
+  const raw = job.schedule;
+  const kind = typeof raw?.kind === 'string' ? raw.kind.toLowerCase() : null;
+  const expression = raw?.expr || (typeof raw === 'string' ? raw : null);
+  const display = [raw?.display, job.schedule_display].find(value => typeof value === 'string' && value.trim() && !['?', 'every'].includes(value.trim().toLowerCase())) || null;
+  const unknown = { schedule: display, scheduleKind: 'unknown', everyMs: null, atIso: null };
+  const kindlessInterval = !kind && typeof expression === 'string' && /^every\b/i.test(expression);
+  if (kind === 'every' || kind === 'interval' || raw === 'every' || kindlessInterval) {
+    const candidates = [[raw?.everyMs, 1], [raw?.seconds, 1000], [raw?.minutes, 60000], [raw?.hours, 3600000]];
+    const fromDisplay = (kindlessInterval ? expression : display)?.match(/^every\s+(\d+(?:\.\d+)?)\s*(ms|s|m|h|d)$/i);
+    if (fromDisplay) candidates.push([Number(fromDisplay[1]), { ms: 1, s: 1000, m: 60000, h: 3600000, d: 86400000 }[fromDisplay[2].toLowerCase()]]);
+    const everyMs = candidates.map(([value, scale]) => typeof value === 'number' ? value * scale : null)
+      .find(value => Number.isSafeInteger(value) && value > 0);
+    if (!everyMs) return kindlessInterval ? { ...unknown, schedule: expression } : unknown;
+    const units = [[86400000, 'd'], [3600000, 'h'], [60000, 'm'], [1000, 's'], [1, 'ms']];
+    const [size, suffix] = units.find(([size]) => everyMs % size === 0);
+    return { schedule: kindlessInterval ? expression : `every ${everyMs / size}${suffix}`, scheduleKind: 'interval', everyMs, atIso: null };
+  }
+  if (kind === 'once' || kind === 'at') {
+    const at = raw?.run_at ?? raw?.at;
+    const atIso = dateIsoOrNull(at);
+    return { schedule: display || (atIso && typeof at === 'string' ? at : atIso), scheduleKind: 'at', everyMs: null, atIso };
+  }
+  if ((kind === 'cron' || (!kind && typeof expression === 'string' && isCronExpression(expression))) && typeof expression === 'string' && expression.trim() && !['?', 'every'].includes(expression.trim().toLowerCase())) {
+    return { schedule: expression, scheduleKind: 'cron', everyMs: null, atIso: null };
+  }
+  return !kind && typeof expression === 'string' && !['?', 'every'].includes(expression.trim().toLowerCase()) ? { ...unknown, schedule: display || expression } : unknown;
+}
+
 function createCronService({
   openclawExec,
+  runner,
+  hermesBin,
   gatewayPort,
   gatewayToken,
   getOpenclawDefaultModelKey,
@@ -214,17 +328,30 @@ function createCronService({
   // Below the Operations source timeout (10s) so one slow scheduler probe
   // never takes the whole cron reader (and the Hermes proof) down with it.
   operationsSoftDeadlineMs = 7000,
+  fetchImpl = (...args) => fetch(...args),
+  fsImpl = fs,
 }) {
+  const fs = fsImpl;
   const openclawCronRunsDir = path.join(homeDir, '.openclaw', 'cron', 'runs');
   const hermesCronJobsFile = path.join(homeDir, '.hermes', 'profiles', hermesProfile, 'cron', 'jobs.json');
   const maxHistoryRuns = 10;
+  // An upstream read keeps this identity when another consumer joins it.
+  // Wall time is real; the ordinal disambiguates starts in the same ms.
+  let evidenceOrder = 0;
+  function markCronObservation() { return { atMs: now(), order: ++evidenceOrder }; }
+
+  function effectiveCronEnabled(job = {}) {
+    const state = job.schedulerState ?? (typeof job.state === 'string' ? job.state.trim() : null);
+    return (typeof job.enabled === 'boolean' ? job.enabled : job.enabled == null)
+      && !(isHermesJob(job) && (['paused', 'completed', 'error'].includes(state) || Boolean(job.paused_at)));
+  }
 
   function normalizeCronRunStatus(job = {}) {
-    if (job.enabled === false) return 'disabled';
+    if (!effectiveCronEnabled(job)) return 'disabled';
     const raw = String(job.state?.lastStatus || job.state?.lastRunStatus || '').trim().toLowerCase();
     if (['ok', 'active', 'running', 'success'].includes(raw)) return 'active';
     if (['failed', 'error', 'errored'].includes(raw)) return 'failed';
-    if (job.state?.nextRunAtMs) return 'scheduled';
+    if (typeof job.state?.nextRunAtMs === 'number' && dateMsOrNull(job.state.nextRunAtMs) !== null) return 'scheduled';
     return 'idle';
   }
 
@@ -279,48 +406,53 @@ function createCronService({
   }
 
   function mapCronJobForApi(job = {}) {
+    if (!job || typeof job.id !== 'string' || !job.id.trim()) return null;
     const scheduler = isHermesJob(job) ? 'hermes' : 'openclaw';
     const sourceId = getCronJobSourceId(job);
+    const enabled = effectiveCronEnabled(job);
+    const model = job.payload?.model ?? job.model ?? (scheduler === 'openclaw' ? getOpenclawDefaultModelKey() : '');
+    const nextRun = typeof job.state?.nextRunAtMs === 'number' ? dateIsoOrNull(job.state.nextRunAtMs) : null;
     return {
       id: getCronJobApiId(job),
       sourceId,
-      name: job.name || String(job.id || '').substring(0, 8) || 'Unnamed job',
+      name: typeof job.name === 'string' && job.name ? job.name : String(job.id).substring(0, 8),
       scheduler,
       schedulerLabel: scheduler === 'hermes' ? 'Hermes' : 'OpenClaw',
-      schedule: job.schedule?.expr || job.schedule?.display || job.schedule_display || job.schedule?.kind || '?',
-      status: normalizeCronRunStatus(job),
-      lastRun: job.state?.lastRunAtMs ? new Date(job.state.lastRunAtMs).toISOString() : null,
-      nextRun: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : null,
-      duration: job.state?.lastDurationMs ? `${job.state.lastDurationMs}ms` : null,
-      target: job.sessionTarget || 'main',
-      payload: job.payload?.kind || '?',
-      model: job.payload?.model || job.model || (scheduler === 'openclaw' ? getOpenclawDefaultModelKey() : '') || '',
-      thinking: job.payload?.thinking || '',
-      description: job.payload?.text?.substring(0, 120) || job.payload?.message?.substring(0, 120) || job.prompt?.substring(0, 120) || '',
+      ...describeCronSchedule(job),
+      status: normalizeCronRunStatus({ ...job, enabled }),
+      lastRun: typeof job.state?.lastRunAtMs === 'number' ? dateIsoOrNull(job.state.lastRunAtMs) : null,
+      nextRun,
+      nextRunOverdue: require('../sources/openclaw/overdue').isNextRunOverdue(enabled, nextRun, now()),
+      nextRunDue: require('../sources/openclaw/overdue').isNextRunDue(enabled, nextRun, now()),
+      verified: true,
+      ...(scheduler === 'hermes' ? { schedulerState: job.schedulerState ?? null, upstreamEnabled: typeof job.enabled === 'boolean' ? job.enabled : null,
+        pausedAt: dateIsoOrNull(job.paused_at),
+        pausedReason: typeof job.paused_reason === 'string' ? redactString(job.paused_reason).slice(0, 256) : null } : {}),
+      duration: Number.isFinite(job.state?.lastDurationMs) && job.state.lastDurationMs >= 0 ? `${job.state.lastDurationMs}ms` : null,
+      target: typeof job.sessionTarget === 'string' ? job.sessionTarget : 'main',
+      payload: typeof job.payload?.kind === 'string' ? job.payload.kind : '?',
+      model: typeof model === 'string' ? model : '',
+      thinking: typeof job.payload?.thinking === 'string' ? job.payload.thinking : '',
+      description: [job.payload?.text, job.payload?.message, job.prompt].find(value => typeof value === 'string')?.substring(0, 120) || '',
       history: readRunHistory(sourceId, scheduler),
-      enabled: job.enabled !== false,
+      enabled,
       actions: getCronJobActions(job),
     };
   }
 
   function toMsOrNull(value) {
-    if (!value) return null;
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+    return dateMsOrNull(value);
   }
 
   function normalizeHermesCronJob(job = {}) {
+    if (!job || typeof job !== 'object' || Array.isArray(job)) return { scheduler: 'hermes', id: null, sourceId: null };
     const lastStatus = job.last_status || job.lastStatus || job.state;
     return {
       ...job,
       scheduler: 'hermes',
+      schedulerState: typeof job.state === 'string' ? job.state.trim() : null,
       sourceId: job.id,
-      schedule: {
-        kind: job.schedule?.kind || 'cron',
-        expr: job.schedule?.expr || job.schedule_display || job.schedule?.display || '?',
-        display: job.schedule_display || job.schedule?.display || job.schedule?.expr || '?',
-      },
+      schedule: job.schedule,
       sessionTarget: job.deliver || job.sessionTarget || 'origin',
       payload: {
         kind: job.prompt ? 'agentTurn' : (job.payload?.kind || 'cron'),
@@ -390,63 +522,100 @@ function createCronService({
     return { provider: null, model: normalized, base_url: null };
   }
 
-  function patchHermesCronJob(sourceId = '', patch = {}) {
-    const parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
-    const jobs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
-    const index = jobs.findIndex((candidate) => String(candidate.id) === String(sourceId));
-    if (index === -1) {
-      const error = new Error(`Hermes cron job not found: ${sourceId}`);
-      error.statusCode = 404;
-      throw error;
+  function strictHermesJobs() {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(hermesCronJobsFile, 'utf8'));
+      const jobs = Array.isArray(parsed) ? parsed : parsed?.jobs;
+      if (!Array.isArray(jobs) || jobs.some(job => !job || typeof job.id !== 'string')) throw new Error('Invalid jobs');
+      return jobs;
+    } catch {
+      throw httpError(409, 'hermes_cron_unavailable', 'Hermes cron data is unreadable; no changes were made');
     }
-
-    const nextJob = { ...jobs[index], ...patch };
-    const nextJobs = jobs.slice();
-    nextJobs[index] = nextJob;
-    const output = Array.isArray(parsed) ? nextJobs : { ...parsed, jobs: nextJobs };
-    writeJsonFileAtomic(hermesCronJobsFile, output);
-    return normalizeHermesCronJob(nextJob);
   }
 
-  function updateHermesCronJobModel(sourceId = '', modelRef = '') {
-    const next = splitHermesModelRef(modelRef);
-    return patchHermesCronJob(sourceId, {
-      provider: next.provider,
-      model: next.model,
-      base_url: next.base_url,
+  async function runHermesCron(args, { read = false } = {}) {
+    if (typeof runner?.run !== 'function') throw httpError(503, 'hermes_runner_unavailable', 'The Hermes runner is unavailable');
+    const hostBin = path.join(homeDir, '.local', 'bin', 'hermes');
+    const bin = hermesBin || process.env.HERMES_BIN || (fs.existsSync(hostBin) ? hostBin : 'hermes');
+    const result = await runner.run(bin, ['--profile', hermesProfile, 'cron', ...args], {
+      lane: 'hermes', timeoutMs: read ? 8000 : 15000, maxOutputBytes: 1024 * 1024,
+      ...(read ? { key: `hermes-cron-verification:${hermesProfile}:${randomUUID()}` } : {}),
+      env: { ...process.env, HOME: homeDir, HERMES_PROFILE: hermesProfile },
     });
+    if (!result?.ok) {
+      if (read) throw Object.assign(new Error('Hermes read-back failed'), { code: 'upstream_read_failed' });
+      throw httpError(503, 'upstream_command_failed', 'Hermes did not accept the command');
+    }
+    return result;
   }
 
-  function updateHermesCronJobEnabled(sourceId = '', enabled = true) {
-    return patchHermesCronJob(sourceId, { enabled: enabled !== false });
+  async function updateHermesCronJobModel(sourceId = '', modelRef = '') {
+    const existing = strictHermesJobs().find(job => job.id === sourceId);
+    if (!existing) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
+    const next = splitHermesModelRef(modelRef);
+    // The supported edit interface cannot set or clear base_url. Never send
+    // a provider/model change that requires an endpoint change it cannot make.
+    if ((existing.base_url || null) !== next.base_url) {
+      throw httpError(409, 'hermes_base_url_requires_external_change', 'The job base URL must be changed in Hermes before this model change');
+    }
+    return runHermesCron(['edit', sourceId, `--model=${next.model || ''}`, `--provider=${next.provider || ''}`]);
+  }
+
+  async function updateHermesCronJobEnabled(sourceId = '', enabled = true) {
+    if (!strictHermesJobs().some(job => job.id === sourceId)) throw httpError(404, 'hermes_cron_job_not_found', 'Hermes cron job not found');
+    return runHermesCron([enabled ? 'resume' : 'pause', sourceId]);
+  }
+
+  async function readCronJobsForVerification(scheduler) {
+    if (scheduler === 'hermes') {
+      // The installed CLI's list has --all but no JSON flag. Ask the supported
+      // reader on its lane, then inspect only metadata in its authoritative
+      // state document. Never parse/promote the human list's prompt text.
+      await runHermesCron(['list', '--all'], { read: true });
+      const fields = ['id', 'name', 'enabled', 'state', 'paused_at', 'paused_reason', 'schedule', 'schedule_display',
+        'model', 'provider', 'base_url', 'last_run_at', 'next_run_at', 'last_status', 'last_duration_ms'];
+      let jobs;
+      try { jobs = strictHermesJobs(); } catch { throw Object.assign(new Error('Hermes state could not be read'), { code: 'upstream_read_failed' }); }
+      return jobs.map(job => ({ ...normalizeHermesCronJob(Object.fromEntries(fields.filter(key => Object.hasOwn(job, key)).map(key => [key, job[key]]))), _verificationMetadataOnly: true }));
+    }
+    let result;
+    try { result = await openclawExec(['cron', 'list', '--json', '--all'], 8000); }
+    catch { throw Object.assign(new Error('OpenClaw read-back failed'), { code: 'upstream_read_failed' }); }
+    try { return completeCronInventoryJobs(extractJsonPayload([result.stdout, result.stderr].filter(Boolean).join('\n'))).map(normalizeOpenclawCronJob); }
+    catch { throw httpError(409, 'upstream_unverified', 'OpenClaw did not return a readable, complete cron inventory'); }
   }
 
 
   async function fetchOpenclawCronJobsEvidence({ acceptEmpty = true } = {}) {
+    let incompleteInventory = false;
     try {
       const { stdout, stderr } = await openclawExec(['cron', 'list', '--json', '--all'], 15000);
       const raw = [stdout, stderr].filter(Boolean).join('\n');
       if (raw.trim()) {
         try {
           const result = extractJsonPayload(raw);
-          const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
+          const jobs = completeCronInventoryJobs(result);
           if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron JSON');
           return {
-            jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+            jobs: jobs.map(normalizeOpenclawCronJob),
             sourceSucceeded: true,
             provenance: 'openclaw-cron-cli-json',
             observedAt: new Date().toISOString(),
           };
-        } catch {}
+        } catch (error) { incompleteInventory = error.code === 'cron_inventory_incomplete'; }
       }
     } catch {}
 
     try {
-      const { stdout } = await openclawExec(['cron', 'list'], 15000);
+      // A human table cannot prove an explicitly nonterminal JSON page is a
+      // complete inventory. Only another complete JSON source may replace it.
+      if (incompleteInventory) throw new Error('Incomplete inventory');
+      const { stdout } = await openclawExec(['cron', 'list', '--all'], 15000);
       const jobs = parseCronTableOutput(stdout);
+      if (!jobs.length && !String(stdout || '').split('\n').some(line => /^No cron jobs\b/i.test(line.trim()))) throw new Error('Unrecognized cron table');
       if (!acceptEmpty && jobs.length === 0) throw new Error('Empty cron table');
       return {
-        jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+        jobs: jobs.map(normalizeOpenclawCronJob),
         sourceSucceeded: true,
         provenance: 'openclaw-cron-cli-table',
         observedAt: new Date().toISOString(),
@@ -456,7 +625,7 @@ function createCronService({
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
     try {
-      const response = await fetch(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
+      const response = await fetchImpl(`http://127.0.0.1:${gatewayPort}/tools/invoke`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -465,16 +634,16 @@ function createCronService({
         signal: controller.signal,
         body: JSON.stringify({
           tool: 'cron',
-          args: { action: 'list' },
+          args: { action: 'list', includeDisabled: true },
         }),
       });
       if (!response.ok) throw new Error('OpenClaw cron gateway unavailable');
       const data = await response.json();
       const details = data?.result?.details;
       if (details?.jobs || Array.isArray(details)) {
-        const jobs = Array.isArray(details) ? details : details.jobs;
+        const jobs = completeCronInventoryJobs(details);
         return {
-          jobs: (jobs || []).map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+          jobs: (jobs || []).map(normalizeOpenclawCronJob),
           sourceSucceeded: true,
           provenance: 'openclaw-cron-gateway',
           observedAt: new Date().toISOString(),
@@ -482,9 +651,9 @@ function createCronService({
       }
       const textResult = data?.result?.content?.[0]?.text || '{}';
       const result = extractJsonPayload(textResult);
-      const jobs = Array.isArray(result) ? result : (Array.isArray(result?.jobs) ? result.jobs : []);
+      const jobs = completeCronInventoryJobs(result);
       return {
-        jobs: jobs.map((job) => ({ ...job, scheduler: 'openclaw', sourceId: job.id })),
+        jobs: jobs.map(normalizeOpenclawCronJob),
         sourceSucceeded: true,
         provenance: 'openclaw-cron-gateway',
         observedAt: new Date().toISOString(),
@@ -529,7 +698,11 @@ function createCronService({
     function refresh() {
       if (!inFlight) {
         inFlight = Promise.resolve()
-          .then(read)
+          .then(() => {
+            const started = markCronObservation();
+            return Promise.resolve(read()).then(evidence => ({ ...evidence,
+              readStartedAtMs: started.atMs, readStartedOrder: started.order }));
+          })
           .then((evidence) => {
             if (evidence?.sourceSucceeded) lastGood = { evidence, at: now() };
             return evidence;
@@ -580,13 +753,19 @@ function createCronService({
       ? new Date(Math.max(...observedTimes)).toISOString()
       : null;
     const sourceProof = ({
-      sourceSucceeded, provenance, observedAt: sourceObservedAt, stale, staleAgeMs, cacheAgeMs,
+      sourceSucceeded, provenance, observedAt: sourceObservedAt, stale, staleAgeMs, cacheAgeMs, readStartedAtMs, readStartedOrder,
     }) => ({
       sourceSucceeded,
       provenance,
       observedAt: sourceObservedAt,
+      readStartedAtMs,
+      readStartedOrder,
       ...(stale ? { stale: true, staleAgeMs } : {}),
       ...(cacheAgeMs !== undefined ? { cacheAgeMs } : {}),
+      // The cache limits travel with the proof, so a holder of this reading
+      // (the Operations cron source) ages it against the same limits.
+      freshMs,
+      maxStaleMs,
     });
     return {
       jobs: [...openclaw.jobs, ...hermes.jobs],
@@ -603,16 +782,18 @@ function createCronService({
   }
 
   function toIsoOrNull(value) {
-    if (!value) return null;
-    const parsed = new Date(value);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    return dateIsoOrNull(value);
   }
 
   function normalizeCalendarEntry(entry = {}, nowIso = new Date().toISOString()) {
+    assertCalendarEntry(entry);
     return {
       id: String(entry.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
       title: String(entry.title || 'Untitled').trim() || 'Untitled',
-      schedule: String(entry.schedule || ''),
+      schedule: entry.schedule === null ? null : (entry.schedule || ''),
+      scheduleKind: SCHEDULE_KINDS.includes(entry.scheduleKind) ? entry.scheduleKind : 'unknown',
+      everyMs: entry.everyMs ?? null,
+      atIso: entry.atIso ?? null,
       startsAt: toIsoOrNull(entry.startsAt),
       status: String(entry.status || 'scheduled'),
       assignee: String(entry.assignee || 'Mudur'),
@@ -623,6 +804,11 @@ function createCronService({
       createdAt: toIsoOrNull(entry.createdAt) || nowIso,
       updatedAt: toIsoOrNull(entry.updatedAt) || nowIso,
       lastSyncedAt: toIsoOrNull(entry.lastSyncedAt) || toIsoOrNull(entry.updatedAt) || nowIso,
+      userOverrides: Array.isArray(entry.userOverrides)
+        ? [...new Set(entry.userOverrides.filter(field => (entry.source === 'cron' ? CRON_OVERRIDABLE_FIELDS : CALENDAR_EDITABLE_FIELDS).includes(field)))] : [],
+      cronDerived: entry.source === 'cron' && entry.cronDerived && typeof entry.cronDerived === 'object'
+        ? Object.fromEntries(CRON_OVERRIDABLE_FIELDS.filter(field => Object.hasOwn(entry.cronDerived, field))
+          .map(field => [field, entry.cronDerived[field]])) : null,
     };
   }
 
@@ -635,34 +821,101 @@ function createCronService({
     });
   }
 
-  function readCalendarDataSafe() {
-    try {
-      if (!fs.existsSync(calendarFile)) {
-        return { entries: [], updatedAt: null, lastCronSyncAt: null };
+  function readCalendarDocument({ withRaw = false } = {}) {
+    let raw;
+    try { raw = fs.readFileSync(calendarFile); } catch (error) {
+      if (error.code === 'ENOENT') {
+        const document = { entries: [], updatedAt: null, lastCronSyncAt: null };
+        return withRaw ? { document, raw: null } : document;
       }
-      const parsed = JSON.parse(fs.readFileSync(calendarFile, 'utf8'));
-      const payload = Array.isArray(parsed) ? { entries: parsed } : (parsed || {});
+      throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+    }
+    try {
+      const parsed = JSON.parse(raw.toString('utf8'));
+      const payload = Array.isArray(parsed) ? { entries: parsed } : parsed;
+      if (!payload || !Array.isArray(payload.entries)) throw new Error('Invalid calendar document');
+      return withRaw ? { document: payload, raw } : payload;
+    } catch {
+      throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+    }
+  }
+
+  function readCalendarDataSafe({ strict = false, tolerateEntries = false } = {}) {
+    try {
+      const payload = readCalendarDocument();
+      const { valid, diagnostics } = partitionCalendarEntries(payload.entries);
+      if (strict && !tolerateEntries && (diagnostics.quarantined.count || diagnostics.duplicates.count)) throw new Error('Calendar entries require correction');
       return {
-        entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
+        entries: sortCalendarEntries(valid.map(entry => normalizeCalendarEntry(entry))),
         updatedAt: toIsoOrNull(payload.updatedAt),
         lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
+        diagnostics,
       };
     } catch (error) {
+      if (strict) {
+        throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+      }
       console.error('[Calendar read]', error.message);
       return { entries: [], updatedAt: null, lastCronSyncAt: null, error: error.message };
     }
   }
 
-  function writeCalendarDataSafe(payload = {}) {
+  function writeCalendarDataSafe(payload = {}, { originalDocument } = {}) {
+    if (!Array.isArray(payload.entries)) throw httpError(400, 'calendar_entry_invalid', 'Calendar entries must be an array');
+    payload.entries.forEach(entry => assertCalendarEntry(entry));
+    const partition = partitionCalendarEntries(payload.entries);
+    if (partition.duplicates.length) throw httpError(400, 'calendar_entry_invalid', 'Calendar entry IDs must be unique');
     const dir = path.dirname(calendarFile);
-    fs.mkdirSync(dir, { recursive: true });
     const next = {
-      entries: sortCalendarEntries((payload.entries || []).map((entry) => normalizeCalendarEntry(entry))),
+      ...originalDocument,
+      entries: sortCalendarEntries(payload.entries.map(entry => normalizeCalendarEntry(entry))),
       updatedAt: toIsoOrNull(payload.updatedAt) || new Date().toISOString(),
       lastCronSyncAt: toIsoOrNull(payload.lastCronSyncAt),
     };
-    fs.writeFileSync(calendarFile, JSON.stringify(next, null, 2), 'utf8');
+    next.entries.forEach(entry => assertCalendarEntry(entry));
+    fs.mkdirSync(dir, { recursive: true });
+    writeJsonFileAtomic(calendarFile, next, { fsImpl: fs });
     return next;
+  }
+
+  function repairCalendarData() {
+    try {
+      if (fs.lstatSync(calendarFile).isSymbolicLink()) throw httpError(409, 'calendar_symlink_unsupported', 'Repair requires a regular calendar file; no changes were made');
+    } catch (error) {
+      if (error.code !== 'ENOENT') {
+        if (error.status) throw error;
+        throw httpError(409, 'calendar_unavailable', 'Calendar data is unreadable; no changes were made');
+      }
+    }
+    const { document, raw } = readCalendarDocument({ withRaw: true });
+    const { valid, quarantined, duplicates } = partitionCalendarEntries(document.entries);
+    const counts = { kept: valid.length, quarantined: quarantined.length, duplicates: duplicates.length };
+    if (!quarantined.length && !duplicates.length) return { ok: true, repaired: false, counts, backupPath: null, ...readCalendarDataSafe({ strict: true }) };
+    const repairedAt = new Date(now()).toISOString();
+    const backup = `${calendarFile}.repair-${repairedAt.replace(/[:.]/g, '-')}-${randomUUID()}.json`;
+    const relative = file => {
+      const publicPath = homeRelativePath(file, { homeDir, fsImpl: fs });
+      return publicPath.startsWith('~') ? publicPath : path.join(path.basename(path.dirname(publicPath)), path.basename(publicPath));
+    };
+    try {
+      // Commit the exact original bytes, including unknown root keys, before
+      // replacing the source. Recovery files are always private (0600).
+      // If the source rename fails, retain this backup and the original file.
+      writeFileAtomic(backup, raw, { fsImpl: fs, mode: 0o600 });
+      const repaired = writeCalendarDataSafe({ entries: valid, updatedAt: repairedAt, lastCronSyncAt: document.lastCronSyncAt }, { originalDocument: document });
+      const prefix = `${path.basename(calendarFile)}.repair-`;
+      const backups = fs.readdirSync(path.dirname(calendarFile))
+        .filter(name => name.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}T[\d-]+Z-[0-9a-f-]{36}\.json$/.test(name.slice(prefix.length)))
+        .map(name => path.join(path.dirname(calendarFile), name))
+        .filter(file => fs.lstatSync(file).isFile())
+        .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs || b.localeCompare(a));
+      // Keep the just-committed recovery point even on coarse timestamp FSs.
+      const retainedOrder = [backup, ...backups.filter(file => file !== backup)];
+      for (const old of retainedOrder.slice(10)) fs.unlinkSync(old);
+      return { ok: true, repaired: true, counts, backupPath: relative(backup), entries: repaired.entries, updatedAt: repaired.updatedAt, lastCronSyncAt: repaired.lastCronSyncAt };
+    } catch {
+      throw httpError(503, 'calendar_repair_failed', 'Calendar repair could not be committed safely');
+    }
   }
 
   function mergeCalendarEntriesWithCronJobs(currentData = {}, cronJobs = [], syncedAtIso = new Date().toISOString()) {
@@ -676,58 +929,124 @@ function createCronService({
         .map((entry) => [String(entry.linkedJobId), entry])
     );
 
-    const syncedCronEntries = cronJobs.map((job) => {
+    const issues = [];
+    const seen = new Set();
+    const syncedCronEntries = cronJobs.flatMap((job) => {
       const previous = existingCronEntries.get(String(job.id)) || {};
-      return normalizeCalendarEntry({
+      const reject = (field, code = 'calendar_upstream_entry_invalid') => {
+        issues.push({ id: typeof job.id === 'string' ? redactString(job.id).slice(0, 256) : null, code, field });
+        // Keep a schema-valid last-good row when its upstream replacement is
+        // unusable. Other jobs still refresh, and diagnostics stay in memory.
+        return previous.id ? [previous] : [];
+      };
+      const sourceId = Object.hasOwn(job, 'sourceId') ? job.sourceId : job.id;
+      if (typeof sourceId !== 'string' || !sourceId.trim() || typeof job.id !== 'string' || !job.id.trim() || job.id.length > 256) return reject('id');
+      if (seen.has(job.id)) {
+        issues.push({ id: redactString(job.id).slice(0, 256), code: 'calendar_upstream_duplicate_id', field: 'id' });
+        return [];
+      }
+      seen.add(job.id);
+      if (job.name !== undefined && entryIssue({ id: 'check', title: job.name })) return reject('title');
+      for (const field of ['text', 'message']) {
+        if (job.payload && Object.hasOwn(job.payload, field) && typeof job.payload[field] !== 'string') return reject(`payload.${field}`);
+      }
+      for (const field of ['lastRunAtMs', 'nextRunAtMs']) {
+        if (job.state?.[field] != null && (typeof job.state[field] !== 'number' || dateMsOrNull(job.state[field]) === null)) return reject(field, 'calendar_upstream_timestamp_invalid');
+      }
+      for (const field of ['last_run_at', 'next_run_at', 'lastRunAt', 'nextRunAt']) {
+        if (job[field] != null && dateMsOrNull(job[field]) === null) return reject(field, 'calendar_upstream_timestamp_invalid');
+      }
+      const schedule = describeCronSchedule(job);
+      const cronDerived = {
+        title: job.name || String(job.id || 'Cron job'),
+        schedule: schedule.schedule,
+        notes: job._verificationMetadataOnly && !job._verificationInstructionsKnown
+          ? previous.cronDerived?.notes ?? previous.notes ?? '' : job.payload?.text ?? job.payload?.message ?? '',
+        assignee: 'Mudur',
+      };
+      const userOverrides = [...(previous.userOverrides || [])].filter(field => CRON_OVERRIDABLE_FIELDS.includes(field));
+      // Preserve legacy manually assigned fields when first adding baselines.
+      if (!previous.cronDerived && previous.assignee && previous.assignee !== 'Mudur') userOverrides.push('assignee');
+      if (!previous.cronDerived && previous.notes && !job.payload) userOverrides.push('notes');
+      const derived = {
         ...previous,
+        ...cronDerived,
+        scheduleKind: schedule.scheduleKind,
+        everyMs: schedule.everyMs,
+        atIso: schedule.atIso,
         id: previous.id || `cron-${job.id}`,
-        title: job.name || previous.title || String(job.id || 'Cron job'),
-        schedule: job.schedule?.expr || job.schedule?.kind || previous.schedule || '',
-        startsAt: job.state?.nextRunAtMs ? new Date(job.state.nextRunAtMs).toISOString() : previous.startsAt || null,
+        startsAt: dateIsoOrNull(job.state?.nextRunAtMs),
         status: normalizeCronRunStatus(job),
-        assignee: previous.assignee || 'Mudur',
         source: 'cron',
         linkedJobId: job.id,
-        notes: job.payload?.text || job.payload?.message || previous.notes || '',
         createdAt: previous.createdAt || syncedAtIso,
         updatedAt: syncedAtIso,
         lastSyncedAt: syncedAtIso,
-      }, syncedAtIso);
+        userOverrides: [...new Set(userOverrides)],
+        cronDerived,
+      };
+      for (const field of derived.userOverrides) derived[field] = previous[field];
+      // Validate the upstream baseline as well as the overlaid row: a user
+      // override must not conceal an invalid scheduler value in cronDerived.
+      const issue = entryIssue(derived);
+      if (issue) return reject(issue);
+      return [normalizeCalendarEntry(derived, syncedAtIso)];
     });
 
     return {
       entries: [...manualEntries, ...syncedCronEntries],
       updatedAt: syncedAtIso,
       lastCronSyncAt: syncedAtIso,
+      upstream: { count: issues.length, ids: issues.map(issue => issue.id), issues },
     };
   }
 
-  async function syncCalendarWithLiveCron() {
-    const current = readCalendarDataSafe();
-    const parsed = await fetchCronJobsLive();
-    const cronJobs = Array.isArray(parsed) ? parsed : (Array.isArray(parsed?.jobs) ? parsed.jobs : []);
-    if ((!cronJobs || cronJobs.length === 0) && Array.isArray(current.entries) && current.entries.length > 0) {
-      return { ...current, warning: 'Live cron fetch returned empty; calendar preserved from last known good snapshot.' };
+  function syncCalendarWithCronEvidence(evidence) {
+    const schedulers = evidence?.operationsSource?.schedulers || {};
+    const observed = Object.keys(schedulers).filter(key => schedulers[key].sourceSucceeded && !schedulers[key].stale);
+    if (!Array.isArray(evidence?.jobs) || !observed.length) {
+      // Nothing fresh to sync from: a typed 503, and nothing is written.
+      throw httpError(503, 'calendar_scheduler_unavailable', 'No fresh scheduler evidence; the calendar was not synced');
     }
-    const merged = mergeCalendarEntriesWithCronJobs(current, cronJobs, new Date().toISOString());
-    return writeCalendarDataSafe(merged);
+    const stored = readCalendarDataSafe({ strict: true });
+    const current = { ...stored, entries: stored.entries.map(entry => ({
+      ...entry,
+      linkedJobId: entry.source === 'cron' && entry.linkedJobId && !/^(openclaw|hermes):/.test(String(entry.linkedJobId))
+        ? `openclaw:${entry.linkedJobId}` : entry.linkedJobId,
+    })) };
+    // Namespaced IDs prevent two schedulers with the same local ID colliding.
+    const cronJobs = evidence.jobs.filter(job => observed.includes(job?.scheduler || 'openclaw'))
+      .map(job => ({ ...job, sourceId: job?.sourceId ?? job?.id ?? null, id: getCronJobApiId(job || {}) }));
+    const preserved = current.entries.filter(entry => {
+      if (entry.source !== 'cron' || !entry.linkedJobId) return false;
+      const scheduler = String(entry.linkedJobId).startsWith('hermes:') ? 'hermes' : 'openclaw';
+      return !observed.includes(scheduler);
+    });
+    const merged = mergeCalendarEntriesWithCronJobs(current, cronJobs, new Date(now()).toISOString());
+    merged.entries.push(...preserved);
+    return { ...writeCalendarDataSafe(merged), upstream: merged.upstream };
+  }
+
+  async function syncCalendarWithLiveCron() {
+    return syncCalendarWithCronEvidence(await fetchCronJobsForOperations());
   }
 
   function createCalendarEntry(payload = {}) {
+    assertCalendarEntry(payload, 'create');
     const nowIso = new Date().toISOString();
-    if (!String(payload.title || '').trim()) {
-      const error = new Error('title required');
-      error.statusCode = 400;
-      throw error;
-    }
+    if (payload.linkedJobId != null) throw httpError(400, 'invalid_calendar_link', 'Scheduler-linked entries are created by cron sync');
 
-    const current = readCalendarDataSafe();
+    const current = readCalendarDataSafe({ strict: true });
     const entry = normalizeCalendarEntry({
       ...payload,
-      id: payload.id || `entry-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `entry-${randomUUID()}`,
       createdAt: nowIso,
       updatedAt: nowIso,
       lastSyncedAt: nowIso,
+      userOverrides: [],
+      cronDerived: null,
+      scheduleKind: 'manual',
+      everyMs: null,
     }, nowIso);
 
     const next = writeCalendarDataSafe({
@@ -737,23 +1056,39 @@ function createCronService({
       lastCronSyncAt: current.lastCronSyncAt,
     });
 
-    return { ok: true, entry, entries: next.entries };
+    return { ok: true, entry, entries: next.entries, updatedAt: next.updatedAt, lastCronSyncAt: next.lastCronSyncAt };
   }
 
   function updateCalendarEntry(id, payload = {}) {
-    const current = readCalendarDataSafe();
+    assertCalendarEntry(payload, 'patch');
+    const current = readCalendarDataSafe({ strict: true });
     const idx = current.entries.findIndex((entry) => entry.id === id);
     if (idx < 0) {
-      const error = new Error('Calendar entry not found');
-      error.statusCode = 404;
-      throw error;
+      throw httpError(404, 'calendar_entry_not_found', 'Calendar entry not found');
     }
 
     const existing = current.entries[idx];
+    const linked = existing.source === 'cron' && existing.linkedJobId;
+    if (linked && CRON_OWNED_FIELDS.some(field => Object.hasOwn(payload, field))) {
+      throw httpError(400, 'calendar_scheduler_owned', 'Status and next-run fields are owned by the scheduler');
+    }
     const nowIso = new Date().toISOString();
+    const editedFields = CALENDAR_EDITABLE_FIELDS.filter(field => Object.hasOwn(payload, field));
+    const patch = Object.fromEntries(editedFields.map(field => [field, payload[field]]));
+    const cleared = linked ? editedFields.filter(field => patch[field] === null) : [];
+    for (const field of cleared) {
+      if (!Object.hasOwn(existing.cronDerived || {}, field) && existing.userOverrides.includes(field)) {
+        throw httpError(409, 'calendar_override_unavailable', 'Sync cron before clearing a legacy override');
+      }
+      patch[field] = Object.hasOwn(existing.cronDerived || {}, field) ? existing.cronDerived[field] : existing[field];
+    }
+    const candidate = normalizeCalendarEntry({ ...existing, ...patch }, nowIso);
+    const changedFields = editedFields.filter(field => candidate[field] !== existing[field]);
     const updated = normalizeCalendarEntry({
       ...existing,
-      ...payload,
+      ...patch,
+      userOverrides: existing.source === 'cron'
+        ? [...new Set([...(existing.userOverrides || []), ...changedFields])].filter(field => !cleared.includes(field)) : existing.userOverrides,
       id: existing.id,
       createdAt: existing.createdAt,
       updatedAt: nowIso,
@@ -771,44 +1106,7 @@ function createCronService({
       lastCronSyncAt: current.lastCronSyncAt,
     });
 
-    return { ok: true, entry: updated, entries: next.entries };
-  }
-
-  function upsertTaskCalendarEntry(task = {}, options = {}) {
-    const schedule = String(options.schedule || task.schedule || '').trim();
-    const startsAt = toIsoOrNull(options.startsAt || task.scheduleAt || task.startsAt);
-    if (!schedule && !startsAt) return null;
-
-    const current = readCalendarDataSafe();
-    const existing = current.entries.find((entry) => entry.linkedTaskId === task.id && entry.source !== 'cron');
-    const nowIso = new Date().toISOString();
-    const entry = normalizeCalendarEntry({
-      ...existing,
-      id: existing?.id || `task-${task.id}`,
-      title: task.title || existing?.title || 'Task',
-      schedule: schedule || existing?.schedule || '',
-      startsAt: startsAt || existing?.startsAt || null,
-      status: options.calendarStatus || task.calendarStatus || existing?.status || 'scheduled',
-      assignee: task.assignee || existing?.assignee || 'Mudur',
-      source: existing?.source || task.source || 'assistant',
-      linkedTaskId: task.id,
-      linkedJobId: task.linkedJobId || existing?.linkedJobId || null,
-      notes: task.description || existing?.notes || '',
-      createdAt: existing?.createdAt || nowIso,
-      updatedAt: nowIso,
-      lastSyncedAt: nowIso,
-    }, nowIso);
-
-    const nextEntries = current.entries.filter((item) => item.id !== entry.id);
-    nextEntries.push(entry);
-    writeCalendarDataSafe({
-      ...current,
-      entries: nextEntries,
-      updatedAt: nowIso,
-      lastCronSyncAt: current.lastCronSyncAt,
-    });
-
-    return entry;
+    return { ok: true, entry: updated, entries: next.entries, updatedAt: next.updatedAt, lastCronSyncAt: next.lastCronSyncAt };
   }
 
   return {
@@ -819,14 +1117,20 @@ function createCronService({
     mapCronJobForApi,
     updateHermesCronJobModel,
     updateHermesCronJobEnabled,
+    readCronJobsForVerification,
+    markCronObservation,
+    splitHermesModelRef,
     toIsoOrNull,
     normalizeCalendarEntry,
     readCalendarDataSafe,
     writeCalendarDataSafe,
+    repairCalendarData,
     syncCalendarWithLiveCron,
+    syncCalendarWithCronEvidence,
+    mergeCalendarEntriesWithCronJobs,
+    sortCalendarEntries,
     createCalendarEntry,
     updateCalendarEntry,
-    upsertTaskCalendarEntry,
   };
 }
 

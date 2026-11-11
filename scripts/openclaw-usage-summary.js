@@ -12,11 +12,14 @@
  * one pass over recent files, no gateway calls, no per-session bundle fan-out.
  */
 const path = require('node:path');
-const fs = require('node:fs');
+
 const readline = require('node:readline');
-const { execFileSync } = require('node:child_process');
+
 const costSanity = require('../server/services/costSanity');
 
+function createUsageReader({ fs = require('node:fs'), now = Date.now, env = process.env, platform = 'all' } = {}) {
+let strictRead = false;
+let malformedRecords = 0;
 const VALID_PERIODS = new Set(['day', '7d', 'month']);
 const MONTH_ANCHOR_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 // Bucket contract (2026-08-02): OpenClaw owns EVERYTHING it launched — native
@@ -214,7 +217,7 @@ function modelName(provider, model, record = {}) {
   if (p === 'openai' && (!m || m === 'unknown')) {
     return isCodexRolloutRecord(record)
       ? 'openai/unknown'
-      : process.env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
+      : env.MC_OPENCLAW_DEFAULT_MODEL || 'openai/gpt-5.5';
   }
   if (!p) return m;
   if (!m) return p;
@@ -246,20 +249,11 @@ function providerFamily(provider) {
 }
 
 function sessionMetaBillingMode(payload = {}) {
-  const source = typeof payload.source === 'string'
-    ? payload.source
-    : payload.source && typeof payload.source === 'object'
-      ? Object.keys(payload.source)[0]
-      : '';
-  return payload.originator === 'openclaw' && (source === 'vscode' || source === 'subagent')
-    ? 'subscription_included'
-    : '';
+  return payload.billingMode || payload.billing_mode || '';
 }
 
 function isSubscriptionIncludedRecord(record = {}) {
-  return record.provider === 'openai-codex'
-    || record.billingProvider === 'openai-codex'
-    || record.billingMode === 'subscription_included';
+  return record.billingMode === 'subscription_included';
 }
 
 // A "codex rollout" is a session transcript written by the Codex CLI/app —
@@ -385,7 +379,8 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0, ori
   let entries = [];
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if (strictRead) throw error;
     return;
   }
 
@@ -416,7 +411,7 @@ function listJsonlFiles(dir, agentId, agentsBase, startMs, files, depth = 0, ori
           sessionKey: keyPrefix + path.relative(agentsBase, fullPath),
         });
       }
-    } catch {}
+    } catch (error) { if (strictRead) throw error; }
   }
 }
 
@@ -425,7 +420,8 @@ function findSessionDirs(root, out = [], depth = 0) {
   let entries = [];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    if (strictRead) throw error;
     return out;
   }
 
@@ -442,145 +438,28 @@ function findSessionDirs(root, out = [], depth = 0) {
 }
 
 function codexSessionsRoot() {
-  const codexHome = process.env.MC_CODEX_HOME
-    || process.env.CODEX_HOME
-    || path.join(process.env.HOME || '/home/ubuntu', '.codex');
+  const codexHome = env.MC_CODEX_HOME
+    || env.CODEX_HOME
+    || path.join(env.HOME || '/home/ubuntu', '.codex');
   return path.join(codexHome, 'sessions');
 }
 
-// The router passes the authoritative path via MC_HERMES_DB_PATH (see
-// server/routes/costs.js hermesProfileDbPath — the single source for the
-// discovery rules). The HOME-scoped default below only covers standalone CLI
-// runs of this script and deliberately has no absolute-path fallbacks.
-function hermesDbPath() {
-  if (process.env.MC_HERMES_DB_PATH) return process.env.MC_HERMES_DB_PATH;
-  const profile = process.env.HERMES_PROFILE || 'hmudur';
-  return path.join(process.env.HOME || '/home/ubuntu', '.hermes', 'profiles', profile, 'state.db');
-}
-
-// Billing evidence for the standalone Codex home comes from its auth.json —
-// the same file the codex CLI/app authenticate with. An API key present means
-// metered usage, so no subscription claim may be made; ChatGPT auth mode (or a
-// stored token set) is positive subscription evidence. Anything else, including
-// a missing or unparseable file, stays honestly unknown.
-function codexBillingModeDefault() {
-  const codexHome = path.dirname(codexSessionsRoot());
-  let auth;
-  try {
-    auth = JSON.parse(fs.readFileSync(path.join(codexHome, 'auth.json'), 'utf8'));
-  } catch {
-    return '';
-  }
-  if (!auth || typeof auth !== 'object') return '';
-  if (auth.OPENAI_API_KEY !== null && auth.OPENAI_API_KEY !== undefined && auth.OPENAI_API_KEY !== '') return '';
-  if (auth.auth_mode === 'chatgpt') return 'subscription_included';
-  if (auth.tokens && typeof auth.tokens === 'object' && Object.keys(auth.tokens).length > 0) return 'subscription_included';
-  return '';
-}
-
-// Schema compatibility, not just row coverage: a sessions table can hold
-// started_at and still be unusable to the consumer if a column it aggregates
-// was dropped or never migrated — the server query then FAILS and the Hermes
-// bucket is empty, so a started_at-only probe would authorize erasing tokens
-// that exist nowhere else. This guard REFERENCES every non-started_at column
-// hermesUsageSummary selects, so a missing one makes sqlite error out and the
-// probe returns an empty set (⇒ retain). It is tautological — every term is
-// COALESCE/LENGTH-wrapped, so the sum is never NULL and the returned rows are
-// identical to the unguarded query.
-//
-// MUST STAY IN SYNC with hermesUsageSummary's SELECT (server/routes/costs.js
-// 884-902). Columns covered: started_at (WHERE/SELECT above), billing_provider,
-// model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
-// reasoning_tokens, actual_cost_usd, estimated_cost_usd, cost_status,
-// billing_mode. A column the consumer adds LATER is not covered until it is
-// mirrored here.
-const HERMES_CONSUMED_COLUMNS_GUARD = `(
-  COALESCE(input_tokens, 0)
-  + COALESCE(output_tokens, 0)
-  + COALESCE(cache_read_tokens, 0)
-  + COALESCE(cache_write_tokens, 0)
-  + COALESCE(reasoning_tokens, 0)
-  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
-  + LENGTH(COALESCE(billing_provider, '') || COALESCE(model, '') || COALESCE(cost_status, '') || COALESCE(billing_mode, ''))
-) IS NOT NULL`.replace(/\s+/g, ' ');
-
-// A row only counts as coverage if it actually BEARS usage. A session row can
-// exist with every token/cost column zero or null — just started, or failed
-// before recording anything — and buildHermesUsageRows then contributes zero
-// replacement tokens for that day. Excluding against such a row would erase the
-// rollout's tokens from every bucket. Overlaps the numeric half of the guard
-// above by design; the guard still carries the string columns.
-const HERMES_USAGE_BEARING = `(
-  COALESCE(input_tokens, 0)
-  + COALESCE(output_tokens, 0)
-  + COALESCE(cache_read_tokens, 0)
-  + COALESCE(cache_write_tokens, 0)
-  + COALESCE(reasoning_tokens, 0)
-  + COALESCE(actual_cost_usd, estimated_cost_usd, 0)
-) > 0`.replace(/\s+/g, ' ');
-
-// Which DAYS the Hermes bucket actually represents. Deliberately mirrors the
-// consumer (server/routes/costs.js hermesUsageSummary): same sessions table,
-// same row window (started_at >= previousStart, <= end — which is exactly the
-// range scanUsageRecords receives, so no slack is needed or wanted), same
-// date(started_at,'unixepoch','localtime') day expression. dayKey() is also
-// machine-local, so the two agree.
-//
-// Existence, queryability, and any-row-in-window are all too weak: a corrupt
-// file, a missing sessions table, a missing sqlite3 binary, an empty table, and
-// a table whose rows sit on OTHER days are equally cases where the Hermes
-// bucket represents nothing for the day of the record being excluded.
-//
-// Residual (known, accepted): Hermes attributes a whole session's totals to its
-// START day, so a rollout record on day D belonging to a session started on day
-// C≠D is retained here while its tokens also sit in the Hermes bucket under C.
-// Retention stays the safe direction — double-count is visible in the totals,
-// erasure is not.
-function hermesCoveredDays(range) {
-  // Both bounds FLOOR, exactly like the consumer's previousStartSec/endSec
-  // (costs.js rangeForPeriod). Rounding the end up would open a sub-second
-  // window in which a row marks a day covered that the consumer's query skips.
-  const startSec = Math.floor(range.startMs / 1000);
-  const endSec = Math.floor(range.endMs / 1000);
-  if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) return new Set();
-  try {
-    const out = execFileSync('sqlite3', [
-      // READ-ONLY, always: plain `sqlite3 <path> <sql>` CREATES the file when it
-      // is missing, which would plant a phantom state.db in the Hermes profile
-      // and make every later existence check believe Hermes is configured. This
-      // probe must never mutate the Hermes profile. Verified on sqlite3 3.51.0:
-      // `-readonly` on a missing file errors ("unable to open database file")
-      // and creates nothing.
-      '-readonly',
-      hermesDbPath(),
-      `SELECT DISTINCT date(started_at, 'unixepoch', 'localtime') FROM sessions`
-      + ` WHERE started_at >= ${startSec} AND started_at <= ${endSec}`
-      + ` AND ${HERMES_CONSUMED_COLUMNS_GUARD}`
-      + ` AND ${HERMES_USAGE_BEARING}`,
-    ], {
-      timeout: 3000,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    // No matching row exits 0 with empty stdout — silence is NOT coverage.
-    return new Set(String(out).split('\n').map((line) => line.trim()).filter(Boolean));
-  } catch {
-    return new Set();
-  }
-}
+function codexBillingModeDefault() { return ''; }
 
 function listSessionFiles(startMs) {
-  const agentsBase = path.join(process.env.HOME || '/home/ubuntu', '.openclaw', 'agents');
+  const agentsBase = path.join(env.HOME || '/home/ubuntu', '.openclaw', 'agents');
   const files = [];
   let agents = [];
   try {
-    agents = fs.readdirSync(agentsBase, { withFileTypes: true })
+    agents = platform === 'codex' ? [] : fs.readdirSync(agentsBase, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.'))
       .map((entry) => entry.name);
-  } catch {
+  } catch (error) {
+    if (strictRead) throw error;
     agents = [];
   }
 
-  for (const agentId of agents) {
+  for (const agentId of platform === 'codex' ? [] : agents) {
     const agentRoot = path.join(agentsBase, agentId);
     for (const sessionsDir of findSessionDirs(agentRoot)) {
       listJsonlFiles(sessionsDir, agentId, agentsBase, startMs, files);
@@ -591,7 +470,7 @@ function listSessionFiles(startMs) {
   // codex CLI spawn that runs outside OpenClaw write here. The key prefix keeps
   // these session keys from colliding with OpenClaw-relative paths.
   const codexRoot = codexSessionsRoot();
-  listJsonlFiles(codexRoot, 'codex', codexRoot, startMs, files, 0, 'codex', 'codex-sessions/');
+  if (platform !== 'openclaw') listJsonlFiles(codexRoot, 'codex', codexRoot, startMs, files, 0, 'codex', 'codex-sessions/');
 
   return files;
 }
@@ -634,27 +513,14 @@ function prioritizeScanFiles(files, range, maxFiles) {
 async function scanUsageRecords(range) {
   const files = listSessionFiles(range.startMs);
   const records = [];
-  const maxFiles = Number(process.env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
+  const maxFiles = Number(env.MC_OPENCLAW_USAGE_MAX_FILES || 20000);
   const scanFiles = prioritizeScanFiles(files, range, maxFiles);
   // Exclusions and unknowns must stay visible: zero-output-with-green-signals
   // is the failure mode this dashboard exists to prevent.
   const hermesOwned = { files: new Set(), tokens: 0 };
   const hermesRetained = { files: new Set(), tokens: 0 };
   const unrecognizedOriginators = new Map();
-  // hermes-owned rollouts duplicate Hermes state.db tokens — but only on the
-  // DAYS that db actually represents. A record whose day the Hermes bucket does
-  // not cover would be erased from EVERY bucket if dropped here, so exclusion
-  // is decided per record against this set. Queried once per scan, not per file.
-  const hermesCoveredDaySet = hermesCoveredDays(range);
-  // Standalone Codex home rollouts never persist a cost figure, so their
-  // billing label has to come from configuration evidence. Probed once per
-  // scan, not per file.
-  // KALİBRASYON NOTU: varsayılan artık varsayım değil, auth.json kanıtı —
-  // OPENAI_API_KEY varsa metered (boş), chatgpt auth_mode / token seti varsa
-  // subscription_included, kanıt yoksa boş (dürüst bilinmiyor). Kalan sınır:
-  // auth.json ev-seviyesinde ve ŞU ANKİ durumu anlatır; oturum başına ya da
-  // geçmişteki auth değişimlerini ayırt edemez. Gözden geçirme koşulu:
-  // rollout'lar cost>0 yazmaya başlarsa bu varsayılan tamamen kalkar.
+  // Billing is unknown unless the usage record explicitly records it.
   const codexBillingDefault = codexBillingModeDefault();
 
   for (const file of scanFiles) {
@@ -668,12 +534,15 @@ async function scanUsageRecords(range) {
       // No session_meta at all ⇒ stays unrecognized ⇒ CLI bucket + counter.
       codexClass: file.origin === 'codex' ? 'unrecognized' : '',
     };
+    let streamError;
+    stream.on('error', error => {streamError=error;rl.close();});
     for await (const line of rl) {
       if (!line || line.charCodeAt(0) !== 123) continue;
       let obj;
       try {
         obj = JSON.parse(line);
       } catch {
+        malformedRecords += 1;
         continue;
       }
       if (obj.type === 'session_meta' && obj.payload && typeof obj.payload === 'object') {
@@ -693,6 +562,16 @@ async function scanUsageRecords(range) {
       if (obj.type === 'turn_context' && obj.payload && typeof obj.payload === 'object') {
         applyModelContext(context, obj.payload);
       }
+      // Codex emits repeated cumulative snapshots; identical cumulative totals
+      // are the same observation, not a second request.
+      if (obj.type === 'event_msg' && obj.payload?.type === 'token_count') {
+        const cumulative = obj.payload.info?.total_token_usage;
+        if (cumulative) {
+          const signature = JSON.stringify(cumulative);
+          if (context.lastCumulative === signature) continue;
+          context.lastCumulative = signature;
+        }
+      }
       const record = extractUsageRecord(obj, file.mtimeMs, file.sessionKey, context);
       if (!record || record.timestampMs < range.startMs || record.timestampMs > range.endMs) continue;
       record.origin = file.origin || 'openclaw';
@@ -700,13 +579,7 @@ async function scanUsageRecords(range) {
       record.codexClass = context.codexClass;
       if (file.origin === 'codex') {
         if (context.codexClass === 'hermes_owned') {
-          if (hermesCoveredDaySet.has(record.date)) {
-            // Counted once via the Hermes state.db bucket; excluded here, loudly.
-            hermesOwned.files.add(file.sessionKey);
-            hermesOwned.tokens += record.totalTokens;
-            continue;
-          }
-          // No Hermes coverage for this record's day: retain in Codex CLI, loudly.
+          record.owner = 'hermes';
           hermesRetained.files.add(file.sessionKey);
           hermesRetained.tokens += record.totalTokens;
         }
@@ -717,6 +590,7 @@ async function scanUsageRecords(range) {
       }
       records.push(record);
     }
+    if (streamError) throw streamError;
   }
   // No silent caps: when the budget truncated the candidate set the totals may
   // be understated, and that has to be visible rather than inferred from a
@@ -866,8 +740,8 @@ function buildUsageFromAccumulator({
     return out;
   });
 
-  const todayKey = dayKey(new Date());
-  const yesterday = new Date();
+  const todayKey = dayKey(new Date(now()));
+  const yesterday = new Date(now());
   yesterday.setDate(yesterday.getDate() - 1);
   const yesterdayKey = dayKey(yesterday);
   const todayRow = daily.find((d) => d.date === todayKey) || {};
@@ -910,7 +784,7 @@ function buildUsageFromAccumulator({
 }
 
 async function buildForPeriod(period, monthAnchor = null) {
-  const r = rangeForPeriod(period, monthAnchor);
+  const r = rangeForPeriod(period, monthAnchor, new Date(now()));
   const {
     records,
     filesScanned,
@@ -1035,28 +909,43 @@ async function buildForPeriod(period, monthAnchor = null) {
   return combined;
 }
 
-async function main() {
-  const args = process.argv.slice(2).map(String);
-  const period = args.find((arg) => VALID_PERIODS.has(arg)) || 'month';
-  const monthAnchor = args.find((arg) => isValidMonthAnchor(arg)) || null;
-  const data = await buildForPeriod(period, monthAnchor);
-  process.stdout.write(JSON.stringify(data));
+async function buildProvider({ since, until }) {
+  if (platform === 'codex') return require('../server/sources/usage/codex-log-reader').readCodexLogs({since,until},{fs,home:env.HOME,codexHome:path.dirname(codexSessionsRoot()),now,maxFiles:Number(env.MC_OPENCLAW_USAGE_MAX_FILES)||20000,...(env.MC_USAGE_CACHE_DIR?{cacheDir:env.MC_USAGE_CACHE_DIR}:{})});
+  strictRead = true; malformedRecords = 0;
+  const root = platform === 'codex' ? codexSessionsRoot() : path.join(env.HOME, '.openclaw', 'agents');
+  // A missing/unreadable root is unavailable, never an observed empty corpus.
+  fs.readdirSync(root, { withFileTypes: true });
+  const scan = await scanUsageRecords({startMs: new Date(since+'T00:00:00').getTime(), endMs: new Date(until+'T23:59:59.999').getTime()});
+  const days = new Map();
+  for (const r of scan.records) {
+    const model = modelName(r.provider,r.model,r);
+    const key = r.date+'::'+model;
+    const current = days.get(key) || {date:r.date,model,inputTokens:0,outputTokens:0,cacheReadTokens:0,cacheWriteTokens:0,billedUsd:0};
+    // Codex's prompt count includes cached input; native OpenClaw usage separates it.
+    current.inputTokens += r.origin === 'codex' || isCodexRolloutRecord(r) ? Math.max(0,r.input-r.cacheRead) : r.input;
+    current.outputTokens += r.output; current.cacheReadTokens += r.cacheRead; current.cacheWriteTokens += r.cacheWrite;
+    const billed = r.totalCost > 0 ? r.totalCost : isSubscriptionIncludedRecord(r) ? 0 : null;
+    current.billedUsd = current.billedUsd === null || billed === null ? null : current.billedUsd+billed;
+    days.set(key,current);
+  }
+  return {days:[...days.values()],observedAt:new Date(now()).toISOString(),coverage:scan.scanTruncated || malformedRecords>0 || scan.hermesOwnedCodexRetained.tokens>0 ? 'partial':'complete',note:malformedRecords>0 ? 'Malformed log records skipped; totals may be understated' : scan.scanTruncated ? 'Scan truncated by file cap; totals may be understated' : scan.hermesOwnedCodexRetained.tokens>0 ? 'Hermes-owned Codex usage retained without confirmed Hermes coverage; overlap possible' : 'Local usage records; billing unknown unless explicitly recorded'};
 }
-
-if (require.main === module) {
-  main().catch((err) => {
-    console.error('[openclaw-usage-summary] failed', err && err.message ? err.message : String(err));
-    process.exit(1);
-  });
+return { buildForPeriod, buildProvider, extractUsageRecord, isValidMonthAnchor, listSessionFiles, prioritizeScanFiles, rangeForPeriod, bucketForRecord, classifyCodexSession, applyModelContext, sessionMetaBillingMode, sessionMetaSourceKey, modelName, isSubscriptionIncludedRecord };
 }
-
-module.exports = {
-  buildForPeriod,
-  extractUsageRecord,
-  isValidMonthAnchor,
-  listSessionFiles,
-  prioritizeScanFiles,
-  rangeForPeriod,
-  bucketForRecord,
-  classifyCodexSession,
-};
+const defaultReader = createUsageReader();
+async function main(args = process.argv.slice(2)) {
+ const flag = name => args[args.indexOf(name)+1];
+ if (args.includes('--provider')) {
+  const platform = flag('--provider');
+  if (!['codex','openclaw'].includes(platform)) throw Error('Invalid provider');
+  const since = flag('--since'), until=flag('--until');
+  if (![since,until].every(x=>/^\d{4}-\d{2}-\d{2}$/.test(x)) || since>until) throw Error('Invalid date bounds');
+  const reader = createUsageReader({platform});
+  process.stdout.write(JSON.stringify(await reader.buildProvider({since,until}))); return;
+ }
+ const period = args.find(arg=>['day','7d','month'].includes(arg)) || 'month';
+ const anchor=args.find(arg=>/^\d{4}-(0[1-9]|1[0-2])$/.test(arg)) || null;
+ process.stdout.write(JSON.stringify(await defaultReader.buildForPeriod(period,anchor)));
+}
+module.exports = {...defaultReader,createUsageReader,main};
+if (require.main === module) main().catch(()=>{console.error('[usage] Local usage scan failed');process.exitCode=1;});

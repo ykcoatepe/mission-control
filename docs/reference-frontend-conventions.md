@@ -20,8 +20,8 @@ legacy pages.
 | `anyModule` | Show a grouped surface when any listed module is enabled |
 | `section`, `description` | Navigation metadata |
 
-The tested primary order is `/`, `/work`, `/automations`, `/sessions`,
-`/gbrain`, `/usage`, `/systems`. Utility navigation is `/settings`, then
+The tested primary order is `/`, `/attention`, `/automations`, `/usage`,
+`/services`, `/ollama`. Utility navigation is `/settings`, then
 `/councils`. Direct pages and compatibility redirects are listed in the
 [Operator Surfaces Reference](reference-operator-surfaces.md).
 
@@ -84,7 +84,6 @@ Reusable primitives live in `src/components/`:
 | `GlassCard` | Frosted panel wrapper |
 | `StatusBadge` | State pill and dot |
 | `AnimatedCounter` | Animated numeric value |
-| `PageTransition` | Route/page transition |
 
 Reuse a primitive when it preserves the established hierarchy and behavior.
 User-visible status surfaces need loading, empty, stale, unavailable, and error

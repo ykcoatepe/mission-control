@@ -699,3 +699,10 @@ test('custom/ provider models are local, not cloud-priced', () => {
 
   assert.deepEqual(estimate, { usd: 0, status: 'not_applicable', source: 'local_model' });
 });
+
+require('node:test')('rate-card data preserves every baseline value and review date', () => {
+  const crypto = require('node:crypto');
+  const { lastReviewed, ...rates } = require('../server/sources/usage/rate-cards.json');
+  assert.equal(lastReviewed, '2026-09-13');
+  assert.equal(crypto.createHash('sha256').update(JSON.stringify(rates)).digest('hex'), 'f69905b85daa1bb131f67e733d23d90465ee6035d9ff614d9371d2f19c5bcd53');
+});

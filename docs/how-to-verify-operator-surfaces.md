@@ -120,15 +120,15 @@ For subscription-backed sources, `periodUsd` remains zero and services report
 models may explicitly return `not_applicable` or `unavailable` instead of a
 fabricated dollar value.
 
-Do not call mutation endpoints during this read smoke. Some GET task endpoints
-perform reconciliation and may persist normalized task state, so omit them when
-you require a strictly read-only filesystem check.
+Do not call mutation endpoints during this read smoke. `GET /api/cron` and
+`GET /api/calendar` may write runtime snapshots or calendar entries, so omit
+them when you require a strictly read-only filesystem check.
 
 ## 5. Verify routes and the served build
 
 ```bash
-for route in / /work /automations /sessions /gbrain /usage /systems \
-  /settings /councils /setup /workshop /calendar /office /team /ollama /diagnostics
+for route in / /attention /automations /usage /services /ollama \
+  /settings /councils /setup /gbrain /calendar
 do
   curl -fsS -o /dev/null "$MC_BASE_URL$route" || exit 1
 done
@@ -137,9 +137,11 @@ done
 An HTTP 200 only proves the SPA fallback returned `index.html`. Open the app in
 a browser and confirm:
 
-- exactly eight primary destinations, in the documented order, including
-  Ollama Runtime after Systems;
-- Settings and Audit/Governance as utility destinations;
+- the primary destinations Brain, Attention, Automations, Usage, Services, and
+  Local models, in that order;
+- Settings and Audit as utility destinations;
+- removed routes (for example `/work`, `/workshop`, `/diagnostics`) land on
+  the Brain page;
 - no unexpected console errors;
 - the page content renders rather than remaining in a loading shell;
 - the UI behavior matches the API response you just inspected.
@@ -158,11 +160,9 @@ sed -n 's/.*src="\([^"]*assets\/[^"]*\.js\)".*/\1/p' frontend/dist/index.html
   are rejected. Use tests for these checks unless you intend the local action.
 - Governance actions return `410` unless
   `MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS=1`.
-- Hermes run/delete controls remain disabled in the API contract.
-- Task execute, agent creation/model changes, self-heal, quick actions, uploads,
-  and settings import are real mutations. Do not use them as probes.
-- `DELETE /api/sessions/:key/close` hides a row locally; it does not close the
-  OpenClaw session.
+- Hermes cron run/delete controls remain disabled in the API contract.
+- Cron create/toggle/run/delete, calendar writes, and settings import are real
+  mutations. Do not use them as probes.
 
 ## 7. Verify supply-chain checks when network is available
 

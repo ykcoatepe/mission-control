@@ -56,11 +56,11 @@ different boundaries according to what is understood and testable:
 
 - GBrain R0 diagnostics and previews are direct; W1 repair requires exact
   confirmation; W2 is absent.
-- Hermes Kanban and cron expose only named, validated actions. Hermes cron
+- Hermes Kanban is read-only. Cron exposes only named, validated actions. Hermes cron
   run/delete remains disabled even though the source system may support it.
 - Governance stays archive-only unless explicitly enabled.
-- Task execution and OpenClaw self-heal are broader mutations and should never
-  be used as health probes.
+- Cron create/run/delete and settings import are broader mutations and should
+  never be used as health probes.
 
 An action response proves completion of the invocation, not the desired
 outcome. GBrain results remain in a verifying state until a later read carries

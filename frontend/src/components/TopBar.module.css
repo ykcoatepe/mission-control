@@ -1,0 +1,406 @@
+/*
+ * The bar is its own size container: what fits depends on the width of the workspace (viewport minus the
+ * sidebar), not on the viewport. As it narrows, things yield in a fixed order and the title never does:
+ *   1. "Updated 2m ago" collapses to the refresh button (the age moves to its tooltip)
+ *   2. the attention pill drops its breakdown, then its words (the number stays)
+ *   3. the annunciators collapse to dots (names and states move to their tooltips)
+ *   4. the search box becomes an icon button
+ *   5. the three dots become one status button with a list
+ * The thresholds are widths of the bar's content box, sized for the widest content each part can have
+ * (long breakdown, all three systems lit); the bar's own padding is not counted.
+ */
+.bar {
+  container-type: inline-size;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+  height: var(--topbar-h);
+  padding: 0 var(--sp-6);
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line);
+}
+
+.menu {
+  display: none;
+}
+
+.title {
+  /* Never shrinks below its text; only a very long title is cut, with an ellipsis and a tooltip. */
+  flex: 0 0 auto;
+  max-width: 24ch;
+  overflow: hidden;
+  color: var(--text-1);
+  font-size: var(--fs-h2);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spacer {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Everything on the right keeps its size; the container queries below decide what is shown. */
+.annunciators,
+.systemsMenu,
+.attention,
+.palette,
+.age,
+.menu,
+.theme {
+  flex: none;
+}
+
+.annunciators {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  list-style: none;
+}
+
+.annunciator {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.annunciator:hover {
+  background: var(--surface-2);
+}
+
+.annunciator:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.annDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--r-full);
+  background: var(--text-disabled);
+}
+
+.annWord {
+  font-weight: var(--fw-regular);
+}
+
+/* Healthy is dim: a dim dot and a dim label. */
+.annunciator[data-state='reading'] .annDot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-3);
+}
+
+/* Anything else is lit in its state colour, with the state word. */
+.annunciator[data-state='warning'],
+.annunciator[data-state='critical'],
+.annunciator[data-state='unavailable'],
+.annunciator[data-state='inactive'] {
+  color: var(--text-1);
+}
+
+.annunciator[data-state='warning'] .annDot { background: var(--state-warning); }
+.annunciator[data-state='critical'] .annDot { background: var(--state-critical); }
+.annunciator[data-state='inactive'] .annDot { background: var(--state-inactive); }
+.annunciator[data-state='unavailable'] .annDot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--state-unavailable);
+}
+
+.annunciator[data-state='warning'] .annWord { color: var(--state-warning); }
+.annunciator[data-state='critical'] .annWord { color: var(--state-critical); }
+.annunciator[data-state='unavailable'] .annWord,
+.annunciator[data-state='inactive'] .annWord { color: var(--text-3); }
+
+/* Inline annunciators from 1200px; one status button below that. */
+.systemsMenu {
+  position: relative;
+  display: block;
+}
+
+.systemsButton {
+  width: var(--control-h);
+  justify-content: center;
+  padding: 0;
+}
+
+.systemsList {
+  position: absolute;
+  top: calc(100% + var(--sp-1));
+  right: 0;
+  z-index: var(--z-overlay);
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+  padding: var(--sp-1);
+  background: var(--surface-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-lg);
+  list-style: none;
+}
+
+.systemsItem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-md);
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.systemsItem:hover {
+  background: var(--surface-3);
+}
+
+.systemsItem:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.systemsWord {
+  margin-left: auto;
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+
+.systemsItem[data-state='warning'] .annDot,
+.systemsButton[data-state='warning'] .annDot { background: var(--state-warning); }
+.systemsItem[data-state='critical'] .annDot,
+.systemsButton[data-state='critical'] .annDot { background: var(--state-critical); }
+.systemsItem[data-state='inactive'] .annDot,
+.systemsButton[data-state='inactive'] .annDot { background: var(--state-inactive); }
+.systemsItem[data-state='unavailable'] .annDot,
+.systemsItem[data-state='reading'] .annDot,
+.systemsButton[data-state='unavailable'] .annDot,
+.systemsButton[data-state='reading'] .annDot {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--state-unavailable);
+}
+
+.systemsButton[data-state='warning'],
+.systemsButton[data-state='critical'],
+.systemsButton[data-state='unavailable'] {
+  color: var(--text-1);
+}
+
+.attention {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border: 1px solid transparent;
+  border-radius: var(--r-full);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.attention[data-state='warning'] {
+  background: var(--state-warning-bg);
+  border-color: var(--state-warning-line);
+  color: var(--state-warning);
+}
+
+.attention[data-state='critical'] {
+  background: var(--state-critical-bg);
+  border-color: var(--state-critical-line);
+  color: var(--state-critical);
+}
+
+.attention[data-state='unavailable'] {
+  color: var(--text-3);
+}
+
+.attentionCount {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.attentionSecondary {
+  color: var(--text-3);
+  font-weight: var(--fw-regular);
+}
+
+.attentionSecondary::before {
+  content: '·';
+  margin-right: var(--sp-2);
+}
+
+.attention:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.palette {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-2) 0 var(--sp-3);
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  font-size: var(--fs-body);
+}
+
+.palette:hover {
+  border-color: var(--text-3);
+  color: var(--text-2);
+}
+
+.palette:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.paletteText {
+  min-width: 96px;
+  text-align: start;
+}
+
+.age {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.stale {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-right: var(--sp-1);
+  color: var(--state-warning);
+  font-weight: var(--fw-medium);
+}
+
+.staleDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: var(--r-full);
+  background: var(--state-warning);
+}
+
+.spinning svg {
+  animation: topbar-spin 800ms linear infinite;
+}
+
+@keyframes topbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---- Yielding order (bar width = workspace width) ---- */
+
+.annunciators {
+  display: flex;
+}
+
+.systemsMenu {
+  display: none;
+}
+
+@container (max-width: 1369px) {
+  .ageText,
+  .staleText {
+    display: none;
+  }
+}
+
+@container (max-width: 1269px) {
+  .attentionSecondary {
+    display: none;
+  }
+}
+
+@container (max-width: 989px) {
+  .attentionWords {
+    display: none;
+  }
+}
+
+@container (max-width: 879px) {
+  .annName,
+  .annWord {
+    display: none;
+  }
+
+  .annunciator {
+    padding: 0 var(--sp-2);
+  }
+}
+
+@container (max-width: 729px) {
+  .paletteText,
+  .palette kbd {
+    display: none;
+  }
+
+  .palette {
+    width: var(--control-h);
+    justify-content: center;
+    padding: 0;
+  }
+}
+
+@container (max-width: 649px) {
+  .annunciators {
+    display: none;
+  }
+
+  .systemsMenu {
+    display: block;
+  }
+}
+
+/* Very narrow phones: the title may shorten, but never to a sliver. */
+@container (max-width: 329px) {
+  .title {
+    flex: 0 1 auto;
+    min-width: 5ch;
+  }
+}
+
+@media (max-width: 899px) {
+  .menu {
+    display: inline-flex;
+  }
+
+  .bar {
+    padding: 0 var(--sp-3);
+    gap: var(--sp-2);
+  }
+
+  .title {
+    font-size: var(--fs-h3);
+  }
+}
+
+/* Phones: the theme switch lives in Settings. */
+@media (max-width: 699px) {
+  .theme {
+    display: none;
+  }
+}

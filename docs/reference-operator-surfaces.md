@@ -10,31 +10,22 @@ families, and action boundaries. `frontend/src/appRoutes.tsx` and
 
 | Label | Page title | Route | Module | Data owner |
 | --- | --- | --- | --- | --- |
-| Brain | Shared Brain | `/` | `dashboard` | Operations overview + GBrain actions |
-| Work | Hermes Kanban | `/work` | `workshop` | Hermes Kanban |
-| Automations | Cron Jobs | `/automations` | `cron` | OpenClaw + Hermes cron |
-| Sessions | Conversations | `/sessions` | `chat` | OpenClaw sessions/chat |
-| Explore | GBrain | `/gbrain` | `gbrain` | GBrain runtime and timeline |
-| Usage | Cost Tracker | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
-| Systems | Agent Hub | `/systems` | `agents` | agents, sessions, models |
-| Ollama Runtime | Ollama Runtime | `/ollama` | `ollamaMonitor` | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
-
-The title differences for Sessions/Conversations, Usage/Cost Tracker, and
-Systems/Agent Hub are intentional: navigation names describe the operator
-destination while the page retains its established product title.
+| Brain | Brain | `/` | `dashboard` | Operations overview + GBrain synoptic and actions |
+| Attention | Attention | `/attention` | `attention` | Manager loops (`/api/loops`) |
+| Automations | Automations | `/automations` | `cron` | OpenClaw + Hermes cron, calendar |
+| Usage | Usage | `/usage` | `costs` | OpenClaw, Hermes, Claude Code, CodexBar |
+| Services | Services | `/services` | `services` | launchd services and endpoint reachability |
+| Local models | Local models | `/ollama` | `ollamaMonitor` | Read-only Ollama runtime and model telemetry; inventory may include cloud-backed models |
 
 ### Utility and direct routes
 
 | Route | Visibility | Purpose |
 | --- | --- | --- |
-| `/settings` | utility navigation | Setup, routing, heartbeat, budget, import/export |
-| `/councils` | utility navigation | Governance archive and open-approval alarm |
+| `/settings` | utility navigation | Model routing, heartbeat, appearance, budget, import/export |
+| `/councils` | utility navigation (label: Audit) | Governance archive of past decisions and their votes |
 | `/setup` | direct | First-run configuration |
-| `/workshop` | direct | Local/OpenClaw task board and execution |
+| `/gbrain` | direct | Knowledge: is the brain healthy and in sync |
 | `/calendar` | direct | Schedule and local calendar entries |
-| `/office` | direct | Digital Office telemetry and triage |
-| `/team` | direct | Team structure and bootstrap suggestions |
-| `/diagnostics` | direct | Memory, Docs, Scout, AWS, and Skills tabs |
 
 Direct routes are mounted even when omitted from navigation. Module flags are
 presentation controls, not authorization.
@@ -43,54 +34,87 @@ presentation controls, not authorization.
 
 | Old route | Current target |
 | --- | --- |
-| `/kanban` | `/work` |
 | `/cron` | `/automations` |
-| `/conversations` | `/sessions` |
 | `/costs` | `/usage` |
-| `/agents` | `/systems` |
-| `/memory` | `/diagnostics?tab=memory` |
-| `/scout` | `/diagnostics?tab=scout` |
-| `/aws` | `/diagnostics?tab=aws` |
-| `/skills` | `/diagnostics?tab=skills` |
+| `/work`, `/sessions`, `/systems`, `/workshop`, `/office`, `/team`, `/diagnostics`, `/kanban`, `/conversations`, `/agents`, `/memory`, `/scout`, `/aws`, `/skills` | `/` (the screens were removed) |
 
-## Core read models
+## HTTP contract
 
-### Health
+One contract for every API route (`server/core/http.js`):
 
-`GET /api/health` and `GET /healthz` return:
+- **Errors** are `{ "error": { "code", "message" } }` with a real status.
+  Only errors built with `httpError(status, code, message)` carry a
+  client-facing message (any 4xx, `501`, `503`); every other error, and every
+  other 5xx, answers `internal_error` / "Internal server error". Messages never
+  contain a stack, child-process output, a path under a home or temp
+  directory, or a bearer value. Unknown `/api/*` paths are a JSON `404`
+  (`not_found`), API `OPTIONS` a JSON `405`, a malformed target a JSON `400`.
+- **Readings** from a scheduled source carry `meta`
+  (`{ ok, stale, observedAt, ageMs, error, latencyMs, source }`). A failed
+  refresh keeps the last good reading and marks it stale; with no reading at
+  all the route answers `503`. New endpoints send the envelope
+  `{ data, meta }` (`503` when `data` is `null`); legacy endpoints keep their
+  payload and add `meta` alongside (`/api/models`, an array, and
+  `/api/settings/export`, a download, carry it in the `X-MC-Source-Meta`
+  header).
+- **No request starts a process and no `GET` writes.** Every write is a
+  `POST`/`PATCH`/`DELETE`, carries `X-MC-Request: 1` and is audited.
 
-```json
-{"ok":true,"status":"ok","service":"mission-control","generatedAt":"..."}
-```
+Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
+`403 forbidden_host` / `forbidden_origin` (guard), `500 internal_error`.
 
-### Operations overview
+| Route | Method | Success | Error codes |
+| --- | --- | --- | --- |
+| `/api/health`, `/healthz` | GET | `{ ok, status: ok\|degraded, service, generatedAt, … }` (`/api/health` adds scheduler, lanes, event loop) | `500` |
+| `/api/signals` | GET | `{ data: { systems, attention, automations, loops, services, usage }, meta }` | `503` (no part read) |
+| `/api/loops` | GET | `{ data: { projects, totals, attention }, meta }` | `503` |
+| `/api/loops/:project` | GET | `{ data: project, meta }` | `400 invalid_project`, `404 loop_project_not_found`, `503` |
+| `/api/services` | GET | `{ data: { services, counts, gateways, ollama }, meta }` | `503` |
+| `/api/operations/overview` | GET | overview schema `1` (`systems`, `overall`, `attention`, `evidence`, `capabilities`) + `meta` | `503 operations_unavailable` |
+| `/api/hermes-kanban` | GET | board (`ok`, `profile`, `columns`, `summary`, …) + `meta` | `503 hermes_kanban_unavailable` |
+| `/api/status` | GET | OpenClaw status payload + `meta` (`meta.ok` false until observed) | `500` |
+| `/api/sessions` | GET | `{ count, sessions, meta }` | `503 sessions_unavailable` |
+| `/api/gbrain/overview` | GET | normalized overview with `verdict` + `meta` | `500` |
+| `/api/gbrain/health`, `/api/gbrain/sources`, `/api/gbrain/version` | GET | legacy reading + `meta` (last good, stale after a failed refresh) | `503 gbrain_<name>_unavailable` (with `meta`) |
+| `/api/gbrain/integration-health` | GET | integration proof + `meta` | `500` |
+| `/api/gbrain/synoptic` | GET | `{ data: synoptic, meta }` | `503` |
+| `/api/gbrain/timeline?limit=N` | GET | `{ entries, …, meta }` | `503 gbrain_timeline_unavailable` |
+| `/api/gbrain/search?q=` | GET | `{ data, meta }` | `400`, `429` (`Retry-After`), `503` |
+| `/api/gbrain/pages/:slug` | GET | `{ data, meta }` | `400`, `404`, `429`, `503` |
+| `/api/gbrain/graph?around=` | GET | `{ data, meta }` | `400 graph_around_required`, `429`, `503` |
+| `/api/gbrain/actions` | GET | `{ ok, mode, actions }` (static allowlist) | — |
+| `/api/gbrain/actions` | POST | `200` action result (`ok`, `action`, `status: completed`, `pending`, `refreshAfter`, `summary`, `payload`, `checkedAt`) | the action result with `error: { code, message }`: `400 confirmation_required`, `400 gbrain_action_rejected`, `409 gbrain_action_busy`, `502 gbrain_action_failed`, `504 gbrain_action_timed_out` (`pending` tells a cleanup still running); `503 gbrain_action_quarantined` |
+| `/api/cron` | GET | `{ jobs, summary, …, meta }` | `503 automations_unavailable` |
+| `/api/cron/create` | POST | `{ ok, message, job }` | `400 invalid_job` / `invalid_schedule` / `invalid_enabled` / `invalid_session` / `invalid_payload` / `invalid_model`, `500` |
+| `/api/cron/:id/toggle` | POST | `{ ok, message, job? }` | `400 invalid_enabled` / `invalid_scheduler` / `cron_id_required` / `invalid_cron_id`, `404 hermes_cron_job_not_found`, `409 hermes_cron_unavailable`, `500` |
+| `/api/cron/:id/run`, `/api/cron/:id` | POST, DELETE | `{ ok, message }` | `400 invalid_cron_id`, `501 hermes_cron_read_only`, `500` |
+| `/api/cron/:id/model` | PATCH | `{ ok, message, job }` | `400 invalid_model` / `invalid_thinking`, `404`, `409`, `501 not_implemented`, `500` |
+| `/api/calendar` | GET | `{ entries, updatedAt, lastCronSyncAt, …, meta }` | `503 calendar_unavailable` |
+| `/api/calendar` | POST | `{ ok, entry, entries }` | `400 calendar_title_required` / `invalid_calendar_link`, `409 calendar_unavailable` |
+| `/api/calendar/:id` | PATCH | `{ ok, entry, entries }` | `400 calendar_scheduler_owned`, `404 calendar_entry_not_found`, `409 calendar_unavailable` / `calendar_override_unavailable` |
+| `/api/calendar/sync-cron` | POST | `{ ok, synced, entries, updatedAt, lastCronSyncAt }` | `503 calendar_scheduler_unavailable` (nothing written), `409 calendar_unavailable` |
+| `/api/costs?period=&month=` | GET | usage payload with `meta` (`stale`, per-source status) | `400 invalid_usage_query`, `500` |
+| `/api/costs/codexbar`, `/api/costs/months` | GET | CodexBar costs / month list | `400 invalid_usage_query`, `500` |
+| `/api/usage/summary` | GET | `{ data, meta }` | `503` |
+| `/api/aws/costs` | GET | `{ period, total, daily, services, meta }` (scheduled Cost Explorer read) | `404 aws_disabled`, `503 aws_costs_unavailable` |
+| `/api/models` | GET | array of models; `meta` in `X-MC-Source-Meta` | `503 models_unavailable` |
+| `/api/ollama/telemetry`, `…/history`, `…/models` | GET | telemetry payload + `meta` | `503 ollama_unavailable` |
+| `/api/config` | GET | allowlisted public config (`name`, `subtitle`, `modules`, `aws.enabled`) + `meta` | `500` |
+| `/api/setup` | GET | `{ needsSetup, gatewayRunning, gatewayPort, gatewayVersion, detectedConfig, meta }`; `gatewayRunning` is the scheduled reachability reading (`null` when not current) | `500` |
+| `/api/setup` | POST | `{ success, config }`; accepts only `dashboardName`, `gateway { port, token }`, `modules` (known ids, booleans) | `400 invalid_setup` / `unsupported_setup_field` / `unknown_module` / `invalid_module_flag` / `invalid_gateway`, `503 settings_config_unavailable` / `config_store_unavailable` |
+| `/api/settings`, `/api/settings/model-routing`, `/api/settings/heartbeat` | GET | settings reading + `meta` | `503 settings_config_unavailable` |
+| `/api/settings/model-routing`, `/api/settings/heartbeat` | POST | `{ status: saved }` | `400 invalid_model` / `invalid_interval`, `503`, `500` |
+| `/api/settings/budget` | POST | `{ status: saved, budget }` | `400 invalid_budget`, `503` |
+| `/api/settings/export` | GET | redacted config document (download); `meta` in `X-MC-Source-Meta` | `500` |
+| `/api/settings/import` | POST (multipart `config`) | `{ status: imported, message }` | `400 config_file_required` / `invalid_upload` / `invalid_config` / `redacted_identity_required` / `redacted_value_unavailable`, `413 payload_too_large`, `503` |
+| `/api/councils/summary`, `/api/councils/decisions`, `/api/councils/governance/scorecard`, `/api/councils/decisions/:id/timeline` | GET | archive reads (no snapshot is persisted) | `503 councils_archive_unavailable` |
+| `/api/councils/decisions/:id/action` | POST | `{ ok, decision }` | `410 council_actions_disabled` (default; with `mode`, `recommendation`), `400 decision_id_required` / `council_action_required` / `council_note_required`, `404 decision_not_found`, `503` |
+| `/cron-search`, any non-API path | GET | static page / SPA shell | JSON `404 not_found` when the file is missing |
 
-`GET /api/operations/overview` is Brain's aggregate contract. Schema version
-`1` contains independent `systems.openclaw`, `systems.hermes`, and
-`systems.gbrain` objects plus `overall`, `attention`, `evidence`, and
-`capabilities`. Each reader is bounded and failure-isolated. The response
-redacts credentials, raw content, and absolute home paths.
+`tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
+pure-GET sweep, and a contract sweep that forces a failure on every route.
 
-State, freshness, and trust are independent. A source can report high trust and
-still surface a caveat or stale evidence.
-
-### GBrain
-
-| Method | Endpoint | Purpose |
-| --- | --- | --- |
-| GET | `/api/gbrain/overview` | Normalized GBrain overview and saved/live proof |
-| GET | `/api/gbrain/health` | Live health and job statistics |
-| GET | `/api/gbrain/sources` | Source inventory |
-| GET | `/api/gbrain/version` | Runtime/version probe |
-| GET | `/api/gbrain/integration-health` | Bridge and integration proof |
-| GET | `/api/gbrain/actions` | Allowlisted action catalog |
-| POST | `/api/gbrain/actions` | Execute one allowlisted action |
-| GET | `/api/gbrain/timeline?limit=N` | Most recent evidence entries, bounded by `limit` |
-
-The health reader first uses the supported call interface and job statistics,
-with `gbrain health --json` as a compatibility fallback.
-
-The action catalog contains exactly:
+The GBrain action catalog contains exactly:
 
 | ID | Safety | Confirmation |
 | --- | --- | --- |
@@ -107,69 +131,24 @@ Only one GBrain action runs at once. Arbitrary action names are rejected. An
 HTTP success means the action finished; the UI reports it as verified only
 after newer, fresh evidence is observed.
 
-## API families
-
-The tables below group the public application API. Endpoint path parameters use
-`:name` notation.
-
-### Work, automations, and sessions
-
-| Family | Endpoints | Notes |
-| --- | --- | --- |
-| Hermes Kanban | `GET /api/hermes-kanban`, `GET /api/hermes-kanban/tasks/:taskId`, `POST /api/hermes-kanban/actions` | Named actions and flag-safe argument validation |
-| Cron | `GET /api/cron`, `POST /api/cron/create`, `POST /api/cron/:id/toggle`, `POST /api/cron/:id/run`, `PATCH /api/cron/:id/model`, `DELETE /api/cron/:id` | Hermes jobs cannot run/delete; toggle/model are allowed |
-| Calendar | `GET /api/calendar`, `POST /api/calendar`, `PATCH /api/calendar/:id`, `POST /api/calendar/sync-cron` | Combines schedule data with local entries |
-| Tasks | `GET /api/activity`, `GET /api/tasks`, `GET /api/tasks/board`, `GET /api/tasks/:taskId`, `POST /api/tasks`, `POST /api/tasks/add`, `POST /api/tasks/assistant`, `PATCH /api/tasks/:taskId`, `DELETE /api/tasks/:taskId`, `POST /api/tasks/:taskId/execute` | Execute dispatches real OpenClaw work; list/board may reconcile and persist state |
-| Sessions | `GET /api/sessions`, `GET /api/sessions/:sessionKey/history`, `POST /api/sessions/:sessionKey/send`, `DELETE /api/sessions/:key/close` | `close` hides locally; it does not terminate OpenClaw |
-| Chat | `POST /api/chat` | Gateway/SSE proxy with abort handling |
-
-### Usage, systems, and models
-
-| Family | Endpoints | Notes |
-| --- | --- | --- |
-| Status | `GET /api/status` | Dashboard/runtime status snapshot |
-| Usage | `GET /api/costs?period=7d`, `GET /api/costs/codexbar` | Periods are normalized; metadata reports source readiness, stale state, and refresh state |
-| Agents | `GET /api/agents`, `POST /api/agents/create`, `POST /api/agents/:agentId/model` | Registry, live sessions, custom agents, model override |
-| Team/Office | `GET /api/team/structure`, `POST /api/team/structure/bootstrap`, `GET /api/office/telemetry` | Bootstrap produces suggested structure; office is live telemetry |
-| Models | `GET /api/models`, `GET /api/model`, `POST /api/model` | Catalog and OpenClaw default model |
-| Ollama | `GET /api/ollama/telemetry`, `GET /api/ollama/telemetry/history`, `GET /api/ollama/telemetry/models`, `POST /api/ollama/optimization` | Local model and memory telemetry |
-
-Usage merges included/local consumption and estimated spend from multiple
-sources. `meta.openclawStatus`, `meta.hermesStatus`, `meta.claudeCodeStatus`,
-`meta.stale`, and `meta.refreshing` explain source reliability. A stale cached
-source is not equivalent to zero usage.
-
-### Settings and diagnostics
-
-| Family | Endpoints | Notes |
-| --- | --- | --- |
-| Settings | `GET /api/config`, `GET|POST /api/setup`, `GET /api/settings`, `POST /api/settings/budget`, `GET|POST /api/settings/model-routing`, `GET|POST /api/settings/heartbeat`, `GET /api/settings/export`, `POST /api/settings/import` | Public config strips known gateway/Notion/Scout secrets; import accepts one config file |
-| Memory | `GET /api/memory` | Local memory projection |
-| Docs | `GET /api/docs`, `POST /api/docs/upload`, `GET /cron-search` | Upload limit is 20 files; settings imports and document uploads have separate temporary paths |
-| Skills | `GET /api/skills`, `POST /api/skills/:name/toggle`, `POST /api/skills/:name/install`, `POST /api/skills/:name/uninstall` | Install/uninstall currently acknowledge but do not implement package changes |
-| Scout | `GET /api/scout`, `GET /api/scout/status`, `POST /api/scout/scan`, `POST /api/scout/deploy`, `POST /api/scout/dismiss` | Optional Brave Search-backed workflow |
-| AWS | `GET /api/aws/services`, `GET /api/aws/bedrock-models`, `POST /api/aws/generate-image`, `GET /api/aws/image/:id`, `GET /api/aws/gallery`, `GET /api/aws/s3-image/:key`, `GET /api/aws/costs` | Optional Bedrock/S3 integration |
-
-### Governance and operator actions
-
-| Family | Endpoints | Notes |
-| --- | --- | --- |
-| Councils | `GET /api/councils/summary`, `GET /api/councils/decisions`, `GET /api/councils/agents`, `GET /api/councils/governance/scorecard`, `GET /api/councils/decisions/:decisionId/timeline`, `POST /api/councils/decisions/:decisionId/action` | Action returns `410` unless explicitly enabled |
-| Ops | `GET /api/ops/events`, `POST /api/ops/openclaw/self-heal` | Local event history and a real OpenClaw recovery action |
-| Quick | `POST /api/heartbeat/run`, `POST /api/quick/emails`, `POST /api/quick/schedule` | OpenClaw gateway actions |
+State words are one vocabulary with one ordering everywhere (server
+`sources/gbrain/state.js`, Operations, frontend `lib/state.ts`):
+critical > warning > unavailable > healthy > inactive. An aggregate is the
+worst relevant condition; nothing read is `unavailable`, never healthy.
 
 ## Request boundary
 
 The server binds to loopback by default and only accepts localhost Host values.
-Its mutation Origin check uses a local-origin prefix test, not exact origin
-parsing, so it is defense in depth rather than an authentication or robust CSRF
-boundary. Hidden navigation, module flags, and disabled buttons do not secure
-endpoints; keep the service private and treat every POST/PATCH/DELETE as a real
-local side effect.
+Writes, and every API read that carries an `Origin`, must match the server's
+own origin exactly; `Sec-Fetch-Site: cross-site` is refused. Every mutating
+request must carry `X-MC-Request: 1` (report-only by default) and is written
+to the audit log. Hidden navigation, module flags, and disabled buttons do not
+secure endpoints; keep the service private and treat every POST/PATCH/DELETE
+as a real local side effect.
 
-`/data/*` is deliberately blocked. The SPA fallback serves `index.html` for any
-non-API route, so an HTTP 200 proves route reachability but not successful React
-rendering.
+`/data/*` is deliberately blocked (JSON `404`). The SPA fallback serves
+`index.html` for any non-API route, so an HTTP 200 proves route reachability
+but not successful React rendering.
 
 ## Related
 

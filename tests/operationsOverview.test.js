@@ -354,7 +354,8 @@ test('keeps the longer GBrain probe deadline scoped to GBrain only', async () =>
 
   assert.equal(overview.systems.openclaw.state, 'unavailable');
   assert.equal(overview.systems.gbrain.state, 'healthy');
-  const serverSource = fs.readFileSync(path.join(process.cwd(), 'server.js'), 'utf8');
+  // The composition root moved from server.js to server/app.js (createApp).
+  const serverSource = fs.readFileSync(path.join(__dirname, '..', 'server', 'app.js'), 'utf8');
   assert.match(
     serverSource,
     /sourceTimeoutMsOverrides:\s*\{\s*gbrain:\s*GBRAIN_OPERATIONS_SOURCE_TIMEOUT_MS\s*,?\s*\}/,
@@ -821,11 +822,11 @@ test('promotes caveatless stale GBrain sources to warning with explicit proof', 
   assert.equal(overview.overall.state, 'warning');
   assert.deepEqual(overview.systems.gbrain.caveats, []);
   assert.ok(staleAttention);
-  assert.equal(staleAttention.detailHref, '/gbrain');
+  assert.equal(staleAttention.detailHref, '/');
   assert.deepEqual(staleAttention.evidenceRefs, ['gbrain:source-freshness']);
   assert.ok(staleEvidence);
   assert.equal(staleEvidence.status, 'warning');
-  assert.equal(staleEvidence.detailHref, '/gbrain');
+  assert.equal(staleEvidence.detailHref, '/');
   assert.match(staleEvidence.summary, /3 stale/i);
 });
 

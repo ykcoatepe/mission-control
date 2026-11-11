@@ -1,18 +1,4 @@
-export type GBrainEvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive'
-
-export interface OperationalStateInput {
-  hasData: boolean
-  loading: boolean
-  trustStatus: GBrainEvidenceStatus
-  incidentStatus?: GBrainEvidenceStatus | null
-  incidentIsCurrent?: boolean
-  caveatCount: number
-}
-
-export interface OperationalState {
-  status: GBrainEvidenceStatus
-  label: string
-}
+export type GBrainEvidenceStatus = 'healthy' | 'warning' | 'critical' | 'inactive' | 'unavailable'
 
 export interface TimelineDeltaEntry {
   trust: {
@@ -37,18 +23,12 @@ export interface QueueEvidenceInput {
   stalledJobs: number | null
 }
 
-const statusRank: Record<GBrainEvidenceStatus, number> = {
-  inactive: 0,
-  healthy: 1,
-  warning: 2,
-  critical: 3,
-}
-
 function evidenceStatusLabel(status: GBrainEvidenceStatus) {
-  if (status === 'healthy') return 'Verified'
-  if (status === 'warning') return 'Caveat'
-  if (status === 'critical') return 'Failing'
-  return 'Read-only'
+  if (status === 'healthy') return 'Normal'
+  if (status === 'warning') return 'Warning'
+  if (status === 'critical') return 'Critical'
+  if (status === 'unavailable') return 'Unavailable'
+  return 'Not read'
 }
 
 function sourceSyncLabel(status: GBrainEvidenceStatus) {
@@ -84,11 +64,11 @@ function oldestAgeText(seconds: number | null) {
 // Raw missing-embedding count; inside the embed tolerance it is labeled as
 // catching up, beyond it with the oldest age. Snapshots without
 // missingEmbeddingsOverdue treat every missing embedding as overdue.
-function missingEmbeddingsLabel(entry: TimelineDeltaEntry) {
+function missingEmbeddingsLabel(entry: TimelineDeltaEntry, withAge = true) {
   const count = missingEmbeddingsCount(entry)
   if (count === null) return null
   const overdue = structuredCount(entry.metrics, 'missingEmbeddingsOverdue') ?? count
-  const oldest = oldestAgeText(structuredCount(entry.metrics, 'missingEmbeddingsOldestAgeSeconds'))
+  const oldest = withAge ? oldestAgeText(structuredCount(entry.metrics, 'missingEmbeddingsOldestAgeSeconds')) : ''
   if (overdue > 0) return `${count.toLocaleString()}${oldest}`
   if (count > 0) return `${count.toLocaleString()} catching up${oldest}`
   return count.toLocaleString()
@@ -111,23 +91,6 @@ function compiledTruthLabel(entry: TimelineDeltaEntry) {
   return 'Current'
 }
 
-export function deriveOperationalState(input: OperationalStateInput): OperationalState {
-  if (input.loading) return { status: 'inactive', label: 'Checking live proof' }
-  if (!input.hasData) return { status: 'inactive', label: 'No live proof' }
-
-  const statuses = [input.trustStatus, input.incidentIsCurrent === false ? null : input.incidentStatus]
-    .filter((status): status is GBrainEvidenceStatus => Boolean(status))
-  if (input.caveatCount > 0) statuses.push('warning')
-  const status = statuses.reduce<GBrainEvidenceStatus>((mostSevere, current) => (
-    statusRank[current] > statusRank[mostSevere] ? current : mostSevere
-  ), 'inactive')
-
-  if (status === 'critical') return { status, label: 'Action required' }
-  if (status === 'warning') return { status, label: 'Degraded' }
-  if (status === 'healthy') return { status, label: 'Operational' }
-  return { status, label: 'Read-only' }
-}
-
 export function deriveQueueEvidenceStatus(input: QueueEvidenceInput): GBrainEvidenceStatus {
   if (!input.hasLiveHealth) return input.fallbackStatus
   if (input.missingEmbeddingsUnavailable === true) return 'warning'
@@ -137,28 +100,38 @@ export function deriveQueueEvidenceStatus(input: QueueEvidenceInput): GBrainEvid
   return 'healthy'
 }
 
+export interface DeltaOptions {
+  /**
+   * Include the age of the oldest missing embedding in the line (default). A history list
+   * turns it off: that age grows by itself and is not a change worth a row.
+   */
+  withAge?: boolean
+}
+
 export function timelineDeltaLines(
   current: TimelineDeltaEntry,
   previous: TimelineDeltaEntry | undefined,
+  options: DeltaOptions = {},
 ): string[] {
+  const withAge = options.withAge !== false
   if (!previous) return []
 
   const values: { label: string; from: string | number | null | undefined; to: string | number | null | undefined }[] = [
     {
-      label: 'Proof state',
+      label: 'State',
       from: evidenceStatusLabel(previous.trust.status),
       to: evidenceStatusLabel(current.trust.status),
     },
-    { label: 'Trust', from: previous.trust.score, to: current.trust.score },
+    { label: 'Quality', from: previous.trust.score, to: current.trust.score },
     { label: 'Health', from: previous.metrics.health, to: current.metrics.health },
     { label: 'Embeddings', from: previous.metrics.embeddings, to: current.metrics.embeddings },
     {
       label: 'Missing embeddings',
-      from: missingEmbeddingsLabel(previous),
-      to: missingEmbeddingsLabel(current),
+      from: missingEmbeddingsLabel(previous, withAge),
+      to: missingEmbeddingsLabel(current, withAge),
     },
     {
-      label: 'Compiled truth',
+      label: 'Link extraction',
       from: compiledTruthLabel(previous),
       to: compiledTruthLabel(current),
     },
@@ -168,7 +141,7 @@ export function timelineDeltaLines(
       from: sourceSyncLabel(previous.sourceFreshness.status),
       to: sourceSyncLabel(current.sourceFreshness.status),
     },
-    { label: 'Caveats', from: previous.metrics.caveats, to: current.metrics.caveats },
+    { label: 'Notes', from: previous.metrics.caveats, to: current.metrics.caveats },
   ]
 
   return values.flatMap(({ label, from, to }) => {

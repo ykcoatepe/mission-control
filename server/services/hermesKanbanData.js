@@ -1,10 +1,8 @@
 const fs = require('fs');
 const os = require('os');
-const util = require('util');
-const { execFile } = require('child_process');
-
-const defaultExecFilePromise = util.promisify(execFile);
+const { httpError } = require('../core/http');
 const STATUSES = ['triage', 'todo', 'ready', 'running', 'blocked', 'done'];
+const RUNNER_UNAVAILABLE = new Set(['lane_busy', 'lane_quarantined', 'shutdown', 'timeout', 'queue_timeout', 'kill_unverified', 'max_output']);
 
 function findHermesBin(processEnv) {
   const home = processEnv.MC_USER_HOME || processEnv.HOME || os.homedir();
@@ -64,24 +62,6 @@ function normalizeAssignee(row) {
   };
 }
 
-function normalizeDetail(payload) {
-  const task = normalizeTask(payload.task || {});
-  const events = Array.isArray(payload.events) ? payload.events.map((event) => ({
-    ...event,
-    createdAt: normalizeEpoch(event.created_at),
-  })) : [];
-  const comments = Array.isArray(payload.comments) ? payload.comments.map((comment) => ({
-    ...comment,
-    createdAt: normalizeEpoch(comment.created_at),
-  })) : [];
-  const runs = Array.isArray(payload.runs) ? payload.runs.map((run) => ({
-    ...run,
-    startedAt: normalizeEpoch(run.started_at),
-    endedAt: normalizeEpoch(run.ended_at),
-  })) : [];
-  return { ...payload, task, events, comments, runs };
-}
-
 function buildHermesEnv(profile, processEnv) {
   const hostHome = processEnv.MC_USER_HOME || processEnv.HOME || os.homedir();
   return {
@@ -91,47 +71,40 @@ function buildHermesEnv(profile, processEnv) {
   };
 }
 
-function assertNoFlagPrefix(value, label) {
-  const text = String(value || '');
-  if (text.startsWith('-')) {
-    const error = new Error(`${label} cannot start with "-"`);
-    error.statusCode = 400;
-    throw error;
-  }
-  return text;
-}
-
-function actionValidationError(message) {
-  const error = new Error(message);
-  error.statusCode = 400;
-  error.responseBody = { error: message };
-  return error;
-}
-
 function createHermesKanbanService({
   mcConfig = {},
-  execFilePromise = defaultExecFilePromise,
+  runner,
   processEnv = process.env,
   now = Date.now,
   maxConcurrency = 2,
   freshMs = 5 * 60 * 1000,
   maxStaleMs = 10 * 60 * 1000,
 } = {}) {
+  if (typeof runner?.run !== 'function') throw new TypeError('createHermesKanbanService: core runner required');
   const profile = processEnv.HERMES_PROFILE || mcConfig?.hermes?.profile || 'hmudur';
   const hermesBin = processEnv.HERMES_BIN || findHermesBin(processEnv);
 
   async function hermes(args, { json = false, timeout = 15000 } = {}) {
-    const { stdout, stderr } = await execFilePromise(
+    const argv = ['--profile', profile, 'kanban', ...args];
+    const result = await runner.run(
       hermesBin,
-      ['--profile', profile, 'kanban', ...args],
+      argv,
       {
+        lane: 'hermes',
+        key: JSON.stringify(['hermes-kanban', hermesBin, buildHermesEnv(profile, processEnv).HOME, argv]),
         env: buildHermesEnv(profile, processEnv),
-        timeout,
-        maxBuffer: 10 * 1024 * 1024,
+        timeoutMs: timeout,
+        maxOutputBytes: 10 * 1024 * 1024,
       },
     );
+    if (!result?.ok) {
+      const code = typeof result?.error?.code === 'string' && /^[a-z][a-z0-9_]{1,63}$/i.test(result.error.code)
+        ? result.error.code : 'hermes_kanban_unavailable';
+      throw httpError(503, code, 'Hermes Kanban could not be read');
+    }
+    const { stdout, stderr } = result;
     const out = String(stdout || '').trim();
-    if (out.toLowerCase().includes('could not initialize database')) throw new Error(out);
+    if (out.toLowerCase().includes('could not initialize database')) throw httpError(503, 'hermes_kanban_unavailable', 'Hermes Kanban could not be read');
     return json ? parseJsonOutput(out, null) : { stdout: out, stderr: String(stderr || '').trim() };
   }
 
@@ -170,8 +143,8 @@ function createHermesKanbanService({
         const tasks = await hermes(['list', '--status', status, '--json'], { json: true });
         return [status, Array.isArray(tasks) ? tasks.map(normalizeTask) : []];
       }),
-      async () => hermes(['stats', '--json'], { json: true }).catch(() => null),
-      async () => hermes(['assignees', '--json'], { json: true }).catch(() => []),
+      async () => hermes(['stats', '--json'], { json: true }).catch(error => { if (RUNNER_UNAVAILABLE.has(error.code)) throw error; return null; }),
+      async () => hermes(['assignees', '--json'], { json: true }).catch(error => { if (RUNNER_UNAVAILABLE.has(error.code)) throw error; return []; }),
     ];
     const settled = await mapLimited(calls, maxConcurrency, (call) => call());
     const lists = settled.slice(0, STATUSES.length);
@@ -249,65 +222,12 @@ function createHermesKanbanService({
       return staleBoard() || await refresh;
     } catch (error) {
       const stale = staleBoard();
-      if (stale) return stale;
+      if (stale) return { ...stale, unavailable: true, error: { code: error.code || 'hermes_kanban_unavailable', message: 'Hermes Kanban could not be read' } };
       throw error;
     }
   }
 
-  async function getTaskDetail(taskId) {
-    const payload = await hermes(['show', taskId, '--json'], { json: true });
-    return { ok: true, profile, ...normalizeDetail(payload || {}) };
-  }
-
-  async function runAction(payload = {}) {
-    const action = String(payload.action || '').trim();
-    const taskId = String(payload.taskId || '').trim();
-    const args = [];
-
-    if (action === 'create') {
-      const title = assertNoFlagPrefix(String(payload.title || '').trim(), 'title');
-      if (!title) throw actionValidationError('title required');
-      args.push('create', title);
-      if (payload.body) args.push('--body', String(payload.body));
-      if (payload.assignee) args.push('--assignee', assertNoFlagPrefix(payload.assignee, 'assignee'));
-      if (payload.workspace) args.push('--workspace', assertNoFlagPrefix(payload.workspace, 'workspace'));
-      if (payload.tenant) args.push('--tenant', assertNoFlagPrefix(payload.tenant, 'tenant'));
-      if (Number.isFinite(Number(payload.priority))) args.push('--priority', String(Math.trunc(Number(payload.priority))));
-      if (payload.triage) args.push('--triage');
-      if (Array.isArray(payload.skills)) {
-        payload.skills.filter(Boolean).forEach((skill) => args.push('--skill', assertNoFlagPrefix(skill, 'skill')));
-      }
-      args.push('--created-by', 'mission-control', '--json');
-    } else {
-      if (!taskId) throw actionValidationError('taskId required');
-      const safeTaskId = assertNoFlagPrefix(taskId, 'taskId');
-      if (action === 'assign') {
-        if (!payload.assignee) throw actionValidationError('assignee required');
-        args.push('assign', safeTaskId, assertNoFlagPrefix(payload.assignee, 'assignee'));
-      } else if (action === 'comment') {
-        if (!payload.text) throw actionValidationError('text required');
-        args.push('comment', '--author', 'mission-control', safeTaskId, String(payload.text));
-      } else if (action === 'block') {
-        args.push('block', safeTaskId, String(payload.reason || 'Blocked from Mission Control'));
-      } else if (action === 'unblock') {
-        args.push('unblock', safeTaskId);
-      } else if (action === 'archive') {
-        args.push('archive', safeTaskId);
-      } else if (action === 'dispatch') {
-        args.push('dispatch', '--max', '1', '--json');
-      } else {
-        throw actionValidationError(`Unsupported action: ${action}`);
-      }
-    }
-
-    const result = await hermes(args, {
-      json: action === 'create' || action === 'dispatch',
-      timeout: action === 'dispatch' ? 30000 : 15000,
-    });
-    return { ok: true, action, result };
-  }
-
-  return { profile, getBoard, getTaskDetail, runAction };
+  return { profile, getBoard };
 }
 
 module.exports = { STATUSES, createHermesKanbanService };

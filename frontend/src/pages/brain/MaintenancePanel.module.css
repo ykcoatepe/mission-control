@@ -1,0 +1,17 @@
+.groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--sp-6);
+}
+
+.heading {
+  margin: 0 0 var(--sp-3);
+  color: var(--text-2);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.none {
+  margin: 0;
+  color: var(--text-3);
+}

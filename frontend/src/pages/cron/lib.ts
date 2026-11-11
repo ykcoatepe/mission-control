@@ -1,4 +1,6 @@
+import { describeApiError, sendJson } from '../../lib/hooks'
 import type {
+  CronApiResponse,
   CronJob,
   CronModelResponse,
   CronOverlapMarker,
@@ -16,7 +18,7 @@ export const CRON_PRESETS = [
   { label: 'Daily 8am', expr: '0 8 * * *' },
   { label: 'Daily 6pm', expr: '0 18 * * *' },
   { label: 'Weekly Monday', expr: '0 9 * * 1' },
-  { label: 'Every 30min', expr: '*/30 * * * *' },
+  { label: 'Every 30 minutes', expr: '*/30 * * * *' },
 ]
 
 // ── Success rate ──────────────────────────────────────────────────────────
@@ -30,10 +32,6 @@ export function calcSuccessRate(history: CronHistoryEntry[]): SuccessRate | null
   return { rate: `${pct}%`, pct, total, ok, failed }
 }
 
-export function successRateColor(pct: number): string {
-  return pct === 100 ? '#32D74B' : pct >= 75 ? '#FFD60A' : pct >= 50 ? '#FF9500' : '#FF453A'
-}
-
 // ── Scheduler helpers ─────────────────────────────────────────────────────
 
 export function getCronScheduler(job?: Pick<CronJob, 'scheduler'>): CronScheduler {
@@ -42,10 +40,6 @@ export function getCronScheduler(job?: Pick<CronJob, 'scheduler'>): CronSchedule
 
 export function getCronSchedulerLabel(job?: Pick<CronJob, 'scheduler' | 'schedulerLabel'>) {
   return job?.schedulerLabel || (getCronScheduler(job) === 'hermes' ? 'Hermes' : 'OpenClaw')
-}
-
-export function getCronSchedulerColor(job?: Pick<CronJob, 'scheduler'>) {
-  return getCronScheduler(job) === 'hermes' ? '#64D2FF' : '#BF5AF2'
 }
 
 // ── Model options ─────────────────────────────────────────────────────────
@@ -108,7 +102,14 @@ export function buildCronModelOptions(models: CronModelResponse[] = [], jobs: Cr
     add(normalizedModel, isAlias ? `${rawModel} → ${normalizedModel}` : normalizedModel, fromCurrentJobOnly)
   }
 
-  return [{ value: '', label: 'Default' }, ...Array.from(byId.values())]
+  return [{ value: '', label: 'Default' }, ...disambiguateLabels(Array.from(byId.values()))]
+}
+
+/** Two different models can share a display name; those show their id too, so the list never has two identical lines. */
+export function disambiguateLabels(options: ModelOption[]): ModelOption[] {
+  const seen = new Map<string, number>()
+  for (const option of options) seen.set(option.label, (seen.get(option.label) ?? 0) + 1)
+  return options.map((option) => ((seen.get(option.label) ?? 0) > 1 ? { ...option, label: `${option.label} (${option.value})` } : option))
 }
 
 // ── Overlap markers ───────────────────────────────────────────────────────
@@ -136,6 +137,8 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
       continue
     }
 
+    // Only a cron expression has a minute and an hour slot to share; an interval has none.
+    if (job.scheduleKind && job.scheduleKind !== 'cron') continue
     const parts = String(job.schedule || '').trim().split(/\s+/)
     if (parts.length < 2) continue
     const [minute, hour] = parts
@@ -149,9 +152,9 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
   for (const bucket of nextRunBuckets.values()) {
     if (bucket.length < 2) continue
     const label = formatOverlapMinute(bucket[0]?.nextRun) || 'same minute'
-    const detail = `${bucket.length} jobs share the next execution window`
+    const detail = `${bucket.length} jobs run in this time slot`
     for (const job of bucket) {
-      markers.set(job.id, { count: bucket.length, label: `Overlap ${label}`, detail })
+      markers.set(job.id, { count: bucket.length, label: `Same time slot at ${label}`, detail })
     }
   }
 
@@ -159,9 +162,9 @@ export function buildCronOverlapMarkers(jobs: CronJob[]): CronOverlapState {
     if (bucket.length < 2) continue
     const [hour, minute] = key.split('|')
     const label = hour === '*'
-      ? `Overlap :${minute.padStart(2, '0')}`
-      : `Overlap ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
-    const detail = `${bucket.length} enabled jobs share the same cron slot`
+      ? `Same time slot at :${minute.padStart(2, '0')}`
+      : `Same time slot at ${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`
+    const detail = `${bucket.length} enabled jobs run in this time slot`
     for (const job of bucket) {
       if (!markers.has(job.id)) {
         markers.set(job.id, { count: bucket.length, label, detail })
@@ -189,26 +192,81 @@ export function rowStaggerDelay(index: number, base: number, step: number, capIn
 
 // ── Write helper ──────────────────────────────────────────────────────────
 
+/** Readable text for any failure: the server's own message for 400/409, "busy" for 429, "not available" for 503. */
 export function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err)
+  return describeApiError(err, String(err))
 }
 
 /**
- * Fetch wrapper for cron write endpoints: resolves on 2xx, otherwise throws
- * an Error carrying the server's `{ error }` message when one is present.
+ * Cron write endpoints: resolves on 2xx, otherwise throws the shared `ApiError`
+ * carrying the server's `{ error: { code, message } }`. Goes through `sendJson`,
+ * which adds the write-guard header.
  */
-export async function cronFetch(url: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
-    ...init,
-  })
-  if (res.ok) return
-  let message = `HTTP ${res.status}`
-  try {
-    const body = await res.json()
-    if (body && typeof body.error === 'string' && body.error) message = body.error
-  } catch {
-    // non-JSON error body; keep the HTTP status message
+export async function cronRequest(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<void> {
+  await sendJson(url, method, body)
+}
+
+/**
+ * What a cron write answers: `job` is the committed job as the list shows it
+ * (a deleted job carries `deleted: true`); create names it `entity`. `meta.stale`
+ * means the write succeeded but a dependent reading is still catching up.
+ */
+export interface CronWriteResponse {
+  ok?: boolean
+  message?: string
+  /** The scheduler shows the change. `false`: the command was sent and the read-back failed; nothing was promoted. */
+  verified?: boolean
+  /** On an unconfirmed write: the values that were asked for (never shown as current). */
+  requested?: unknown
+  job?: Partial<CronJob> & { deleted?: boolean }
+  entity?: Partial<CronJob>
+  meta?: { ok?: boolean; stale?: boolean; error?: { code?: string; message?: string } | null }
+}
+
+/** Same request as `cronRequest`, but hands back the committed entity. */
+export async function cronWrite(
+  url: string,
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: unknown,
+): Promise<CronWriteResponse | null> {
+  const response = await sendJson<CronWriteResponse | null>(url, method, body)
+  return response && typeof response === 'object' ? response : null
+}
+
+export type CronWriteArg =
+  | { kind: 'update'; jobId: string; response: CronWriteResponse | null }
+  | { kind: 'delete'; jobId: string; response: CronWriteResponse | null }
+  | { kind: 'create'; response: CronWriteResponse | null }
+
+const isWholeJob = (job: Partial<CronJob> | undefined): job is CronJob =>
+  Boolean(job) && typeof job?.id === 'string' && typeof job?.name === 'string' && typeof job?.enabled === 'boolean'
+
+/**
+ * The list after a write, from what the server reports. Only what the system confirmed is put on screen:
+ * an update merges the returned job over the one shown (when the command could not be confirmed the returned
+ * job is the previous state, marked `verified: false`), a delete drops the row only when the answer says the
+ * job is gone, a create adds the new job once. A requested value is never shown: with no usable job in the
+ * answer the list stays as it is and the refetch decides.
+ */
+export function applyCronWrite(data: CronApiResponse, write: CronWriteArg): CronApiResponse {
+  const jobs = data.jobs ?? []
+  const committed = write.response?.job
+  if (write.kind === 'delete') {
+    if (committed?.deleted !== true || write.response?.verified === false) return data
+    return { ...data, jobs: jobs.filter((job) => job.id !== write.jobId) }
   }
-  throw new Error(message)
+  if (write.kind === 'create') {
+    const created = write.response?.entity ?? committed
+    if (write.response?.verified === false || !isWholeJob(created) || jobs.some((job) => job.id === created.id)) return data
+    return { ...data, jobs: [...jobs, created] }
+  }
+  if (!committed || committed.id !== write.jobId || committed.deleted === true || !jobs.some((job) => job.id === write.jobId)) return data
+  // `deleted` is a marker on the response, not a field of the job.
+  const fields: Partial<CronJob> & { deleted?: boolean } = { ...committed }
+  delete fields.deleted
+  return { ...data, jobs: jobs.map((job) => (job.id === write.jobId ? { ...job, ...fields } : job)) }
 }

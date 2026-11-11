@@ -1,12 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { stateRank, isState } = require('../core/state');
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 const DEFAULT_RETENTION = 5000;
-const HEARTBEAT_MS = 60 * 60 * 1000;
 const DEFAULT_SOURCE_THRESHOLD_HOURS = 24;
 const DEFAULT_SOURCE_THRESHOLDS = {
   missionControl: 12,
@@ -41,7 +41,7 @@ function sanitizeTimelineValue(value) {
 
 function normalizeStatus(status) {
   const value = String(status || 'inactive').toLowerCase();
-  if (value === 'healthy' || value === 'warning' || value === 'critical' || value === 'inactive') return value;
+  if (isState(value)) return value;
   if (/fail|error|critical|unavailable/.test(value)) return 'critical';
   if (/warn|stale|degrad|caveat|unknown/.test(value)) return 'warning';
   if (/ok|clean|healthy|synced|verified/.test(value)) return 'healthy';
@@ -112,11 +112,12 @@ function normalizeSnapshot(overview, options = {}) {
     actor: options.actor || 'mission-control',
     trust: {
       label: sanitizeTimelineText(overview?.trust?.label || 'No trust state'),
-      status: normalizeStatus(overview?.trust?.status),
-      score: Number.isFinite(Number(overview?.trust?.score)) ? Number(overview.trust.score) : null,
+      status: isState(overview?.verdict?.state) ? overview.verdict.state : normalizeStatus(overview?.trust?.status),
+      score: overview?.trust?.score != null && Number.isFinite(Number(overview.trust.score)) ? Number(overview.trust.score) : null,
       source: sanitizeTimelineText(overview?.trust?.source || ''),
       lastVerifiedAt: overview?.trust?.lastVerifiedAt || overview?.refreshedAt || now,
     },
+    ...(overview?.verdict ? { verdict: sanitizeTimelineValue(overview.verdict) } : {}),
     metrics: {
       health: sanitizeTimelineText(cockpit.health?.value || ''),
       embeddings: sanitizeTimelineText(cockpit.embeddings?.value || ''),
@@ -137,23 +138,36 @@ function normalizeSnapshot(overview, options = {}) {
 }
 
 function fingerprintSnapshot(snapshot) {
+  // Whitelist material counters, never presentation text or monotonically
+  // ticking ages. Legacy entries can still carry counts only in the detail.
+  const metrics = snapshot.metrics || {};
+  const legacyCount = (pattern) => {
+    const match = String(metrics.embeddingsDetail || '').match(pattern);
+    return match ? Number(match[1].replace(/,/g, '')) : undefined;
+  };
   return hashValue({
     schemaVersion: snapshot.schemaVersion,
     trust: {
-      label: snapshot.trust?.label,
       status: snapshot.trust?.status,
       score: snapshot.trust?.score,
-      source: snapshot.trust?.source,
     },
-    metrics: snapshot.metrics,
+    metrics: {
+      missingEmbeddings: metrics.missingEmbeddings ?? legacyCount(/([\d,]+)\s+missing/i),
+      missingEmbeddingsOverdue: metrics.missingEmbeddingsOverdue,
+      stalePages: metrics.stalePages ?? legacyCount(/([\d,]+)\s+stale pages/i),
+      stalePagesOverdue: metrics.stalePagesOverdue,
+      queue: String(metrics.queue || '').match(/\d+/g)?.map(Number) || null,
+      caveats: finiteMetric(metrics.caveats),
+    },
+    reasons: snapshot.verdict?.reasons,
     bridgeProof: snapshot.bridgeProof?.map((item) => ({
       id: item.id,
       status: item.status,
-      proofLabel: item.proofLabel,
-      proofSource: item.proofSource,
     })),
-    sourceFreshness: snapshot.sourceFreshness,
-    warnings: snapshot.warnings,
+    sourceFreshness: { status: snapshot.sourceFreshness?.status,
+      staleCount: snapshot.sourceFreshness?.staleCount, warningCount: snapshot.sourceFreshness?.warningCount },
+    // Old entries have no structured verdict; their warnings are their reasons.
+    ...(snapshot.verdict ? {} : { warnings: snapshot.warnings }),
   });
 }
 
@@ -176,33 +190,14 @@ function readTimeline(options = {}) {
   const ledgerPath = options.ledgerPath || timelinePathFor(options.projectRoot || process.cwd());
   const limit = parseLimit(options.limit, options.defaultLimit, options.maxLimit);
   const warnings = [];
-  if (!fs.existsSync(ledgerPath)) {
-    return {
-      enabled: true,
-      entries: [],
-      warnings,
-      malformedLineCount: 0,
-      retainedEntryCount: 0,
-      truncated: false,
-      limit,
-      schemaVersion: SCHEMA_VERSION,
-    };
-  }
-
   let text = '';
   try {
     text = fs.readFileSync(ledgerPath, 'utf8');
   } catch (error) {
-    return {
-      enabled: true,
-      entries: [],
-      warnings: [`Timeline ledger unreadable: ${sanitizeTimelineText(error.message)}`],
-      malformedLineCount: 0,
-      retainedEntryCount: 0,
-      truncated: false,
-      limit,
-      schemaVersion: SCHEMA_VERSION,
-    };
+    if (error.code !== 'ENOENT') throw Object.assign(new Error('Timeline ledger unavailable'), { code: 'gbrain_timeline_unavailable' });
+    // An absent ledger is an observed empty history; an unreadable one is not.
+    return { enabled: true, entries: [], warnings, malformedLineCount: 0,
+      retainedEntryCount: 0, truncated: false, limit, schemaVersion: SCHEMA_VERSION };
   }
 
   const entries = [];
@@ -211,7 +206,13 @@ function readTimeline(options = {}) {
   for (const [index, line] of lines.entries()) {
     try {
       const parsed = JSON.parse(line);
-      if (parsed && typeof parsed === 'object') entries.push(sanitizeTimelineValue(parsed));
+      if (parsed && typeof parsed === 'object') {
+        const entry = sanitizeTimelineValue(parsed);
+        // Compatibility view only: never rewrite historical bytes on GET/read.
+        if (entry.trust && isState(entry.verdict?.state)) entry.trust.status = entry.verdict.state;
+        else if (entry.trust?.status === 'critical' && entry.trust.label === 'GBrain unavailable') entry.trust.status = 'unavailable';
+        entries.push(entry);
+      }
     } catch (error) {
       malformedLineCount += 1;
       warnings.push(`Malformed timeline line ${index + 1}: ${sanitizeTimelineText(error.message)}`);
@@ -282,7 +283,7 @@ function computeTrustDiff(current, previous) {
 }
 
 function severityRank(status) {
-  return { inactive: 0, healthy: 1, warning: 2, critical: 3 }[normalizeStatus(status)] || 0;
+  return stateRank(normalizeStatus(status), 'inactive');
 }
 
 function parseTimelineCount(value, pattern) {
@@ -447,10 +448,7 @@ async function captureSnapshotIfNeeded(overview, options = {}) {
       const current = readTimeline({ ...options, ledgerPath, limit: 1, defaultLimit: 1, maxLimit: 1 });
       const latest = current.entries[0] || null;
       const latestFingerprint = latest ? fingerprintSnapshot(latest) : '';
-      const latestCapturedAt = latest?.capturedAt ? Date.parse(latest.capturedAt) : NaN;
-      const heartbeatElapsed = !Number.isFinite(latestCapturedAt) || (Date.parse(snapshot.capturedAt) - latestCapturedAt) >= (options.heartbeatMs || HEARTBEAT_MS);
-
-      if (latest && latestFingerprint === fingerprint && !heartbeatElapsed) {
+      if (latest && latestFingerprint === fingerprint) {
         return {
           captured: false,
           reason: 'skipped-duplicate',
@@ -460,7 +458,7 @@ async function captureSnapshotIfNeeded(overview, options = {}) {
         };
       }
 
-      const reason = latest && latestFingerprint === fingerprint ? 'heartbeat' : 'changed';
+      const reason = 'changed';
       const nextSnapshot = { ...snapshot, fingerprint };
       appendSnapshot(ledgerPath, nextSnapshot);
       const pruned = pruneTimeline({ ...options, ledgerPath });
@@ -497,7 +495,6 @@ function createGBrainTimelineService(options = {}) {
     projectRoot,
     ledgerPath,
     sourceThresholds: options.sourceThresholds || DEFAULT_SOURCE_THRESHOLDS,
-    heartbeatMs: options.heartbeatMs || HEARTBEAT_MS,
     retention: options.retention || DEFAULT_RETENTION,
     defaultLimit: options.defaultLimit || DEFAULT_LIMIT,
     maxLimit: options.maxLimit || MAX_LIMIT,

@@ -1,20 +1,37 @@
-import { useState } from 'react'
-import { Settings2, Save, RefreshCw, Shield, Database, Globe, Download, Upload, Clock, Zap } from 'lucide-react'
-import PageTransition from '../components/PageTransition'
-import { useIsMobile } from '../lib/useIsMobile'
-import GlassCard from '../components/GlassCard'
-import StatusBadge from '../components/StatusBadge'
-import { useApi } from '../lib/hooks'
+import { useCallback, useRef, useState } from 'react'
+import type { ChangeEvent } from 'react'
+import { Download, Upload } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
+import { describeApiError, isApiError, postForm, postJson, useApi } from '../lib/hooks'
+import { applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../lib/writes'
+import { StaleWriteNote } from '../components/StaleWriteNote'
+import { changedRouting, describeHeartbeat, heartbeatError, routingErrors } from './settings/lib'
+import type { Routing, RoutingField } from './settings/lib'
+import { useTheme } from '../lib/theme'
+import type { Theme } from '../lib/theme'
+import {
+  Button,
+  ErrorState,
+  Field,
+  Mono,
+  Notice,
+  Page,
+  Panel,
+  SegmentedControl,
+  Select,
+  Skeleton,
+  useToast,
+} from '../components/ui'
+import type { SelectOption } from '../components/ui'
 import styles from './Settings.module.css'
 
+/** GET /api/settings. The gateway token is never part of it. */
 interface OpenClawConfig {
-  model?: string
-  available_models?: string[]
-  gateway_port?: number
-  token?: string
-  memory_path?: string
-  skills_path?: string
-  bedrock_region?: string
+  model?: string | null
+  gateway_port?: number | null
+  memory_path?: string | null
+  skills_path?: string | null
+  bedrock_region?: string | null
   system?: {
     mission_control_version?: string
     openclaw_version?: string | null
@@ -24,429 +41,530 @@ interface OpenClawConfig {
   }
 }
 
-export default function Settings() {
-  const isMobile = useIsMobile()
-  const { data: configData } = useApi<OpenClawConfig>('/api/settings')
-
-  return (
-    <PageTransition>
-      <div className={`${styles.page} ${isMobile ? styles.pageMobile : ''}`} style={{ gap: isMobile ? 16 : 24 }}>
-        {/* Header */}
-        <div>
-          <h1 className="text-title" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Settings2 size={22} style={{ color: '#007AFF' }} /> Settings
-          </h1>
-          <p className="text-body" style={{ marginTop: 4 }}>Gateway configuration, model routing & preferences</p>
-        </div>
-
-        <div className={`${styles.cardGrid} ${isMobile ? styles.cardGridMobile : styles.cardGridDesktop}`}>
-          {/* Model Routing Card */}
-          <ModelRoutingCard isMobile={isMobile} />
-
-          {/* OpenClaw Configuration Card */}
-          <GlassCard noPad>
-            <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
-              <div className={styles.cardHeader}>
-                <div className={styles.cardIconPurple}>
-                  <Shield size={18} style={{ color: '#BF5AF2' }} />
-                </div>
-                <h2 className={styles.cardTitle}>OpenClaw Configuration</h2>
-              </div>
-
-              <div className={styles.configRows}>
-                {[
-                  { label: 'Gateway Port', value: configData?.gateway_port || 18789 },
-                  { label: 'Memory Path', value: configData?.memory_path || '/home/ubuntu/clawd/memory', mono: true },
-                  { label: 'Skills Path', value: configData?.skills_path || '/home/ubuntu/clawd/skills', mono: true },
-                  { label: 'AWS Region', value: configData?.bedrock_region || 'us-east-1', mono: true },
-                ].map((item) => (
-                  <div key={item.label} className={styles.configRow}>
-                    <span className={styles.configRowLabel}>{item.label}</span>
-                    <span className={item.mono ? styles.configRowValueMono : styles.configRowValue}>{String(item.value)}</span>
-                  </div>
-                ))}
-                <div className={styles.configRowLast}>
-                  <span className={styles.configRowLabel}>Status</span>
-                  <StatusBadge status="active" label="Connected" />
-                </div>
-              </div>
-            </div>
-          </GlassCard>
-
-          {/* Heartbeat Configuration Card */}
-          <HeartbeatConfigCard isMobile={isMobile} />
-
-          {/* System Information Card */}
-          <GlassCard noPad>
-            <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
-              <div className={styles.cardHeader}>
-                <div className={styles.cardIconOrange}>
-                  <Database size={18} style={{ color: '#FF9500' }} />
-                </div>
-                <h2 className={styles.cardTitle}>System Information</h2>
-              </div>
-
-              <div className={styles.configRows}>
-                {[
-                  { label: 'Mission Control Version', value: configData?.system?.mission_control_version ? `v${configData.system.mission_control_version}` : '—' },
-                  { label: 'OpenClaw Version', value: configData?.system?.openclaw_version || '—' },
-                  { label: 'Node.js Version', value: configData?.system?.node_version || '—' },
-                  { label: 'Platform', value: (configData?.system?.platform && configData?.system?.arch) ? `${configData.system.platform} ${configData.system.arch}` : '—' },
-                ].map((item) => (
-                  <div key={item.label} className={styles.configRow}>
-                    <span className={styles.sysInfoLabel}>{item.label}</span>
-                    <span className={styles.sysInfoValue}>{item.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </GlassCard>
-
-          {/* Export/Import Configuration Card */}
-          <ExportImportCard isMobile={isMobile} />
-        </div>
-      </div>
-    </PageTransition>
-  )
-}
+/** Whether a routing field is set, left unset in the configuration, or could not be read (`*Source`). */
+type RoutingSource = 'set' | 'unset' | 'unreadable'
 
 interface ModelRoutingData {
-  main?: string
-  subagent?: string
-  heartbeat?: string
+  main?: string | null
+  subagent?: string | null
+  heartbeat?: string | null
+  mainSource?: RoutingSource
+  subagentSource?: RoutingSource
+  heartbeatSource?: RoutingSource
 }
 
-function ModelRoutingCard({ isMobile }: { isMobile: boolean }) {
-  const [routing, setRouting] = useState({ main: '', subagent: '', heartbeat: '' })
-  const [saving, setSaving] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
+interface ModelInfo {
+  id: string
+  name: string
+  tags?: string[]
+}
 
-  const { data: modelsData } = useApi<{ id: string; name: string; tags?: string[] }[]>('/api/models')
-  const { data: routingData } = useApi<ModelRoutingData>('/api/settings/model-routing')
+interface SaveMessages {
+  success: string
+  /** The command was sent but the system has not confirmed it. */
+  unconfirmed?: string
+  error: string
+}
 
-  // Sync routing form to server data using render-phase update (avoids setState-in-effect).
-  const [lastRoutingData, setLastRoutingData] = useState<ModelRoutingData | null>(null)
-  if (routingData && routingData !== lastRoutingData) {
-    setLastRoutingData(routingData)
-    setRouting({
-      main: routingData.main || '',
-      subagent: routingData.subagent || routingData.main || '',
-      heartbeat: routingData.heartbeat || '',
+type SaveResult = { ok: true; response: unknown; unconfirmed: boolean } | { ok: false; error: unknown; message: string }
+
+/**
+ * One save path for every write on this page: busy flag per action and a toast
+ * with the outcome. A failure toast carries the server's reason; the caller
+ * also gets the error back, to show a 400 next to the field it is about.
+ */
+function useSaver() {
+  const toast = useToast()
+  const [busy, setBusy] = useState<string | null>(null)
+  // The save whose follow-up reading the server could not confirm yet (meta.stale): it is saved, the list is behind.
+  const [catchingUp, setCatchingUp] = useState<string | null>(null)
+  // The save the system has not confirmed (verified: false): a warning, never a success.
+  const [unconfirmed, setUnconfirmed] = useState<string | null>(null)
+
+  const run = useCallback(
+    async (key: string, request: () => Promise<unknown>, messages: SaveMessages): Promise<SaveResult> => {
+      setBusy(key)
+      setCatchingUp(null)
+      setUnconfirmed(null)
+      try {
+        const response = await request()
+        const notConfirmed = isUnconfirmedWrite(response)
+        setUnconfirmed(notConfirmed ? key : null)
+        setCatchingUp(!notConfirmed && isStaleWrite(response) ? key : null)
+        if (notConfirmed) toast.show('warning', messages.unconfirmed ?? 'Sent, not yet confirmed')
+        else toast.show('success', messages.success)
+        return { ok: true, response, unconfirmed: notConfirmed }
+      } catch (error) {
+        const message = describeApiError(error)
+        toast.show('error', `${messages.error}: ${message}`)
+        return { ok: false, error, message }
+      } finally {
+        setBusy(null)
+      }
+    },
+    [toast],
+  )
+
+  const post = useCallback(
+    (key: string, url: string, body: unknown, messages: SaveMessages) =>
+      run(key, () => postJson(url, body), messages),
+    [run],
+  )
+
+  /** The note under a panel's form: the calm "list may be behind" line, or the unconfirmed warning. */
+  const noteFor = (key: string) => ({ show: catchingUp === key || unconfirmed === key, unconfirmed: unconfirmed === key })
+
+  return { busy, noteFor, run, post }
+}
+
+type Saver = ReturnType<typeof useSaver>
+
+const THEME_OPTIONS: { value: Theme; label: string }[] = [
+  { value: 'dark', label: 'Dark' },
+  { value: 'light', label: 'Light' },
+]
+
+const HEARTBEAT_OPTIONS: SelectOption[] = [
+  { value: '', label: 'Choose an interval' },
+  { value: '30m', label: 'Every 30 minutes' },
+  { value: '1h', label: 'Every hour' },
+  { value: '2h', label: 'Every 2 hours' },
+  { value: '4h', label: 'Every 4 hours' },
+]
+
+export default function Settings() {
+  const saver = useSaver()
+
+  return (
+    <Page title="Settings" description="Model routing, heartbeat, appearance and backup." width="narrow">
+      <ModelsPanel saver={saver} />
+      <HeartbeatPanel saver={saver} />
+      <AppearancePanel />
+      <ConnectionPanel />
+      <BackupPanel saver={saver} />
+    </Page>
+  )
+}
+
+/**
+ * "Inherits the main model": the field is unset in the configuration (`*Source` is `unset`) or
+ * the person chose to unset it. Only the heartbeat model can be unset through the API, so only
+ * it is offered as a choice; a sub-agent that inherits shows it as its current state.
+ * `''` is a value that is not a model: "Not set" (main) or "Not read" (the source could not be read).
+ */
+const INHERIT = '__inherit__'
+
+/** The select value for a routing field, from what the server reported. */
+function baselineFor(field: RoutingField, value: string | null | undefined, source: RoutingSource | undefined): string {
+  if (source === 'set' && typeof value === 'string' && value) return value
+  if (source === 'unset' && field !== 'main') return INHERIT
+  return ''
+}
+
+function emptyLabel(source: RoutingSource | undefined): string {
+  return source === 'unset' ? 'Not set' : 'Not read'
+}
+
+function modelOptions(models: ModelInfo[], current: string, field: RoutingField, source: RoutingSource | undefined): SelectOption[] {
+  const options: SelectOption[] = models.map((m) => ({ value: m.id, label: m.name || m.id }))
+  if (current && current !== INHERIT && !models.some((m) => m.id === current)) {
+    options.unshift({ value: current, label: current })
+  }
+  // The heartbeat model can be unset through the API; a sub-agent only shows that it inherits.
+  if (field === 'heartbeat' || current === INHERIT) {
+    options.unshift({ value: INHERIT, label: 'Inherits the main model' })
+  }
+  if (!current) options.unshift({ value: '', label: emptyLabel(source) })
+  return options
+}
+
+/** The routing as the server takes it: the explicit inherit choice becomes the empty string. */
+function routingForServer(changed: Partial<Routing>): Partial<Routing> {
+  return changed.heartbeat === INHERIT ? { ...changed, heartbeat: '' } : changed
+}
+
+const ROUTING_URL = '/api/settings/model-routing'
+const HEARTBEAT_URL = '/api/settings/heartbeat'
+
+/** The routing a save answers with, when it is complete enough to show (every field and why it is empty). */
+function committedRouting(response: unknown): ModelRoutingData | null {
+  if (!response || typeof response !== 'object') return null
+  const body = response as Record<string, unknown> & ModelRoutingData
+  const complete = ['mainSource', 'subagentSource', 'heartbeatSource'].every((key) => typeof body[key] === 'string')
+  if (!complete) return null
+  return {
+    main: body.main ?? null,
+    subagent: body.subagent ?? null,
+    heartbeat: body.heartbeat ?? null,
+    mainSource: body.mainSource,
+    subagentSource: body.subagentSource,
+    heartbeatSource: body.heartbeatSource,
+  }
+}
+
+/** The hint under a field that holds no model: the server's `*Source` says why. */
+function unreadHint(name: string, source: RoutingSource | undefined): string {
+  return source === 'unset'
+    ? `No ${name} model is set. Choose one to set it.`
+    : `The current ${name} model could not be read. Choose one to change it.`
+}
+
+function ModelsPanel({ saver }: { saver: Saver }) {
+  const queryClient = useQueryClient()
+  const models = useApi<ModelInfo[]>('/api/models')
+  const routingApi = useApi<ModelRoutingData>(ROUTING_URL)
+  const [draft, setDraft] = useState<Partial<Routing>>({})
+  const [saved, setSaved] = useState<Routing | null>(null)
+  // What the server said about the last save, next to the fields that were sent.
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<RoutingField, string>>>({})
+
+  const loading = models.loading || routingApi.loading
+  const error = routingApi.error ?? models.error
+
+  const retry = () => {
+    if (routingApi.error) routingApi.refetch()
+    if (models.error) models.refetch()
+  }
+
+  let body
+  if (loading) {
+    body = <Skeleton lines={3} label="Reading model routing" />
+  } else if (error || !routingApi.data) {
+    body = (
+      <ErrorState
+        title="Model routing could not be read"
+        message={error ?? undefined}
+        onRetry={retry}
+      />
+    )
+  } else {
+    const server = routingApi.data
+    // Each field comes as the server reported it. A sub-agent model that is unset inherits the main
+    // model; the page does not copy the main model into it.
+    const baseline: Routing = saved ?? {
+      main: baselineFor('main', server.main, server.mainSource),
+      subagent: baselineFor('subagent', server.subagent, server.subagentSource),
+      heartbeat: baselineFor('heartbeat', server.heartbeat, server.heartbeatSource),
+    }
+    const routing: Routing = { ...baseline, ...draft }
+    const dirty = (Object.keys(routing) as (keyof Routing)[]).some((k) => routing[k] !== baseline[k])
+    const list = models.data ?? []
+    const set = (key: keyof Routing) => (e: ChangeEvent<HTMLSelectElement>) => {
+      setDraft((prev) => ({ ...prev, [key]: e.target.value }))
+      setFieldErrors((prev) => ({ ...prev, [key]: undefined }))
+    }
+
+    const onSave = async () => {
+      // A partial update: only the fields that changed are sent.
+      const changed = routingForServer(changedRouting(baseline, routing))
+      const invalid = routingErrors(changed)
+      if (Object.keys(invalid).length > 0) {
+        setFieldErrors(invalid)
+        return
+      }
+      setFieldErrors({})
+      const result = await saver.post('routing', '/api/settings/model-routing', changed, {
+        success: 'Model routing saved',
+        error: 'Model routing could not be saved',
+        unconfirmed: 'Model routing sent, not yet confirmed',
+      })
+      if (result.ok) {
+        const entity = committedRouting(result.response)
+        if (entity) {
+          // The server's own account of what is configured now. When the change could not be confirmed this is
+          // the previous setting: the requested value is never shown as current.
+          await applyCommitted<ModelRoutingData>(queryClient, ROUTING_URL, () => entity)
+          setSaved(null)
+        } else {
+          setSaved(result.unconfirmed ? null : routing)
+          void queryClient.invalidateQueries({ queryKey: ['api', ROUTING_URL] })
+        }
+        setDraft({})
+      } else if (isApiError(result.error) && (result.error.status === 400 || isUpstreamRefusal(result.error))) {
+        // The server validates every model value, and the system may refuse one: say so next to the fields that were sent.
+        const sent = Object.keys(changed) as RoutingField[]
+        setFieldErrors(Object.fromEntries(sent.map((field) => [field, result.message])))
+        if (isUpstreamRefusal(result.error)) {
+          // Never keep the refused value: show what the system reports.
+          setDraft({})
+          setSaved(null)
+          void queryClient.invalidateQueries({ queryKey: ['api', ROUTING_URL] })
+        }
+      }
+    }
+
+    body = (
+      <div className={styles.form}>
+        <div className={styles.fields}>
+          <Field label="Main model" hint={routing.main === '' ? unreadHint('main', server.mainSource) : 'Used for the main assistant.'} error={fieldErrors.main}>
+            {(c) => <Select {...c} value={routing.main} onChange={set('main')} options={modelOptions(list, routing.main, 'main', server.mainSource)} />}
+          </Field>
+          <Field
+            label="Sub-agent model"
+            hint={routing.subagent === '' ? unreadHint('sub-agent', server.subagentSource) : 'Used by sub-agents the assistant starts.'}
+            error={fieldErrors.subagent}
+          >
+            {(c) => <Select {...c} value={routing.subagent} onChange={set('subagent')} options={modelOptions(list, routing.subagent, 'subagent', server.subagentSource)} />}
+          </Field>
+          <Field
+            label="Heartbeat model"
+            hint={routing.heartbeat === '' ? unreadHint('heartbeat', server.heartbeatSource) : 'Used for scheduled heartbeat checks.'}
+            error={fieldErrors.heartbeat}
+          >
+            {(c) => <Select {...c} value={routing.heartbeat} onChange={set('heartbeat')} options={modelOptions(list, routing.heartbeat, 'heartbeat', server.heartbeatSource)} />}
+          </Field>
+        </div>
+        {models.error && (
+          <Notice tone="warning" title="Model list could not be read">
+            Only the current choices are listed.
+          </Notice>
+        )}
+        <StaleWriteNote {...saver.noteFor('routing')} />
+        <div className={styles.actions}>
+          <Button
+            variant="primary"
+            onClick={onSave}
+            loading={saver.busy === 'routing'}
+            disabled={!dirty || saver.busy !== null}
+          >
+            Save routing
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <Panel title="Models" description="Which model handles each kind of work.">
+      {body}
+    </Panel>
+  )
+}
+
+/** GET /api/settings/heartbeat: `interval` is null when none is configured; a failed read is an error. */
+interface HeartbeatData {
+  interval: string | null
+}
+
+function HeartbeatPanel({ saver }: { saver: Saver }) {
+  const queryClient = useQueryClient()
+  const heartbeat = useApi<HeartbeatData>(HEARTBEAT_URL)
+  // null: the person has not touched the select, so it shows what is configured.
+  const [draft, setDraft] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const current = describeHeartbeat(heartbeat.data?.interval)
+  const configured = current.interval ?? ''
+  const interval = draft ?? configured
+  const readFailed = !heartbeat.loading && (heartbeat.error !== null || heartbeat.data === null)
+
+  // The configured value is always an option, so the select can show it even when it is not a preset.
+  const options: SelectOption[] = []
+  if (current.interval && !HEARTBEAT_OPTIONS.some((option) => option.value === current.interval)) {
+    options.push({ value: current.interval, label: current.off ? `Off (${current.interval})` : (current.label ?? current.interval) })
+  }
+  options.push(...HEARTBEAT_OPTIONS.filter((option) => option.value !== '' || configured === ''))
+
+  let hint: string
+  if (heartbeat.loading) hint = 'Reading the current interval…'
+  else if (readFailed) hint = 'The current interval could not be read. Choose one to change it.'
+  else if (current.off) hint = `Heartbeat checks are off (the interval is ${current.interval}). Choose an interval to turn them on.`
+  else if (current.label) hint = `Currently ${current.label.charAt(0).toLowerCase()}${current.label.slice(1)}.`
+  else hint = 'No interval is set. Choose one to set it.'
+
+  const onSave = async () => {
+    const invalid = heartbeatError(interval)
+    if (invalid) {
+      setError(invalid)
+      return
+    }
+    setError(null)
+    const result = await saver.post('heartbeat', '/api/settings/heartbeat', { interval }, {
+      success: 'Heartbeat interval saved',
+      error: 'Heartbeat interval could not be saved',
+      unconfirmed: 'Heartbeat interval sent, not yet confirmed',
     })
-  }
-
-  const handleSave = async () => {
-    setSaving(true)
-    setSaveStatus('idle')
-
-    try {
-      const res = await fetch('/api/settings/model-routing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(routing)
-      })
-
-      if (res.ok) {
-        setSaveStatus('success')
-        setTimeout(() => setSaveStatus('idle'), 3000)
-      } else {
-        setSaveStatus('error')
-        setTimeout(() => setSaveStatus('idle'), 3000)
+    if (result.ok) {
+      // The interval the server answers with is what is configured now; the draft is no longer needed.
+      const committed = (result.response as Partial<HeartbeatData> | null)?.interval
+      await applyCommitted<HeartbeatData>(queryClient, HEARTBEAT_URL, (current) =>
+        committed === undefined ? current : { ...current, interval: committed },
+      )
+      setDraft(null)
+    } else if (isApiError(result.error) && (result.error.status === 400 || isUpstreamRefusal(result.error))) {
+      setError(result.message)
+      if (isUpstreamRefusal(result.error)) {
+        // Never keep the refused value: show what the system reports.
+        setDraft(null)
+        void queryClient.invalidateQueries({ queryKey: ['api', HEARTBEAT_URL] })
       }
-    } catch {
-      setSaveStatus('error')
-      setTimeout(() => setSaveStatus('idle'), 3000)
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const MODEL_OPTIONS = [
-    { value: '', label: 'Inherit from Main (no override)' },
-    ...((modelsData || []).map((m) => ({
-      value: m.id,
-      label: m.name || m.id,
-    }))),
-  ]
-
-  return (
-    <GlassCard noPad>
-      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
-        <div className={styles.cardHeader}>
-          <div className={styles.cardIconOrange}>
-            <Zap size={18} style={{ color: '#FF9500' }} />
-          </div>
-          <h2 className={styles.cardTitle}>Model Routing</h2>
-        </div>
-
-        <div className={styles.fieldGroup}>
-          <div>
-            <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Main Model</label>
-            <select value={routing.main} onChange={(e) => setRouting({ ...routing, main: e.target.value })} className={styles.selectField}>
-              {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Sub-agent Model</label>
-            <select value={routing.subagent} onChange={(e) => setRouting({ ...routing, subagent: e.target.value })} className={styles.selectField}>
-              {MODEL_OPTIONS.filter(m => m.value !== '').map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Heartbeat Model</label>
-            <select value={routing.heartbeat} onChange={(e) => setRouting({ ...routing, heartbeat: e.target.value })} className={styles.selectField}>
-              {MODEL_OPTIONS.map(m => (
-                <option key={m.value || 'inherit'} value={m.value}>{m.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className={`${styles.saveBtn} ${saving ? styles.saveBtnOrangeSaving : styles.saveBtnOrange}`}
-          >
-            {saving ? (
-              <>
-                <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                <span>Saving...</span>
-              </>
-            ) : (
-              <>
-                <Save size={16} />
-                <span>Save Model Routing</span>
-              </>
-            )}
-          </button>
-
-          {saveStatus === 'success' && (
-            <div className={styles.statusSuccess}>
-              <span className="status-dot status-dot-green" />
-              Model routing saved successfully
-            </div>
-          )}
-          {saveStatus === 'error' && (
-            <div className={styles.statusError}>
-              <span className="status-dot status-dot-red" />
-              Failed to save model routing
-            </div>
-          )}
-        </div>
-      </div>
-    </GlassCard>
-  )
-}
-
-function HeartbeatConfigCard({ isMobile }: { isMobile: boolean }) {
-  const [interval, setInterval] = useState('1h')
-  const [saving, setSaving] = useState(false)
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle')
-
-  const intervalOptions = [
-    { value: '30min', label: '30 minutes' },
-    { value: '1h', label: '1 hour' },
-    { value: '2h', label: '2 hours' },
-    { value: '4h', label: '4 hours' },
-    { value: 'off', label: 'Off' },
-  ]
-
-  const handleSave = async () => {
-    setSaving(true)
-    setSaveStatus('idle')
-
-    try {
-      const res = await fetch('/api/settings/heartbeat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ interval })
-      })
-
-      if (res.ok) {
-        setSaveStatus('success')
-        setTimeout(() => setSaveStatus('idle'), 3000)
-      } else {
-        setSaveStatus('error')
-        setTimeout(() => setSaveStatus('idle'), 3000)
-      }
-    } catch {
-      setSaveStatus('error')
-      setTimeout(() => setSaveStatus('idle'), 3000)
-    } finally {
-      setSaving(false)
     }
   }
 
   return (
-    <GlassCard noPad>
-      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
-        <div className={styles.cardHeader}>
-          <div className={styles.cardIconRed}>
-            <Clock size={18} style={{ color: '#FF453A' }} />
-          </div>
-          <h2 className={styles.cardTitle}>Heartbeat Interval</h2>
-        </div>
-
-        <div className={styles.fieldGroup}>
-          <div>
-            <label className="text-label" style={{ display: 'block', marginBottom: 8 }}>Check Interval</label>
-            <select
-              value={interval}
-              onChange={(e) => setInterval(e.target.value)}
-              className={styles.heartbeatSelect}
-            >
-              {intervalOptions.map(opt => (
-                <option key={opt.value} value={opt.value} style={{ background: '#1a1a1a', color: '#fff' }}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className={`${styles.saveBtn} ${saving ? styles.saveBtnRedSaving : styles.saveBtnRed}`}
-          >
-            {saving ? (
-              <>
-                <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                <span>Saving...</span>
-              </>
-            ) : (
-              <>
-                <Save size={16} />
-                <span>Save Heartbeat Interval</span>
-              </>
+    <Panel title="Heartbeat" description="How often the assistant checks in on its own.">
+      <div className={styles.form}>
+        <div className={styles.fields}>
+          <Field label="Check interval" hint={hint} error={error}>
+            {(c) => (
+              <Select
+                {...c}
+                value={interval}
+                disabled={heartbeat.loading}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  setError(null)
+                }}
+                options={options}
+              />
             )}
-          </button>
-
-          {saveStatus === 'success' && (
-            <div className={styles.statusSuccess}>
-              <span className="status-dot status-dot-green" />
-              Heartbeat interval saved successfully
-            </div>
-          )}
-          {saveStatus === 'error' && (
-            <div className={styles.statusError}>
-              <span className="status-dot status-dot-red" />
-              Failed to save heartbeat interval
-            </div>
-          )}
+          </Field>
+        </div>
+        <StaleWriteNote {...saver.noteFor('heartbeat')} />
+        <div className={styles.actions}>
+          <Button
+            variant="primary"
+            onClick={onSave}
+            loading={saver.busy === 'heartbeat'}
+            disabled={!interval || interval === configured || saver.busy !== null}
+          >
+            Save interval
+          </Button>
         </div>
       </div>
-    </GlassCard>
+    </Panel>
   )
 }
 
-function ExportImportCard({ isMobile }: { isMobile: boolean }) {
-  const [importing, setImporting] = useState(false)
-  const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle')
+function AppearancePanel() {
+  const { theme, setTheme } = useTheme()
+  return (
+    <Panel title="Appearance" description="Saved in this browser.">
+      <div className={styles.appearance}>
+        <span className={styles.rowLabel}>Theme</span>
+        <SegmentedControl<Theme> ariaLabel="Theme" options={THEME_OPTIONS} value={theme} onChange={setTheme} />
+      </div>
+    </Panel>
+  )
+}
 
-  const handleExport = () => {
+function ConnectionPanel() {
+  const { data, loading, error, refetch } = useApi<OpenClawConfig>('/api/settings')
+
+  let body
+  if (loading) {
+    body = <Skeleton lines={4} label="Reading connection details" />
+  } else if (error || !data) {
+    body = <ErrorState title="Connection details could not be read" message={error ?? undefined} onRetry={refetch} />
+  } else {
+    const sys = data.system
+    const rows: { label: string; value: string | number | null | undefined }[] = [
+      { label: 'Gateway port', value: data.gateway_port },
+      { label: 'Memory folder', value: data.memory_path },
+      { label: 'Skills folder', value: data.skills_path },
+      { label: 'Bedrock region', value: data.bedrock_region },
+      { label: 'Mission Control', value: sys?.mission_control_version ? `v${sys.mission_control_version}` : null },
+      { label: 'OpenClaw', value: sys?.openclaw_version },
+      { label: 'Node.js', value: sys?.node_version },
+      { label: 'Platform', value: sys?.platform && sys?.arch ? `${sys.platform} ${sys.arch}` : null },
+    ]
+    body = (
+      <dl className={styles.rows}>
+        {rows.map((row) => (
+          <div key={row.label} className={styles.row}>
+            <dt className={styles.rowLabel}>{row.label}</dt>
+            <dd className={styles.rowValue}>
+              {row.value === null || row.value === undefined || row.value === '' ? (
+                <span className={styles.missing} aria-label="not read">
+                  —
+                </span>
+              ) : (
+                <Mono truncate>{String(row.value)}</Mono>
+              )}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    )
+  }
+
+  return (
+    <Panel title="Connection" description="Read-only values reported by the gateway.">
+      {body}
+    </Panel>
+  )
+}
+
+function BackupPanel({ saver }: { saver: Saver }) {
+  const queryClient = useQueryClient()
+  const inputRef = useRef<HTMLInputElement>(null)
+  const [imported, setImported] = useState(false)
+  // The server names the offending path when it refuses a document; keep that visible.
+  const [importError, setImportError] = useState<string | null>(null)
+
+  const onExport = () => {
     window.location.href = '/api/settings/export'
   }
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
+  const onFile = async (e: ChangeEvent<HTMLInputElement>) => {
+    const input = e.target
+    const file = input.files?.[0]
     if (!file) return
-
-    setImporting(true)
-    setImportStatus('idle')
-
-    try {
-      const formData = new FormData()
-      formData.append('config', file)
-
-      const res = await fetch('/api/settings/import', {
-        method: 'POST',
-        body: formData
-      })
-
-      if (res.ok) {
-        setImportStatus('success')
-        setTimeout(() => setImportStatus('idle'), 3000)
-      } else {
-        setImportStatus('error')
-        setTimeout(() => setImportStatus('idle'), 3000)
-      }
-    } catch {
-      setImportStatus('error')
-      setTimeout(() => setImportStatus('idle'), 3000)
-    } finally {
-      setImporting(false)
-      e.target.value = ''
+    setImported(false)
+    setImportError(null)
+    const formData = new FormData()
+    formData.append('config', file)
+    const result = await saver.run(
+      'import',
+      () => postForm('/api/settings/import', formData),
+      { success: 'Configuration imported. Restart required.', error: 'Configuration could not be imported' },
+    )
+    if (result.ok) {
+      setImported(true)
+      // An import can change every setting: read them all again.
+      void queryClient.invalidateQueries({ queryKey: ['api'] })
     }
+    else setImportError(result.message)
+    input.value = ''
   }
 
   return (
-    <GlassCard noPad>
-      <div className={`${styles.cardPad} ${isMobile ? styles.cardPadMobile : styles.cardPadDesktop}`}>
-        <div className={styles.cardHeader}>
-          <div className={styles.cardIconGreen}>
-            <Globe size={18} style={{ color: '#32D74B' }} />
-          </div>
-          <h2 className={styles.cardTitle}>Export / Import</h2>
-        </div>
-
-        <div className={styles.exportImportGroup}>
-          <button
-            onClick={handleExport}
-            className={styles.exportBtn}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(50,215,75,0.2)' }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(50,215,75,0.1)' }}
+    <Panel title="Backup" description="Export the configuration, or load one from a JSON file.">
+      <div className={styles.form}>
+        <div className={styles.actions}>
+          <Button icon={<Download size={14} />} onClick={onExport}>
+            Export configuration
+          </Button>
+          <Button
+            icon={<Upload size={14} />}
+            loading={saver.busy === 'import'}
+            disabled={saver.busy !== null}
+            onClick={() => inputRef.current?.click()}
           >
-            <Download size={16} />
-            Export Configuration
-          </button>
-
-          <div className={styles.importWrap}>
-            <input
-              type="file"
-              accept=".json"
-              onChange={handleImport}
-              disabled={importing}
-              className={importing ? styles.importFileInputDisabled : styles.importFileInput}
-            />
-            <button
-              disabled={importing}
-              className={importing ? styles.importBtnDisabled : styles.importBtn}
-              onMouseEnter={(e) => { if (!importing) e.currentTarget.style.background = 'rgba(0,122,255,0.2)' }}
-              onMouseLeave={(e) => { if (!importing) e.currentTarget.style.background = 'rgba(0,122,255,0.1)' }}
-            >
-              {importing ? (
-                <>
-                  <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} />
-                  <span>Importing...</span>
-                </>
-              ) : (
-                <>
-                  <Upload size={16} />
-                  <span>Import Configuration</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {importStatus === 'success' && (
-            <div className={styles.statusSuccess}>
-              <span className="status-dot status-dot-green" />
-              Configuration imported successfully. Restart required.
-            </div>
-          )}
-          {importStatus === 'error' && (
-            <div className={styles.statusError}>
-              <span className="status-dot status-dot-red" />
-              Failed to import configuration
-            </div>
-          )}
+            Import configuration
+          </Button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".json"
+            className={styles.fileInput}
+            aria-label="Configuration file to import"
+            tabIndex={-1}
+            onChange={onFile}
+          />
         </div>
+        <StaleWriteNote {...saver.noteFor('import')} />
+        {importError && (
+          <Notice tone="critical" title="This file was not imported">
+            {importError}
+          </Notice>
+        )}
+        {imported && (
+          <Notice tone="warning" title="Restart required">
+            The imported configuration takes effect after a restart.
+          </Notice>
+        )}
       </div>
-    </GlassCard>
+    </Panel>
   )
 }

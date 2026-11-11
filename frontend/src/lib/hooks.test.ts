@@ -1,82 +1,153 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { timeAgo, formatDate } from './hooks'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  ApiError,
+  describeApiError,
+  fetchJson,
+  isBusyError,
+  isUnavailableError,
+  parseRetryAfter,
+  postForm,
+  postJson,
+  retryOnce,
+  sendJson,
+  writeFailureMessage,
+} from './hooks'
 
-// ---------------------------------------------------------------------------
-// timeAgo — use fake timers for determinism
-// ---------------------------------------------------------------------------
+function json(body: unknown, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json', ...(init.headers as Record<string, string>) },
+    ...init,
+  })
+}
 
-describe('timeAgo', () => {
-  const NOW = new Date('2024-06-01T12:00:00.000Z').getTime()
+function stubFetch(response: Response) {
+  const mock = vi.fn().mockResolvedValue(response)
+  vi.stubGlobal('fetch', mock)
+  return mock
+}
 
-  beforeEach(() => {
-    vi.useFakeTimers()
-    vi.setSystemTime(NOW)
+function sentHeaders(mock: ReturnType<typeof vi.fn>) {
+  return new Headers((mock.mock.calls[0][1] as RequestInit).headers)
+}
+
+afterEach(() => vi.unstubAllGlobals())
+
+describe('error contract', () => {
+  it('surfaces status, code and message from { error: { code, message } }', async () => {
+    stubFetch(json({ error: { code: 'invalid_budget', message: 'monthly budget must be a finite number' } }, { status: 400 }))
+    const error = await fetchJson('/api/settings/budget').catch((reason: unknown) => reason)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ status: 400, code: 'invalid_budget', message: 'monthly budget must be a finite number' })
   })
 
-  afterEach(() => {
-    vi.useRealTimers()
+  it('falls back to the status when the body is not JSON', async () => {
+    stubFetch(new Response('<html>bad gateway</html>', { status: 502, headers: { 'content-type': 'text/html' } }))
+    const error = await fetchJson('/api/x').catch((reason: unknown) => reason)
+    expect(error).toMatchObject({ status: 502, code: 'http_error', message: 'HTTP 502' })
   })
 
-  it('returns "—" for empty string', () => {
-    expect(timeAgo('')).toBe('—')
+  it('reads a 503 envelope with data: null as not available, taking the meta error', async () => {
+    stubFetch(json({ data: null, meta: { ok: false, error: { code: 'gbrain_graph_pending', message: 'Graph is warming up' } } }, { status: 503 }))
+    const error = await fetchJson('/api/gbrain/synoptic').catch((reason: unknown) => reason)
+    expect(isUnavailableError(error)).toBe(true)
+    expect(error).toMatchObject({ code: 'gbrain_graph_pending', message: 'Graph is warming up' })
   })
 
-  it('returns "just now" for < 1 minute ago', () => {
-    const date = new Date(NOW - 30_000).toISOString() // 30s ago
-    expect(timeAgo(date)).toBe('just now')
+  it('a 503 without any message still says it is not available', async () => {
+    stubFetch(json({ data: null, meta: { ok: false, error: null } }, { status: 503 }))
+    const error = await fetchJson('/api/gbrain/synoptic').catch((reason: unknown) => reason)
+    expect(error).toMatchObject({ status: 503, code: 'unavailable' })
+    expect(describeApiError(error)).toBe('Not available right now.')
   })
 
-  it('returns minutes ago', () => {
-    const date = new Date(NOW - 5 * 60_000).toISOString() // 5m ago
-    expect(timeAgo(date)).toBe('5m ago')
+  it('keeps the legacy action-result shape ({ status, error: text }) readable', async () => {
+    stubFetch(json({ ok: false, status: 'busy', error: 'Another GBrain action is already running.' }, { status: 409 }))
+    const error = await fetchJson('/api/gbrain/actions').catch((reason: unknown) => reason)
+    expect(error).toMatchObject({ status: 409, code: 'busy', message: 'Another GBrain action is already running.' })
+    expect((error as ApiError).payload).toMatchObject({ status: 'busy' })
   })
 
-  it('returns hours ago', () => {
-    const date = new Date(NOW - 3 * 3600_000).toISOString() // 3h ago
-    expect(timeAgo(date)).toBe('3h ago')
+  it('429 carries Retry-After and reads as busy', async () => {
+    stubFetch(json({ error: { code: 'lane_busy', message: 'busy' } }, { status: 429, headers: { 'retry-after': '7' } }))
+    const error = await fetchJson('/api/gbrain/search?q=x').catch((reason: unknown) => reason)
+    expect(isBusyError(error)).toBe(true)
+    expect((error as ApiError).retryAfterMs).toBe(7000)
+    expect(describeApiError(error)).toBe('The server is busy, try again in 7 seconds.')
   })
 
-  it('returns days ago', () => {
-    const date = new Date(NOW - 2 * 86400_000).toISOString() // 2d ago
-    expect(timeAgo(date)).toBe('2d ago')
+  it('has no old Turkish or pattern-hack text', async () => {
+    stubFetch(json({ error: { code: 'bad_request', message: 'The string did not match the expected pattern.' } }, { status: 400 }))
+    const error = await fetchJson('/api/x').catch((reason: unknown) => reason)
+    expect(describeApiError(error)).toBe('The string did not match the expected pattern.')
   })
 
-  it('returns "in <1m" for a future date < 1 minute ahead', () => {
-    const date = new Date(NOW + 30_000).toISOString() // 30s in the future
-    expect(timeAgo(date)).toBe('in <1m')
+  it('does not retry client errors or an unavailable reading, but retries a server fault once', () => {
+    expect(retryOnce(0, new ApiError({ status: 400, code: 'x', message: 'x' }))).toBe(false)
+    expect(retryOnce(0, new ApiError({ status: 429, code: 'x', message: 'x' }))).toBe(false)
+    expect(retryOnce(0, new ApiError({ status: 503, code: 'x', message: 'x' }))).toBe(false)
+    expect(retryOnce(0, new ApiError({ status: 500, code: 'x', message: 'x' }))).toBe(true)
+    expect(retryOnce(1, new ApiError({ status: 500, code: 'x', message: 'x' }))).toBe(false)
+    expect(retryOnce(0, new TypeError('network'))).toBe(true)
   })
 
-  it('returns "in Xm" for future minutes', () => {
-    const date = new Date(NOW + 10 * 60_000).toISOString() // 10m in the future
-    expect(timeAgo(date)).toBe('in 10m')
-  })
-
-  it('returns "in Xh" for future hours', () => {
-    const date = new Date(NOW + 5 * 3600_000).toISOString() // 5h in the future
-    expect(timeAgo(date)).toBe('in 5h')
-  })
-
-  it('returns "in Xd" for future days', () => {
-    const date = new Date(NOW + 3 * 86400_000).toISOString() // 3d in the future
-    expect(timeAgo(date)).toBe('in 3d')
+  it('writeFailureMessage names the action and the server reason', () => {
+    const error = new ApiError({ status: 409, code: 'calendar_override_unavailable', message: 'Sync cron before clearing a legacy override' })
+    expect(writeFailureMessage('Schedule save failed', error)).toBe('Schedule save failed: Sync cron before clearing a legacy override')
   })
 })
 
-// ---------------------------------------------------------------------------
-// formatDate
-// ---------------------------------------------------------------------------
+describe('Retry-After', () => {
+  it('parses seconds and dates, and ignores junk', () => {
+    expect(parseRetryAfter('3')).toBe(3000)
+    expect(parseRetryAfter(null)).toBeNull()
+    expect(parseRetryAfter('soon')).toBeNull()
+    const now = Date.parse('2026-11-11T10:00:00Z')
+    expect(parseRetryAfter('Wed, 11 Nov 2026 10:00:09 GMT', now)).toBe(9000)
+  })
+})
 
-describe('formatDate', () => {
-  it('returns a non-empty string for a valid ISO date', () => {
-    const result = formatDate('2024-06-01T12:00:00.000Z')
-    expect(typeof result).toBe('string')
-    expect(result.length).toBeGreaterThan(0)
+describe('write guard header', () => {
+  it('adds X-MC-Request: 1 to every write method', async () => {
+    for (const method of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) {
+      const mock = stubFetch(json({ ok: true }))
+      await sendJson('/api/x', method, { a: 1 })
+      expect(sentHeaders(mock).get('x-mc-request')).toBe('1')
+      expect((mock.mock.calls[0][1] as RequestInit).method).toBe(method)
+    }
   })
 
-  it('includes month abbreviation and day number', () => {
-    // In en-US locale, "Jun 1" or "Jun 1" pattern
-    const result = formatDate('2024-06-01T12:00:00.000Z')
-    expect(result).toMatch(/Jun/)
-    expect(result).toMatch(/1/)
+  it('adds it for a direct fetchJson write too, and keeps caller headers', async () => {
+    const mock = stubFetch(json({ ok: true }))
+    await fetchJson('/api/x', { method: 'post', headers: { 'X-Other': 'y' } })
+    expect(sentHeaders(mock).get('x-mc-request')).toBe('1')
+    expect(sentHeaders(mock).get('x-other')).toBe('y')
+  })
+
+  it('does not add it to reads', async () => {
+    const mock = stubFetch(json({ ok: true }))
+    await fetchJson('/api/x')
+    expect((mock.mock.calls[0][1] as RequestInit | undefined)?.headers).toBeUndefined()
+  })
+
+  it('postJson sends a JSON body; postForm leaves the content type to the browser', async () => {
+    const mock = stubFetch(json({ ok: true }))
+    await postJson('/api/x', { monthly: null })
+    expect(sentHeaders(mock).get('content-type')).toBe('application/json')
+    expect((mock.mock.calls[0][1] as RequestInit).body).toBe('{"monthly":null}')
+
+    const form = new FormData()
+    form.append('config', new Blob(['{}']), 'mc.json')
+    const formMock = stubFetch(json({ ok: true }))
+    await postForm('/api/settings/import', form)
+    expect(sentHeaders(formMock).get('x-mc-request')).toBe('1')
+    expect(sentHeaders(formMock).get('content-type')).toBeNull()
+  })
+
+  it('a write with no body sends no content type', async () => {
+    const mock = stubFetch(json({ ok: true }))
+    await postJson('/api/calendar/sync-cron')
+    expect(sentHeaders(mock).get('content-type')).toBeNull()
+    expect((mock.mock.calls[0][1] as RequestInit).body).toBeUndefined()
   })
 })

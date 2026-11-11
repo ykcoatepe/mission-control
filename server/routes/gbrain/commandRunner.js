@@ -3,6 +3,7 @@
 const os = require('os');
 const { execFile } = require('child_process');
 const util = require('util');
+const { scrubText } = require('../../core/scrub');
 const { DEFAULT_COMMAND_TIMEOUT_MS, HEALTH_PROBE_HARD_KILL_DELAY_MS } = require('./constants');
 
 const defaultExecFilePromise = util.promisify(execFile);
@@ -32,12 +33,10 @@ function createGBrainExecOptions(timeoutMs, options = {}) {
   return execOptions;
 }
 
+// Every GBrain diagnostic (action summaries, errors, payload strings, probe
+// messages) goes through the one shared sanitizer.
 function sanitizeMessage(value) {
-  return String(value || 'Unknown error')
-    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer [redacted]')
-    .replace(/sk-[A-Za-z0-9_-]+/g, 'sk-[redacted]')
-    .replace(/\/(?:Users|home)\/[^/\s]+/g, '~')
-    .slice(0, 220);
+  return scrubText(String(value || 'Unknown error')).slice(0, 220);
 }
 
 function parseJsonFromOutput(output) {

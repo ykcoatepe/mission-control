@@ -1,0 +1,146 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+}
+
+.toolbarEnd {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-left: auto;
+}
+
+.select {
+  width: 220px;
+}
+
+.count {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.projectCell {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+
+.projectName {
+  min-width: 0;
+  color: var(--text-1);
+  font-weight: var(--fw-medium);
+  overflow-wrap: anywhere;
+}
+
+/* The tag stays on the name's line for every row. */
+.restricted {
+  flex: none;
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  white-space: nowrap;
+}
+
+.what {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 200px;
+  max-width: 640px;
+}
+
+.clamp {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-1);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.sub {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+/* A raw command: its own block under the plain summary, one line, full text in the tooltip. */
+.command {
+  display: block;
+  overflow: hidden;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.readingAge {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.part {
+  white-space: nowrap;
+}
+
+.time {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.overdue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-critical);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.muted {
+  color: var(--text-3);
+}
+
+.type {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 140px;
+}
+
+.typeLabel {
+  color: var(--text-1);
+}
+
+/* Codes break only after an underscore, never in the middle of a word. */
+.code {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+@media (max-width: 700px) {
+  .toolbarEnd {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .select {
+    width: 100%;
+  }
+}

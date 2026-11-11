@@ -1,0 +1,57 @@
+.list {
+  display: flex;
+  gap: var(--sp-1);
+  overflow-x: auto;
+  /* The underline sits inside the tab, so nothing overflows vertically and no stray scrollbar appears. */
+  overflow-y: hidden;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-3);
+  color: var(--text-3);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--text-1);
+}
+
+.tab:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  border-radius: var(--r-md);
+}
+
+.tab[aria-selected='true'] {
+  color: var(--text-1);
+}
+
+.tab[aria-selected='true']::after {
+  content: '';
+  position: absolute;
+  left: var(--sp-3);
+  right: var(--sp-3);
+  bottom: 0;
+  height: 2px;
+  background: var(--accent);
+}
+
+.tab:disabled {
+  color: var(--text-disabled);
+}
+
+.count {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums;
+}

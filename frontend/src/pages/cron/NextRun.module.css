@@ -1,0 +1,7 @@
+.overdue {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--state-warning);
+  font-size: var(--fs-small);
+}

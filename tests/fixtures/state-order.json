@@ -1,0 +1,41 @@
+{
+ "_comment": "Expected results of worstState for every ordered pair of states. A static table, not computed from either implementation: both tests/scrubAndStateFinal.test.js (backend consumers) and frontend/src/lib/state.test.ts execute their real implementation against this table. Worst first: critical > warning > unavailable > healthy > inactive.",
+ "states": ["critical", "warning", "unavailable", "healthy", "inactive"],
+ "empty": "unavailable",
+ "pairs": [
+  ["critical", "critical", "critical"],
+  ["critical", "warning", "critical"],
+  ["critical", "unavailable", "critical"],
+  ["critical", "healthy", "critical"],
+  ["critical", "inactive", "critical"],
+  ["warning", "critical", "critical"],
+  ["warning", "warning", "warning"],
+  ["warning", "unavailable", "warning"],
+  ["warning", "healthy", "warning"],
+  ["warning", "inactive", "warning"],
+  ["unavailable", "critical", "critical"],
+  ["unavailable", "warning", "warning"],
+  ["unavailable", "unavailable", "unavailable"],
+  ["unavailable", "healthy", "unavailable"],
+  ["unavailable", "inactive", "unavailable"],
+  ["healthy", "critical", "critical"],
+  ["healthy", "warning", "warning"],
+  ["healthy", "unavailable", "unavailable"],
+  ["healthy", "healthy", "healthy"],
+  ["healthy", "inactive", "healthy"],
+  ["inactive", "critical", "critical"],
+  ["inactive", "warning", "warning"],
+  ["inactive", "unavailable", "unavailable"],
+  ["inactive", "healthy", "healthy"],
+  ["inactive", "inactive", "inactive"]
+ ],
+ "lists": [
+  [["healthy", "critical", "warning"], "critical"],
+  [["healthy", "warning", "unavailable"], "warning"],
+  [["inactive", "healthy", "unavailable"], "unavailable"],
+  [["inactive", "healthy", "inactive"], "healthy"],
+  [["inactive", "inactive"], "inactive"],
+  [["unavailable", "inactive", "critical", "healthy", "warning"], "critical"],
+  [[], "unavailable"]
+ ]
+}

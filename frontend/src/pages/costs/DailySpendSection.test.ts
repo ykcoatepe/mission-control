@@ -1,17 +1,13 @@
 // @vitest-environment jsdom
 
-import { act, createElement, type ReactNode } from 'react'
+import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import DailySpendSection from './DailySpendSection'
 import type { ChartDataRow, ChartSeriesItem } from './types'
 
-vi.mock('../../components/GlassCard', () => ({
-  default: ({ children }: { children: ReactNode }) => createElement('div', null, children),
-}))
-
 const localSeries: ChartSeriesItem[] = [
-  { model: 'ollama/llama3', key: 'm0', color: '#8E8E93', totalCost: 0, totalTokens: 9000 },
+  { model: 'ollama/llama3', identity: 'llama3', key: 'm0', color: 'var(--series-6)', totalCost: 0, totalTokens: 9000 },
 ]
 
 const localOnlyRows = [
@@ -20,11 +16,9 @@ const localOnlyRows = [
 ] as unknown as ChartDataRow[]
 
 const baseProps = {
-  m: false,
   chartData: localOnlyRows,
   chartSeries: localSeries,
   hasChartBars: false,
-  useMobileDailyChart: false,
   activeChartDate: '2026-08-02',
   setActiveChartDate: () => {},
   chartDayCount: 2,
@@ -35,8 +29,6 @@ const baseProps = {
   hasSessionEstimateChart: false,
   sessionEstimateData: [],
   totalTokens: 9000,
-  tokenBasedCost: null,
-  blendedCostBreakdown: [],
   apiEquivalentReliability: 'not_applicable',
 }
 
@@ -73,5 +65,27 @@ describe('DailySpendSection selected-day detail reachability', () => {
     const panel = host.querySelector('[data-testid="day-detail-panel"]')
     expect(panel).not.toBeNull()
     expect(panel?.textContent).toContain('2026-08-02')
+  })
+})
+
+describe('DailySpendSection chart accessibility', () => {
+  const rows = [
+    { day: '1', fullDate: '2026-08-01', total: 10, totalTokens: 100, m0: 10, m0__tokens: 100 },
+    { day: '2', fullDate: '2026-08-02', total: 30, totalTokens: 300, m0: 30, m0__tokens: 300 },
+  ] as unknown as ChartDataRow[]
+
+  it('is a named picture: role img with a summary, and nothing inside it takes Tab focus', async () => {
+    const { host } = await renderSection({
+      ...baseProps,
+      chartData: rows,
+      hasChartBars: true,
+      ledgerActive: true,
+      apiEquivalentReliability: 'estimated',
+    })
+    const chart = host.querySelector('[role="img"]')
+    expect(chart).not.toBeNull()
+    expect(chart?.getAttribute('aria-label')).toBe('Daily spend, 2 days, $40.00 in total. Busiest day 2026-08-02, $30.00.')
+    expect(chart?.querySelectorAll('[tabindex]:not([tabindex="-1"])').length).toBe(0)
+    expect(chart?.getAttribute('tabindex')).toBeNull()
   })
 })

@@ -1,4 +1,6 @@
 const express = require('express');
+const fs = require('fs');
+const { httpError } = require('../core/http');
 
 function normalizeDecisionRecord(decision) {
   return {
@@ -128,21 +130,30 @@ function isAutorunInfraFailedEvent(event) {
   return isDelegationAutorunInfraFailureText(failureText);
 }
 
+// GETs read the archive files only; the action route (410 unless enabled) is
+// the one writer.
 function buildCouncilsRouter({
-  readRuntimeSnapshot,
-  writeRuntimeSnapshot,
-  runtimeSnapshotTtl,
   decisionLogPath,
   opsEventsPath,
-  agentRegistryPath,
   readJsonFileSafe,
   writeJsonFileAtomic,
 }) {
   const router = express.Router();
   const councilActionsEnabled = String(process.env.MISSION_CONTROL_ENABLE_COUNCIL_ACTIONS || '').trim() === '1';
+  // A missing archive file is an empty archive; one that exists but cannot be
+  // parsed is unavailable (503), never an empty list, and never overwritten.
+  const UNREADABLE = Symbol('unreadable');
+  function readArchive(filePath) {
+    if (!fs.existsSync(filePath)) return [];
+    const value = readJsonFileSafe(filePath, UNREADABLE);
+    if (value === UNREADABLE || !Array.isArray(value)) {
+      throw httpError(503, 'councils_archive_unavailable', 'The decision archive could not be read');
+    }
+    return value;
+  }
 
   function buildCouncilsSummaryPayload() {
-    const raw = readJsonFileSafe(decisionLogPath, []);
+    const raw = readArchive(decisionLogPath);
     const decisions = Array.isArray(raw) ? raw.map(normalizeDecisionRecord) : [];
     const metrics = buildArchiveMetrics(decisions);
     return {
@@ -164,7 +175,7 @@ function buildCouncilsRouter({
   }
 
   function buildGovernanceScorecardPayload() {
-    const raw = readJsonFileSafe(decisionLogPath, []);
+    const raw = readArchive(decisionLogPath);
     const decisions = Array.isArray(raw) ? raw.map(normalizeDecisionRecord) : [];
     const open = decisions.filter((decision) => isOpenDecisionStatus(decision.status)).length;
     const blocked = decisions.filter((decision) => String(decision.status || '').toLowerCase() === 'blocked').length;
@@ -172,7 +183,7 @@ function buildCouncilsRouter({
 
     const nowMs = Date.now();
     const liveCutoffMs = nowMs - (24 * 60 * 60 * 1000);
-    const rawEvents = readJsonFileSafe(opsEventsPath, []);
+    const rawEvents = readArchive(opsEventsPath);
     const events = Array.isArray(rawEvents) ? rawEvents : [];
     const parseEventTs = (event) => {
       const rawTs = event?.timestamp || event?.createdAt;
@@ -259,34 +270,25 @@ function buildCouncilsRouter({
   }
 
   router.get('/api/councils/summary', (req, res) => {
-    const snapshot = readRuntimeSnapshot('councils-summary', runtimeSnapshotTtl.councilsSummary);
-    if (snapshot) return res.json(snapshot);
-    return res.json(writeRuntimeSnapshot('councils-summary', buildCouncilsSummaryPayload()));
+    // GET is pure: built from the archive files, nothing is persisted.
+    return res.json(buildCouncilsSummaryPayload());
   });
 
   router.get('/api/councils/decisions', (req, res) => {
-    const raw = readJsonFileSafe(decisionLogPath, []);
+    const raw = readArchive(decisionLogPath);
     const decisions = (Array.isArray(raw) ? raw : [])
       .map(normalizeDecisionRecord)
       .sort((left, right) => new Date(right.updatedAt || right.createdAt || 0).getTime() - new Date(left.updatedAt || left.createdAt || 0).getTime());
     return res.json({ decisions });
   });
 
-  router.get('/api/councils/agents', (req, res) => {
-    const registry = readJsonFileSafe(agentRegistryPath, {});
-    const agents = Array.isArray(registry?.agents) ? registry.agents : (Array.isArray(registry) ? registry : []);
-    return res.json({ agents });
-  });
-
   router.get('/api/councils/governance/scorecard', (req, res) => {
-    const snapshot = readRuntimeSnapshot('governance-scorecard', runtimeSnapshotTtl.governanceScorecard);
-    if (snapshot) return res.json(snapshot);
-    return res.json(writeRuntimeSnapshot('governance-scorecard', buildGovernanceScorecardPayload()));
+    return res.json(buildGovernanceScorecardPayload());
   });
 
   router.get('/api/councils/decisions/:decisionId/timeline', (req, res) => {
     const decisionId = String(req.params.decisionId || '').trim();
-    const events = readJsonFileSafe(opsEventsPath, []);
+    const events = readArchive(opsEventsPath);
     const decisionEvents = (Array.isArray(events) ? events : [])
       .filter((event) => {
         if (String(event?.entityId || '') === decisionId) return true;
@@ -306,7 +308,7 @@ function buildCouncilsRouter({
   router.post('/api/councils/decisions/:decisionId/action', (req, res) => {
     if (!councilActionsEnabled) {
       return res.status(410).json({
-        error: 'Council actions are disabled',
+        error: { code: 'council_actions_disabled', message: 'Council actions are disabled' },
         mode: 'archive_only',
         recommendation: 'Use live operation surfaces for new work; keep this endpoint disabled unless council execution is explicitly restored.',
       });
@@ -314,14 +316,14 @@ function buildCouncilsRouter({
 
     const decisionId = String(req.params.decisionId || '').trim();
     const { action, note, by } = req.body || {};
-    if (!decisionId) return res.status(400).json({ error: 'decisionId required' });
-    if (!action) return res.status(400).json({ error: 'action required' });
-    if (!note || !String(note).trim()) return res.status(400).json({ error: 'note required' });
+    if (!decisionId) throw httpError(400, 'decision_id_required', 'decisionId required');
+    if (!action) throw httpError(400, 'council_action_required', 'action required');
+    if (!note || !String(note).trim()) throw httpError(400, 'council_note_required', 'note required');
 
-    const raw = readJsonFileSafe(decisionLogPath, []);
+    const raw = readArchive(decisionLogPath);
     const list = Array.isArray(raw) ? raw : [];
     const index = list.findIndex((decision) => String(decision?.decisionId || decision?.id || '') === decisionId);
-    if (index < 0) return res.status(404).json({ error: 'decision not found' });
+    if (index < 0) throw httpError(404, 'decision_not_found', 'decision not found');
 
     const current = normalizeDecisionRecord(list[index]);
     const normalizedAction = String(action).toLowerCase();
@@ -345,7 +347,7 @@ function buildCouncilsRouter({
     list[index] = updated;
     writeJsonFileAtomic(decisionLogPath, list);
 
-    const events = readJsonFileSafe(opsEventsPath, []);
+    const events = readArchive(opsEventsPath);
     const eventList = Array.isArray(events) ? events : [];
     eventList.unshift({
       eventId: `EVT-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,

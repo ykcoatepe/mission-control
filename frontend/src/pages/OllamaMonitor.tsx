@@ -1,11 +1,44 @@
 import { useMemo, useRef, useState } from 'react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Server, Activity, Boxes, Cpu, Gauge, HardDrive, RefreshCw, CircleAlert, Clock3, ChevronDown, ChevronUp } from 'lucide-react'
-import PageTransition from '../components/PageTransition'
-import GlassCard from '../components/GlassCard'
-import StatusBadge from '../components/StatusBadge'
+import { RefreshCw } from 'lucide-react'
+import {
+  Button,
+  DataTable,
+  Drawer,
+  EmptyState,
+  ErrorState,
+  Freshness,
+  Meter,
+  Mono,
+  Notice,
+  Page,
+  Panel,
+  Select,
+  Skeleton,
+  Stat,
+  StatePill,
+  StatRow,
+  TimeAgo,
+} from '../components/ui'
+import type { DataTableColumn } from '../components/ui'
+import { worstState } from '../lib/state'
+import type { UiState } from '../lib/state'
 import { fetchJson, useApi } from '../lib/hooks'
+import { nextTokenUsageRefetch, shouldRetryTokenUsageFast } from './ollamaTokenRetry'
+import type { TokenUsageRetryState } from './ollamaTokenRetry'
+import {
+  describeTokenUsage,
+  finiteNumber,
+  formatMiB,
+  formatSize,
+  formatTokens,
+  aggregateLocalTokenUsage,
+  canonicalLocalModelName,
+  countUnknownLocality,
+  splitLocalTokens,
+} from './ollamaFormat'
+import type { TokenServiceUsage } from './ollamaFormat'
 import styles from './OllamaMonitor.module.css'
 
 type OllamaModel = {
@@ -28,16 +61,20 @@ type OllamaGpuDevice = {
   vendor?: string | null
   cores?: string | null
   utilGpu?: number | null
-  utilMemory?: number | null
-  memTotalMiB?: number | null
+  /** Apple tiler utilization (not memory utilization). */
+  tilerUtilPercent?: number | null
+  /** Unified memory allocated to the GPU; not the hardware total. */
+  memAllocatedMiB?: number | null
+  /** Hardware capacity; null where the probe cannot measure it. */
+  memHardwareTotalMiB?: number | null
   memUsedMiB?: number | null
-  memFreeMiB?: number | null
   tempC?: number | null
   powerDraw?: number | null
   powerLimit?: number | null
   memUsedEstimate?: boolean
   metricSource?: string | null
-  memorySource?: string | null
+  /** The server's plain-words note on what the counters measure. */
+  metricSourceNote?: string | null
 }
 
 type OllamaGpu = {
@@ -81,12 +118,12 @@ type OllamaTelemetryHistoryResponse = {
 
 type OllamaModelTelemetryItem = {
   name: string
-  requestCount: number
-  errorCount: number
-  errorRate: number
+  requestCount: number | null
+  errorCount: number | null
+  errorRate: number | null
   avgLatencyMs: number | null
   p95LatencyMs: number | null
-  requestsPerMinute: number
+  requestsPerMinute: number | null
   status: string
   estimated: boolean
 }
@@ -97,20 +134,8 @@ type OllamaModelTelemetryResponse = {
   estimated: boolean
   telemetrySource: string
   limitations?: string[]
-  windowMs: number
+  windowMs: number | null
   models: OllamaModelTelemetryItem[]
-}
-
-type TokenServiceUsage = {
-  name: string
-  cost?: number
-  tokens?: number
-  sessions?: number
-  percentage?: number
-  agent?: string
-  costSource?: string
-  costStatus?: string
-  billingModes?: string
 }
 
 type TokenUsageResponse = {
@@ -130,15 +155,6 @@ type TokenUsageResponse = {
     preservedPreviousOpenClaw?: boolean
     preservedPreviousUsage?: boolean
   }
-}
-
-type ModelTokenUsage = {
-  tokens: number
-  sessions: number
-  cost: number
-  percentage: number
-  sources: string[]
-  costSources: string[]
 }
 
 type OllamaTelemetry = {
@@ -188,39 +204,24 @@ type OllamaTelemetry = {
   gpu?: OllamaGpu
 }
 
-const STATUS_GREEN = '#32D74B'
-const STATUS_AMBER = '#FFD60A'
-const STATUS_RED = '#FF453A'
-const STATUS_GRAY = '#8E8E93'
-const TOKEN_USAGE_RETRY_INTERVAL_MS = 2500
-const TOKEN_USAGE_RETRY_LIMIT = 60
-const TOKEN_USAGE_RETRY_TIMEOUT_MS = TOKEN_USAGE_RETRY_INTERVAL_MS * TOKEN_USAGE_RETRY_LIMIT
-const TOKEN_USAGE_STEADY_REFRESH_MS = 60000
+type UsagePeriod = 'day' | '7d' | 'month'
 
-function formatBytes(bytes?: number | null) {
-  if (!Number.isFinite(bytes || NaN) || (bytes || 0) <= 0) return '—'
-  const units = ['B', 'KB', 'MB', 'GB', 'TB']
-  let value = Number(bytes)
-  let index = 0
-  while (value >= 1024 && index < units.length - 1) {
-    value /= 1024
-    index += 1
-  }
-  return `${value.toFixed(index === 0 ? 0 : 2)} ${units[index]}`
-}
-
-function formatMiB(v?: number | null) {
-  if (!Number.isFinite(v || NaN) || (v || 0) <= 0) return '—'
-  return `${v} MB`
-}
-
-function finiteNumber(value?: number | null): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null
-}
+const PERIOD_OPTIONS: { value: UsagePeriod; label: string }[] = [
+  { value: 'day', label: 'Today' },
+  { value: '7d', label: 'Last 7 days' },
+  { value: 'month', label: 'This month' },
+]
 
 function presentText(value?: string | null): string | null {
   const text = String(value || '').trim()
   return text && text !== '—' ? text : null
+}
+
+/** "0 GB" (cloud-hosted entries) carries no information; treat it as not read. */
+function presentSize(value?: string | null): string | null {
+  const text = presentText(value)
+  if (!text || /^0(\.0+)?\s*[a-z]*$/i.test(text)) return null
+  return text
 }
 
 function modelMetaParts(model: OllamaModel) {
@@ -239,33 +240,29 @@ function hasAnyGpuMetricValue(
     const memUsed = Number.isFinite(device.memUsedMiB as number) && (!device.memUsedEstimate || includeEstimated)
       ? device.memUsedMiB
       : null
-    return [device.utilGpu, device.utilMemory, device.tempC, device.powerDraw, device.powerLimit, memUsed].some((value) => Number.isFinite(value as number))
+    return [device.utilGpu, device.tilerUtilPercent, device.tempC, device.powerDraw, device.powerLimit, memUsed].some((value) => Number.isFinite(value as number))
   })
 }
 
-function formatTime(dateStr?: string | null) {
-  if (!dateStr) return '—'
-  const d = new Date(dateStr)
-  if (Number.isNaN(d.getTime())) return '—'
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+function scoreState(score: number | null): UiState {
+  if (score === null) return 'unavailable'
+  if (score >= 85) return 'healthy'
+  if (score >= 60) return 'warning'
+  return 'critical'
 }
 
-function healthColor(score: number) {
-  if (score >= 85) return STATUS_GREEN
-  if (score >= 60) return STATUS_AMBER
-  return STATUS_RED
+function percentState(percent: number | null): UiState | undefined {
+  if (percent === null) return undefined
+  if (percent >= 92) return 'critical'
+  if (percent >= 80) return 'warning'
+  return undefined
 }
 
-function percentTone(percent: number) {
-  if (percent >= 92) return STATUS_RED
-  if (percent >= 80) return STATUS_AMBER
-  return STATUS_GREEN
-}
-
-function serverTone(status: string) {
-  if (status === 'online') return STATUS_GREEN
-  if (status === 'degraded') return STATUS_AMBER
-  return STATUS_RED
+function serverState(status: string): UiState {
+  if (status === 'online') return 'healthy'
+  if (status === 'degraded') return 'warning'
+  if (status === 'offline') return 'critical'
+  return 'unavailable'
 }
 
 function formatMetric(value?: number | null, digits = 2) {
@@ -274,776 +271,530 @@ function formatMetric(value?: number | null, digits = 2) {
 }
 
 function formatErrorRate(rate?: number | null) {
-  if (!Number.isFinite(rate as number)) return '0.0%'
+  if (!Number.isFinite(rate as number)) return '—'
   return (Number(rate) * 100).toFixed(1) + '%'
 }
 
-function formatTokens(value?: number | null) {
-  const n = Number(value || 0)
-  if (!Number.isFinite(n) || n <= 0) return '0'
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n >= 10_000_000_000 ? 1 : 2)}B`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 1 : 2)}M`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 1 : 2)}K`
-  return String(Math.round(n))
-}
-
-function canonicalLocalModelName(value?: string | null) {
-  return String(value || '')
-    .trim()
-    .replace(/^(OpenClaw|Hermes)\s*\/\s*/i, '')
-    .replace(/^(ollama|custom|lmstudio|local)\//i, '')
-    .replace(/:latest$/i, '')
-    .toLowerCase()
-}
-
-function aggregateLocalTokenUsage(services: TokenServiceUsage[] = []) {
-  const usage = new Map<string, ModelTokenUsage>()
-  for (const service of services) {
-    const rawName = String(service.name || '')
-    const localLike = /(^|\/\s*)(ollama|custom|lmstudio|local)\//i.test(rawName)
-    if (!localLike) continue
-    const key = canonicalLocalModelName(rawName)
-    if (!key) continue
-    const existing = usage.get(key) || { tokens: 0, sessions: 0, cost: 0, percentage: 0, sources: [], costSources: [] }
-    existing.tokens += Number(service.tokens || 0)
-    existing.sessions += Number(service.sessions || 0)
-    existing.cost += Number(service.cost || 0)
-    existing.percentage += Number(service.percentage || 0)
-    const source = String(service.agent || '').trim() || rawName.split('/')[0]?.trim()
-    if (source && !existing.sources.includes(source)) existing.sources.push(source)
-    const costSource = String(service.costSource || service.costStatus || service.billingModes || '').trim()
-    if (costSource && !existing.costSources.includes(costSource)) existing.costSources.push(costSource)
-    usage.set(key, existing)
-  }
-  return usage
-}
-
-function isPreservedTokenUsageCache(tokens?: TokenUsageResponse | null) {
-  return !!(
-    tokens?.meta?.stale &&
-    !tokens.meta.refreshing &&
-    (tokens.meta.preservedPreviousOpenClaw || tokens.meta.preservedPreviousUsage)
-  )
-}
-
-function shouldRetryTokenUsageFast(tokens?: TokenUsageResponse | null) {
-  if (!tokens) return true
-  if (isPreservedTokenUsageCache(tokens)) return false
-  return (
-    tokens.source === 'sessions.fast_fallback' ||
-    !!tokens.meta?.refreshing ||
-    !!tokens.meta?.stale
-  )
-}
-
-function modelTelemetryLabels(estimated?: boolean) {
-  if (!estimated) {
-    return {
-      rate: 'Req/min',
-      volume: 'Requests in window',
-      volumeShort: 'Requests',
-      error: 'Average error rate',
-      errorShort: 'Err%',
-      latency: 'p95 latency',
-      source: 'Request telemetry',
-      note: 'Backed by request telemetry when available.',
-    }
-  }
-
-  return {
-    rate: 'Samples/min',
-    volume: 'Samples in window',
-    volumeShort: 'Samples',
-    error: 'Status error pressure',
-    errorShort: 'Err pressure',
-    latency: 'Probe p95',
-    source: 'Monitor samples',
-    note: 'Derived from Mission Control snapshots and Ollama health probes; this is not a request log.',
-  }
-}
-
-function summarizePercentTrend(values: number[]) {
-  const valid = values.filter((v) => Number.isFinite(v))
-  if (!valid.length) return '—'
-  const current = valid[valid.length - 1]
-  const min = Math.min(...valid)
-  const max = Math.max(...valid)
-  return `Now ${Math.round(current)}% · Min ${Math.round(min)}% · Max ${Math.round(max)}%`
-}
-
-function renderSparkline(values: number[], color: string, gradientId: string) {
-  if (!values.length) {
-    return <div className={styles.mutedSmall}>No metrics yet</div>
-  }
-  if (values.length === 1) {
-    return <p className={styles.mutedSmall}>{`${Math.round(values[0])}%`}</p>
-  }
-
-  const width = 260
-  const height = 44
-  const pad = 6
-  const clamped = values.map((v) => Math.max(0, Math.min(100, v)))
-  const min = Math.min(...clamped)
-  const max = Math.max(...clamped)
-  const span = Math.max(1, max - min)
-  const points = clamped
+/** Health-score trend: absolute 0-100 scale, so a flat line near the top reads as flat. */
+function HealthSpark({ values }: { values: number[] }) {
+  if (values.length < 2) return null
+  const width = 100
+  const height = 24
+  const points = values
     .map((v, index) => {
-      const x = (index / (clamped.length - 1)) * width
-      const y = (height - pad) - ((v - min) / span) * (height - pad * 2)
-      return `${x},${y}`
+      const x = (index / (values.length - 1)) * width
+      const y = height - (Math.max(0, Math.min(100, v)) / 100) * height
+      return `${x.toFixed(2)},${y.toFixed(2)}`
     })
     .join(' ')
-
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" style={{ width: '100%', height: '52px', display: 'block' }}>
-      <defs>
-        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.45" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polyline
-        points={`0,${height - pad} ${points} ${width},${height - pad}`}
-        fill={`url(#${gradientId})`}
-        opacity={0.25}
-      />
-      <polyline points={points} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    <svg
+      className={styles.spark}
+      viewBox={`0 0 ${width} ${height}`}
+      preserveAspectRatio="none"
+      role="img"
+      aria-label={`Health score over the last ${values.length} readings`}
+    >
+      <polyline points={points} className={styles.sparkLine} />
     </svg>
   )
 }
 
-function MetricPill({ label, value, tone, title }: { label: string; value: string; tone?: 'estimate' | 'ok'; title?: string }) {
+function DetailRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className={`${styles.pill} ${tone === 'estimate' ? styles.pillEstimate : ''}`} title={title}>
-      <span>{label}</span>
-      <strong>{value}</strong>
+    <div className={styles.detailRow}>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
     </div>
   )
 }
 
-function OllamaLoadingState() {
-  return (
-    <PageTransition>
-      <div className={styles.page}>
-        <div className={styles.topBar}>
-          <div className={styles.pageTitle}>
-            <span>System telemetry</span>
-            <h1>Ollama Runtime</h1>
-            <p className={styles.subtitle}>Loading Ollama runtime telemetry. Ollama is often a 10-15s check on first paint.</p>
-          </div>
-          <StatusBadge status="idle" label="Loading" />
-        </div>
-
-        <GlassCard delay={0.04} noPad>
-          <div className={styles.loadingCard}>
-            <div className={styles.loadingSpinner} />
-            <div>
-              <strong>Checking Ollama runtime health</strong>
-              <small>Server, available models, GPU, and memory telemetry.</small>
-            </div>
-          </div>
-        </GlassCard>
-
-        <div className={styles.loadingGrid}>
-          {['Server', 'Models', 'Memory', 'GPU'].map((label) => (
-            <GlassCard key={label} delay={0.06} noPad>
-              <div className={styles.loadingPanel}>
-                <p>{label}</p>
-                <div className={styles.shimmer} style={{ width: '68%', height: 14 }} />
-                <div className={styles.shimmer} style={{ width: '42%', height: 10, opacity: 0.7 }} />
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      </div>
-    </PageTransition>
-  )
-}
+const MISSING = <Mono muted>—</Mono>
 
 export default function OllamaMonitor() {
   const { data, loading, error, refetch: refetchTelemetry } = useApi<OllamaTelemetry>('/api/ollama/telemetry', 2500)
   const { data: historyData, refetch: refetchHistory } = useApi<OllamaTelemetryHistoryResponse>('/api/ollama/telemetry/history', 5000)
   const { data: modelTelemetryData, refetch: refetchModelTelemetry } = useApi<OllamaModelTelemetryResponse>('/api/ollama/telemetry/models', 5000)
-  const [usagePeriod, setUsagePeriod] = useState<'day' | '7d' | 'month'>('month')
-  const tokenUsageRetry = useRef<{ key: string; startedAt: number } | null>(null)
+  const [usagePeriod, setUsagePeriod] = useState<UsagePeriod>('month')
+  const [selectedName, setSelectedName] = useState<string | null>(null)
+  const [refreshing, setRefreshing] = useState(false)
+  const tokenUsageRetry = useRef<TokenUsageRetryState | null>(null)
   const tokenUsageUrl = `/api/costs?period=${usagePeriod}`
   const tokenUsageQuery = useQuery<TokenUsageResponse, Error>({
     queryKey: ['api', tokenUsageUrl],
     queryFn: () => fetchJson<TokenUsageResponse>(tokenUsageUrl),
     refetchInterval: (query) => {
-      const tokens = query.state.data as TokenUsageResponse | undefined
-      if (!shouldRetryTokenUsageFast(tokens)) {
-        tokenUsageRetry.current = null
-        return TOKEN_USAGE_STEADY_REFRESH_MS
-      }
-
-      const retryKey = [
+      const decision = nextTokenUsageRefetch(
+        query.state.data as TokenUsageResponse | undefined,
         usagePeriod,
-        tokens?.source || 'pending',
-        tokens?.meta?.refreshStartedAt || tokens?.meta?.updatedAt || 'unknown',
-      ].join(':')
-      const now = Date.now()
-      if (tokenUsageRetry.current?.key !== retryKey) {
-        tokenUsageRetry.current = { key: retryKey, startedAt: now }
-      }
-
-      return now - tokenUsageRetry.current.startedAt < TOKEN_USAGE_RETRY_TIMEOUT_MS
-        ? TOKEN_USAGE_RETRY_INTERVAL_MS
-        : TOKEN_USAGE_STEADY_REFRESH_MS
+        tokenUsageRetry.current,
+        Date.now(),
+      )
+      tokenUsageRetry.current = decision.state
+      return decision.interval
     },
     refetchOnWindowFocus: false,
   })
-  const [expandedModels, setExpandedModels] = useState<Record<string, boolean>>({})
 
   const tokenUsageData = tokenUsageQuery.data ?? null
   const tokenUsageError = tokenUsageQuery.error ? String(tokenUsageQuery.error.message || 'Unknown error') : null
   const tokenUsageFastRetrying = !tokenUsageError && shouldRetryTokenUsageFast(tokenUsageData)
-  const tokenUsageBadgeLabel = !tokenUsageData && tokenUsageQuery.isFetching
-    ? 'token usage loading'
-    : tokenUsageFastRetrying
-      ? 'token usage refreshing'
-      : tokenUsageQuery.isFetching
-        ? 'token usage updating'
-        : ''
 
-  const models = useMemo(() => data?.models || [], [data?.models])
+  const models = useMemo(() => {
+    const list = data?.models || []
+    // Loaded models first; otherwise keep the server's order.
+    return [...list].sort((a, b) => Number(b.status === 'running') - Number(a.status === 'running'))
+  }, [data?.models])
   const modelMetrics = useMemo(() => modelTelemetryData?.models || [], [modelTelemetryData?.models])
   const modelTelemetryIsEstimated = !!modelTelemetryData?.estimated
-  const modelLabels = useMemo(() => modelTelemetryLabels(modelTelemetryIsEstimated), [modelTelemetryIsEstimated])
-  const modelMetricMap = useMemo(() => {
-    return new Map(modelMetrics.map((metric) => [metric.name, metric]))
-  }, [modelMetrics])
+  // Per-model request and error figures exist only when the API actually measured them.
+  const requestFiguresMeasured =
+    !modelTelemetryIsEstimated &&
+    modelMetrics.some((metric) => finiteNumber(metric.requestsPerMinute) !== null || finiteNumber(metric.errorRate) !== null)
+  const requestFiguresUnmeasured = !!modelTelemetryData && !modelTelemetryIsEstimated && !requestFiguresMeasured
+  const modelMetricMap = useMemo(() => new Map(modelMetrics.map((metric) => [metric.name, metric])), [modelMetrics])
   const modelTokenUsageMap = useMemo(() => aggregateLocalTokenUsage(tokenUsageData?.byService || []), [tokenUsageData?.byService])
-  const getModelTokenUsage = (name: string) => modelTokenUsageMap.get(canonicalLocalModelName(name))
-  const tokenUsageSummary = useMemo(() => {
-    const totalTokens = Array.from(modelTokenUsageMap.values()).reduce((sum, usage) => sum + usage.tokens, 0)
-    const matchedTokens = models.reduce((sum, model) => sum + (modelTokenUsageMap.get(canonicalLocalModelName(model.name))?.tokens || 0), 0)
-    const visibleModelsWithTokens = models.filter((model) => (modelTokenUsageMap.get(canonicalLocalModelName(model.name))?.tokens || 0) > 0).length
-    return { totalTokens, matchedTokens, visibleModelsWithTokens }
-  }, [modelTokenUsageMap, models])
-  const modelSummary = useMemo(() => {
-    const totalModels = models.length
-    const runningCount = models.filter((model) => model.status === 'running').length
-    const avgErrorRate = modelMetrics.length
-      ? modelMetrics.reduce((sum, metric) => sum + (Number.isFinite(metric.errorRate) ? Number(metric.errorRate) : 0), 0) / modelMetrics.length
-      : 0
-    const totalRequests = modelMetrics.reduce((sum, metric) => sum + (Number.isFinite(metric.requestCount) ? Number(metric.requestCount) : 0), 0)
-
-    return {
-      totalModels,
-      runningCount,
-      avgErrorRate,
-      totalRequests,
-    }
-  }, [modelMetrics, models])
-  const allModelsExpanded = models.length > 0 && models.every((model) => expandedModels[model.name])
-  const runningModelNames = useMemo(() => {
-    return models
-      .filter((model) => model.status === 'running')
-      .map((model) => model.name)
-      .filter(Boolean)
-  }, [models])
-  const visibleRunningModelNames = runningModelNames.slice(0, 2)
-  const hiddenRunningModelCount = Math.max(0, runningModelNames.length - visibleRunningModelNames.length)
-  const latestModelAt = useMemo(() => {
+  const unknownLocality = useMemo(() => countUnknownLocality(tokenUsageData?.byService || []), [tokenUsageData?.byService])
+  const tokenSplit = useMemo(
+    () =>
+      splitLocalTokens(
+        modelTokenUsageMap,
+        new Set(models.map((model) => canonicalLocalModelName(model.name))),
+      ),
+    [modelTokenUsageMap, models],
+  )
+  const probeSamples = useMemo(() => {
+    const counts = modelMetrics.map((metric) => finiteNumber(metric.requestCount)).filter((n): n is number => n !== null)
+    return counts.length ? Math.max(...counts) : null
+  }, [modelMetrics])
+  const runningModelNames = useMemo(() => models.filter((model) => model.status === 'running').map((model) => model.name).filter(Boolean), [models])
+  const latestLoadedAt = useMemo(() => {
     let latest = ''
     for (const model of models) {
-      const candidate = model.loadedAt || model.expiresAt || ''
-      if (candidate && candidate > latest) latest = candidate
+      if (model.loadedAt && model.loadedAt > latest) latest = model.loadedAt
     }
-    return latest ? formatTime(latest) : '—'
+    return latest || null
   }, [models])
-
-  const gpu = data?.gpu
-  const gpuHasDevices = !!gpu?.devices?.length
-  const hasLiveGpuMetrics = hasAnyGpuMetricValue(gpu?.devices || [], { includeEstimated: false })
-  const hasAnyGpuMetrics = hasAnyGpuMetricValue(gpu?.devices || [], { includeEstimated: true })
-  const hasEstimatedGpuMetrics = hasAnyGpuMetrics && !hasLiveGpuMetrics
-  const gpuPlatform = gpu?.platform || 'linux'
-  const gpuLabel = !gpuHasDevices
-    ? 'No metrics'
-    : hasLiveGpuMetrics && !gpu?.limited
-      ? 'Active'
-      : hasEstimatedGpuMetrics
-        ? 'Estimated'
-        : 'Partial'
-  const gpuBadgeStatus = !gpu?.available || !gpuHasDevices ? 'error' : gpu?.limited ? 'idle' : 'ok'
-
-  const healthScore = Number.isFinite(Number(data?.healthScore)) ? Number(data?.healthScore) : 0
-  const alertNotes = useMemo(() => {
-    return data?.alerts || []
-  }, [data?.alerts])
-  const healthHistory = useMemo(() => historyData?.history || [], [historyData?.history])
   const healthTrend = useMemo(() => {
-    return healthHistory
+    return (historyData?.history || [])
       .map((item) => item.healthScore)
       .filter((score) => Number.isFinite(score))
       .slice(-20)
-  }, [healthHistory])
+  }, [historyData?.history])
 
-  const toggleModelExpanded = (name: string) => {
-    setExpandedModels((prev) => ({
-      ...prev,
-      [name]: !prev[name],
-    }))
-  }
-
-  const setAllModelsExpanded = (expanded: boolean) => {
-    setExpandedModels(
-      Object.fromEntries(models.map((model) => [model.name, expanded])),
-    )
-  }
+  const getModelTokenUsage = (name: string) => modelTokenUsageMap.get(canonicalLocalModelName(name))
 
   const handleRefresh = async () => {
-    await Promise.all([
-      refetchTelemetry(),
-      refetchHistory(),
-      refetchModelTelemetry(),
-      tokenUsageQuery.refetch(),
-    ])
+    setRefreshing(true)
+    try {
+      await Promise.all([
+        refetchTelemetry(),
+        refetchHistory(),
+        refetchModelTelemetry(),
+        tokenUsageQuery.refetch(),
+      ])
+    } finally {
+      setRefreshing(false)
+    }
   }
 
-  const visibleGpuUtilHistory = useMemo(() => {
-    if (!data?.gpu?.available) return []
-    return healthHistory
-      .map((item) => item.gpuUtilPercent)
-      .filter((value): value is number => Number.isFinite(value))
-      .slice(-30)
-  }, [data?.gpu?.available, healthHistory])
-  const visibleGpuMemHistory = useMemo(() => {
-    if (!data?.gpu?.available) return []
-    return healthHistory
-      .map((item) => item.gpuMemoryPercent)
-      .filter((value): value is number => Number.isFinite(value))
-      .slice(-30)
-  }, [data?.gpu?.available, healthHistory])
+  const refreshButton = (
+    <Button size="sm" icon={<RefreshCw size={14} aria-hidden="true" />} loading={refreshing} onClick={handleRefresh}>
+      Refresh
+    </Button>
+  )
 
   if (loading && !data) {
-    return <OllamaLoadingState />
-  }
-
-  if (!data || error) {
     return (
-      <PageTransition>
-        <div className={styles.errorWrap}>
-          <CircleAlert size={48} />
-          <p>{error || 'Could not load Ollama telemetry'}</p>
-          <button className={styles.retryButton} onClick={() => refetchTelemetry()}>
-            Retry
-          </button>
-        </div>
-      </PageTransition>
+      <Page title="Local models" description="Reading Ollama. The first read can take 10–15 seconds.">
+        <Skeleton variant="block" label="Reading Ollama telemetry" />
+      </Page>
     )
   }
 
-  const firstGpuDevice = gpu?.devices?.[0]
-  const gpuLoadNow = finiteNumber(firstGpuDevice?.utilGpu)
-  const cpuPercent = data.system.cpu.usagePercent
-  const memPercent = data.system.memory.usedPercent
-  const periodLabel = usagePeriod === 'day' ? 'Today' : usagePeriod === '7d' ? 'Last 7 days' : 'This month'
+  if (!data) {
+    return (
+      <Page title="Local models" description="Is Ollama OK?">
+        <ErrorState
+          title="Ollama telemetry could not be read"
+          message={error || undefined}
+          onRetry={() => void refetchTelemetry()}
+        />
+      </Page>
+    )
+  }
 
-  const heroCards: { label: string; icon: ReactNode; value: string; detail: string; color: string; spark?: number[] }[] = [
+  const gpu = data.gpu
+  const gpuDevices = gpu?.devices || []
+  const firstGpuDevice = gpuDevices[0]
+  const hasLiveGpuMetrics = hasAnyGpuMetricValue(gpuDevices, { includeEstimated: false })
+  const gpuLoad = finiteNumber(firstGpuDevice?.utilGpu)
+
+  const healthScore = finiteNumber(data.healthScore)
+  const memPercent = finiteNumber(data.system?.memory?.usedPercent)
+  const alerts = data.alerts || []
+  const status = data.server.status
+  // Unknown stays unknown: only an explicit false is "not accepting requests".
+  const canAccept = typeof data.runtime.canAcceptRequests === 'boolean' ? data.runtime.canAcceptRequests : null
+  const alertState: UiState = alerts.some((a) => a.severity === 'critical') ? 'critical' : alerts.length ? 'warning' : 'healthy'
+  const verdictState = worstState([
+    serverState(status),
+    scoreState(healthScore),
+    alertState,
+    canAccept === null ? 'unavailable' : canAccept ? 'healthy' : 'warning',
+  ])
+  let verdictText = 'Ollama is running normally'
+  if (status === 'offline') verdictText = 'Ollama is not responding'
+  else if (status === 'degraded') verdictText = 'Ollama is degraded'
+  else if (status !== 'online') verdictText = 'Ollama status could not be read'
+  else if (canAccept === false) verdictText = 'Ollama is running but not accepting requests'
+  else if (alerts.length) verdictText = `Ollama is running with ${alerts.length} active alert${alerts.length === 1 ? '' : 's'}`
+  else if (canAccept === null) verdictText = 'Ollama is running, but it did not report whether it accepts requests'
+  else if (verdictState !== 'healthy') verdictText = 'Ollama is running with a low health score'
+
+  const verdict = (
+    <span className={styles.verdict}>
+      <StatePill state={verdictState} label={verdictText} />
+      <Freshness observedAt={data.generatedAt} staleAfterMs={60_000} />
+    </span>
+  )
+
+  const periodLabel = PERIOD_OPTIONS.find((option) => option.value === usagePeriod)?.label || ''
+  const selectedModel = selectedName ? models.find((model) => model.name === selectedName) || null : null
+  const selectedMetric = selectedModel ? modelMetricMap.get(selectedModel.name) : undefined
+  const selectedUsage = selectedModel ? getModelTokenUsage(selectedModel.name) : undefined
+
+  const columns: DataTableColumn<OllamaModel>[] = [
     {
-      label: 'Health score',
-      icon: <Gauge size={13} />,
-      value: String(healthScore),
-      detail: 'Overall health, scored 0-100',
-      color: healthColor(healthScore),
-      spark: healthTrend,
+      key: 'name',
+      header: 'Model',
+      cell: (model) => {
+        const meta = modelMetaParts(model)
+        return (
+          <span className={styles.modelCell}>
+            <Mono truncate>{model.name}</Mono>
+            {meta.length > 0 ? <span className={styles.modelMeta}>{meta.join(' · ')}</span> : null}
+          </span>
+        )
+      },
     },
     {
-      label: 'Server',
-      icon: <Server size={13} />,
-      value: data.server.status.charAt(0).toUpperCase() + data.server.status.slice(1),
-      detail: `${data.server.baseUrl}${data.server.version ? ` · v${data.server.version}` : ''}`,
-      color: serverTone(data.server.status),
+      key: 'state',
+      header: 'State',
+      width: '120px',
+      cell: (model) =>
+        model.status === 'running' ? (
+          <StatePill state="healthy" label="Loaded" />
+        ) : (
+          <span className={styles.quiet}>Not loaded</span>
+        ),
     },
     {
-      label: 'Models loaded',
-      icon: <Boxes size={13} />,
-      value: `${data.runtime.runningModels}/${data.runtime.totalModels}`,
-      detail: runningModelNames.length
-        ? `${visibleRunningModelNames.join(', ')}${hiddenRunningModelCount ? ` +${hiddenRunningModelCount} more` : ''}`
-        : `No model loaded · last load ${latestModelAt}`,
-      color: data.runtime.runningModels > 0 ? STATUS_GREEN : STATUS_GRAY,
+      key: 'size',
+      header: 'Size',
+      align: 'end',
+      mono: true,
+      width: '112px',
+      cell: (model) => presentSize(model.sizeLabel) || '—',
     },
     {
-      label: 'CPU',
-      icon: <Cpu size={13} />,
-      value: `${cpuPercent}%`,
-      detail: `Load ${data.system.cpu.load1} / ${data.system.cpu.load5} / ${data.system.cpu.load15}`,
-      color: percentTone(cpuPercent),
-    },
-    {
-      label: 'Memory',
-      icon: <HardDrive size={13} />,
-      value: `${memPercent}%`,
-      detail: `${formatBytes(data.system.memory.usedBytes)} / ${formatBytes(data.system.memory.totalBytes)}`,
-      color: percentTone(memPercent),
-    },
-    {
-      label: 'GPU load',
-      icon: <Activity size={13} />,
-      value: gpuLoadNow !== null ? `${Math.round(gpuLoadNow)}%` : '—',
-      detail: firstGpuDevice?.name || 'No GPU metrics',
-      color: gpuLoadNow !== null ? percentTone(gpuLoadNow) : STATUS_GRAY,
+      key: 'tokens',
+      header: 'Tokens',
+      align: 'end',
+      mono: true,
+      width: '112px',
+      mobileLabel: `Tokens (${periodLabel.toLowerCase()})`,
+      cell: (model) => {
+        const usage = getModelTokenUsage(model.name)
+        return usage && usage.tokens > 0 ? formatTokens(usage.tokens) : '—'
+      },
     },
   ]
+  if (requestFiguresMeasured) {
+    columns.push(
+      {
+        key: 'rate',
+        header: 'Requests/min',
+        align: 'end',
+        mono: true,
+        width: '128px',
+        cell: (model) => {
+          const rate = finiteNumber(modelMetricMap.get(model.name)?.requestsPerMinute)
+          return rate !== null ? formatMetric(rate, 2) : '—'
+        },
+      },
+      {
+        key: 'errors',
+        header: 'Error rate',
+        align: 'end',
+        mono: true,
+        width: '112px',
+        cell: (model) => formatErrorRate(modelMetricMap.get(model.name)?.errorRate),
+      },
+    )
+  }
+
+  const tokenNote = tokenUsageError ? (
+    <Notice tone="warning" title="Token usage could not be read">
+      {tokenUsageError}
+    </Notice>
+  ) : tokenUsageData?.meta?.stale ? (
+    <Notice tone="warning" title="Token counts come from a stale cache">
+      Last updated <TimeAgo value={tokenUsageData.meta.updatedAt} />.{tokenUsageData.meta.refreshing ? ' Refreshing now.' : ''}
+    </Notice>
+  ) : tokenUsageData && (tokenUsageData.meta?.refreshing || tokenUsageFastRetrying) ? (
+    <Notice title="Token counts are still refreshing">Totals may rise when the refresh finishes.</Notice>
+  ) : null
+
+  const panelDescription = tokenUsageData
+    ? describeTokenUsage(tokenSplit, periodLabel, unknownLocality)
+    : tokenUsageQuery.isFetching && !tokenUsageError
+      ? 'Reading token usage…'
+      : undefined
+
+  const gpuMetricsNote = [
+    gpu?.limited || gpu?.platform === 'darwin' ? presentText(gpu?.limitation) : null,
+    firstGpuDevice?.memUsedEstimate
+      ? 'Memory is estimated from the size of the loaded models; this system does not expose per-process GPU memory.'
+      : null,
+    // What the counters measure, in the server's own words.
+    presentText(firstGpuDevice?.metricSourceNote),
+  ].filter(Boolean) as string[]
 
   return (
-    <PageTransition>
-      <div className={styles.page}>
-        <div className={styles.topBar}>
-          <div className={styles.pageTitle}>
-            <span>System telemetry</span>
-            <h1>Ollama Runtime</h1>
-            <p className={styles.subtitle}>Ollama runtime health, available models, and hardware headroom in one read-only surface. Model inventory may include cloud-backed entries.</p>
-          </div>
-          <button className={styles.refreshButton} onClick={handleRefresh}>
-            <RefreshCw size={14} />
-            Refresh
-          </button>
-        </div>
+    <Page title="Local models" description={verdict} actions={refreshButton}>
+      {alerts.length > 0 ? (
+        <Notice tone={alertState} title={`${alerts.length} active alert${alerts.length === 1 ? '' : 's'}`}>
+          <ul className={styles.alertList}>
+            {alerts.map((alert) => (
+              <li key={`${alert.code}-${alert.triggeredAt}`}>
+                {alert.message}
+                {alert.suppressed ? ' (cooldown)' : ''}
+              </li>
+            ))}
+          </ul>
+        </Notice>
+      ) : null}
 
-        {alertNotes.length > 0 ? (
-          <div
-            className={styles.alertBanner}
-            style={{ '--status-color': alertNotes.some((alert) => alert.severity === 'critical') ? STATUS_RED : STATUS_AMBER } as CSSProperties}
-            role="status"
-          >
-            <CircleAlert size={16} />
-            <div>
-              <strong>{alertNotes.length} active alert{alertNotes.length === 1 ? '' : 's'}</strong>
-              {alertNotes.slice(0, 3).map((alert) => (
-                <span key={`${alert.code}-${alert.triggeredAt}`}>
-                  {alert.message}
-                  {alert.suppressed ? ' (cooldown)' : ''}
-                </span>
-              ))}
-            </div>
-          </div>
+      {data.server.error ? (
+        <Notice tone="warning" title="Ollama reported a problem">
+          {data.server.error}
+        </Notice>
+      ) : null}
+
+      {error ? (
+        <Notice tone="warning" title="The latest refresh failed">
+          Showing the last reading. {error}
+        </Notice>
+      ) : null}
+
+      <StatRow aria-label="Ollama readings">
+        <Stat
+          label="Health"
+          value={healthScore !== null ? Math.round(healthScore) : null}
+          unit="/ 100"
+          state={verdictState !== 'healthy' ? scoreState(healthScore) : undefined}
+          hint={
+            <>
+              <span className={styles.hintLine}>
+                {data.server.baseUrl}
+                {data.server.version ? ` · v${data.server.version}` : ''}
+              </span>
+              <HealthSpark values={healthTrend} />
+            </>
+          }
+        />
+        <Stat
+          label="Memory"
+          value={memPercent !== null ? Math.round(memPercent) : null}
+          unit="%"
+          state={percentState(memPercent)}
+          hint={
+            finiteNumber(data.system?.memory?.usedBytes) !== null && finiteNumber(data.system?.memory?.totalBytes) !== null
+              ? `${formatSize(data.system.memory.usedBytes)} of ${formatSize(data.system.memory.totalBytes)}`
+              : undefined
+          }
+        />
+        <Stat
+          label="GPU load"
+          value={gpuLoad !== null ? Math.round(gpuLoad) : null}
+          unit="%"
+          hint={firstGpuDevice?.name || 'No GPU metrics'}
+        />
+        <Stat
+          label="Models loaded"
+          value={finiteNumber(data.runtime.runningModels)}
+          unit={finiteNumber(data.runtime.totalModels) !== null ? `of ${data.runtime.totalModels}` : undefined}
+          hint={
+            runningModelNames.length
+              ? runningModelNames.join(', ')
+              : latestLoadedAt
+                ? (
+                  <>
+                    None loaded · last load <TimeAgo value={latestLoadedAt} />
+                  </>
+                )
+                : 'None loaded'
+          }
+        />
+      </StatRow>
+
+      {(!gpu?.available || gpuDevices.length === 0) && (gpu?.error || gpu?.limitation) ? (
+        <Notice tone="unavailable" title="GPU metrics could not be read">
+          {[gpu?.error, gpu?.limitation].filter(Boolean).join(' · ')}
+          {gpu?.tried?.length ? ` Commands tried: ${gpu.tried.join(', ')}.` : ''}
+        </Notice>
+      ) : null}
+
+      {modelTelemetryIsEstimated ? (
+        <Notice title="Request figures are not measured per model">
+          Mission Control samples Ollama&rsquo;s health probe
+          {probeSamples !== null && finiteNumber(modelTelemetryData?.windowMs) !== null
+            ? ` (${probeSamples} samples in the last ${Math.round((modelTelemetryData?.windowMs ?? 0) / 60000)} min)`
+            : ''}
+          {' '}rather than reading a request log, so request and error counts are not shown per model.
+          {finiteNumber(data.server.latencyMs) !== null ? ` Latest probe: ${data.server.latencyMs} ms.` : ''}
+          {' '}Updated <TimeAgo value={modelTelemetryData?.generatedAt} />.
+        </Notice>
+      ) : null}
+
+      {tokenNote}
+
+      <Panel
+        title="Models"
+        description={panelDescription}
+        padding="none"
+        actions={
+          <Select
+            aria-label="Token usage period"
+            title="Token usage period"
+            value={usagePeriod}
+            onChange={(event) => setUsagePeriod(event.target.value as UsagePeriod)}
+            options={PERIOD_OPTIONS}
+          />
+        }
+      >
+        <DataTable
+          caption="Local models"
+          columns={columns}
+          rows={models}
+          rowKey={(model) => model.name}
+          onRowClick={(model) => setSelectedName(model.name)}
+          selectedKey={selectedName}
+          maxHeight="none"
+          empty={<EmptyState title="No models found" description="Ollama did not list any local models." />}
+        />
+        {requestFiguresUnmeasured ? (
+          <p className={styles.tableNote}>
+            Requests per minute and error rate are not shown: Ollama does not count requests per model.
+          </p>
         ) : null}
+      </Panel>
 
-        {data.server.error ? (
-          <div className={styles.alertBanner} style={{ '--status-color': STATUS_AMBER } as CSSProperties} role="status">
-            <CircleAlert size={16} />
-            <div>
-              <strong>Server warning</strong>
-              <span>{data.server.error}</span>
-            </div>
-          </div>
-        ) : null}
-
-        <div className={styles.heroStrip}>
-          {heroCards.map((card) => (
-            <div className={styles.heroCard} key={card.label} style={{ '--status-color': card.color } as CSSProperties}>
-              <span className={styles.heroLabel}>{card.icon}{card.label}</span>
-              <strong className={styles.heroValue}>{card.value}</strong>
-              <small className={styles.heroDetail}>{card.detail}</small>
-              {card.spark && card.spark.length > 1 ? (
-                <div className={styles.heroSpark}>{renderSparkline(card.spark, card.color, `hero-${card.label.replace(/\s+/g, '-')}`)}</div>
-              ) : null}
-            </div>
-          ))}
-        </div>
-
-        <div className={styles.mainGrid}>
-          <GlassCard delay={0.08} noPad>
-            <div className={styles.panelHeader}>
-              <div className={styles.panelTitle}><Activity size={15} /> GPU</div>
-              <StatusBadge
-                status={gpuBadgeStatus}
-                label={gpuLabel === 'No metrics' ? gpuLabel : `${gpuLabel}${gpu?.devices?.length ? ` (${gpu.devices.length})` : ''}`}
-              />
-            </div>
-            <div className={styles.panelBody}>
-              {(!gpu?.available || !gpu?.devices?.length) ? (
-                <>
-                  <p className={styles.muted}>
-                    {gpu?.error ? `GPU metrics unavailable: ${gpu.error}` : 'No GPU metrics are visible.'}
+      {gpuDevices.length > 0 ? (
+        <Panel title="GPU" description={hasLiveGpuMetrics ? undefined : 'Live GPU counters are not exposed on this system.'}>
+          <div className={styles.gpuList}>
+            {gpuDevices.map((device) => {
+              const tilerUtil = finiteNumber(device.tilerUtilPercent)
+              const memUsed = finiteNumber(device.memUsedMiB)
+              const memAllocated = finiteNumber(device.memAllocatedMiB)
+              const memHardware = finiteNumber(device.memHardwareTotalMiB)
+              const tempC = finiteNumber(device.tempC)
+              const powerDraw = finiteNumber(device.powerDraw)
+              const powerLimit = finiteNumber(device.powerLimit)
+              const subtitle = [device.vendor, device.cores ? `${device.cores} cores` : null].map(presentText).filter(Boolean).join(' · ')
+              return (
+                <div key={device.index} className={styles.gpuDevice}>
+                  <p className={styles.gpuName}>
+                    {device.name}
+                    <span className={styles.gpuMeta}>{` GPU ${device.index}${subtitle ? ` · ${subtitle}` : ''}`}</span>
                   </p>
-                  {!!gpu?.limitation && <p className={styles.mutedSmall}>Note: {gpu.limitation}</p>}
-                  {!!gpu?.tried?.length && <p className={styles.mutedSmall}>Commands tried: {gpu.tried.join(', ')}</p>}
-                </>
-              ) : (
-                <>
-                  {hasEstimatedGpuMetrics && !hasLiveGpuMetrics ? (
-                    <p className={styles.muted}>
-                      GPU devices found; live counters are unavailable, so VRAM is estimated from the loaded model footprint.
-                    </p>
-                  ) : null}
-                  {(gpuPlatform === 'darwin' || gpu?.limited) && gpu?.limitation ? (
-                    <p className={styles.mutedSmall}>{gpu.limitation}</p>
-                  ) : null}
-                  {gpu.devices?.map((device) => {
-                    const utilGpu = finiteNumber(device.utilGpu)
-                    const utilMemory = finiteNumber(device.utilMemory)
-                    const memUsed = finiteNumber(device.memUsedMiB)
-                    const memTotal = finiteNumber(device.memTotalMiB)
-                    const memFree = finiteNumber(device.memFreeMiB)
-                    const tempC = finiteNumber(device.tempC)
-                    const powerDraw = finiteNumber(device.powerDraw)
-                    const powerLimit = finiteNumber(device.powerLimit)
-                    const memoryLabel = device.memUsedEstimate
-                      ? 'Memory estimate'
-                      : gpuPlatform === 'darwin'
-                        ? 'GPU memory observed'
-                        : 'VRAM used'
-                    const metricPills = [
-                      utilGpu !== null ? { label: 'GPU load', value: `${Math.round(utilGpu)}%` } : null,
-                      utilMemory !== null ? { label: 'Memory pressure', value: `${Math.round(utilMemory)}%` } : null,
-                      memUsed !== null || memTotal !== null ? {
-                        label: memoryLabel,
-                        value: [memUsed !== null ? formatMiB(memUsed) : null, memTotal !== null ? formatMiB(memTotal) : null].filter(Boolean).join(' / '),
-                        tone: device.memUsedEstimate ? 'estimate' as const : 'ok' as const,
-                      } : null,
-                      memFree !== null ? { label: gpuPlatform === 'darwin' ? 'Memory free observed' : 'VRAM free', value: formatMiB(memFree) } : null,
-                      tempC !== null ? { label: 'Temperature', value: `${Math.round(tempC)} °C` } : null,
-                      powerDraw !== null || powerLimit !== null ? {
-                        label: 'Power',
-                        value: [powerDraw !== null ? `${Math.round(powerDraw)} W` : null, powerLimit !== null ? `${Math.round(powerLimit)} W limit` : null].filter(Boolean).join(' / '),
-                      } : null,
-                    ].filter(Boolean) as { label: string; value: string; tone?: 'estimate' | 'ok' }[]
-                    const subtitle = [device.vendor, device.cores ? `${device.cores} cores` : null].map(presentText).filter(Boolean).join(' · ')
-
-                    return (
-                      <div key={device.index} className={styles.gpuDevice}>
-                        <div className={styles.gpuDeviceHead}>
-                          <div>
-                            <p className={styles.gpuDeviceName}>{device.name}</p>
-                            <p className={styles.gpuDeviceMeta}>
-                              GPU {device.index}{subtitle ? ` · ${subtitle}` : ''}
-                            </p>
-                          </div>
-                          {device.memUsedEstimate ? (
-                            <p className={`${styles.gpuDeviceNote} ${styles.gpuDeviceNoteWarn}`}>
-                              macOS does not expose per-process VRAM here; memory is estimated from loaded model size.
-                            </p>
-                          ) : device.memorySource === 'apple-ioreg-unified-memory' ? (
-                            <p className={styles.gpuDeviceNote}>
-                              Memory is observed from Apple unified-memory counters, not discrete VRAM.
-                            </p>
-                          ) : null}
-                        </div>
-
-                        {metricPills.length > 0 ? (
-                          <div className={styles.pillGrid}>
-                            {metricPills.map((metric) => (
-                              <MetricPill key={metric.label} label={metric.label} value={metric.value} tone={metric.tone} />
-                            ))}
-                          </div>
-                        ) : (
-                          <p className={styles.muted}>No live GPU counters are available from this machine right now.</p>
-                        )}
-
-                        {device.index === gpu?.devices?.[0]?.index ? (
-                          <>
-                            {visibleGpuUtilHistory.length > 0 ? (
-                              <div className={styles.trendBlock}>
-                                <div className={styles.trendHead}>
-                                  <span className={styles.trendLabel}>GPU load trend</span>
-                                  <span className={styles.trendStats}>{summarizePercentTrend(visibleGpuUtilHistory)}</span>
-                                </div>
-                                {renderSparkline(visibleGpuUtilHistory, '#5E5CE6', 'gpu-util-gradient')}
-                              </div>
-                            ) : null}
-                            {visibleGpuMemHistory.length > 0 ? (
-                              <div className={styles.trendBlock}>
-                                <div className={styles.trendHead}>
-                                  <span className={styles.trendLabel}>{gpuPlatform === 'darwin' ? 'GPU memory trend' : 'VRAM trend'}</span>
-                                  <span className={styles.trendStats}>{summarizePercentTrend(visibleGpuMemHistory)}</span>
-                                </div>
-                                {renderSparkline(visibleGpuMemHistory, '#64D2FF', 'gpu-mem-gradient')}
-                              </div>
-                            ) : null}
-                            {!hasLiveGpuMetrics ? (
-                              <p className={styles.mutedSmall}>
-                                Live GPU counters are not exposed, so unavailable charts and fields are hidden.
-                              </p>
-                            ) : null}
-                          </>
+                  <dl className={styles.gpuGrid}>
+                    {memUsed !== null ? (
+                      <DetailRow label={device.memUsedEstimate ? 'Memory (estimated)' : 'Memory used'}>
+                        <Mono>
+                          {formatMiB(memUsed)}
+                          {memAllocated !== null ? ` of ${formatMiB(memAllocated)} allocated` : ''}
+                          {memHardware !== null ? ` · ${formatMiB(memHardware)} installed` : ''}
+                        </Mono>
+                        {memAllocated !== null ? (
+                          <Meter value={memUsed} max={memAllocated} label="GPU memory used of allocated" />
                         ) : null}
-                      </div>
-                    )
-                  })}
-                </>
-              )}
-            </div>
-          </GlassCard>
-
-        </div>
-
-        <GlassCard delay={0.16} noPad>
-          <div className={styles.panelHeader}>
-            <div className={styles.panelTitle}>
-              <Server size={15} /> Models
-              {modelTelemetryIsEstimated ? <span className={styles.modelBadge}>monitor samples</span> : null}
-              {tokenUsageBadgeLabel ? <span className={`${styles.modelBadge} ${styles.modelBadgeInfo}`}>{tokenUsageBadgeLabel}</span> : null}
-            </div>
-            <div className={styles.modelControls}>
-              <select
-                className={styles.controlSelect}
-                value={usagePeriod}
-                onChange={(event) => setUsagePeriod(event.target.value as 'day' | '7d' | 'month')}
-                title="Token usage period"
-              >
-                <option value="day">Today</option>
-                <option value="7d">Last 7 days</option>
-                <option value="month">This month</option>
-              </select>
-              {models.length > 0 ? (
-                <button className={styles.controlButton} onClick={() => setAllModelsExpanded(!allModelsExpanded)}>
-                  {allModelsExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                  {allModelsExpanded ? 'Collapse all' : 'Expand all'}
-                </button>
-              ) : null}
-            </div>
+                      </DetailRow>
+                    ) : null}
+                    {tilerUtil !== null ? <DetailRow label="Tiler load"><Mono>{Math.round(tilerUtil)}%</Mono></DetailRow> : null}
+                    {tempC !== null ? <DetailRow label="Temperature"><Mono>{Math.round(tempC)} °C</Mono></DetailRow> : null}
+                    {powerDraw !== null || powerLimit !== null ? (
+                      <DetailRow label="Power">
+                        <Mono>
+                          {[powerDraw !== null ? `${Math.round(powerDraw)} W` : null, powerLimit !== null ? `${Math.round(powerLimit)} W limit` : null]
+                            .filter(Boolean)
+                            .join(' / ')}
+                        </Mono>
+                      </DetailRow>
+                    ) : null}
+                  </dl>
+                </div>
+              )
+            })}
           </div>
-          <div className={styles.panelBody}>
-            {(models.length > 0 || modelMetrics.length > 0) ? (
-              <div className={styles.statRow}>
-                <MetricPill label="Models available" value={String(modelSummary.totalModels)} />
-                <MetricPill label="Loaded now" value={String(modelSummary.runningCount)} />
-                {tokenUsageData ? <MetricPill label="Period tokens" value={formatTokens(tokenUsageSummary.matchedTokens || tokenUsageSummary.totalTokens)} tone="ok" /> : null}
-                {tokenUsageData ? <MetricPill label="Models with usage" value={`${tokenUsageSummary.visibleModelsWithTokens}/${models.length}`} tone="ok" /> : null}
-                {modelMetrics.length > 0 ? <MetricPill label={modelLabels.error} value={formatErrorRate(modelSummary.avgErrorRate)} tone={modelTelemetryIsEstimated ? 'estimate' : 'ok'} /> : null}
-                {modelMetrics.length > 0 ? <MetricPill label={modelLabels.volume} value={String(modelSummary.totalRequests)} tone={modelTelemetryIsEstimated ? 'estimate' : 'ok'} /> : null}
-              </div>
-            ) : null}
+          {gpuMetricsNote.length > 0 ? <p className={styles.note}>{gpuMetricsNote.join(' ')}</p> : null}
+        </Panel>
+      ) : null}
 
-            {modelMetrics.length > 0 ? (
-              <div
-                className={`${styles.infoStrip} ${modelTelemetryIsEstimated ? styles.infoStripWarn : ''}`}
-                title={[
-                  modelLabels.note,
-                  modelTelemetryData?.limitations?.length ? `Limits: ${modelTelemetryData.limitations.join('; ')}` : '',
-                ].filter(Boolean).join('\n')}
-              >
-                <CircleAlert size={13} />
-                <span>
-                  <strong>{modelLabels.source}</strong> · {modelTelemetryData?.telemetrySource || 'unknown'} · window {Math.round((modelTelemetryData?.windowMs || 0) / 60000)}m · updated {formatTime(modelTelemetryData?.generatedAt)}
-                </span>
-              </div>
-            ) : null}
+      <Drawer
+        open={!!selectedModel}
+        onClose={() => setSelectedName(null)}
+        title={selectedModel?.name || 'Model'}
+        description={selectedModel ? (selectedModel.status === 'running' ? 'Loaded in memory' : 'Available, not loaded') : undefined}
+      >
+        {selectedModel ? (
+          <div className={styles.drawerBody}>
+            <dl className={styles.detailList}>
+              <DetailRow label="Size">{presentSize(selectedModel.sizeLabel) ? <Mono>{presentSize(selectedModel.sizeLabel)}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Family">{presentText(selectedModel.family) ? <Mono>{selectedModel.family}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Parameters">{presentText(selectedModel.parameterSize) ? <Mono>{selectedModel.parameterSize}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Quantization">{presentText(selectedModel.quantization) ? <Mono>{selectedModel.quantization}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Format">{presentText(selectedModel.format) ? <Mono>{selectedModel.format}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Keep-alive">{presentText(selectedModel.keepAlive) ? <Mono>{selectedModel.keepAlive}</Mono> : MISSING}</DetailRow>
+              <DetailRow label="Loaded">{selectedModel.loadedAt ? <TimeAgo value={selectedModel.loadedAt} /> : MISSING}</DetailRow>
+              <DetailRow label="Unloads">{selectedModel.expiresAt ? <TimeAgo value={selectedModel.expiresAt} /> : MISSING}</DetailRow>
+              <DetailRow label="Digest">{presentText(selectedModel.digest) ? <Mono className={styles.digest}>{selectedModel.digest}</Mono> : MISSING}</DetailRow>
+            </dl>
 
-            {tokenUsageError ? (
-              <div className={`${styles.infoStrip} ${styles.infoStripWarn}`}>
-                <CircleAlert size={13} />
-                <span>
-                  <strong>Token usage unavailable</strong> · {tokenUsageError}
-                </span>
-              </div>
-            ) : null}
-
-            {!tokenUsageData && tokenUsageQuery.isFetching && !tokenUsageError ? (
-              <div className={styles.infoStrip}>
-                <Clock3 size={13} />
-                <span>
-                  <strong>Token usage · {periodLabel}</strong> · loading current usage snapshot
-                </span>
-              </div>
-            ) : null}
-
-            {tokenUsageData ? (
-              <div className={`${styles.infoStrip} ${tokenUsageData.meta?.stale ? styles.infoStripWarn : ''}`}>
-                <Clock3 size={13} />
-                <span>
-                  <strong>Token usage · {periodLabel}</strong> · {tokenUsageData.source || 'unknown'} · updated {formatTime(tokenUsageData.meta?.updatedAt)}{tokenUsageData.meta?.refreshing ? ' · refreshing' : ''}{tokenUsageData.meta?.stale ? ' · stale cache' : ''}
-                </span>
-              </div>
-            ) : null}
-
-            {models.length === 0 ? (
-              <p className={styles.muted}>No models found.</p>
-            ) : (
-              <div className={styles.modelList}>
-                {models.map((model) => {
-                  const metric = modelMetricMap.get(model.name)
-                  const isExpanded = !!expandedModels[model.name]
-                  const metaParts = modelMetaParts(model)
-                  const requestsPerMinute = finiteNumber(metric?.requestsPerMinute)
-                  const hasErrorRate = metric && finiteNumber(metric.errorRate) !== null
-                  const tokenUsage = getModelTokenUsage(model.name)
-                  const hasTokenUsage = !!tokenUsage && tokenUsage.tokens > 0
-                  const tokenUsageTitle = tokenUsage
-                    ? `${tokenUsage.tokens.toLocaleString()} tokens${tokenUsage.sessions ? ` · ${tokenUsage.sessions} sessions` : ''}${tokenUsage.sources.length ? ` · ${tokenUsage.sources.join(', ')}` : ''}`
-                    : 'No token usage recorded in selected period'
-
-                  return (
-                    <div key={model.name} className={styles.modelCard}>
-                      <button className={styles.modelToggle} onClick={() => toggleModelExpanded(model.name)}>
-                        <div className={styles.modelNameCell}>
-                          <div className={styles.modelNameRow}>
-                            <p className={styles.modelName}>{model.name}</p>
-                            {model.status === 'running' ? <StatusBadge status="active" label="running" pulse /> : null}
-                          </div>
-                          {metaParts.length > 0 ? <p className={styles.modelMeta}>{metaParts.join(' · ')}</p> : null}
-                        </div>
-                        <div className={`${styles.modelCell} ${hasTokenUsage ? '' : styles.modelCellMuted}`} title={tokenUsageTitle}>
-                          <span>Tokens</span>
-                          <strong>{hasTokenUsage ? formatTokens(tokenUsage.tokens) : '—'}</strong>
-                        </div>
-                        <div className={`${styles.modelCell} ${requestsPerMinute !== null ? '' : styles.modelCellMuted}`}>
-                          <span>{modelLabels.rate}</span>
-                          <strong>{requestsPerMinute !== null ? formatMetric(requestsPerMinute, 2) : '—'}</strong>
-                        </div>
-                        <div className={`${styles.modelCell} ${hasErrorRate ? '' : styles.modelCellMuted}`}>
-                          <span>{modelLabels.errorShort}</span>
-                          <strong>{hasErrorRate ? formatErrorRate(metric!.errorRate) : '—'}</strong>
-                        </div>
-                        {isExpanded ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
-                      </button>
-
-                      {isExpanded ? (
-                        <div className={styles.modelExpand}>
-                          {metric ? (
-                            <div className={styles.detailGrid}>
-                              <MetricPill
-                                label="Period tokens"
-                                value={hasTokenUsage ? formatTokens(tokenUsage.tokens) : '—'}
-                                title={tokenUsageTitle}
-                              />
-                              <MetricPill label={modelLabels.rate} value={formatMetric(metric.requestsPerMinute, 2)} />
-                              {finiteNumber(metric.p95LatencyMs) !== null ? (
-                                <MetricPill label={modelLabels.latency} value={`${formatMetric(metric.p95LatencyMs, 0)} ms`} />
-                              ) : null}
-                              <MetricPill label={modelLabels.errorShort} value={formatErrorRate(metric.errorRate)} />
-                              <MetricPill label={modelLabels.volumeShort} value={String(metric.requestCount)} />
-                            </div>
-                          ) : null}
-
-                          <div className={styles.detailGrid}>
-                            {presentText(model.sizeLabel) ? <MetricPill label="Size" value={model.sizeLabel!} /> : null}
-                            {presentText(model.family) ? <MetricPill label="Family" value={model.family!} /> : null}
-                            {presentText(model.keepAlive) ? <MetricPill label="Keep-alive" value={model.keepAlive!} /> : null}
-                            {formatTime(model.loadedAt) !== '—' ? <MetricPill label="Loaded" value={formatTime(model.loadedAt)} /> : null}
-                            {formatTime(model.expiresAt) !== '—' ? <MetricPill label="Expires" value={formatTime(model.expiresAt)} /> : null}
-                          </div>
-
-                          <div className={styles.digestGrid}>
-                            {presentText(model.digest) ? (
-                              <div>
-                                <p className={styles.label}>Digest</p>
-                                <p className={styles.value}>{model.digest}</p>
-                              </div>
-                            ) : null}
-                            <div>
-                              <p className={styles.label}>Telemetry</p>
-                              <p className={styles.value}>
-                                {metric ? `${metric.status}${metric.estimated ? ' · snapshot-estimated, not request logs' : ''}` : 'Telemetry unavailable'}
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
+            <section aria-label="Usage">
+              <h3 className={styles.drawerHeading}>Usage · {periodLabel.toLowerCase()}</h3>
+              <dl className={styles.detailList}>
+                <DetailRow label="Tokens">
+                  {selectedUsage && selectedUsage.tokens > 0 ? <Mono>{selectedUsage.tokens.toLocaleString()}</Mono> : MISSING}
+                </DetailRow>
+                <DetailRow label="Sessions">
+                  {selectedUsage && selectedUsage.sessions > 0 ? <Mono>{selectedUsage.sessions}</Mono> : MISSING}
+                </DetailRow>
+                <DetailRow label="Used by">
+                  {selectedUsage && selectedUsage.sources.length > 0 ? selectedUsage.sources.join(', ') : MISSING}
+                </DetailRow>
+                {requestFiguresMeasured && selectedMetric ? (
+                  <>
+                    <DetailRow label="Requests/min">
+                      {finiteNumber(selectedMetric.requestsPerMinute) !== null ? <Mono>{formatMetric(selectedMetric.requestsPerMinute, 2)}</Mono> : MISSING}
+                    </DetailRow>
+                    <DetailRow label="Requests in window">
+                      {finiteNumber(selectedMetric.requestCount) !== null ? <Mono>{selectedMetric.requestCount}</Mono> : MISSING}
+                    </DetailRow>
+                    <DetailRow label="Error rate">
+                      {finiteNumber(selectedMetric.errorRate) !== null ? <Mono>{formatErrorRate(selectedMetric.errorRate)}</Mono> : MISSING}
+                    </DetailRow>
+                    <DetailRow label="p95 latency">
+                      {finiteNumber(selectedMetric.p95LatencyMs) !== null ? <Mono>{formatMetric(selectedMetric.p95LatencyMs, 0)} ms</Mono> : MISSING}
+                    </DetailRow>
+                  </>
+                ) : null}
+              </dl>
+            </section>
           </div>
-        </GlassCard>
-      </div>
-    </PageTransition>
+        ) : null}
+      </Drawer>
+    </Page>
   )
 }

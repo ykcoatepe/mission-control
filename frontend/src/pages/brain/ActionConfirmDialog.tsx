@@ -1,83 +1,80 @@
-import { useEffect, useRef, type RefObject } from 'react'
-import styles from './BrainHome.module.css'
-import type { OperationCapability, OperationSystem } from './types'
+import { Button, Dialog, Mono, StatePill, TimeAgo } from '../../components/ui'
+import type { UiState } from '../../lib/state'
+import { confirmLabel, plainWords } from './lib'
+import styles from './ActionConfirmDialog.module.css'
+import type { OperationCapability } from './types'
+
+export interface ConfirmContext {
+  /** The state shown for GBrain right now. */
+  state: UiState
+  /** When the reading behind that state was taken; null when it was never read. */
+  observedAt: string | null
+  /** The reading is older than it should be. */
+  stale: boolean
+  /** First current note, if any. */
+  note: string | null
+}
 
 export function ActionConfirmDialog({
   action,
-  proof,
+  context,
   onCancel,
   onConfirm,
-  returnFocusRef,
 }: {
   action: OperationCapability | null
-  proof: OperationSystem
+  context: ConfirmContext
   onCancel: () => void
   onConfirm: () => void
-  returnFocusRef: RefObject<HTMLButtonElement | null>
 }) {
-  const confirmRef = useRef<HTMLButtonElement>(null)
-  const visibleAction = action?.safetyClass === 'W2' ? null : action
-
-  useEffect(() => {
-    if (!visibleAction) return
-    const returnFocusTarget = returnFocusRef.current
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCancel()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    confirmRef.current?.focus()
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      returnFocusTarget?.focus()
-    }
-  }, [visibleAction, onCancel, returnFocusRef])
-
-  if (!visibleAction) return null
-
-  const minutes = visibleAction.timeoutMs
-    ? Math.ceil(visibleAction.timeoutMs / 60_000)
-    : null
+  // A class-W2 action never gets a dialog: it can not be confirmed here.
+  const visible = action && action.safetyClass !== 'W2' ? action : null
+  const minutes = visible?.timeoutMs ? Math.ceil(visible.timeoutMs / 60_000) : null
 
   return (
-    <div
-      className={styles.confirmBackdrop}
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel()
-      }}
+    <Dialog
+      open={visible !== null}
+      onClose={onCancel}
+      role="alertdialog"
+      title={visible ? `${visible.label}?` : ''}
+      description={visible ? plainWords(visible.description) : undefined}
+      actions={
+        <>
+          <Button data-autofocus onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={onConfirm}>
+            {visible ? confirmLabel(visible) : 'Run'}
+          </Button>
+        </>
+      }
     >
-      <div
-        className={styles.confirmDialog}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-title"
-        aria-describedby="confirm-description"
-      >
-        <span className={styles.confirmIdentity}>{visibleAction.safetyClass} · GBrain</span>
-        <h2 id="confirm-title">{visibleAction.label}</h2>
-        <p id="confirm-description">{visibleAction.description}</p>
-        <dl>
-          <div>
-            <dt>Current proof</dt>
-            <dd>{proof.state} · {proof.freshness}</dd>
-          </div>
-          <div>
-            <dt>Expected duration</dt>
-            <dd>{minutes ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : 'Not specified'}</dd>
-          </div>
-          <div>
-            <dt>Exact action</dt>
-            <dd>{visibleAction.id}</dd>
-          </div>
-        </dl>
-        {proof.caveats[0] ? <p className={styles.confirmCaveat}>{proof.caveats[0]}</p> : null}
-        <div className={styles.confirmActions}>
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button ref={confirmRef} type="button" onClick={onConfirm}>
-            Run {visibleAction.label}
-          </button>
-        </div>
-      </div>
-    </div>
+      {visible && (
+        <>
+          <dl className={styles.facts}>
+            <div>
+              <dt>GBrain state</dt>
+              <dd>
+                <StatePill state={context.state} />
+              </dd>
+            </div>
+            <div>
+              <dt>Last read</dt>
+              <dd>
+                <TimeAgo value={context.observedAt} fallback="not read" />
+                {context.stale && <span className={styles.stale}> · stale</span>}
+              </dd>
+            </div>
+            <div>
+              <dt>Expected duration</dt>
+              <dd>{minutes ? `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}` : 'Not specified'}</dd>
+            </div>
+          </dl>
+          {context.note && <p className={styles.note}>{context.note}</p>}
+          <p className={styles.actionId}>
+            Action <Mono muted>{visible.id}</Mono>
+          </p>
+        </>
+      )}
+    </Dialog>
   )
 }

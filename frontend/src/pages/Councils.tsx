@@ -1,17 +1,34 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { Activity, AlertTriangle, Archive, FileText, RefreshCcw, Search, ShieldCheck, X } from 'lucide-react'
-import PageTransition from '../components/PageTransition'
-import { useApi, timeAgo } from '../lib/hooks'
+import { useMemo, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { RefreshCcw } from 'lucide-react'
+import { fetchJson, useApi } from '../lib/hooks'
 import {
-  healthStateBadgeStatus,
-  healthStateColor,
   isOpenDecisionStatus,
   normalizeDecisionStatus,
   normalizeHealthState,
   type HealthState,
 } from '../lib/status'
-import StatusBadge from '../components/StatusBadge'
+import { stateLabel, toUiState, type UiState } from '../lib/state'
+import {
+  Button,
+  DataTable,
+  Drawer,
+  EmptyState,
+  ErrorState,
+  FilterChips,
+  Mono,
+  Notice,
+  Page,
+  Panel,
+  SearchInput,
+  Select,
+  Skeleton,
+  Stat,
+  StatePill,
+  StatRow,
+  TimeAgo,
+  type DataTableColumn,
+} from '../components/ui'
 import styles from './Councils.module.css'
 
 type CouncilFilter = 'ALL' | 'EC' | 'OC' | 'TFC' | 'CROSS'
@@ -22,15 +39,12 @@ const councilLabels: Record<CouncilFilter, string> = {
   EC: 'Executive',
   OC: 'Operations',
   TFC: 'Trade & Finance',
-  CROSS: 'Cross-Council',
+  CROSS: 'Cross-council',
 }
 
-const councilTone: Record<CouncilKey, string> = {
-  EC: '#64D2FF',
-  OC: '#32D74B',
-  TFC: '#FF9500',
-  CROSS: '#BF5AF2',
-}
+const councilKeys: CouncilKey[] = ['EC', 'OC', 'TFC', 'CROSS']
+
+const MAX_ROWS = 80
 
 type Decision = {
   decisionId: string
@@ -116,81 +130,128 @@ type TimelinePayload = {
   events?: TimelineEvent[]
 }
 
+type TimelineState = 'loading' | 'ready' | 'error'
+
 const safeSegment = (value: string) => {
   const raw = (value || '').toString()
   const normalized = raw.replace(/[\uD800-\uDFFF]/g, '')
   return encodeURIComponent(normalized)
 }
 
-const compactCount = (value: unknown) => Number(value || 0).toLocaleString('en-US')
+/** A real number, or null (rendered as "—"). Never a made-up zero. */
+const numberOrNull = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) ? value : null
 
-function MiniMetric({ label, value, tone = 'rgba(255,255,255,0.94)', sub }: { label: string; value: string | number; tone?: string; sub?: string }) {
-  return (
-    <div className={styles.miniMetric}>
-      <div className={styles.miniMetricLabel}>{label}</div>
-      <div className={styles.miniMetricValue} style={{ color: tone }}>{value}</div>
-      {sub ? <div className={styles.miniMetricSub}>{sub}</div> : null}
-    </div>
-  )
+const formatCount = (value: unknown): string | null => {
+  const n = numberOrNull(value)
+  return n === null ? null : n.toLocaleString('en-US')
 }
 
-function EmptyState({ text }: { text: string }) {
+const statusLabel = (status: string) => {
+  const text = status.replace(/_/g, ' ')
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+const decisionStatus = (decision: Decision) =>
+  normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)
+
+const councilName = (council: string) => councilLabels[council as CouncilFilter] ?? (council || '—')
+
+function StatusCell({ status }: { status: string }) {
+  if (isOpenDecisionStatus(status)) return <StatePill state="warning" label="Open" />
+  return <span>{statusLabel(status)}</span>
+}
+
+function Fact({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className={styles.emptyState}>
-      {text}
+    <div className={styles.fact}>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
     </div>
   )
 }
 
 export default function Councils() {
-  const navigate = useNavigate()
   const summary = useApi<CouncilSummary>('/api/councils/summary', 10000)
   const decisionsApi = useApi<DecisionsPayload>('/api/councils/decisions', 12000)
   const scorecard = useApi<GovernanceScorecard>('/api/councils/governance/scorecard', 12000)
 
-  const [activeCouncil, setActiveCouncil] = useState<CouncilFilter>('ALL')
-  const [statusFilter, setStatusFilter] = useState('ALL')
-  const [search, setSearch] = useState('')
+  // Council, status and search live in the URL (?council=EC&status=open&q=…) so a view can be shared or reloaded.
+  const [params, setParams] = useSearchParams()
+  const councilParam = params.get('council')
+  const activeCouncil: CouncilFilter = (['ALL', ...councilKeys] as string[]).includes(councilParam ?? '')
+    ? (councilParam as CouncilFilter)
+    : 'ALL'
+  const statusFilter = params.get('status') ?? 'ALL'
+  const search = params.get('q') ?? ''
+  const setParam = (key: 'council' | 'status' | 'q', value: string) =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (value === '' || value === 'ALL') next.delete(key)
+        else next.set(key, value)
+        return next
+      },
+      { replace: true },
+    )
+  const setActiveCouncil = (value: CouncilFilter) => setParam('council', value)
+  const setStatusFilter = (value: string) => setParam('status', value)
+  const setSearch = (value: string) => setParam('q', value)
   const [selected, setSelected] = useState<Decision | null>(null)
   const [timeline, setTimeline] = useState<TimelineEvent[]>([])
+  const [timelineState, setTimelineState] = useState<TimelineState>('ready')
 
   const allDecisions = useMemo<Decision[]>(() => decisionsApi.data?.decisions || [], [decisionsApi.data])
   const archive = summary.data?.archive || {}
   const metrics = summary.data?.metrics || {}
-  const councils = summary.data?.councils || {}
   const review = scorecard.data?.review || null
+
+  const loadTimeline = async (decision: Decision) => {
+    try {
+      const j = await fetchJson<TimelinePayload>(`/api/councils/decisions/${safeSegment(decision.decisionId)}/timeline`)
+      setTimeline(j.events || [])
+      setTimelineState('ready')
+    } catch {
+      setTimeline([])
+      setTimelineState('error')
+    }
+  }
 
   const refreshAll = async () => {
     await Promise.all([summary.refetch(), decisionsApi.refetch(), scorecard.refetch()])
-    if (selected) {
-      const r = await fetch(`/api/councils/decisions/${safeSegment(selected.decisionId)}/timeline`)
-      const j = await r.json() as TimelinePayload
-      setTimeline(j.events || [])
-    }
+    if (selected) await loadTimeline(selected)
   }
 
   const openDecision = async (decision: Decision) => {
     setSelected(decision)
-    try {
-      const r = await fetch(`/api/councils/decisions/${safeSegment(decision.decisionId)}/timeline`)
-      const j = await r.json() as TimelinePayload
-      setTimeline(j.events || [])
-    } catch {
-      setTimeline([])
-    }
+    setTimeline([])
+    setTimelineState('loading')
+    await loadTimeline(decision)
   }
 
   const statusOptions = useMemo(() => {
     const statuses = new Set<string>()
-    allDecisions.forEach((decision) => statuses.add(normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)))
-    return ['ALL', ...Array.from(statuses).sort()]
+    allDecisions.forEach((decision) => statuses.add(decisionStatus(decision)))
+    return [
+      { value: 'ALL', label: 'All statuses' },
+      ...Array.from(statuses).sort().map((status) => ({ value: status, label: statusLabel(status) })),
+    ]
   }, [allDecisions])
+
+  const councilOptions = useMemo(
+    () =>
+      (['ALL', ...councilKeys] as CouncilFilter[]).map((key) => {
+        const count = key === 'ALL' ? null : numberOrNull(summary.data?.councils?.[key]?.totalDecisions)
+        return { value: key, label: councilLabels[key], ...(count === null ? {} : { count }) }
+      }),
+    [summary.data],
+  )
 
   const filteredDecisions = useMemo(() => {
     const q = search.trim().toLowerCase()
     return allDecisions.filter((decision) => {
       const councilOk = activeCouncil === 'ALL' || String(decision.council || '').toUpperCase() === activeCouncil
-      const status = normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)
+      const status = decisionStatus(decision)
       const statusOk = statusFilter === 'ALL' || status === statusFilter
       const searchOk = !q || [decision.decisionId, decision.context, decision.rationale, decision.owner, decision.risk, decision.linkedTaskId]
         .filter(Boolean)
@@ -199,246 +260,305 @@ export default function Councils() {
     })
   }, [activeCouncil, allDecisions, search, statusFilter])
 
+  // The scorecard's own verdict, when it gave a known word. A missing or unknown word is "not read".
+  const scorecardOverall = useMemo<HealthState | null>(() => {
+    const word = normalizeHealthState(scorecard.data?.overall, 'gray')
+    return scorecard.data?.overall && word !== 'gray' ? word : null
+  }, [scorecard.data?.overall])
+
   const workflowState = useMemo<HealthState>(() => {
     if (!review) return 'gray'
-    if (Number(review.workflowSurfaceLive24h || 0) === 0 || Boolean(review.selfReferentialSurfaceWarn)) return 'yellow'
-    return normalizeHealthState(scorecard.data?.overall, 'green')
-  }, [review, scorecard.data?.overall])
+    // A count that was not read is not "zero real work".
+    const realWork = numberOrNull(review.workflowSurfaceLive24h)
+    if (realWork === null) return 'gray'
+    if (realWork === 0 || Boolean(review.selfReferentialSurfaceWarn)) return 'yellow'
+    return scorecardOverall ?? 'gray'
+  }, [review, scorecardOverall])
 
-  const isArchiveMode = Number(metrics.activeDecisions || 0) === 0
+  const openApprovals = numberOrNull(metrics.activeDecisions)
+  const hasOpenApprovals = openApprovals !== null && openApprovals > 0
   const governanceOnly = Boolean(review?.governanceOnlyLive24h || review?.governanceOnlyLive4d || review?.selfReferentialSurfaceWarn)
-  const scoreTone = healthStateColor(workflowState)
+  const workflowUi: UiState = toUiState(workflowState)
+  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable".
+  const overallValue = !review && scorecardOverall ? `Scorecard: ${scorecardOverall}` : stateLabel(workflowUi)
+  const overallHint = scorecardOverall ? 'no review recorded' : 'no review reported'
+  const silenceHours = numberOrNull(review?.workflowSurfaceSilenceHours)
+  const infraFailures = numberOrNull(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)
+  const totalDecisions = formatCount(archive.totalDecisions ?? metrics.totalDecisions)
   const selectedDecision = selected
     ? allDecisions.find((decision) => decision.decisionId === selected.decisionId) || selected
     : null
 
-  return (
-    <PageTransition>
-      {/* Note: councils-page global class required for index.css hover-transform suppression on .macos-panel */}
-      <div className={`councils-page ${styles.page}`}>
-        <div className={styles.headerRow}>
-          <div>
-            <div className={styles.archiveLabel}>
-              <Archive size={15} /> DECISION ARCHIVE
-            </div>
-            <h1 className="text-title">Decision Archive · Governance Health</h1>
-            <p className={`text-body ${styles.pageSubtitle}`}>
-              Councils are no longer the live work queue. This page is the decision archive, open-approval alarm, and drift check for governance becoming louder than real workflow.
-            </p>
-          </div>
-          <button onClick={refreshAll} className={styles.refreshBtn}>
-            <RefreshCcw size={14} /> Refresh
-          </button>
+  const filtersActive = activeCouncil !== 'ALL' || statusFilter !== 'ALL' || search.trim() !== ''
+  const clearFilters = () =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        for (const key of ['council', 'status', 'q']) next.delete(key)
+        return next
+      },
+      { replace: true },
+    )
+
+  const columns: DataTableColumn<Decision>[] = [
+    {
+      key: 'decision',
+      header: 'Decision',
+      width: '18%',
+      cell: (decision) => (
+        <div className={styles.idCell}>
+          <Mono truncate>{decision.decisionId}</Mono>
+          <span className={styles.sub}>{councilName(decision.council)}</span>
         </div>
+      ),
+    },
+    {
+      key: 'context',
+      header: 'Context',
+      cell: (decision) => <span className={styles.context}>{decision.context || 'No context recorded'}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      width: '160px',
+      cell: (decision) => <StatusCell status={decisionStatus(decision)} />,
+    },
+    { key: 'owner', header: 'Owner', width: '120px', cell: (decision) => decision.owner || '—' },
+    { key: 'risk', header: 'Risk', width: '88px', cell: (decision) => decision.risk || '—' },
+    {
+      key: 'updated',
+      header: 'Updated',
+      width: '112px',
+      cell: (decision) => <TimeAgo value={decision.updatedAt || decision.createdAt} />,
+    },
+    {
+      key: 'task',
+      header: 'Task',
+      width: '120px',
+      hideOnMobile: true,
+      cell: (decision) => (decision.linkedTaskId ? <Mono truncate>{decision.linkedTaskId}</Mono> : '—'),
+    },
+  ]
 
-        {(summary.loading || decisionsApi.loading) && <div className={`macos-panel ${styles.loadingBanner}`}>Loading governance archive...</div>}
-        {(summary.error || decisionsApi.error) && <div className={`macos-panel ${styles.errorBanner}`}>Error: {summary.error || decisionsApi.error}</div>}
+  const loadingFirst = (summary.loading || decisionsApi.loading) && !summary.data && !decisionsApi.data
+  const readError = decisionsApi.error || summary.error
 
-        {!!summary.data && (
-          <>
-            <div
-              className={`macos-panel ${styles.alertPanel}`}
-              style={{ border: `1px solid ${isArchiveMode ? 'rgba(100,210,255,0.28)' : 'rgba(255,149,0,0.42)'}` }}
-            >
-              <div className={styles.alertPanelHeader}>
-                <div>
-                  <div className={styles.alertPanelTitle}>
-                    <ShieldCheck size={16} style={{ color: isArchiveMode ? '#64D2FF' : '#FF9500' }} />
-                    {isArchiveMode ? 'Archive mode: no open council decisions' : 'Attention: open governance decisions exist'}
-                  </div>
-                  <div className={styles.alertPanelDesc}>
-                    Live operation should happen in Cron Jobs, Digital Office, Workshop, or Agent Hub. This archive stays read-only unless council execution is explicitly restored.
-                  </div>
-                </div>
-                <StatusBadge status={isArchiveMode ? 'info' : 'warning'} label={isArchiveMode ? 'Archive' : 'Action needed'} />
-              </div>
-              <div className={styles.alertPanelNavRow}>
-                <button onClick={() => navigate('/cron')} className={styles.navBtn}>Open Cron Jobs</button>
-                <button onClick={() => navigate('/office')} className={styles.navBtn}>Open Digital Office</button>
-                <button onClick={() => navigate('/workshop')} className={styles.navBtn}>Open Workshop</button>
-              </div>
-              <div className={styles.alertMetricsGrid}>
-                <MiniMetric label="Total decisions" value={compactCount(archive.totalDecisions ?? metrics.totalDecisions)} tone="#64D2FF" sub="full archive" />
-                <MiniMetric label="Open approvals" value={compactCount(metrics.activeDecisions)} tone={Number(metrics.activeDecisions || 0) > 0 ? '#FF9500' : '#32D74B'} sub="should be rare" />
-                <MiniMetric label="Conditional" value={compactCount(metrics.conditionalApprovals)} tone="#FF9500" sub="approved with caveats" />
-                <MiniMetric label="Rejected" value={compactCount(metrics.rejectedDecisions)} tone="#FF453A" sub="audit trail" />
-                <MiniMetric label="Last decision" value={archive.lastDecisionAt ? timeAgo(archive.lastDecisionAt) : '—'} tone="rgba(255,255,255,0.92)" sub={archive.lastDecisionAt || 'no timestamp'} />
-              </div>
-            </div>
+  const archiveNotice = () => {
+    if (!summary.data) return null
+    const lead = hasOpenApprovals
+      ? 'Open approvals should be rare. Review them below.'
+      : openApprovals === null
+        ? 'Open approvals could not be read.'
+        : 'Read-only archive: councils no longer run live work.'
+    return (
+      <Notice
+        tone={hasOpenApprovals ? 'warning' : 'info'}
+        title={hasOpenApprovals ? `${openApprovals} council ${openApprovals === 1 ? 'decision is' : 'decisions are'} still open` : undefined}
+      >
+        {lead}
+        {totalDecisions !== null ? ` ${totalDecisions} ${totalDecisions === '1' ? 'decision' : 'decisions'} on record` : null}
+        {totalDecisions !== null && archive.lastDecisionAt ? <>, last <TimeAgo value={archive.lastDecisionAt} /></> : null}
+        {totalDecisions !== null ? '.' : null}
+      </Notice>
+    )
+  }
 
-            <div className={styles.twoPanelGrid}>
-              <div className={`macos-panel ${styles.workflowPanel}`} style={{ border: `1px solid ${scoreTone}44` }}>
-                <div className={styles.workflowPanelHeader}>
-                  <div>
-                    <div className={styles.workflowPanelTitle}>
-                      <Activity size={15} style={{ color: scoreTone }} /> Governance vs Real Workflow
-                    </div>
-                    <div className={styles.workflowPanelDesc}>
-                      If governance events exist but real workflow is silent, this turns yellow. It is an audit warning, not a work queue.
-                    </div>
-                  </div>
-                  <StatusBadge status={healthStateBadgeStatus(workflowState)} label={workflowState} />
-                </div>
-                <div className={styles.workflowKpiGrid}>
-                  <MiniMetric label="Real workflow" value={compactCount(review?.workflowSurfaceLive24h)} tone="#32D74B" sub="live 24h" />
-                  <MiniMetric label="Governance auto-ops" value={compactCount(review?.governanceEventsLive24h)} tone="#FF9500" sub="live 24h" />
-                  <MiniMetric label="Silence" value={review?.workflowSurfaceSilenceHours == null ? '—' : `${Math.round(Number(review.workflowSurfaceSilenceHours))}h`} tone={governanceOnly ? '#FF9500' : 'rgba(255,255,255,0.92)'} sub="since workflow signal" />
-                </div>
-                {review?.idleAdvisories?.length ? (
-                  <div className={styles.idleAdvisories}>
-                    {review.idleAdvisories.slice(0, 6).map((item: string) => (
-                      <span key={item} className={styles.idleAdvisoryBadge}>{item}</span>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
+  return (
+    <Page
+      title="Audit"
+      description="What was decided, and is governance outrunning real work?"
+      actions={
+        <Button size="sm" icon={<RefreshCcw size={14} aria-hidden="true" />} onClick={refreshAll}>
+          Refresh
+        </Button>
+      }
+    >
+      {archiveNotice()}
 
-              <div className={`macos-panel ${styles.healthPanel}`}>
-                <div className={styles.healthPanelTitle}>
-                  <AlertTriangle size={15} style={{ color: scorecard.data?.overall === 'yellow' ? '#FF9500' : '#32D74B' }} /> Health signals
-                </div>
-                <div className={styles.healthMetricGrid}>
-                  <div className={styles.healthMetricRow}>
-                    <span className={styles.healthMetricRowLabel}>Overall</span>
-                    <b style={{ color: scorecard.data?.overall === 'yellow' ? '#FF9500' : '#32D74B', textTransform: 'uppercase' }}>{scorecard.data?.overall || 'unknown'}</b>
-                  </div>
-                  <div className={styles.healthMetricRow}>
-                    <span className={styles.healthMetricRowLabel}>Autorun attempts</span>
-                    <b>{compactCount(scorecard.data?.metrics?.delegationAutorunAttempts)}</b>
-                  </div>
-                  <div className={styles.healthMetricRow}>
-                    <span className={styles.healthMetricRowLabel}>Infra failures</span>
-                    <b style={{ color: Number(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts || 0) > 0 ? '#FF453A' : '#32D74B' }}>{compactCount(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)}</b>
-                  </div>
-                  <div className={styles.healthMetricRow}>
-                    <span className={styles.healthMetricRowLabel}>RCA active</span>
-                    <b style={{ color: review?.rcaTaskActive ? '#FF9500' : 'rgba(255,255,255,0.86)' }}>{review?.rcaTaskActive || '—'}</b>
-                  </div>
-                </div>
-                <div className={styles.healthPanelFooter}>
-                  Gateway self-heal was removed from this page; it now reports audit and health, not mutations.
-                </div>
-              </div>
-            </div>
+      {scorecard.error && !scorecard.data ? (
+        <Notice tone="unavailable" title="Governance check could not be read">
+          {scorecard.error}
+        </Notice>
+      ) : (
+        <>
+          {scorecard.loading && !scorecard.data ? (
+            <Skeleton variant="block" label="Reading governance check" />
+          ) : (
+            <StatRow aria-label="Governance versus real workflow, last 24 hours">
+              <Stat
+                label="Overall"
+                value={overallValue}
+                state={workflowUi}
+                hint={review ? 'audit activity against real work' : overallHint}
+              />
+              <Stat label="Real work" value={formatCount(review?.workflowSurfaceLive24h)} hint="events, last 24 hours" />
+              <Stat label="Audit's own events" value={formatCount(review?.governanceEventsLive24h)} hint="logged automatically, last 24 hours" />
+              <Stat
+                label="Time without real work"
+                value={silenceHours === null ? null : Math.round(silenceHours)}
+                unit={silenceHours === null ? undefined : 'h'}
+                state={governanceOnly ? 'warning' : undefined}
+                hint="since the last real-work event"
+              />
+              <Stat label="Automatic task attempts" value={formatCount(scorecard.data?.metrics?.delegationAutorunAttempts)} />
+              <Stat
+                label="Failed attempts"
+                hint="infrastructure problems"
+                value={formatCount(infraFailures)}
+                state={infraFailures !== null && infraFailures > 0 ? 'critical' : undefined}
+              />
+            </StatRow>
+          )}
 
-            <div className={`macos-panel ${styles.archivePanel}`}>
-              <div className={styles.archivePanelHeader}>
-                <div>
-                  <h3 className={styles.archivePanelTitle}>Decision Archive ({filteredDecisions.length})</h3>
-                  <p className={styles.archivePanelSubtitle}>Read-only decision history. Not an action queue.</p>
-                </div>
-                <div className={styles.archiveFilterRow}>
-                  <div className={styles.searchBox}>
-                    <Search size={13} className={styles.searchIcon} />
-                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search archive" aria-label="Search decision archive" className={styles.searchInput} />
-                  </div>
-                  <select value={activeCouncil} onChange={(event) => setActiveCouncil(event.target.value as CouncilFilter)} className={styles.archiveSelect}>
-                    {Object.entries(councilLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-                  </select>
-                  <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className={styles.archiveSelect}>
-                    {statusOptions.map((status) => <option key={status} value={status}>{status === 'ALL' ? 'All statuses' : status}</option>)}
-                  </select>
-                </div>
-              </div>
+          {(governanceOnly || review?.rcaTaskActive || review?.idleAdvisories?.length) ? (
+            <Notice tone={governanceOnly ? 'warning' : 'info'} title={governanceOnly ? 'Only audit activity, no real work' : undefined}>
+              {review?.rcaTaskActive ? <p className={styles.noticeLine}>Investigation task open: <Mono>{review.rcaTaskActive}</Mono></p> : null}
+              {review?.idleAdvisories?.length ? (
+                <ul className={styles.advisories}>
+                  {review.idleAdvisories.slice(0, 6).map((item: string) => <li key={item}>{item}</li>)}
+                </ul>
+              ) : null}
+            </Notice>
+          ) : null}
+        </>
+      )}
 
-              <div className={styles.councilTabGrid}>
-                {(['EC', 'OC', 'TFC', 'CROSS'] as const).map((key) => {
-                  const item = councils[key] || {}
-                  return (
-                    <button key={key} onClick={() => setActiveCouncil(key)} className={`macos-panel ${styles.councilTab}`}
-                      style={{ border: activeCouncil === key ? `1px solid ${councilTone[key]}` : '1px solid rgba(255,255,255,0.08)' }}>
-                      <div className={styles.councilTabHeader}>
-                        <span className={styles.councilTabName}>{councilLabels[key]}</span>
-                        <span style={{ fontSize: 18, fontWeight: 850, color: councilTone[key] }}>{compactCount(item.totalDecisions)}</span>
-                      </div>
-                      <div className={styles.councilTabStats}>
-                        <span>open {compactCount(item.openDecisions)}</span>
-                        <span>approved {compactCount(item.approved)}</span>
-                        <span>rejected {compactCount(item.rejected)}</span>
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
+      {loadingFirst ? (
+        <Skeleton variant="block" size="lg" label="Reading decisions" />
+      ) : readError && !decisionsApi.data ? (
+        <ErrorState
+          title="Decisions could not be read"
+          message={readError}
+          onRetry={() => { void Promise.all([summary.refetch(), decisionsApi.refetch()]) }}
+        />
+      ) : (
+        <Panel title="Decisions" padding="none">
+          <div className={styles.toolbar}>
+            <SearchInput
+              value={search}
+              onChange={setSearch}
+              label="Search decisions"
+              placeholder="Search id, context, owner, risk or task"
+              className={styles.search}
+            />
+            <FilterChips
+              ariaLabel="Council"
+              options={councilOptions}
+              value={activeCouncil}
+              onChange={(value) => setActiveCouncil(value as CouncilFilter)}
+            />
+            <Select
+              aria-label="Status"
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+              options={statusOptions}
+              className={styles.statusSelect}
+            />
+          </div>
+          <DataTable
+            caption="Council decisions"
+            columns={columns}
+            rows={filteredDecisions.slice(0, MAX_ROWS)}
+            rowKey={(decision) => decision.decisionId}
+            onRowClick={(decision) => { void openDecision(decision) }}
+            selectedKey={selectedDecision?.decisionId ?? null}
+            empty={
+              allDecisions.length === 0 ? (
+                <EmptyState title="No decisions recorded" description="Nothing has been decided by a council yet." />
+              ) : (
+                <EmptyState
+                  title="No decisions match these filters"
+                  action={filtersActive ? <Button size="sm" onClick={clearFilters}>Clear filters</Button> : undefined}
+                />
+              )
+            }
+          />
+          {filteredDecisions.length > MAX_ROWS && (
+            <p className={styles.more}>Showing {MAX_ROWS} of {filteredDecisions.length} decisions. Narrow the filters to see the rest.</p>
+          )}
+        </Panel>
+      )}
 
-              {filteredDecisions.length === 0 ? <EmptyState text="No decision records match these filters." /> : (
-                <div className={styles.decisionList}>
-                  {filteredDecisions.slice(0, 80).map((decision) => {
-                    const status = normalizeDecisionStatus(decision.status || decision.outcome || decision.decision)
-                    const open = isOpenDecisionStatus(status)
-                    const tone = open ? '#FF9500' : status === 'rejected' ? '#FF453A' : status === 'approved_with_conditions' ? '#FFB340' : '#32D74B'
-                    return (
-                      <button key={decision.decisionId} onClick={() => openDecision(decision)} className={styles.decisionRow}>
-                        <div className={styles.decisionRowTop}>
-                          <div className={styles.decisionRowIdGroup}>
-                            <FileText size={14} style={{ color: councilTone[decision.council as CouncilKey] || '#8E8E93', flex: '0 0 auto' }} />
-                            <span className={styles.decisionRowId}>{decision.decisionId}</span>
-                            <span className={styles.decisionRowCouncil} style={{ color: councilTone[decision.council as CouncilKey] || '#8E8E93' }}>{decision.council}</span>
-                          </div>
-                          <span className={styles.decisionRowStatus} style={{ color: tone }}>{status}</span>
-                        </div>
-                        <p className={styles.decisionRowContext}>{decision.context || 'No context'}</p>
-                        <div className={styles.decisionRowMeta}>
-                          <span>Owner: {decision.owner || '—'}</span>
-                          <span>Risk: {decision.risk || '—'}</span>
-                          <span>{timeAgo(decision.updatedAt || decision.createdAt || '')}</span>
-                          {decision.linkedTaskId ? <span>Task: {decision.linkedTaskId}</span> : null}
-                        </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          </>
-        )}
-
+      <Drawer
+        open={selectedDecision !== null}
+        onClose={() => setSelected(null)}
+        title={selectedDecision?.context || 'Decision'}
+        description={selectedDecision ? `${councilName(selectedDecision.council)} · ${selectedDecision.decisionId}` : undefined}
+        size="lg"
+      >
         {selectedDecision && (
-          <div className={styles.drawerOverlay}>
-            <div className={styles.drawer}>
-              <div className={styles.drawerHeader}>
-                <div>
-                  <div className={styles.drawerCouncilLabel} style={{ color: councilTone[selectedDecision.council as CouncilKey] || 'rgba(255,255,255,0.62)' }}>{selectedDecision.council} · {selectedDecision.decisionId}</div>
-                  <h3 className={styles.drawerDecisionTitle}>{selectedDecision.context}</h3>
-                </div>
-                <button onClick={() => setSelected(null)} className={styles.drawerCloseBtn}><X size={18} /></button>
-              </div>
-
-              <div className={styles.drawerDetails}>
-                <div className={styles.drawerOutcome}><b>Outcome:</b> {normalizeDecisionStatus(selectedDecision.status || selectedDecision.outcome || selectedDecision.decision)}</div>
-                <div className={styles.drawerMeta}>
-                  Owner: {selectedDecision.owner || '—'} · Risk: {selectedDecision.risk || '—'} · Revisit: {selectedDecision.revisitDate || '—'} · Updated: {selectedDecision.updatedAt || selectedDecision.createdAt || '—'}
-                  {selectedDecision.delegatedTaskState ? ` · Task: ${selectedDecision.delegatedTaskState}` : ''}
-                </div>
-                {selectedDecision.rationale ? <div className={styles.drawerRationale}><b>Rationale:</b> {selectedDecision.rationale}</div> : null}
-                {selectedDecision.conditions?.length ? <div className={styles.drawerConditions}>Conditions: {selectedDecision.conditions.join(' · ')}</div> : null}
-                {selectedDecision.quorum ? <div className={styles.drawerQuorum}>Quorum: {selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</div> : null}
-                {selectedDecision.voters?.length ? <div className={styles.drawerVoters}>Voters: {selectedDecision.voters.join(', ')}</div> : null}
-                {selectedDecision.modelFamilies?.length ? <div className={styles.drawerModels}>Models: {selectedDecision.modelFamilies.join(', ')}</div> : null}
-                {selectedDecision.evidence?.length ? (
-                  <div className={styles.drawerEvidence}>
-                    <b>Evidence</b>
-                    <ul className={styles.drawerEvidenceList}>
-                      {selectedDecision.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`} className={styles.drawerEvidenceItem}>{item}</li>)}
-                    </ul>
-                  </div>
+          <div className={styles.drawerBody}>
+            <section className={styles.section}>
+              <dl className={styles.facts}>
+                <Fact label="Outcome"><StatusCell status={decisionStatus(selectedDecision)} /></Fact>
+                <Fact label="Owner">{selectedDecision.owner || '—'}</Fact>
+                <Fact label="Risk">{selectedDecision.risk || '—'}</Fact>
+                <Fact label="Revisit">{selectedDecision.revisitDate || '—'}</Fact>
+                <Fact label="Updated"><TimeAgo value={selectedDecision.updatedAt || selectedDecision.createdAt} /></Fact>
+                {selectedDecision.delegatedTaskState ? <Fact label="Task state">{selectedDecision.delegatedTaskState}</Fact> : null}
+                {selectedDecision.linkedTaskId ? <Fact label="Task"><Mono>{selectedDecision.linkedTaskId}</Mono></Fact> : null}
+                {selectedDecision.quorum ? (
+                  <Fact label="Voters present / required">
+                    <Mono>{selectedDecision.quorum.present ?? '—'} / {selectedDecision.quorum.required ?? '—'}</Mono>
+                  </Fact>
                 ) : null}
-              </div>
+                {selectedDecision.voters?.length ? <Fact label="Voters">{selectedDecision.voters.join(', ')}</Fact> : null}
+                {selectedDecision.modelFamilies?.length ? <Fact label="Models">{selectedDecision.modelFamilies.join(', ')}</Fact> : null}
+              </dl>
+            </section>
 
-              <div className={styles.timelineSection}>
-                <div className={styles.timelineTitle}>Timeline</div>
-                {timeline.length === 0 ? <EmptyState text="No timeline events for this decision." /> : timeline.slice(0, 30).map((event, index) => (
-                  <div key={`${event.eventId || index}`} className={styles.timelineEvent}>
-                    <div className={styles.timelineEventType}>{event.eventType || event.type || 'event'}</div>
-                    <div className={styles.timelineEventMeta}>{event.source || 'unknown'} · {timeAgo(event.timestamp || event.createdAt || '')}</div>
-                    {event.payload?.note ? <div className={styles.timelineEventNote}>{event.payload.note}</div> : null}
-                  </div>
-                ))}
-              </div>
-            </div>
+            {selectedDecision.rationale ? (
+              <section className={styles.section}>
+                <h3 className={styles.sectionTitle}>Rationale</h3>
+                <p className={styles.text}>{selectedDecision.rationale}</p>
+              </section>
+            ) : null}
+
+            {selectedDecision.conditions?.length ? (
+              <section className={styles.section}>
+                <h3 className={styles.sectionTitle}>Conditions</h3>
+                <ul className={styles.list}>
+                  {selectedDecision.conditions.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                </ul>
+              </section>
+            ) : null}
+
+            {selectedDecision.evidence?.length ? (
+              <section className={styles.section}>
+                <h3 className={styles.sectionTitle}>Readings</h3>
+                <ul className={styles.list}>
+                  {selectedDecision.evidence.slice(0, 8).map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                </ul>
+              </section>
+            ) : null}
+
+            <section className={styles.section}>
+              <h3 className={styles.sectionTitle}>Timeline</h3>
+              {timelineState === 'loading' ? (
+                <Skeleton variant="line" lines={3} label="Reading timeline" />
+              ) : timelineState === 'error' ? (
+                <p className={styles.muted}>The timeline could not be read.</p>
+              ) : timeline.length === 0 ? (
+                <p className={styles.muted}>No timeline events for this decision.</p>
+              ) : (
+                <ol className={styles.timeline}>
+                  {timeline.slice(0, 30).map((event, index) => (
+                    <li key={`${event.eventId || index}`} className={styles.timelineEvent}>
+                      <div className={styles.timelineHead}>
+                        <span className={styles.timelineType}>{event.eventType || event.type || 'event'}</span>
+                        <span className={styles.timelineMeta}>
+                          {event.source || 'unknown source'} · <TimeAgo value={event.timestamp || event.createdAt} />
+                        </span>
+                      </div>
+                      {event.payload?.note ? <p className={styles.text}>{event.payload.note}</p> : null}
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
           </div>
         )}
-      </div>
-    </PageTransition>
+      </Drawer>
+    </Page>
   )
 }

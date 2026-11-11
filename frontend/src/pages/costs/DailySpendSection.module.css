@@ -1,669 +1,194 @@
-/* ── Outer two-col grid ──────────────────────────────────────── */
-
-.outerGrid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 24px;
-}
-
-.outerGridMobile {
-  grid-template-columns: 1fr;
-  gap: 16px;
-}
-
-/* ── Card inner pad (shared by both cards) ───────────────────── */
-
-.cardInner {
-  padding: 24px;
-}
-
-.cardInnerMobile {
-  padding: 16px;
-}
-
-/* ── Card title block ────────────────────────────────────────── */
-
-.cardTitleBlock {
-  margin-bottom: 24px;
-}
-
-.cardTitleBlockMobile {
-  margin-bottom: 16px;
-}
-
-.cardTitle {
-  font-size: 16px;
-  font-weight: 600;
-  color: rgba(255,255,255,0.92);
-  margin: 0;
-}
-
-.cardTitleMobile {
-  font-size: 15px;
-}
-
-.cardSubtitle {
-  font-size: 12px;
-  color: rgba(255,255,255,0.45);
-  margin-top: 4px;
-}
-
-/* ── CSS-fallback bar chart ──────────────────────────────────── */
-
-.fallbackWrap {
+.body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-
-.fallbackNote {
-  font-size: 12px;
-  color: rgba(255,255,255,0.45);
-}
-
-.fallbackBarList {
-  display: flex;
-  align-items: flex-end;
-  /* gap + height set inline (responsive) */
-  padding-top: 12px;
-}
-
-.fallbackBarCol {
-  flex: 1;
+  gap: var(--sp-3);
   min-width: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
 }
 
-.fallbackBarStack {
+.chartFrame {
   width: 100%;
-  max-width: 28px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  border-radius: 8px;
-  overflow: hidden;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.08);
-  /* height + min-height set inline */
+  min-width: 0;
 }
 
-.fallbackBarLabel {
-  color: rgba(255,255,255,0.45);
-  /* font-size set inline (responsive) */
-}
-
-/* ── Session estimate fallback ───────────────────────────────── */
-
-.sessionEstimateWrap {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.sessionEstimateStatGrid {
-  display: grid;
-  gap: 10px;
-  /* grid-template-columns set inline */
-}
-
-.sessionEstimateStatCell {
-  padding: 14px 16px;
-  border-radius: 16px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-}
-
-.sessionEstimateStatLabel {
-  font-size: 11px;
-  color: rgba(255,255,255,0.45);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.sessionEstimateStatValue {
-  font-size: 15px;
-  color: rgba(255,255,255,0.92);
-  font-weight: 700;
-  margin-top: 8px;
-}
-
-/* ── SessionEstimateChart (local, no-ledger view) ────────────── */
-
-.seChart {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.seBarGrid {
-  display: grid;
-  align-items: end;
-  min-height: 248px;
-  /* grid-template-columns + gap set inline */
-}
-
-.seBarBtn {
-  border-radius: 18px;
-  padding: 12px 6px 10px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  -webkit-tap-highlight-color: transparent;
-  /* border + background + box-shadow set inline (isActive) */
-}
-
-.seBarCost {
-  font-size: 10px;
-  color: rgba(255,255,255,0.92);
-  font-weight: 700;
-}
-
-.seBarTrack {
-  width: 100%;
-  max-width: 30px;
-  min-height: 12px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.05);
-  display: flex;
-  align-items: flex-end;
-  overflow: hidden;
-  padding: 3px;
-  /* height set inline */
-}
-
-.seBarFill {
+.chartPlaceholder {
   width: 100%;
   height: 100%;
-  border-radius: 999px;
-  /* background + opacity set inline */
+  background: var(--surface-2);
+  border-radius: var(--r-md);
 }
 
-.seBarDay {
-  font-size: 10px;
-  /* color + font-weight set inline (isActive) */
+.tooltip {
+  min-width: 220px;
+  padding: var(--sp-3);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: var(--fs-small);
 }
 
-.seDetailBox {
-  padding: 16px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, rgba(94,92,230,0.14) 0%, rgba(255,149,0,0.08) 100%);
-  border: 1px solid rgba(255,255,255,0.08);
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+.tooltipDate {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
 }
 
-.seDetailLabel {
-  font-size: 11px;
-  color: rgba(255,255,255,0.45);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+.tooltipTotal {
+  margin-top: var(--sp-1);
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
-.seDetailValue {
-  font-size: 14px;
-  color: rgba(255,255,255,0.92);
-  font-weight: 700;
-  margin-top: 6px;
-}
-
-/* ── AWS bar chart ───────────────────────────────────────────── */
-
-.awsBarList {
-  display: flex;
-  align-items: flex-end;
-  /* height + gap + padding-top set inline */
-}
-
-.awsBarCol {
-  flex: 1;
+.tooltipRows {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 8px;
+  gap: var(--sp-1);
+  margin: var(--sp-2) 0 0;
+  padding: 0;
+  list-style: none;
 }
 
-.awsBarFill {
-  width: 100%;
-  background: #007AFF;
-  border-radius: 4px 4px 0 0;
-  opacity: 0.8;
-  transition: all 0.3s ease;
-  /* height set inline */
-}
-
-.awsBarLabel {
-  text-align: center;
-  line-height: 1.1;
-  color: rgba(255,255,255,0.45);
-  /* font-size set inline */
-}
-
-/* ── Token-based fallback empty ──────────────────────────────── */
-
-.tokenFallbackWrap {
+.tooltipRow {
   display: flex;
   align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 12px;
-  /* height set inline */
-}
-
-.tokenFallbackTitle {
-  font-size: 14px;
-  color: rgba(255,255,255,0.65);
-}
-
-.tokenFallbackSub {
-  font-size: 12px;
-  color: rgba(255,255,255,0.45);
-  text-align: center;
-}
-
-/* ── Desktop selected-day detail ─────────────────────────────── */
-
-.desktopDetailBox {
-  margin-top: 12px;
-  padding: 14px 16px;
-  border-radius: 14px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.desktopDetailHeader {
-  display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--sp-3);
+}
+
+.tooltipName {
+  display: flex;
   align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
 }
 
-.desktopDetailDate {
-  font-size: 13px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 700;
-  font-feature-settings: "tnum";
+.dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-full);
 }
 
-.desktopDetailHint {
-  font-size: 11px;
-  color: rgba(255,255,255,0.5);
-  margin-top: 2px;
+.nameText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.desktopDetailTotals {
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-width: 0;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.detailHead {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  flex-shrink: 0;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  color: var(--text-1);
 }
 
-.desktopDetailTotal {
-  font-size: 15px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 750;
+.detailTotals {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-3);
 }
 
-.desktopDetailTokens {
-  font-size: 11px;
-  color: rgba(255,255,255,0.55);
-}
-
-.desktopDetailSegments {
+.segments {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--sp-1) var(--sp-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-small);
 }
 
-.desktopDetailSegment {
+.segment {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.08);
-  background: rgba(255,255,255,0.03);
-  max-width: 100%;
+  gap: var(--sp-2);
+  min-width: 0;
+  color: var(--text-2);
 }
 
-.desktopDetailDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  /* background set inline */
+.hint {
+  color: var(--text-3);
+  font-size: var(--fs-small);
 }
 
-.desktopDetailSegmentName {
-  font-size: 11px;
-  color: rgba(255,255,255,0.72);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.desktopDetailSegmentValue {
-  font-size: 11px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 650;
-  white-space: nowrap;
-}
-
-/* ── Mobile daily spend chart ────────────────────────────────── */
-
-.mobileChartWrap {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-
-.mobileChartNote {
-  font-size: 12px;
-  color: rgba(255,255,255,0.45);
-}
-
-.mobileBarGrid {
+/* Token-only and AWS bars: one column per day, height from data. */
+.strip {
   display: grid;
+  grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+  gap: var(--sp-1);
   align-items: end;
-  height: 244px;
-  padding: 12px 0 4px;
-  /* grid-template-columns + gap set inline */
 }
 
-.mobileBarBtn {
-  border-radius: 14px;
-  padding: 10px 4px 8px;
+.stripBar {
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 8px;
-  min-height: 0;
-  -webkit-tap-highlight-color: transparent;
-  /* border + background + box-shadow set inline (isActive) */
-}
-
-.mobileBarCost {
-  font-size: 10px;
-  color: rgba(255,255,255,0.92);
-  font-weight: 700;
-}
-
-.mobileBarStack {
-  width: 100%;
-  max-width: 30px;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  border-radius: 10px;
-  overflow: hidden;
-  background: rgba(255,255,255,0.05);
-  min-height: 14px;
-  /* height set inline */
-}
-
-.mobileBarEmptyFill {
-  height: 100%;
-  background: rgba(255,255,255,0.08);
-}
-
-.mobileBarDay {
-  font-size: 10px;
-  /* color + font-weight set inline (isActive) */
-}
-
-.mobileDetailBox {
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.08);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.mobileDetailHeader {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-}
-
-.mobileDetailDate {
-  font-size: 13px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 700;
-}
-
-.mobileDetailHint {
-  font-size: 11px;
-  color: rgba(255,255,255,0.5);
-  margin-top: 2px;
-}
-
-.mobileDetailTotal {
-  font-size: 14px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 700;
-}
-
-.mobileDetailSegments {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.mobileDetailSegmentRow {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}
-
-.mobileDetailSegmentLabel {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  gap: var(--sp-1);
   min-width: 0;
+  padding: var(--sp-1) 0;
+  border-radius: var(--r-sm);
 }
 
-.mobileDetailDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  /* background set inline */
+button.stripBar:hover {
+  background: var(--surface-2);
 }
 
-.mobileDetailModelName {
-  font-size: 12px;
-  color: rgba(255,255,255,0.76);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+button.stripBar:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
 }
 
-.mobileDetailValue {
-  font-size: 12px;
-  color: rgba(255,255,255,0.95);
-  font-weight: 600;
-  text-align: right;
+button.stripBar[aria-pressed='true'] {
+  background: var(--accent-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line);
 }
 
-.mobileLegend {
+.stripTrack {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  align-items: flex-end;
+  height: 180px;
 }
 
-.mobileLegendItem {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: rgba(255,255,255,0.04);
-  border: 1px solid rgba(255,255,255,0.06);
-}
-
-.mobileLegendDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  /* background set inline */
-}
-
-.mobileLegendLabel {
-  font-size: 11px;
-  color: rgba(255,255,255,0.72);
-}
-
-/* ── Spend Composition (right card) ──────────────────────────── */
-
-.compositionList {
-  display: flex;
-  flex-direction: column;
-  /* gap set inline (responsive) */
-}
-
-.compositionRow {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.compositionTopLine {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 10px;
-}
-
-.compositionNameGroup {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.compositionDot {
-  width: 10px;
-  height: 10px;
-  border-radius: 999px;
-  flex-shrink: 0;
-  /* background set inline */
-}
-
-.compositionName {
-  font-size: 14px;
-  color: rgba(255,255,255,0.75);
-  font-weight: 600;
-}
-
-.compositionNameMobile {
-  font-size: 12px;
-}
-
-.compositionSecondary {
-  font-size: 13px;
-  color: rgba(255,255,255,0.92);
-  font-weight: 700;
-}
-
-.compositionSecondaryMobile {
-  font-size: 12px;
-}
-
-.compositionProgressTrack {
-  height: 7px;
-  background: rgba(255,255,255,0.08);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.compositionProgressFill {
-  height: 100%;
-  border-radius: 999px;
-  transition: width 0.6s ease;
-  /* width + background set inline */
-}
-
-.compositionShareNote {
-  font-size: 11px;
-  /* color set inline (codexbar vs normal) */
-}
-
-/* ── Composition fallback (single bar) ───────────────────────── */
-
-.compositionFallback {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.compositionFallbackRow {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.compositionFallbackLabel {
-  color: rgba(255,255,255,0.65);
-  font-weight: 500;
-  /* font-size set inline */
-}
-
-.compositionFallbackValue {
-  color: rgba(255,255,255,0.92);
-  font-weight: 600;
-  font-family: system-ui;
-  font-feature-settings: "tnum";
-  /* font-size set inline */
-}
-
-.compositionFallbackTrack {
-  height: 6px;
-  background: rgba(255,255,255,0.1);
-  border-radius: 3px;
-  overflow: hidden;
-}
-
-.compositionFallbackFill {
+.stripFill {
+  display: block;
   width: 100%;
-  height: 100%;
-  background: #BF5AF2;
-  border-radius: 3px;
-  transition: width 0.6s ease;
+  background: var(--series-1);
+  border-radius: var(--r-sm) var(--r-sm) 0 0;
 }
 
-.compositionEmpty {
-  font-size: 13px;
-  color: rgba(255,255,255,0.45);
-}
-
-/* ── Recharts wrapper ────────────────────────────────────────── */
-
-.rechartsWrap {
-  width: 100%;
-  min-width: 0;
-  position: relative;
-  overflow: hidden;
-  /* height + min-height set inline (responsive) */
-}
-
-.chartSizingPlaceholder {
-  width: 100%;
-  height: 100%;
-  border-radius: 12px;
-  background: rgba(255,255,255,0.025);
+.stripDay {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+  font-size: var(--fs-micro);
+  text-align: center;
 }

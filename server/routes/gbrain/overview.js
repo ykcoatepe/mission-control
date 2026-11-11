@@ -1,13 +1,12 @@
 'use strict';
 
 const {
-  AUDIT_REPORT_PATH,
   DESIGN_HANDOFF_PATH,
-  AUDIT_VERIFIED_AT,
   GBRAIN_INTEGRATION_CONTRACT,
 } = require('./constants');
 const { formatCount, formatPercent, liveHealthStatus, liveSourceStatus } = require('./liveProbes');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
+const { verdictCaveats } = require('../../sources/gbrain/verdict');
 const { listGBrainActions } = require('./actionsExecutor');
 
 function statusLabelText(status) {
@@ -42,10 +41,10 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const healthUnavailable = Boolean(live.health && !live.health.ok);
   const sourcesUnavailable = Boolean(live.sources && !live.sources.ok);
   const versionUnavailable = Boolean(live.version && !live.version.ok);
-  const versionValue = liveVersion?.version || '0.40.2.0';
-  const versionMetricValue = versionUnavailable ? 'Unavailable' : versionValue;
+  const versionValue = liveVersion?.version || null;
+  const versionMetricValue = versionValue || 'Unavailable';
   const healthScore = liveHealth?.score ?? null;
-  const healthValue = healthUnavailable ? 'Unavailable' : healthScore !== null ? `${healthScore}/100` : '9/10';
+  const healthValue = healthScore !== null ? `${healthScore}/100` : 'Unavailable';
   const pages = liveHealth?.metrics?.pages ?? liveSources?.totalPages ?? null;
   const chunks = liveHealth?.metrics?.chunks ?? null;
   const embedded = liveHealth?.metrics?.embedded ?? null;
@@ -104,12 +103,12 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const queue = liveHealth?.metrics?.queue || {};
   const hasLiveQueueCounters = [queue.waiting, queue.active, queue.stalled].every(Number.isFinite);
   const queueUnavailable = Boolean(liveHealth && !hasLiveQueueCounters);
-  const healthStatus = liveHealthStatus(liveHealth, healthUnavailable);
+  const healthStatus = live.health?.meta?.stale ? 'warning' : liveHealthStatus(liveHealth, healthUnavailable);
   const queueStatus = healthUnavailable ? 'warning' : queueUnavailable ? 'warning' : healthStatus;
-  const sourceStatus = liveSourceStatus(liveSources, sourcesUnavailable);
+  const sourceStatus = live.sources?.meta?.stale ? 'warning' : liveSourceStatus(liveSources, sourcesUnavailable);
   const queueValue = hasLiveQueueCounters
     ? `${queue.waiting} / ${queue.active} / ${queue.stalled}`
-    : liveHealth ? 'Unavailable' : '0 / 0 / 0';
+    : 'Unavailable';
   const sourceCount = liveSources?.count ?? null;
   const sourceWarnings = liveSources?.warningCount ?? null;
   const sourceFreshness = liveSources?.freshness || null;
@@ -121,7 +120,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
     ? staleSourceCount > 0
       ? `${staleSourceCount} source${staleSourceCount === 1 ? '' : 's'} stale or missing sync proof`
       : `all sync-tracked sources fresh under ${sourceFreshness.defaultThresholdHours}h default`
-    : 'saved audit has no freshness thresholds';
+    : 'Source freshness not read';
   const sourceRisks = sourcesUnavailable
     ? ['Live source probe could not reach the local GBrain runtime.']
     : staleSourceCount > 0
@@ -137,6 +136,8 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const activeCaveats = [
     ...(healthUnavailable ? ['Live health probe unavailable.'] : []),
     ...(sourcesUnavailable ? ['Live source probe unavailable.'] : []),
+    ...(live.health?.meta?.stale ? ['Health evidence is stale; see meta.'] : []),
+    ...(live.sources?.meta?.stale ? ['Source evidence is stale; see meta.'] : []),
     ...(liveHealth?.metrics?.stalePagesUnavailable === true ? ['Live health did not report a valid stale-page count.'] : []),
     ...(stalePages > 0 ? [`Live health reports ${formatCount(stalePages)} stale page${stalePages === 1 ? '' : 's'}${staleOldestText}.`] : []),
     ...(missingUnavailable ? [missingUnavailableText] : []),
@@ -159,20 +160,20 @@ function buildGBrainOverview(live = {}, extra = {}) {
       status: healthStatus,
       summary: 'Postgres-backed local shared memory for Hermes, OpenClaw, and Codex.',
       proof: {
-        label: liveHealth || healthUnavailable ? 'Live health probe' : 'Hermes audit',
-        source: liveHealth || healthUnavailable ? 'gbrain call get_health' : AUDIT_REPORT_PATH,
-        verifiedAt: liveCheckedAt || AUDIT_VERIFIED_AT,
+        label: liveHealth || healthUnavailable ? 'Live health probe' : 'Not read',
+        source: liveHealth || healthUnavailable ? 'gbrain call get_health' : 'not-read',
+        verifiedAt: liveCheckedAt || null,
         detail: healthUnavailable
           ? `Read-only health probe is unavailable: ${live.health.error}`
           : liveHealth
           ? `Read-only health probe returned ${liveHealth.status}.`
-          : 'Installed GBrain 0.40.2.0; engine is Postgres-backed; health 9/10.',
+          : 'GBrain core has not been read.',
       },
       metrics: [
         { label: 'Version', value: versionMetricValue },
-        { label: 'Pages', value: pages !== null ? formatCount(pages) : healthUnavailable ? 'Unavailable' : '15,713' },
-        { label: 'Chunks', value: chunks !== null ? formatCount(chunks) : healthUnavailable ? 'Unavailable' : '191,638' },
-        { label: 'Embedded', value: embedded !== null ? formatCount(embedded) : healthUnavailable ? 'Unavailable' : '191,638' },
+        { label: 'Pages', value: pages !== null ? formatCount(pages) : healthUnavailable ? 'Unavailable' : 'Unavailable' },
+        { label: 'Chunks', value: chunks !== null ? formatCount(chunks) : healthUnavailable ? 'Unavailable' : 'Unavailable' },
+        { label: 'Embedded', value: embedded !== null ? formatCount(embedded) : healthUnavailable ? 'Unavailable' : 'Unavailable' },
         ...(stalePagesValue !== null ? [{ label: 'Stale pages', value: stalePagesValue }] : []),
       ],
       risks: [
@@ -182,7 +183,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
             : 'Live probe is read-only and does not prove write or repair paths.'
           : healthUnavailable
           ? 'Live GBrain health probe could not reach the local runtime.'
-          : 'Green state is based on the latest saved audit, not a live mutation or repair run.',
+          : 'Core state has not been read.',
         GBRAIN_INTEGRATION_CONTRACT.localMemoryBoundary,
       ],
       nextSafeAction: liveHealth
@@ -191,60 +192,13 @@ function buildGBrainOverview(live = {}, extra = {}) {
         ? 'Restore local GBrain database connectivity, then refresh this page.'
         : 'Restore local GBrain database connectivity, then refresh the live health probe.',
     },
-    {
-      id: 'hermes',
-      label: 'Hermes hmudur',
-      kind: 'agent',
-      status: 'healthy',
-      summary: 'Conversational operator surface reading GBrain through the MCP bridge while keeping Hermes profile memory local.',
-      proof: {
-        label: 'Read smoke passed',
-        source: AUDIT_REPORT_PATH,
-        verifiedAt: AUDIT_VERIFIED_AT,
-        detail: 'Hermes hmudur read smoke passed through GBrain MCP.',
-      },
-      metrics: [
-        { label: 'Bridge', value: 'MCP read' },
-        { label: 'Memory boundary', value: 'Local + curated' },
-      ],
-      risks: ['Do not promote raw Hermes transcripts or private profile memory into GBrain.'],
-      nextSafeAction: 'Store bridge smoke results as structured JSON instead of report text.',
-    },
-    {
-      id: 'openclaw',
-      label: 'OpenClaw',
-      kind: 'agent',
-      status: 'healthy',
-      summary: 'Runtime tool surface with verified GBrain tool-call reads while keeping OpenClaw native memory local.',
-      proof: {
-        label: 'Tool smoke passed',
-        source: AUDIT_REPORT_PATH,
-        verifiedAt: AUDIT_VERIFIED_AT,
-        detail: 'OpenClaw read smoke passed through GBrain tool with failures 0.',
-      },
-      metrics: [
-        { label: 'Failures', value: '0' },
-        { label: 'Memory boundary', value: 'Local + shared recall' },
-      ],
-      risks: ['Do not mirror raw OpenClaw sessions, credentials, or untagged runtime memory into GBrain.'],
-      nextSafeAction: 'Expose latest gateway bridge proof without writing to memory.',
-    },
-    {
-      id: 'codex',
-      label: 'Codex',
-      kind: 'agent',
-      status: 'healthy',
-      summary: 'Local Codex memories and workspace sessions included as GBrain sources.',
-      proof: {
-        label: 'Source registered',
-        source: AUDIT_REPORT_PATH,
-        verifiedAt: AUDIT_VERIFIED_AT,
-        detail: 'Sources include codex-memories and mission-control.',
-      },
-      metrics: [{ label: 'Mode', value: 'source' }],
-      risks: ['Codex is represented as one node in v1; App, memories, and sessions may split later.'],
-      nextSafeAction: 'Decide whether Codex needs separate app, memory, and workspace nodes.',
-    },
+    ...[
+      ['hermes', 'Hermes hmudur'], ['openclaw', 'OpenClaw'], ['codex', 'Codex'],
+    ].map(([id, label]) => ({ id, label, kind: 'agent', status: 'inactive',
+      summary: 'Reader calls have not been observed.',
+      proof: { label: 'Not read', source: 'not-read', verifiedAt: null,
+        detail: 'MCP configuration and source sync do not establish a successful reader call.' },
+      metrics: [], risks: [], nextSafeAction: 'Inspect integration configuration and read evidence.' })),
     {
       id: 'sources',
       label: 'Source Systems',
@@ -252,19 +206,19 @@ function buildGBrainOverview(live = {}, extra = {}) {
       status: sourceStatus,
       summary: liveSources
         ? 'Project sources feeding the shared brain, verified by the live source probe.'
-        : 'Project sources feeding the shared brain, verified by the saved audit.',
+        : 'Source systems have not been read.',
       proof: {
-        label: liveSources || sourcesUnavailable ? 'Live source probe' : 'Source list captured',
-        source: liveSources || sourcesUnavailable ? 'gbrain sources list' : AUDIT_REPORT_PATH,
-        verifiedAt: liveSources?.checkedAt || live.sources?.checkedAt || AUDIT_VERIFIED_AT,
+        label: liveSources || sourcesUnavailable ? 'Live source probe' : 'Not read',
+        source: liveSources || sourcesUnavailable ? 'gbrain sources list' : 'not-read',
+        verifiedAt: liveSources?.checkedAt || live.sources?.checkedAt || null,
         detail: sourcesUnavailable
           ? `Read-only source probe is unavailable: ${live.sources.error}`
           : liveSources
           ? `Read-only source probe returned ${sourceCount} registered source${sourceCount === 1 ? '' : 's'}.`
-          : 'Sources include clawd, hermes-agent, gbrain, codex-memories, finance-analyzer, mission-control, PDFQuickFix, JapaneseBuddy, gstack.',
+          : 'Registered sources have not been read.',
       },
       metrics: [
-        { label: 'Known sources', value: sourceCount !== null ? String(sourceCount) : '9' },
+        { label: 'Known sources', value: sourceCount !== null ? String(sourceCount) : 'Unavailable' },
         ...(liveSources?.totalPages ? [{ label: 'Source pages', value: formatCount(liveSources.totalPages) }] : []),
         ...(sourceFreshness ? [{ label: 'Stale sources', value: String(staleSourceCount) }] : []),
       ],
@@ -288,23 +242,23 @@ function buildGBrainOverview(live = {}, extra = {}) {
         ? `Embedding coverage reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}${missingJobReasonText} in the latest live audit.`
         : missingCatchingUpText
         ? `Embedding coverage is catching up: ${formatCount(missing)} new chunk${missing === 1 ? '' : 's'} awaiting the next embed tick${missingOldestText}.`
-        : 'Embedding coverage and minion queue are clean in the latest audit.',
+        : hasLiveQueueCounters ? 'Embedding and queue counters were read.' : 'Embedding and queue counters have not been read.',
       proof: {
-        label: liveHealth || healthUnavailable ? 'Live queue probe' : 'Queue audit',
-        source: liveHealth || healthUnavailable ? 'gbrain jobs stats --json' : AUDIT_REPORT_PATH,
-        verifiedAt: liveCheckedAt || AUDIT_VERIFIED_AT,
+        label: liveHealth || healthUnavailable ? 'Live queue probe' : 'Not read',
+        source: liveHealth || healthUnavailable ? 'gbrain jobs stats --json' : 'not-read',
+        verifiedAt: liveCheckedAt || null,
         detail: healthUnavailable
           ? `Read-only jobs probe is unavailable because health is unavailable: ${live.health.error}`
           : queueUnavailable
           ? 'Read-only health probe refreshed, but jobs stats counters were unavailable.'
           : liveHealth
           ? 'Read-only health and jobs probes refreshed embedding and queue counters.'
-          : 'Embed coverage 100%; missing embeddings 0; 0 waiting, 0 active, 0 stalled.',
+          : 'Embedding and queue statistics have not been read.',
       },
       metrics: [
-        { label: 'Coverage', value: coverage !== null ? formatPercent(coverage) : healthUnavailable ? 'Unavailable' : '100%' },
-        { label: 'Missing', value: missingValue !== null ? missingValue : healthUnavailable || liveHealth ? 'Unavailable' : '0' },
-        { label: 'Stalled', value: Number.isFinite(queue.stalled) ? formatCount(queue.stalled) : liveHealth || healthUnavailable ? 'Unavailable' : '0' },
+        { label: 'Coverage', value: coverage !== null ? formatPercent(coverage) : 'Unavailable' },
+        { label: 'Missing', value: missingValue !== null ? missingValue : 'Unavailable' },
+        { label: 'Stalled', value: Number.isFinite(queue.stalled) ? formatCount(queue.stalled) : 'Unavailable' },
       ],
       risks: [
         ...(healthUnavailable ? ['Live health and jobs probes were unavailable; queue counters are not current.'] : []),
@@ -321,43 +275,31 @@ function buildGBrainOverview(live = {}, extra = {}) {
         ? 'Refresh the live health probe; do not treat embeddings as clean until it reports a valid missing-embedding count.'
         : 'Refresh at a conservative interval to avoid false negatives or extra load.',
     },
-    {
-      id: 'google-bridge',
-      label: 'Google Bridge',
-      kind: 'bridge',
-      status: 'healthy',
-      summary: 'Custom local Google bridge is operational and tracked with bridge-specific proof.',
-      proof: {
-        label: 'Custom bridge proof captured',
-        source: AUDIT_REPORT_PATH,
-        verifiedAt: AUDIT_VERIFIED_AT,
-        detail: 'Custom local Google bridge is verified separately from the official integrations doctor.',
-      },
-      metrics: [{ label: 'Bridge signal', value: 'custom verified' }],
-      risks: [],
-      nextSafeAction: 'Keep the bridge-specific proof fresh alongside Gmail and Calendar ingest checks.',
-    },
+    { id: 'google-bridge', label: 'Google Bridge', kind: 'bridge', status: 'inactive',
+      summary: 'Google bridge has not been probed.',
+      proof: { label: 'Not read', source: 'not-read', verifiedAt: null, detail: 'No bridge-specific observation is available.' },
+      metrics: [], risks: [], nextSafeAction: 'Read bridge-specific evidence before claiming readiness.' },
   ];
 
   const edges = [
-    { id: 'edge-hermes-gbrain', from: 'hermes', to: 'gbrain-core', label: 'read', status: 'healthy', proofNodeId: 'hermes' },
-    { id: 'edge-openclaw-gbrain', from: 'openclaw', to: 'gbrain-core', label: 'tool read', status: 'healthy', proofNodeId: 'openclaw' },
-    { id: 'edge-codex-gbrain', from: 'codex', to: 'gbrain-core', label: 'source sync', status: 'healthy', proofNodeId: 'codex' },
+    { id: 'edge-hermes-gbrain', from: 'hermes', to: 'gbrain-core', label: 'read', status: 'inactive', proofNodeId: 'hermes' },
+    { id: 'edge-openclaw-gbrain', from: 'openclaw', to: 'gbrain-core', label: 'tool read', status: 'inactive', proofNodeId: 'openclaw' },
+    { id: 'edge-codex-gbrain', from: 'codex', to: 'gbrain-core', label: 'source sync', status: 'inactive', proofNodeId: 'codex' },
     { id: 'edge-sources-gbrain', from: 'sources', to: 'gbrain-core', label: 'sync', status: sourceStatus, proofNodeId: 'sources' },
     { id: 'edge-queues-gbrain', from: 'queues', to: 'gbrain-core', label: 'embed', status: queueStatus, proofNodeId: 'queues' },
-    { id: 'edge-google-gbrain', from: 'google-bridge', to: 'gbrain-core', label: 'bridge', status: 'healthy', proofNodeId: 'google-bridge' },
+    { id: 'edge-google-gbrain', from: 'google-bridge', to: 'gbrain-core', label: 'bridge', status: 'inactive', proofNodeId: 'google-bridge' },
   ];
 
   const overview = {
     ok: true,
-    mode: liveAttemptedAt ? 'live-read-only' : 'read-only-fixture',
-    refreshedAt: liveCheckedAt || AUDIT_VERIFIED_AT,
-    evidenceFreshness: liveAttemptedAt ? 'live-read-only' : 'saved-audit',
+    mode: 'live-read-only',
+    refreshedAt: liveCheckedAt || null,
+    evidenceFreshness: liveAttemptedAt ? 'live-read-only' : 'unavailable',
     title: 'GBrain',
     subtitle: 'Shared memory for Hermes, OpenClaw, and Codex',
     trust: {
-      label: healthUnavailable
-        ? 'Health probe unavailable'
+      label: !liveHealth
+        ? healthUnavailable ? 'Health probe unavailable' : 'Health not read'
         : stalePages > 0 || staleSourceCount > 0
         ? 'Live data stale'
         : hasActiveCaveats
@@ -366,24 +308,24 @@ function buildGBrainOverview(live = {}, extra = {}) {
           : 'Trusted with caveats'
         : liveHealth
         ? 'Live trusted'
-        : 'Trusted',
+        : 'Health not read',
       status: healthUnavailable ? 'warning' : hasActiveCaveats && healthStatus === 'healthy' ? 'warning' : healthStatus,
-      score: healthScore ?? 90,
-      lastVerifiedAt: liveCheckedAt || AUDIT_VERIFIED_AT,
-      source: liveAttemptedAt ? 'gbrain call get_health' : AUDIT_REPORT_PATH,
+      score: healthScore,
+      lastVerifiedAt: liveCheckedAt || null,
+      source: liveAttemptedAt ? 'gbrain call get_health' : 'not-read',
     },
     cockpit: {
       health: { label: 'Health', value: healthValue, status: healthStatus, proofNodeId: 'gbrain-core' },
       version: {
         label: 'Active version',
-        value: versionUnavailable ? 'Unavailable' : versionValue,
-        detail: liveVersion ? 'gbrain --version' : versionUnavailable ? 'version probe unavailable' : 'saved audit baseline',
-        status: versionUnavailable ? 'warning' : healthStatus,
+        value: versionValue || 'Unavailable',
+        detail: liveVersion ? 'gbrain --version' : 'version not read',
+        status: versionUnavailable || live.version?.meta?.stale ? 'warning' : healthStatus,
         proofNodeId: 'gbrain-core',
       },
       embeddings: {
         label: 'Embeddings',
-        value: healthUnavailable ? 'Unavailable' : coverage !== null ? formatPercent(coverage) : '100%',
+        value: healthUnavailable ? 'Unavailable' : coverage !== null ? formatPercent(coverage) : 'Unavailable',
         detail: healthUnavailable
           ? 'health probe unavailable'
           : stalePages > 0
@@ -392,13 +334,13 @@ function buildGBrainOverview(live = {}, extra = {}) {
           ? 'missing-embedding count unavailable'
           : missingCatchingUpText
           ? `${formatCount(missing)} missing, catching up${missingOldestText}`
-          : `${missing !== null ? formatCount(missing) : '0'} missing${hasMissingEmbeddings ? missingOldestText : ''}`,
+          : `${missing !== null ? formatCount(missing) : 'Unknown'} missing${hasMissingEmbeddings ? missingOldestText : ''}`,
         status: healthStatus,
         proofNodeId: 'queues',
       },
       freshness: {
         label: 'Freshness',
-        value: sourcesUnavailable ? 'Unavailable' : staleSourceCount > 0 ? `${staleSourceCount} stale` : liveSources ? 'Fresh' : 'Audit',
+        value: sourcesUnavailable ? 'Unavailable' : staleSourceCount > 0 ? `${staleSourceCount} stale` : liveSources ? 'Fresh' : 'Unavailable',
         detail: sourceFreshnessDetail,
         status: sourcesUnavailable ? 'warning' : sourceFreshnessStatus,
         proofNodeId: 'sources',
@@ -414,7 +356,7 @@ function buildGBrainOverview(live = {}, extra = {}) {
         label: 'Memory role',
         value: 'Shared brain',
         detail: 'Hermes/OpenClaw keep local memory; GBrain stores curated cross-system knowledge',
-        status: 'healthy',
+        status: 'inactive',
         proofNodeId: 'gbrain-core',
       },
       integration: {
@@ -431,8 +373,8 @@ function buildGBrainOverview(live = {}, extra = {}) {
         status: integrationHealth.thinkRuntime.status === 'inactive' ? 'warning' : integrationHealth.thinkRuntime.status,
         proofNodeId: 'gbrain-core',
       },
-      autopilot: { label: 'Operator actions', value: 'Allowlisted', detail: `${listGBrainActions().length} local actions; probes remain read-only`, status: 'healthy', proofNodeId: 'gbrain-core' },
-      bridge: { label: 'Bridge proof', value: '2 passed', detail: 'Hermes + OpenClaw read smokes', status: 'healthy', proofNodeId: 'hermes' },
+      autopilot: { label: 'Operator actions', value: 'Allowlisted', detail: `${listGBrainActions().length} local actions; probes remain read-only`, status: 'inactive', proofNodeId: 'gbrain-core' },
+      bridge: { label: 'Bridge proof', value: 'Not read', detail: 'Reader calls have not been observed', status: 'inactive', proofNodeId: 'hermes' },
       caveats: {
         label: 'Caveats',
         value: String(activeCaveats.length),
@@ -464,6 +406,30 @@ function buildGBrainOverview(live = {}, extra = {}) {
     },
   };
 
+  if (extra.verdict) {
+    overview.verdict = extra.verdict;
+    overview.state = extra.verdict.state;
+    overview.trust.status = extra.verdict.state;
+    overview.cockpit.health.status = extra.verdict.state;
+    overview.cockpit.version.status = extra.verdict.state;
+    overview.trust.label = extra.verdict.state === 'healthy' ? 'Operational' : `GBrain ${extra.verdict.state}`;
+    overview.caveats = verdictCaveats(extra.verdict);
+    if (extra.sourcesState) {
+      const sourceNode = overview.nodes.find((node) => node.id === 'sources');
+      const sourceIds = new Set((liveSources?.sources || []).map((s) => s.id));
+      if (sourceNode) {
+        sourceNode.status = extra.sourcesState;
+        sourceNode.risks = extra.verdict.reasons.filter((r) => r.state !== 'inactive'
+          && (sourceIds.has(r.elementId) || r.elementId === 'gbrain.sources')).map((r) => r.text);
+      }
+      overview.edges.find((edge) => edge.id === 'edge-sources-gbrain').status = extra.sourcesState;
+      overview.cockpit.freshness.status = extra.sourcesState;
+      if (extra.sourcesState === 'inactive') overview.cockpit.freshness.value = 'Not applicable';
+      if (Number.isFinite(liveSources?.freshness?.freshCount) && Number.isFinite(liveSources?.freshness?.untrackedCount)) overview.cockpit.freshness.detail = `${liveSources.freshness.freshCount} sync-tracked fresh, ${liveSources.freshness.untrackedCount} not applicable`;
+    }
+    overview.cockpit.caveats = { ...overview.cockpit.caveats, value: String(overview.caveats.length),
+      detail: overview.caveats.join(' ') || 'No active caveats', status: extra.verdict.state };
+  }
   if (extra.timelineSummary) overview.timelineSummary = extra.timelineSummary;
   if (extra.incidentBanner !== undefined) overview.incidentBanner = extra.incidentBanner;
   if (extra.incidentBanners !== undefined) overview.incidentBanners = extra.incidentBanners;

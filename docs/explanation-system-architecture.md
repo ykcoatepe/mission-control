@@ -10,9 +10,9 @@ and confirmation policy are understood.
 ```text
 React/Vite browser application
           |
-          | same-origin JSON, SSE, and file responses
+          | same-origin JSON and file responses
           v
-Express composition root (`server.js`)
+Express app factory (`server/app.js`)
   |       |          |          |           |
   v       v          v          v           v
 GBrain  Hermes   OpenClaw    Ollama     local files/SQLite
@@ -25,9 +25,13 @@ GBrain  Hermes   OpenClaw    Ollama     local files/SQLite
               Brain / source-specific pages
 ```
 
-Express serves the built SPA and mounts route modules from `server/routes/`.
+`server.js` is the thin entry point; `server/index.js` listens and shuts down
+cleanly, and `server/app.js` (`createApp(deps)`) serves the built SPA and mounts
+route modules from `server/routes/`. Shared plumbing (config, the one process
+runner with per-tool lanes, last-good sources, the scheduler, HTTP error
+contract, request guards) lives in `server/core/`; see `server/core/README.md`.
 Reusable source readers, normalization, caching, and persistence live in
-`server/services/`. The frontend route registry is centralized in
+`server/services/` and, as areas migrate, `server/sources/`. The frontend route registry is centralized in
 `frontend/src/appRoutes.tsx`.
 
 ## Two levels of operator view
@@ -38,10 +42,12 @@ freshness, provenance, caveats, attention items, and evidence separate. It
 derives the worst relevant condition instead of averaging three systems into a
 false global green.
 
-Explore (`/gbrain`) and the other source pages are detailed workbenches. They
-retain source-specific data and controls that would overload Brain. This is why
-hidden pages can remain directly reachable even when they are not primary
-navigation destinations.
+Knowledge (`/gbrain`) and the other source pages (Attention, Automations,
+Usage, Services, Local models) are detailed views. They retain source-specific
+data and controls that would overload Brain. This is why hidden pages can
+remain directly reachable even when they are not primary navigation
+destinations. Screens that were removed (Work, Sessions, Systems, Workshop,
+Office, Team, Diagnostics and their sub-tabs) redirect to Brain.
 
 ## Data acquisition and failure behavior
 
@@ -68,27 +74,28 @@ Not every visible action has the same risk model:
 
 - GBrain exposes exactly eight allowlisted actions. R0 diagnostics/previews run
   directly; W1 maintenance requires scoped confirmation; W2 is not rendered.
-- Hermes Kanban accepts named actions and validates values before passing
-  argument arrays to the CLI.
+- Hermes Kanban is read-only: only `GET /api/hermes-kanban` remains.
 - Hermes cron jobs can be toggled and have their model changed, but cannot be
   run or deleted from Mission Control.
 - Governance is archive-only by default; mutations require an explicit
   environment opt-in.
-- Task execution is broader: it launches OpenClaw work in the configured
-  workspace. Treat execute controls as real agent dispatch, not as a read-only
-  preview.
-- Hiding a session removes it from Mission Control's list; it does not close the
-  underlying OpenClaw session.
+- Cron create, run, and delete, calendar writes, and settings import are real
+  mutations of OpenClaw or local state. Treat them as such, not as previews.
 
 Navigation and module flags are presentation controls. They are never part of
 the authorization model.
 
 ## Local trust model
 
-The server binds to `127.0.0.1` by default and accepts only localhost Host
-values. Its mutation Origin filter uses a local-origin prefix check, so it is
-defense in depth rather than exact origin validation. There is no user login or
-network-grade authentication. That is appropriate for a private loopback
+The server binds to `127.0.0.1` by default and accepts only Host values for
+its own loopback names and bind host. A mutating request that carries an Origin
+must match one of the server's own origins exactly (parsed, not by prefix), and
+the guard fails closed on any internal error. Mutating `/api` requests are
+expected to carry `X-MC-Request: 1`; that write guard ships in report-only mode
+(`security.writeGuard` / `MC_WRITE_GUARD`) until the frontend sends the header,
+and every mutating request is recorded in a bounded audit file
+(`data/audit/write-events.json`). There is no user login or network-grade
+authentication. That is appropriate for a private loopback
 console, but it makes changing the bind host a security decision rather than a
 cosmetic configuration change.
 
