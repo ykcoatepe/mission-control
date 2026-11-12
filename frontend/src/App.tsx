@@ -1,7 +1,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
-import { Route, Routes, useLocation, useNavigate } from 'react-router-dom'
-import { appRoutes } from './appRoutes'
+import { useLocation, useNavigate } from 'react-router-dom'
 import styles from './App.module.css'
+import AppRouteTable from './components/AppRouteTable'
 import CommandPalette from './components/CommandPalette'
 import RouteErrorBoundary from './components/RouteErrorBoundary'
 import Sidebar from './components/Sidebar'
@@ -74,12 +74,7 @@ export default function App() {
   const routed = (
     <RouteErrorBoundary resetKey={location.pathname}>
       <Suspense fallback={<RouteFallback />}>
-        <Routes location={location}>
-          {appRoutes.map((route) => {
-            const Component = route.component
-            return <Route key={route.path} path={route.path} element={<Component />} />
-          })}
-        </Routes>
+        <AppRouteTable location={location} />
       </Suspense>
     </RouteErrorBoundary>
   )

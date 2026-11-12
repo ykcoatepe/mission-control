@@ -163,4 +163,55 @@ describe.each(THEMES)('%s theme contrast', (_name, tokens) => {
       }
     }
   })
+
+  it.each(['reference', 'projects', 'agent', 'curated'])('line colour %s is legible as 12px label text on surface-1 (4.5:1)', (name) => {
+    expect(contrast(rgb(tokens, `line-${name}`), rgb(tokens, 'surface-1')), name).toBeGreaterThanOrEqual(MIN)
+  })
+
+  it('analog bars: the fill reaches 3:1 on the track, and the normal band is a visibly different strip', () => {
+    const track = rgb(tokens, 'surface-3')
+    expect(contrast(rgb(tokens, 'bar-fill'), track), 'fill on track').toBeGreaterThanOrEqual(3)
+    const band = over(tokens, 'band', track)
+    expect(contrast(band, track), 'band on track').toBeGreaterThanOrEqual(1.3)
+    // The fill is teal-toned (blue channel and green channel above red), not a state colour.
+    const [r, g, b] = rgb(tokens, 'bar-fill')
+    expect(g).toBeGreaterThan(r)
+    expect(b).toBeGreaterThan(r)
+  })
+
+  it('chart colours: six muted categories, each visible on surface-1 (3:1) and away from the line colours, accent and state colours', () => {
+    const chart = [1, 2, 3, 4, 5, 6].map((n) => rgb(tokens, `chart-${n}`))
+    for (const [i, colour] of chart.entries()) {
+      expect(contrast(colour, rgb(tokens, 'surface-1')), `chart-${i + 1} on surface-1`).toBeGreaterThanOrEqual(3)
+    }
+    const protectedTokens = ['line-reference', 'line-projects', 'line-agent', 'line-curated', 'accent', 'state-warning', 'state-critical']
+    for (const [i, colour] of chart.entries()) {
+      for (const name of protectedTokens) {
+        expect(oklabDistance(colour, rgb(tokens, name)), `chart-${i + 1} vs ${name}`).toBeGreaterThanOrEqual(0.07)
+      }
+      for (const [j, other] of chart.entries()) {
+        if (j > i) expect(oklabDistance(colour, other), `chart-${i + 1} vs chart-${j + 1}`).toBeGreaterThanOrEqual(0.05)
+      }
+    }
+  })
 })
+
+/** Distance between two colours in OKLab: how different they look, independent of the contrast ratio. */
+function oklabDistance(a: Rgb, b: Rgb): number {
+  const ok = ([r, g, bl]: Rgb): [number, number, number] => {
+    const [R, G, B] = [r, g, bl].map((c) => {
+      const x = c / 255
+      return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4
+    })
+    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B)
+    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B)
+    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B)
+    return [
+      0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+    ]
+  }
+  const [p, q] = [ok(a), ok(b)]
+  return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
+}

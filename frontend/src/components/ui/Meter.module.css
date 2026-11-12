@@ -11,7 +11,6 @@
   width: var(--meter-pct);
   height: 100%;
   background: var(--bar-fill);
-  opacity: 0.7;
 }
 
 .bar[data-state='warning'] { background: var(--state-warning); opacity: 1; }

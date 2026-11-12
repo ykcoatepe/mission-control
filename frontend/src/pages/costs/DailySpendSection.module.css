@@ -181,7 +181,7 @@ button.stripBar[aria-pressed='true'] {
 .stripFill {
   display: block;
   width: 100%;
-  background: var(--series-1);
+  background: var(--chart-1);
   border-radius: 0;
 }
 

@@ -181,6 +181,10 @@
     overflow-wrap: anywhere;
   }
 
+  .table td > * {
+    min-width: 0;
+  }
+
   .table td::before {
     content: attr(data-label);
     flex: 0 0 auto;

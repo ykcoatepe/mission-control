@@ -78,22 +78,12 @@
   outline-offset: -2px;
 }
 
-/* Selected: teal tint ground, teal text and icon, a 2px teal bar at the left edge. */
+/* Selected: teal tint ground and teal text and icon. No side stripe. */
 .itemActive,
 .itemActive:hover {
   background: var(--accent-bg);
   color: var(--accent);
   font-weight: var(--fw-medium);
-}
-
-.itemActive::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: var(--accent);
 }
 
 .icon {

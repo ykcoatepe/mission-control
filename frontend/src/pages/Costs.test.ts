@@ -381,7 +381,7 @@ describe('Usage page: model colours', () => {
     await mount()
     const before = { beta: colourOf('beta-model'), gamma: colourOf('gamma-model'), alpha: colourOf('alpha-model') }
     expect(new Set(Object.values(before)).size).toBe(3)
-    for (const colour of Object.values(before)) expect(colour).toMatch(/var\(--series-[1-6]\)/)
+    for (const colour of Object.values(before)) expect(colour).toMatch(/var\(--chart-[1-6]\)/)
 
     await click('7 days')
     expect(colourOf('beta-model')).toBe(before.beta)
@@ -777,10 +777,10 @@ describe('Usage page: one name and one colour per model', () => {
     // A reload: the model that arrives first now would otherwise take the first free colour.
     await act(async () => root!.unmount())
     host!.remove()
-    window.localStorage.setItem('mc.usage.seriesColors.v1', JSON.stringify({ 'beta-model': 'var(--series-1)', 'alpha-model': 'var(--series-3)' }))
+    window.localStorage.setItem('mc.usage.seriesColors.v1', JSON.stringify({ 'beta-model': 'var(--chart-1)', 'alpha-model': 'var(--chart-3)' }))
     await mount()
-    expect(legend().find(item => item.name === 'beta-model')?.color).toContain('var(--series-1)')
-    expect(legend().find(item => item.name === 'alpha-model')?.color).toContain('var(--series-3)')
+    expect(legend().find(item => item.name === 'beta-model')?.color).toContain('var(--chart-1)')
+    expect(legend().find(item => item.name === 'alpha-model')?.color).toContain('var(--chart-3)')
     expect(first['alpha-model']).toBeDefined()
   })
 

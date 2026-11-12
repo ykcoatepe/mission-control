@@ -3,7 +3,7 @@ import type { KeyboardEvent, ReactNode } from 'react'
 import { Block, Button, StateMark, cx } from '../../components/ui'
 import { stateLabel, type UiState } from '../../lib/state'
 import { useNow } from '../../lib/useNow'
-import { coreReadings, embeddedPercent, fmtPercent, type CoreReading, type Diagram, type DiagramGroup } from './diagram'
+import { coreReadings, embeddedPercent, fmtPercent, groupFreshness, railWeight, shareText, type CoreReading, type Diagram, type DiagramGroup, type GroupFreshness } from './diagram'
 import { CORE_ID, QUEUE_ID, fmtCount, type BlockModel, type BrainModel } from './lib'
 import {
   GROUP_HEADER_H,
@@ -54,10 +54,24 @@ const pagesTotal = (total: number | null) => (total === null ? 'not read' : `${f
 
 const pagesText = (pages: number | null) => (pages === null ? 'not read' : fmtCount(pages))
 
-function groupLabel(group: DiagramGroup) {
+/** What the rail says about its group, in words: the rail's weight, its oldest sync, its stale and sync-off sources. */
+function railWords(group: DiagramGroup, fresh: GroupFreshness, thresholdHours: number | null): string {
+  const parts = [shareText(group.share)]
+  if (fresh.label !== null) {
+    parts.push(
+      fresh.unread
+        ? 'sync times not read'
+        : `oldest sync ${fresh.label}${fresh.stale ? `, stale${thresholdHours === null ? '' : ` (limit ${thresholdHours} h)`}` : ''}`,
+    )
+  }
+  if (fresh.off > 0) parts.push(`${fresh.off} sync off`)
+  return parts.join(', ')
+}
+
+function groupLabel(group: DiagramGroup, fresh: GroupFreshness, thresholdHours: number | null) {
   const total = group.totalPages
   const pages = total === null ? 'pages not read' : `${fmtCount(total)} pages`
-  return `${group.label}, ${group.sources.length} ${group.sources.length === 1 ? 'source' : 'sources'}, ${pages}`
+  return `${group.label}, ${group.sources.length} ${group.sources.length === 1 ? 'source' : 'sources'}, ${pages}, ${railWords(group, fresh, thresholdHours)}`
 }
 
 function readerSub(reader: BlockModel): string {
@@ -78,6 +92,7 @@ export function TrackDiagram({ syn, model, diagram, health, selectedId, onSelect
     queueUnits: queueRead ? waiting + (active ?? 0) : 0,
   })
 
+  const fresh = diagram.groups.map((group) => groupFreshness(group, now))
   const svgRef = useRef<SVGSVGElement>(null)
   const focusables = [
     ...layout.groups.map((g) => ({ id: diagram.groups[g.index].blockId, x: g.box.x + g.box.w / 2, y: g.box.y + g.box.h / 2 })),
@@ -132,14 +147,24 @@ export function TrackDiagram({ syn, model, diagram, health, selectedId, onSelect
           onKeyDown={onKeyDown}
           aria-label="GBrain: source groups feed the core, the core feeds the readers"
         >
-          {/* tracks: drawn first, so blocks sit on top. They carry no information of their own. */}
+          {/* tracks: drawn first, so blocks sit on top. A group's rail is as heavy as its share of the pages. */}
           <g aria-hidden="true">
-            {layout.groupTracks.map(({ index, points }) => (
-              <g key={diagram.groups[index].id} className={styles.track} data-tone={diagram.groups[index].tone}>
-                <path className={styles.ties} d={trackPath(points)} />
-                <path className={styles.rail} d={trackPath(points)} />
-              </g>
-            ))}
+            {layout.groupTracks.map(({ index, points }) => {
+              const group = diagram.groups[index]
+              const weight = railWeight(group.share)
+              const d = trackPath(points)
+              return (
+                <g key={group.id} className={styles.track} data-tone={group.tone} data-rail-weight={weight} data-group-track={group.id}>
+                  <path className={styles.ties} d={d} style={{ strokeWidth: weight + 5 }} />
+                  <path className={styles.rail} d={d} style={{ strokeWidth: weight }} />
+                  <path className={styles.hit} d={d}>
+                    <title>
+                      {group.label}: {railWords(group, fresh[index], diagram.thresholdHours)}
+                    </title>
+                  </path>
+                </g>
+              )
+            })}
             {layout.readerTracks.map(({ index, points }) => (
               <g key={model.readers[index].id} className={styles.track}>
                 <path className={styles.ties} d={trackPath(points)} />
@@ -153,11 +178,41 @@ export function TrackDiagram({ syn, model, diagram, health, selectedId, onSelect
             </g>
           </g>
 
+          {/* what each rail reads: its oldest sync, and the sources with sync off */}
+          {layout.groupTracks.map(({ index, points }) => {
+            const group = diagram.groups[index]
+            const f = fresh[index]
+            const half = (railWeight(group.share) + 5) / 2
+            const x = points[0].x + 10
+            const cy = points[0].y
+            if (f.label === null && f.off === 0) return null
+            return (
+              <g key={group.id} className={styles.railLabels} data-rail-labels={group.id} aria-hidden="true">
+                {f.label !== null && (
+                  <g data-rail-freshness={f.stale ? 'stale' : f.unread ? 'unread' : 'fresh'}>
+                    {(f.stale || f.unread) && <Mark state={f.unread ? 'unavailable' : 'warning'} x={x} y={cy - half - 15} />}
+                    <text className={cx(styles.railText, f.stale && styles.railStale)} x={x + (f.stale || f.unread ? 16 : 0)} y={cy - half - 5}>
+                      {f.label}
+                    </text>
+                  </g>
+                )}
+                {f.off > 0 && (
+                  <g data-rail-off={f.off}>
+                    <Mark state="inactive" x={x} y={cy + half + 4} />
+                    <text className={styles.railText} x={x + 16} y={cy + half + 14}>
+                      {f.off} off
+                    </text>
+                  </g>
+                )}
+              </g>
+            )
+          })}
+
           {/* source groups */}
           {layout.groups.map(({ index, box, firstRowY }) => {
             const group = diagram.groups[index]
             return (
-              <g key={group.id} {...blockProps(group.blockId, groupLabel(group))} data-tone={group.tone}>
+              <g key={group.id} {...blockProps(group.blockId, groupLabel(group, fresh[index], diagram.thresholdHours))} data-tone={group.tone}>
                 {ring(box, 3)}
                 <rect className={styles.frame} x={box.x} y={box.y} width={box.w} height={box.h} rx={3} />
                 <rect className={styles.head} x={box.x} y={box.y} width={box.w} height={GROUP_HEADER_H} rx={3} />

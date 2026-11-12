@@ -315,9 +315,11 @@ export default function Councils() {
   const openApprovals = numberOrNull(metrics.activeDecisions)
   const hasOpenApprovals = openApprovals !== null && openApprovals > 0
   const governanceOnly = Boolean(review?.governanceOnlyLive24h || review?.governanceOnlyLive4d || review?.selfReferentialSurfaceWarn)
-  const workflowUi: UiState = toUiState(workflowState)
-  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable".
-  const overallValue = !review && scorecardOverall ? `Scorecard: ${scorecardOverall}` : stateLabel(workflowUi)
+  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable":
+  // that is a value that was read, so it carries its own state's mark and word ("normal"), never the not-read mark.
+  const scorecardOnly = !review && scorecardOverall !== null
+  const workflowUi: UiState = scorecardOnly ? toUiState(scorecardOverall) : toUiState(workflowState)
+  const overallValue = scorecardOnly ? `Scorecard: ${stateLabel(workflowUi).toLowerCase()}` : stateLabel(workflowUi)
   const overallHint = scorecardOverall ? 'no review recorded' : 'no review reported'
   const silenceHours = numberOrNull(review?.workflowSurfaceSilenceHours)
   const infraFailures = numberOrNull(scorecard.data?.metrics?.delegationAutorunInfraFailureAttempts)

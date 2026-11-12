@@ -66,7 +66,7 @@ Consequences that every screen must follow:
 
 Use only tokens from `styles/tokens.css`. No hex, `rgb()` or `rgba()` literals
 in component CSS or TSX. No inline `style` except for values computed from data
-(a bar position, a chart colour taken from a `--series-*` token).
+(a bar position, a chart colour taken from a `--chart-*` token).
 
 Two themes: **Slate dusk** (`:root`, dark, the default) and **Soft daylight**
 (`:root[data-theme='light']`).
@@ -78,8 +78,9 @@ Two themes: **Slate dusk** (`:root`, dark, the default) and **Soft daylight**
 | State | `--state-normal` (neutral), `--state-warning`, `--state-critical`, `--state-unavailable`, `--state-inactive`; tints `--state-warning-bg/-line`, `--state-critical-bg/-line` | `--state-healthy*` are aliases of the neutral normal values; healthy renders neutral. New code uses `--state-normal`. |
 | Action | `--accent`, `--accent-hover`, `--accent-bg`, `--accent-line` | Links, primary action, focus, selection. |
 | Line colours | `--line-reference`, `--line-projects`, `--line-agent`, `--line-curated` | The four GBrain source groups. Identity only. |
-| Series | `--series-1..6` | Chart categories only, never state. |
-| Bars | `--band` (the normal band), `--bar-fill` | Used by `AnalogBar`. |
+| Series | `--series-1..6` | The Brain page only, where a chart needs the four group colours. Never state. |
+| Chart | `--chart-1..6` | Every chart category outside the Brain page (models, platforms…). A muted ramp kept away from amber, red, the accent and the four line colours (checked by distance in `tokens.contrast.test.ts`). Never state. |
+| Bars | `--band` (the normal band), `--bar-fill` | Used by `AnalogBar`. `--bar-fill` is teal-toned (3:1 or more on `surface-3`, the track); `--band` is a lighter neutral strip. The band is the full height of the track and the fill a thinner bar inside it, so both read at a glance. |
 | Type | `--font-sans`, `--font-caps`, `--font-mono`, `--fs-*`, `--fw-*` | See below. |
 | Space | `--sp-1..12` | 4px grid. No 7/9/13px values. |
 | Shape | `--r-sm` 3px, `--r-md` 4px, `--r-lg` 6px, `--r-full` | Controls and blocks `md`. |
@@ -186,6 +187,8 @@ Content is a flex column with `--sp-4` gap, so siblings need no margins.
 | `NavBadge` | `count`, `state`, `word?`, `className?` | A rail badge: the count with the state's shape. Renders nothing at 0 or when the count is not a positive number. Caps the shown number at 999+. |
 | `Stat` | `label`, `value`, `unit?`, `hint?`, `state?`, `className?` | Label above a value. `value` of `null`/`undefined`/`''` renders "—" with "not read" for screen readers, never `0`. `state` adds a mark and colours the value for caution and critical. |
 | `StatRow` | `children`, `aria-label?`, `className?` | One outlined strip of `Stat`s separated by 1px dividers. |
+| `Reading` | `label`, `value`, `hint?`, `state?` | One reading in a compact row: label and number side by side at body size, no hero numeral. `null`/`undefined`/`''` renders "—" with "not read". |
+| `ReadingsRow` | `children`, `aria-label?`, `className?` | The readings of a page on one wrapping line (Automations → Jobs). |
 | `Notice` | `tone?: UiState \| 'info'` (`info`), `title?`, `action?`, `className?`, children | Inline message. Tinted, with its shape, only for caution and critical (`critical` is `role="alert"`); otherwise quiet and neutral. |
 | `Freshness` | `observedAt`, `state?`, `staleAfterMs?` (15 min), `className?` | Rule 8. Fresh renders nothing; stale = caution mark + "as of 12:41" (or "as of 11 Nov, 12:41"); unread = hollow circle + "not read". |
 | `Kbd` | `children`, `className?` | Keyboard hint. |
@@ -301,8 +304,7 @@ Both the rail and the top bar sit on `--rail`.
   `subtitle`, `modules` and `aws.enabled`; nothing else exists there.
 - **Side rail.** Brand (mark + name from `/api/config`), then one flat list: Brain,
   Attention, Automations, Usage, Services, Local models, then Settings and Audit
-  at the bottom. The selected item is a teal tint ground, teal text and icon and a
-  2px teal bar at the left edge. Icons are lucide at one stroke weight. Collapses
+  at the bottom. The selected item is a teal tint ground with teal text and icon (no side stripe). Icons are lucide at one stroke weight. Collapses
   to a 56px icon rail with tooltips (persisted in `localStorage`
   `mc-sidebar-collapsed`). Under 900px it is an off-canvas drawer opened from the
   top bar's menu button (scrim, Esc, closes on navigation).
@@ -396,11 +398,11 @@ restyling them.
 | Page | Question | First viewport |
 | --- | --- | --- |
 | Brain | Is the brain healthy and does anything need me? | The alarm line when something is abnormal (one action at its right end); views Health and Knowledge (`?view=`). Health: the system synoptic, maintenance actions (Check and Change groups, Change asks first) and readings. Knowledge: knowledge search and the page reader. |
-| Attention | What is waiting for you? | Summary strip (new items: the same number as the rail badge; standing and restricted counts are information, projects with open items, open findings, pending confirmations); tables show a finding's bounded `summary`, the drawer its full `detail`; filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
-| Automations | Did my jobs run, what runs next? | Summary strip (active, paused, failed, next run); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid; when the calendar read reports malformed or duplicate rows and `meta.repairAvailable`, its notice offers "Repair calendar" (a confirmation, then one guarded `POST /api/calendar/repair`). |
+| Attention | What is waiting for you? | Summary strip (new items: the same number as the rail badge; standing and restricted counts are information, projects with open items, open findings, pending confirmations); tables show a finding's bounded `summary`, the drawer its full `detail`; filter chips; "Needs you" table; "Projects" table; project detail in a drawer. New items: one shared action cell (`components/AckActions`: Acknowledge then Shelve…, two small buttons in an Actions column). From two new acknowledgeable items the alarm line's single action is "Acknowledge all (N)" (after one confirmation), and the New block header keeps the same button. |
+| Automations | Did my jobs run, what runs next? | One compact readings row (active, paused, failed, next run); the failed rows use the same shared Acknowledge / Shelve… cell in an Actions column, and from two new failures the Automations block header carries "Acknowledge all (N)" with the same confirmation (the alarm line keeps "Show failed"); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid; when the calendar read reports malformed or duplicate rows and `meta.repairAvailable`, its notice offers "Repair calendar" (a confirmation, then one guarded `POST /api/calendar/repair`). |
 | Usage | What did I spend, am I on track? | One figure for the period with budget meter and projection; daily chart; drivers table (model/agent/source tabs). Estimate vs billed is explained once, in a note. |
 | Services | Is everything that should be running, running? | Reachability strip (OpenClaw gateway, Hermes gateway, Ollama); the verdict and the All, Down and Unidentified chips read the server's `summary`; filter chips and search; launchd services table. |
-| Local models | Is Ollama OK? | Alarm line when abnormal; `StatRow` (health, memory, GPU, loaded); models table with expandable detail. |
+| Local models | Is Ollama OK? | Alarm line when abnormal; readings (health, memory, GPU, loaded); models table with expandable detail. |
 | Audit | What was decided? | Archive notice (one line); decisions table with search and filters; decision drawer. |
 | Settings | — | Sections as panels: Models, Heartbeat, Budget, Appearance (theme), Connection, Backup. Real values only; a failed read shows `ErrorState`. |
 

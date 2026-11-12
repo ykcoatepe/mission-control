@@ -19,7 +19,7 @@ export interface TrendDomain {
   max: number
   /** The part of the normal band that lies inside the domain, or null when it does not or covers everything. */
   band: readonly [number, number] | null
-  /** The band covers the whole domain: it says nothing a series can be read against, so it is not drawn. */
+  /** The band covers the whole domain, or the series lies wholly inside it: it says nothing a series can be read against, so it is not drawn. */
   bandCoversAll: boolean
 }
 
@@ -49,6 +49,13 @@ export function trendDomain(values: ReadonlyArray<number>, band: readonly [numbe
   let inside: readonly [number, number] | null = null
   let covers = false
   if (band) {
+    const bandLo = Math.min(band[0], band[1])
+    const bandHi = Math.max(band[0], band[1])
+    // A series that never leaves the band is simply normal throughout: the band says nothing it can be read
+    // against, and a tint under a flat line would only be a block. It is left out.
+    if (min >= bandLo && max <= bandHi) {
+      return { lo, hi, min, max, band: null, bandCoversAll: true }
+    }
     const from = Math.max(Math.min(band[0], band[1]), lo)
     const to = Math.min(Math.max(band[0], band[1]), hi)
     if (to > from) {

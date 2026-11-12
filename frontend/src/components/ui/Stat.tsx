@@ -56,3 +56,43 @@ export function StatRow({ children, 'aria-label': ariaLabel, className }: StatRo
     </div>
   )
 }
+
+export interface ReadingProps {
+  label: string
+  /** The reading. `null`/`undefined` renders "—" (not read), never 0. */
+  value: ReactNode
+  /** A short note after the value. */
+  hint?: ReactNode
+  /** A mark before the label; the value takes the colour for warning and critical. */
+  state?: UiState
+}
+
+/** One reading in a compact row: the label and its number side by side, at the size of the text around it. */
+export function Reading({ label, value, hint, state }: ReadingProps) {
+  const missing = value === null || value === undefined || value === ''
+  return (
+    <div className={styles.reading} data-state={state}>
+      {state && <StateMark state={state} />}
+      <span className={styles.readingLabel}>{label}</span>
+      <span className={styles.readingValue}>
+        {missing ? (
+          <span className={styles.missing} title="Not read">
+            —<span className="visually-hidden"> not read</span>
+          </span>
+        ) : (
+          value
+        )}
+      </span>
+      {hint && <span className={styles.readingHint}>{hint}</span>}
+    </div>
+  )
+}
+
+/** The readings of a page on one line (wrapping when narrow): a quiet strip, not a band of big numbers. */
+export function ReadingsRow({ children, 'aria-label': ariaLabel, className }: StatRowProps) {
+  return (
+    <div className={cx(styles.readings, className)} role="group" aria-label={ariaLabel}>
+      {children}
+    </div>
+  )
+}

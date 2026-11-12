@@ -8,7 +8,7 @@ import { ReadingsBars } from './ReadingsBars'
 import { StatusLine } from './StatusLine'
 import { TrackDiagram } from './TrackDiagram'
 import { alarmFrom } from './alarm'
-import { buildDiagram } from './diagram'
+import { RAIL_MAX, RAIL_MIN, ageShort, buildDiagram, groupFreshness, railWeight } from './diagram'
 import { META, health, sources, synoptic, withVerdict } from './fixtures'
 import { buildBrainModel, deriveReadings, deriveVerdict } from './lib'
 import { PROFILE_SCALE_PX } from './profile'
@@ -209,7 +209,7 @@ describe('line profile', () => {
     expect(lines(host).every((li) => li.querySelector('span[class*="line"]') !== null)).toBe(true)
   })
 
-  it('has a plot at least 140px tall, and every source label is its full id or a middle cut that keeps the id in the title', async () => {
+  it('has a plot at least 140px tall, and every source label is a short name that is unique, with the full id in the title', async () => {
     const host = await mount(createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) }))
     const list = host.querySelector('ul[aria-label="Pages per source"]') as HTMLElement
     expect(Number.parseFloat(list.style.getPropertyValue('--scale'))).toBeGreaterThanOrEqual(140)
@@ -217,12 +217,13 @@ describe('line profile', () => {
     expect(names.every((n) => n !== null)).toBe(true)
     const texts = names.map((n) => n.textContent)
     expect(new Set(texts).size).toBe(texts.length)
-    // The label is the id itself (none of the fixture's ids is long enough to be cut), not its first word.
     for (const li of lines(host)) {
       const name = li.querySelector('span[title]') as HTMLElement
       expect(name.getAttribute('title')).toBe(li.getAttribute('data-source-id'))
-      expect(name.textContent).toBe(li.getAttribute('data-source-id'))
     }
+    const label = (id: string) => lines(host).find((li) => li.getAttribute('data-source-id') === id)?.querySelector('span[title]')?.textContent
+    expect(label('gstack-code')).toBe('gstack')
+    expect(label('aviation-standards')).toBe('aviation')
   })
 
   it('writes the count above each line, and says on hover which counts it left out', async () => {
@@ -274,6 +275,154 @@ describe('line profile', () => {
     const first = lines(host)[0]
     expect(first.textContent).toContain('not read')
     expect(first.querySelector('span[class*="line"]')).toBeNull()
+  })
+})
+
+describe('line profile: looking at one source', () => {
+  const lines = (host: HTMLElement) => [...host.querySelectorAll('ul[aria-label="Pages per source"] li')] as HTMLElement[]
+  const byId = (host: HTMLElement, id: string) => lines(host).find((li) => li.getAttribute('data-source-id') === id) as HTMLElement
+  const profileNode = () => createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) })
+
+  it('has a labelled scale with round values up to the tallest line', async () => {
+    const host = await mount(profileNode())
+    const ticks = [...host.querySelectorAll('[data-axis] [data-tick]')].map((tick) => tick.textContent)
+    expect(ticks[0]).toBe('0')
+    expect(ticks.length).toBeGreaterThanOrEqual(3)
+    expect(ticks).toContain('10,000')
+  })
+
+  it('focusing a column shows its readout with the exact values, a hairline to the scale, a full label, and dims the others', async () => {
+    const host = await mount(profileNode())
+    expect(host.querySelector('[data-readout]')).toBeNull()
+    const target = byId(host, 'gstack-code')
+    await act(async () => target.focus())
+    const card = host.querySelector('[data-readout]') as HTMLElement
+    expect(card.textContent).toContain('gstack-code')
+    expect(card.textContent).toContain('3,237')
+    expect(card.textContent).toContain('6,474')
+    // 3,237 of 41,953 pages (the fixture's total): one decimal place below 10%.
+    expect(card.textContent).toContain('7.7%')
+    expect(card.textContent).toContain('fresh')
+    expect(card.textContent).toMatch(/Last sync/)
+    expect(host.querySelector('[data-rule]')).not.toBeNull()
+    expect(host.querySelector('[data-full-label]')?.textContent).toBe('gstack-code')
+    expect(target.getAttribute('data-shown')).toBe('true')
+    expect(host.querySelector('ul[aria-label="Pages per source"]')?.getAttribute('data-focus')).toBe('true')
+    expect(lines(host).filter((li) => li.hasAttribute('data-shown'))).toHaveLength(1)
+  })
+
+  it('hovering anywhere on the column shows the same readout; leaving clears it', async () => {
+    const host = await mount(profileNode())
+    await act(async () => {
+      byId(host, 'hermes-agent').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
+    })
+    expect(host.querySelector('[data-readout]')?.textContent).toContain('16,190')
+    await act(async () => {
+      host.querySelector('ul[aria-label="Pages per source"]')?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
+    })
+    expect(host.querySelector('[data-readout]')).toBeNull()
+  })
+
+  it('gives a one-pixel source the same readout, and says sync off for a source with sync off', async () => {
+    const host = await mount(profileNode())
+    await act(async () => byId(host, 'curated').focus())
+    expect(host.querySelector('[data-readout]')?.textContent).toContain('curated')
+    expect(byId(host, 'curated').style.getPropertyValue('--h')).toBe('1px')
+    await act(async () => byId(host, 'tk-omc-ain').focus())
+    expect(host.querySelector('[data-readout]')?.textContent).toContain('sync off')
+  })
+
+  it('Escape and blur clear it', async () => {
+    const host = await mount(profileNode())
+    const target = byId(host, 'gbrain')
+    await act(async () => target.focus())
+    expect(host.querySelector('[data-readout]')).not.toBeNull()
+    await act(async () => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    })
+    expect(host.querySelector('[data-readout]')).toBeNull()
+    expect(document.activeElement).toBe(target)
+    await act(async () => {
+      target.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
+    })
+    expect(host.querySelector('[data-readout]')).not.toBeNull()
+    await act(async () => (document.activeElement as HTMLElement).blur())
+    expect(host.querySelector('[data-readout]')).toBeNull()
+  })
+
+  it('a tap toggles the same state', async () => {
+    const host = await mount(profileNode())
+    const target = byId(host, 'finance-analyzer')
+    class FakePointer extends Event {
+      pointerType = 'touch'
+    }
+    await act(async () => {
+      target.dispatchEvent(new FakePointer('pointerdown', { bubbles: true }))
+      target.click()
+    })
+    expect(host.querySelector('[data-readout]')?.textContent).toContain('1,234')
+    await act(async () => {
+      target.dispatchEvent(new FakePointer('pointerdown', { bubbles: true }))
+      target.click()
+    })
+    expect(host.querySelector('[data-readout]')).toBeNull()
+  })
+})
+
+describe('track rails read their group', () => {
+  const NOW = Date.parse(AT) + 8 * 60_000
+
+  it('weights each rail by the group share of pages, and says the share on hover and in the accessible name', async () => {
+    const host = await mount(diagramNode())
+    const diagram = buildDiagram(fixture(), readingOf())
+    const weight = (id: string) => Number(host.querySelector(`[data-group-track="${id}"]`)?.getAttribute('data-rail-weight'))
+    const total = diagram.groups.reduce((sum, group) => sum + (group.totalPages ?? 0), 0)
+    for (const group of diagram.groups) {
+      expect(weight(group.id)).toBeCloseTo(railWeight((group.totalPages as number) / total), 5)
+    }
+    expect(weight('reference')).toBeGreaterThan(weight('projects'))
+    expect(weight('curated')).toBe(2)
+    const title = host.querySelector('[data-group-track="reference"] title')?.textContent ?? ''
+    expect(title).toMatch(/\d+% of all pages/)
+    expect(host.querySelector('[data-syn-id="group:reference"]')?.getAttribute('aria-label')).toMatch(/\d+% of all pages/)
+    // Reader rails stay thin and neutral: not group tracks at all.
+    expect(host.querySelectorAll('[data-group-track]')).toHaveLength(4)
+  })
+
+  it('draws the oldest sync age on the rail, neutral when nothing is stale, with a count of sources that have sync off', async () => {
+    const host = await mount(diagramNode())
+    const fresh = host.querySelector('[data-rail-labels="reference"] [data-rail-freshness]') as HTMLElement
+    expect(fresh.getAttribute('data-rail-freshness')).toBe('fresh')
+    expect(fresh.textContent).toMatch(/^(<1 min|\d+ (min|h|d))$/)
+    expect(fresh.querySelector('[data-shape="triangle"]')).toBeNull()
+    expect(host.querySelector('[data-rail-labels="projects"] [data-rail-off="1"]')?.textContent).toBe('1 off')
+    expect(host.querySelector('[data-rail-labels="reference"] [data-rail-off]')).toBeNull()
+  })
+
+  it('marks a group with a stale source with a caution mark and amber text', async () => {
+    const syn = fixture()
+    const projects = syn.sources.find((group) => group.id === 'projects')!
+    projects.items = projects.items.map((it) => (it.id === 'gbrain' ? { ...it, state: 'warning' as const, lastSyncAt: '2026-11-08T08:19:30.000Z' } : it))
+    const host = await mount(diagramNode(syn))
+    const stale = host.querySelector('[data-rail-labels="projects"] [data-rail-freshness]') as HTMLElement
+    expect(stale.getAttribute('data-rail-freshness')).toBe('stale')
+    expect(stale.querySelector('[data-shape="triangle"]')).not.toBeNull()
+    expect(host.querySelector('[data-syn-id="group:projects"]')?.getAttribute('aria-label')).toMatch(/stale/)
+  })
+
+  it('computes weight, clamp and freshness as pure values', () => {
+    expect(railWeight(0.25)).toBe(4)
+    expect(railWeight(0.5)).toBe(8)
+    expect(railWeight(0.01)).toBe(RAIL_MIN)
+    expect(railWeight(0.9)).toBe(RAIL_MAX)
+    expect(railWeight(null)).toBe(RAIL_MIN)
+    const diagram = buildDiagram(fixture(), readingOf())
+    const reference = diagram.groups.find((group) => group.id === 'reference')!
+    expect(groupFreshness(reference, NOW)).toEqual({ label: '8 min', stale: false, unread: false, off: 0 })
+    const projects = diagram.groups.find((group) => group.id === 'projects')!
+    expect(groupFreshness(projects, NOW).off).toBe(1)
+    expect(ageShort(3 * 3600_000)).toBe('3 h')
+    expect(ageShort(30_000)).toBe('<1 min')
   })
 })
 

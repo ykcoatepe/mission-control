@@ -133,10 +133,10 @@ describe('series colour memory', () => {
 
   it('round-trips and drops anything that is not a known series token', () => {
     const s = store()
-    saveSeriesColorMemory(new Map([['a', 'var(--series-2)']]), s)
-    expect(loadSeriesColorMemory(s).get('a')).toBe('var(--series-2)')
-    s.setItem(SERIES_COLOR_STORAGE_KEY, JSON.stringify({ a: 'var(--series-9)', b: '#ff0000', c: 'var(--series-4)' }))
-    expect([...loadSeriesColorMemory(s)]).toEqual([['c', 'var(--series-4)']])
+    saveSeriesColorMemory(new Map([['a', 'var(--chart-2)']]), s)
+    expect(loadSeriesColorMemory(s).get('a')).toBe('var(--chart-2)')
+    s.setItem(SERIES_COLOR_STORAGE_KEY, JSON.stringify({ a: 'var(--chart-9)', b: '#ff0000', c: 'var(--chart-4)' }))
+    expect([...loadSeriesColorMemory(s)]).toEqual([['c', 'var(--chart-4)']])
   })
 
   it('survives corrupt data, a missing store and a store that throws', () => {
@@ -146,6 +146,6 @@ describe('series colour memory', () => {
     expect(loadSeriesColorMemory(null).size).toBe(0)
     const broken = { getItem: () => { throw new Error('x') }, setItem: () => { throw new Error('x') } } as unknown as Storage
     expect(loadSeriesColorMemory(broken).size).toBe(0)
-    expect(() => saveSeriesColorMemory(new Map([['a', 'var(--series-1)']]), broken)).not.toThrow()
+    expect(() => saveSeriesColorMemory(new Map([['a', 'var(--chart-1)']]), broken)).not.toThrow()
   })
 })

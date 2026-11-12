@@ -4,12 +4,55 @@
   min-width: 0;
 }
 
+/* The scale on the left, the columns on the right. */
+.chart {
+  --labels: 48px;
+  --axis: 52px;
+  display: grid;
+  grid-template-columns: var(--axis) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.axis {
+  position: relative;
+  /* Same height as the body: the plot, then the label rows. */
+  height: calc(var(--scale) + 24px + var(--labels));
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.tick {
+  position: absolute;
+  right: 6px;
+  bottom: calc(var(--labels) + var(--v));
+  transform: translateY(50%);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* A short mark where the tick meets the axis line. */
+.tick::after {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 1px);
+  width: 5px;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+
+.body {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--line-strong);
+}
+
 .profile {
   --tone: var(--track);
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: minmax(0, 1fr);
-  /* Labels differ in length: every plot starts at the top, so every line stands on one baseline. */
   align-items: start;
   gap: 0;
   padding: 0;
@@ -22,7 +65,7 @@
   --tone: var(--track);
   position: relative;
   display: grid;
-  grid-template-rows: calc(var(--scale) + 24px) auto;
+  grid-template-rows: calc(var(--scale) + 24px) var(--labels);
   justify-items: center;
   min-width: 0;
   padding: 0 1px;
@@ -89,6 +132,10 @@
   width: 3px;
   height: var(--h);
   background: var(--tone);
+  transform-origin: 50% 100%;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
 }
 
 /* Sync off: the same line, dashed. */
@@ -98,26 +145,130 @@
   border-left: 3px dashed var(--tone);
 }
 
-/* The full source id, standing up and reading upward so it ends at the baseline; cut in the middle only when long. */
-.name {
-  grid-column: 1;
-  grid-row: 2;
-  align-self: start;
-  max-height: 11rem;
-  padding-bottom: var(--sp-1);
-  overflow: hidden;
-  color: var(--text-2);
-  line-height: 1.3;
-  white-space: nowrap;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
+/* One column is looked at: its line thickens (3px to 8px, drawn as a scale so nothing reflows), the rest step back. */
+.shown .line {
+  opacity: 1;
+  transform: scaleX(2.67);
 }
 
-.shown .name,
-.shown .value {
+.profile[data-focus] .item:not(.shown) .line {
+  opacity: 0.35;
+}
+
+.profile[data-focus] .item:not(.shown) .value {
+  opacity: 0.55;
+}
+
+/* A short name under its line, in the group's line colour. Two rows when neighbours would touch. */
+.name {
+  position: absolute;
+  top: calc(var(--scale) + 24px + 5px + var(--row, 0) * 20px);
+  left: 50%;
+  max-width: 14ch;
+  overflow: hidden;
+  color: var(--tone);
+  font-size: var(--fs-micro);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.shown .name {
+  opacity: 0;
+}
+
+/* The full id of the looked-at source: larger, never cut, kept inside the strip. */
+.full {
+  position: absolute;
+  top: calc(var(--scale) + 24px + 3px);
+  z-index: 4;
+  padding: 0 var(--sp-1);
+  background: var(--surface-1);
   color: var(--text-1);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.full[data-align='centre'] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.full[data-align='start'] {
+  left: 0;
+}
+
+.full[data-align='end'] {
+  right: 0;
+}
+
+/* The hairline from the top of the looked-at line to the scale on the left. */
+.rule {
+  position: absolute;
+  bottom: calc(var(--labels) + var(--h));
+  left: 0;
+  z-index: 1;
+  width: var(--x);
+  height: 0;
+  border-top: 1px solid var(--text-2);
+  pointer-events: none;
+}
+
+/* The readout sits beside its column, never on its own line. */
+.card {
+  position: absolute;
+  top: 0;
+  z-index: 5;
+  width: 15.5rem;
+  max-width: 60%;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: var(--fs-small);
+  pointer-events: none;
+}
+
+.card[data-side='right'] {
+  left: calc(var(--x) + 14px);
+}
+
+.card[data-side='left'] {
+  right: calc(100% - var(--x) + 14px);
+}
+
+.cardTitle {
+  margin: 0 0 var(--sp-1);
+  font-size: var(--fs-body);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cardGroup {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-weight: 400;
+}
+
+.cardList {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px var(--sp-3);
+  margin: 0;
+}
+
+.cardList dt {
+  color: var(--text-2);
+}
+
+.cardList dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: right;
 }
 
 .readout {
@@ -133,8 +284,30 @@
   color: var(--text-2);
 }
 
-/* Narrow: the lines lie down, one row per source, still to scale. */
+@media (prefers-reduced-motion: reduce) {
+  .line,
+  .value {
+    transition: none;
+  }
+}
+
+/* Narrow: the lines lie down, one row per source, still to scale. No scale, hairline or card: the text under the strip says it. */
 @container profile (max-width: 899px) {
+  .chart {
+    display: block;
+  }
+
+  .axis,
+  .rule,
+  .card,
+  .full {
+    display: none;
+  }
+
+  .body {
+    border-left: 0;
+  }
+
   .profile {
     grid-auto-flow: row;
     grid-auto-columns: auto;
@@ -151,15 +324,17 @@
   }
 
   .name {
+    position: static;
     grid-column: 1;
     grid-row: 1;
     align-self: center;
-    max-height: none;
-    padding: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    writing-mode: horizontal-tb;
+    max-width: none;
     transform: none;
+  }
+
+  .shown .name {
+    opacity: 1;
+    font-weight: 600;
   }
 
   .plot {
@@ -189,6 +364,11 @@
   .line {
     width: max(1px, calc(var(--p) * 1%));
     height: 2px;
+    transform-origin: 0 50%;
+  }
+
+  .shown .line {
+    transform: scaleY(2);
   }
 
   .item[data-sync-off] .line {

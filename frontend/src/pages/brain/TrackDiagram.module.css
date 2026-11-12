@@ -56,14 +56,35 @@
 .rail {
   fill: none;
   stroke: var(--tone);
-  stroke-width: 2.5;
+  stroke-width: 2;
   stroke-linecap: butt;
+}
+
+/* A wide invisible stroke, so hovering near a rail shows its readings. */
+.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
+
+.svg .railText {
+  fill: var(--text-2);
+  font-size: 12px;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.svg .railStale {
+  fill: var(--state-warning);
 }
 
 .ties {
   fill: none;
   stroke: var(--tone);
-  stroke-width: 9;
+  stroke-width: 7;
   stroke-dasharray: 1.6 7.4;
   opacity: 0.85;
 }
@@ -289,7 +310,7 @@
 
 .legendUnit text {
   fill: var(--text-1);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 600;
 }
 
@@ -369,11 +390,16 @@
 }
 
 .fact dt {
+  min-width: 0;
   color: var(--text-2);
 }
 
 .fact dd {
   display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  overflow-wrap: anywhere;
   align-items: center;
   gap: var(--sp-1);
   margin: 0;

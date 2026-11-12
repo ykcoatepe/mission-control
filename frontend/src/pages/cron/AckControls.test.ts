@@ -343,3 +343,86 @@ describe('acknowledgement helpers', () => {
     expect(ackNote({ ...SHELVE, until: null })).toBe('Shelved until undone')
   })
 })
+
+describe('Acknowledge all on Automations', () => {
+  const fail = (id: string) => job({ id, status: 'failed' })
+
+  it('stays out of the alarm line, which keeps its one action Show failed, and sits in the Automations header from two new failures', async () => {
+    stubServer([fail('a'), fail('b'), job({ id: 'ok' })])
+    const root = await mount()
+    expect(alarm()!.querySelectorAll('button')).toHaveLength(1)
+    expect(alarm()!.textContent).toContain('Show failed')
+    expect(alarm()!.textContent).not.toContain('Acknowledge all')
+    const header = [...document.querySelectorAll('section')].find((section) => section.querySelector('h2')?.textContent === 'Automations') as HTMLElement
+    expect([...header.querySelectorAll('header button')].map((b) => b.textContent)).toContain('Acknowledge all (2)')
+    await act(async () => root.unmount())
+  })
+
+  it('is not offered for a single failure', async () => {
+    stubServer([fail('a'), job({ id: 'ok' })])
+    const root = await mount()
+    expect(text()).not.toContain('Acknowledge all')
+    await act(async () => root.unmount())
+  })
+
+  it('uses the same shared action cell as Attention: Acknowledge then Shelve… in an Actions column', async () => {
+    stubServer([fail('a'), fail('b')])
+    const root = await mount()
+    expect([...document.querySelectorAll('thead th')].map((th) => th.textContent?.trim())).toContain('Actions')
+    for (const row of rows()) {
+      const cell = row.querySelector('[data-ack-actions]') as HTMLElement
+      expect([...cell.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Acknowledge', 'Shelve…'])
+    }
+    await act(async () => root.unmount())
+  })
+
+  it('asks first with the same words as Attention, then posts every key one after the other and reads the list again', async () => {
+    const server = stubServer([fail('a'), fail('b'), job({ id: 'ok' })])
+    const root = await mount()
+    await act(async () => button('Acknowledge all (2)')?.click())
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(dialog.textContent).toContain('Acknowledge 2 items?')
+    expect(dialog.textContent).toContain('alerts you again')
+    expect(server.sent).toHaveLength(0)
+    await act(async () => ([...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Acknowledge 2') as HTMLButtonElement).click())
+    await settle()
+    await settle()
+    expect(server.sent.map((call) => call.body)).toEqual([
+      { key: 'cron:openclaw:a', kind: 'ack' },
+      { key: 'cron:openclaw:b', kind: 'ack' },
+    ])
+    // The list was asked again: the failures are standing and the alarm is gone.
+    expect(alarm()).toBeNull()
+    expect(strip()).toContain('Failed0')
+    await act(async () => root.unmount())
+  })
+
+  it('stops at the first error and says how far it got, in the server words', async () => {
+    const server = stubServer([fail('a'), fail('b'), fail('c')], { status: 409, code: 'conflict', message: 'The ledger is busy' })
+    const root = await mount()
+    await act(async () => button('Acknowledge all (3)')?.click())
+    await act(async () => button('Acknowledge 3')?.click())
+    await settle()
+    await settle()
+    expect(server.sent).toHaveLength(1)
+    const notice = [...document.querySelectorAll('[role="alert"]')].find((el) => el.textContent?.includes('stopped'))
+    expect(notice?.textContent).toContain('Acknowledged 0 of 3 and stopped: The ledger is busy')
+    await act(async () => root.unmount())
+  })
+})
+
+describe('the Automations summary is a compact readings row', () => {
+  it('puts each label and its number side by side on one line, with no hero numerals', async () => {
+    stubServer([job({ id: 'ok' }), job({ id: 'bad', status: 'failed' })])
+    const root = await mount()
+    const row = document.querySelector('[aria-label="Automations summary"]') as HTMLElement
+    const readings = [...row.children] as HTMLElement[]
+    for (const label of ['Active', 'Paused', 'Failed', 'Next run']) {
+      expect(readings.some((reading) => reading.querySelector('span')?.textContent === label), label).toBe(true)
+    }
+    // Label and value are siblings of one reading (inline), not a label stacked over a large value.
+    for (const reading of readings) expect(reading.querySelectorAll('span').length).toBeGreaterThanOrEqual(2)
+    expect(row.querySelector('[class*="Stat_value"], [class*="stat"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+})

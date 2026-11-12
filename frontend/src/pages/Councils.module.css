@@ -81,6 +81,10 @@
 
 /* The governance readings: one line each, label at the left, digits aligned at the right of their column. */
 .readings {
+  display: grid;
+  /* One set of columns for every row (the rows take it as a subgrid), so the values end on one edge. */
+  grid-template-columns: minmax(160px, 1fr) max-content minmax(0, 2fr);
+  column-gap: var(--sp-3);
   list-style: none;
   margin: 0;
   padding: 0;
@@ -88,7 +92,8 @@
 
 .reading {
   display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(96px, auto) minmax(0, 2fr);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
   gap: var(--sp-3);
   min-height: 32px;
@@ -249,8 +254,11 @@
 }
 
 @media (max-width: 600px) {
+  .readings {
+    grid-template-columns: minmax(0, 1fr) max-content;
+  }
+
   .reading {
-    grid-template-columns: minmax(0, 1fr) auto;
     row-gap: 0;
   }
 

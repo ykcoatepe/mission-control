@@ -1,12 +1,12 @@
 import { Fragment, useEffect, useId, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { AckAllButton, AckAllDialog } from '../../components/AckActions'
 import {
   AlarmLine,
   Block,
   Button,
   DataTable,
-  Dialog,
   EmptyState,
   FilterChips,
   Mono,
@@ -73,7 +73,8 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
   // The server could not read its acknowledgements: every item is listed as new, and nothing can be acknowledged.
   const acksUnread = data.acks?.available === false
   const standingId = useId()
-  const [confirmingAll, setConfirmingAll] = useState(false)
+  // The keys an Acknowledge all would send, while its confirmation is open.
+  const [confirmingAll, setConfirmingAll] = useState<string[] | null>(null)
   const [standingOpen, setStandingOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   // The list filters live in the URL (?filter=overdue&scope=<project>) so a view can be shared or reloaded.
@@ -245,8 +246,8 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
     typeColumn,
     {
       key: 'actions',
-      header: 'Action',
-      width: '300px',
+      header: 'Actions',
+      width: '240px',
       cell: (row) =>
         row.ackKey ? (
           <AckControls ackKey={row.ackKey} name={rowSentence(row)} actions={actions} mode="new" disabled={acksUnread} />
@@ -269,7 +270,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
     },
     {
       key: 'actions',
-      header: 'Action',
+      header: 'Actions',
       width: '140px',
       cell: (row) =>
         row.ackKey ? (
@@ -362,22 +363,31 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       </>
     )
   })()
+  // Everything new that can be acknowledged (the alarm line is not narrowed by the list filters), and as listed in the New block.
+  const allAckableKeys = all.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
+  const ackableKeys = shown.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
+  // Two or more new items: the alarm line's one action acknowledges them all (after asking); one item: just that one.
   const alarmAction =
-    worst && worst.ackKey && !acksUnread
+    worst && !acksUnread && allAckableKeys.length > 1
       ? {
-          label: 'Acknowledge',
-          busy: actions.busy.has(worst.ackKey),
-          onClick: () => void actions.acknowledge(worst.ackKey as string),
+          label: `Acknowledge all (${allAckableKeys.length})`,
+          busy: actions.bulkBusy,
+          onClick: () => setConfirmingAll(allAckableKeys),
         }
-      : undefined
+      : worst && worst.ackKey && !acksUnread
+        ? {
+            label: 'Acknowledge',
+            busy: actions.busy.has(worst.ackKey),
+            onClick: () => void actions.acknowledge(worst.ackKey as string),
+          }
+        : undefined
   // The shell counts new items but this list has none: it has not caught up yet. Say so, do not claim calm.
   const listBehind = !worst && shellCount !== null && shellCount > 0
 
-  // Everything in the New block that can be acknowledged, as listed (filters narrow what is listed).
-  const ackableKeys = shown.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
   const acknowledgeAll = async () => {
-    setConfirmingAll(false)
-    await actions.acknowledgeAll(ackableKeys)
+    const keys = confirmingAll ?? []
+    setConfirmingAll(null)
+    await actions.acknowledgeAll(keys)
   }
 
   const filtered = filter !== 'all' || activeProject !== 'all'
@@ -478,9 +488,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
           meta={counted(shown.fresh, all.fresh.length)}
           actions={
             ackableKeys.length > 1 && !acksUnread ? (
-              <Button size="sm" loading={actions.bulkBusy} onClick={() => setConfirmingAll(true)}>
-                Acknowledge all ({ackableKeys.length})
-              </Button>
+              <AckAllButton count={ackableKeys.length} busy={actions.bulkBusy} onClick={() => setConfirmingAll(ackableKeys)} />
             ) : undefined
           }
           description="Each needs a decision: acknowledge it once you have seen it, or shelve it to silence it for a while."
@@ -591,23 +599,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         />
       </Block>
 
-      <Dialog
-        open={confirmingAll}
-        onClose={() => setConfirmingAll(false)}
-        role="alertdialog"
-        title={`Acknowledge ${ackableKeys.length} items?`}
-        description={`This marks ${ackableKeys.length} new items as seen. They move to Standing and stop counting as new. If one of them changes or gets worse, it alerts you again.`}
-        actions={
-          <>
-            <Button data-autofocus onClick={() => setConfirmingAll(false)}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={() => void acknowledgeAll()}>
-              Acknowledge {ackableKeys.length}
-            </Button>
-          </>
-        }
-      />
+      <AckAllDialog count={confirmingAll?.length ?? 0} onCancel={() => setConfirmingAll(null)} onConfirm={() => void acknowledgeAll()} />
 
       <ProjectDrawer project={selected} onClose={closeProject} now={now} />
     </div>

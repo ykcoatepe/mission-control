@@ -54,7 +54,7 @@
 
 .track {
   position: relative;
-  height: 10px;
+  height: 12px;
   margin-top: var(--sp-1);
   background: var(--surface-3);
   border: 1px solid var(--line-strong);
@@ -68,6 +68,8 @@
   bottom: 0;
 }
 
+/* The normal band is the whole height of the track; the fill is a thinner bar inside it, so the band is
+   still seen above and below the fill and its two limits read at a glance. */
 .band {
   left: var(--from);
   width: calc(var(--to) - var(--from));
@@ -75,15 +77,16 @@
 }
 
 .fill {
+  top: 3px;
+  bottom: 3px;
   left: 0;
   width: var(--at);
   background: var(--bar-fill);
-  opacity: 0.55;
   transition: width var(--dur-base) var(--ease);
 }
 
-.bar[data-state='warning'] .fill { background: var(--state-warning); opacity: 0.7; }
-.bar[data-state='critical'] .fill { background: var(--state-critical); opacity: 0.7; }
+.bar[data-state='warning'] .fill { background: var(--state-warning); }
+.bar[data-state='critical'] .fill { background: var(--state-critical); }
 
 .pointer {
   position: absolute;
@@ -96,20 +99,21 @@
   transition: left var(--dur-base) var(--ease);
 }
 
+/* A limit: a tick through the track and a little beyond, labelled below. */
 .tick {
   position: absolute;
-  bottom: -4px;
+  top: -3px;
+  bottom: -5px;
   left: var(--at);
   width: 1px;
-  height: 4px;
-  background: var(--track);
+  background: var(--text-2);
 }
 
 .scale {
   position: relative;
   height: 18px;
-  margin-top: var(--sp-1);
-  color: var(--text-3);
+  margin-top: var(--sp-2);
+  color: var(--text-2);
   font-size: var(--fs-micro);
   font-variant-numeric: tabular-nums lining-nums;
 }
@@ -127,23 +131,28 @@
 
 .trend {
   display: grid;
-  grid-template-columns: auto minmax(48px, 1fr) auto;
-  /* The chart takes any height the parent has to spare; the words stay in the middle. */
+  /* The words are one column on the left; the plot and its two end values are one block on the right, so the
+     average never sits among the highest and lowest values. */
+  grid-template-columns: minmax(max-content, 7.5rem) minmax(72px, 1fr);
+  /* The chart takes any height the parent has to spare. */
   flex: 1 1 auto;
   align-items: stretch;
   gap: var(--sp-3);
   margin-top: var(--sp-1);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-.trendAvg {
-  text-align: end;
+.trendWords {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
   white-space: nowrap;
 }
 
-.trendLabel,
 .trendAvg {
-  align-self: center;
+  color: var(--text-1);
 }

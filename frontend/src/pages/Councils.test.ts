@@ -63,7 +63,9 @@ describe('Audit: Overall', () => {
     stubServer({ overall: 'green', metrics: {}, review: null })
     const { host, root } = await mount()
     const text = overallTile(host)?.textContent ?? ''
-    expect(text).toContain('Scorecard: green')
+    expect(text).toContain('Scorecard: normal')
+    // A value that was read never carries the hollow not-read mark.
+    expect(overallTile(host)?.querySelector('[data-shape="ring"]')).toBeNull()
     expect(text).toContain('no review recorded')
     expect(text).not.toContain('Not read')
     await act(async () => root.unmount())

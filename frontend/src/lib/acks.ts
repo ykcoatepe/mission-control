@@ -18,6 +18,7 @@ import { apiQueryKey } from './writes'
 
 export const ACKS_URL = '/api/attention/acks'
 const LOOPS_URL = '/api/loops'
+const CRON_URL = '/api/cron'
 
 export type ShelveChoice = '7d' | '30d' | 'forever'
 
@@ -36,6 +37,16 @@ const DAY_MS = 86_400_000
 export function shelveUntil(choice: ShelveChoice, now: number = Date.now()): string | null {
   if (choice === 'forever') return null
   return new Date(now + (choice === '7d' ? 7 : 30) * DAY_MS).toISOString()
+}
+
+/** The words of an acknowledge-all, the same on every page that offers it. */
+export function acknowledgeAllCopy(count: number) {
+  return {
+    button: `Acknowledge all (${count})`,
+    title: `Acknowledge ${count} items?`,
+    description: `This marks ${count} new items as seen. They move to Standing and stop counting as new. If one of them changes or gets worse, it alerts you again.`,
+    confirm: `Acknowledge ${count}`,
+  }
 }
 
 export interface AckResult {
@@ -63,15 +74,17 @@ export function undoRequest(key: string) {
 }
 
 /**
- * Reads again what an acknowledgement changes: the shell signals and every loops reading (the list and the
- * project drawer). A failing refetch is not the write's failure; the row then moves on the next poll.
+ * Reads again what an acknowledgement changes: the shell signals, every loops reading (the list and the
+ * project drawer) and the automations list. A failing refetch is not the write's failure; the row then moves on the next poll.
  */
 export async function refetchAfterAck(client: QueryClient): Promise<void> {
   await Promise.allSettled([
     client.invalidateQueries({ queryKey: apiQueryKey(SIGNALS_URL) }),
     client.invalidateQueries({
       predicate: (query) =>
-        query.queryKey[0] === 'api' && typeof query.queryKey[1] === 'string' && query.queryKey[1].startsWith(LOOPS_URL),
+        query.queryKey[0] === 'api' &&
+        typeof query.queryKey[1] === 'string' &&
+        (query.queryKey[1].startsWith(LOOPS_URL) || query.queryKey[1] === CRON_URL),
     }),
   ])
 }

@@ -57,3 +57,48 @@
   color: var(--text-3);
   font-size: var(--fs-small);
 }
+
+/* ---- compact readings row ---- */
+
+.readings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-6);
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+
+.reading {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--sp-1) var(--sp-2);
+  min-width: 0;
+  font-size: var(--fs-body);
+}
+
+.reading > svg {
+  align-self: center;
+}
+
+.readingLabel {
+  color: var(--text-2);
+}
+
+.readingValue {
+  color: var(--text-1);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.reading[data-state='warning'] .readingValue { color: var(--state-warning); }
+.reading[data-state='critical'] .readingValue { color: var(--state-critical); }
+
+.readingHint {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}

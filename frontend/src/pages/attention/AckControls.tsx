@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { MouseEvent } from 'react'
+import { AckActions as AckButtons } from '../../components/AckActions'
 import { Button, StateMark } from '../../components/ui'
 import { SHELVE_OPTIONS } from '../../lib/acks'
 import type { AckActions } from '../../lib/acks'
@@ -76,26 +77,13 @@ export default function AckControls({ ackKey, name, actions, mode, disabled = fa
           </Button>
         </div>
       ) : (
-        <div className={styles.buttons}>
-          <Button
-            size="sm"
-            loading={busy}
-            disabled={disabled}
-            aria-label={`Acknowledge: ${name}`}
-            onClick={() => void actions.acknowledge(ackKey)}
-          >
-            Acknowledge
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy || disabled}
-            aria-label={`Shelve: ${name}`}
-            onClick={() => setShelving(true)}
-          >
-            Shelve…
-          </Button>
-        </div>
+        <AckButtons
+          name={name}
+          busy={busy}
+          disabled={disabled}
+          onAcknowledge={() => void actions.acknowledge(ackKey)}
+          onShelve={() => setShelving(true)}
+        />
       )}
       <AckError message={error} />
     </div>

@@ -16,6 +16,11 @@
   min-width: 0;
 }
 
+/* A grid item's minimum is its content's: without this a wide child pushes past the right edge of a narrow screen. */
+.top > * {
+  min-width: 0;
+}
+
 @container health (max-width: 1099px) {
   .top {
     grid-template-columns: minmax(0, 1fr);

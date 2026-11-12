@@ -165,11 +165,11 @@ export function modelColorKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
-/** Number of chart series colours the design system defines (`--series-1..6`). */
+/** Number of chart colours the design system defines (`--chart-1..6`: muted categories that never reuse the Brain line colours, the accent or a state colour). */
 export const SERIES_COLOR_COUNT = 6
 
 export function seriesColorToken(slot: number): string {
-  return `var(--series-${(slot % SERIES_COLOR_COUNT) + 1})`
+  return `var(--chart-${(slot % SERIES_COLOR_COUNT) + 1})`
 }
 
 /**

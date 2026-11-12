@@ -19,13 +19,14 @@ import {
   StateDot,
   StateMark,
   StatePill,
-  Stat,
-  StatRow,
+  Reading,
+  ReadingsRow,
   Switch,
   TimeAgo,
   useToast,
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
+import { AckActions, AckAllButton, AckAllDialog, BulkAckNotice } from '../../components/AckActions'
 import { useApi } from '../../lib/hooks'
 import { afterWrite, applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../../lib/writes'
 import { StaleWriteNote } from '../../components/StaleWriteNote'
@@ -51,7 +52,7 @@ import type {
   CronStatusFilter,
 } from './types'
 import { isNewFailure, isStandingFailure, jobState } from './jobState'
-import { SHELVE_OPTIONS, acknowledgeRequest, shelveRequest, shelveUntil, undoRequest } from '../../lib/acks'
+import { SHELVE_OPTIONS, acknowledgeRequest, shelveRequest, shelveUntil, undoRequest, useAckActions } from '../../lib/acks'
 import type { ShelveChoice } from '../../lib/acks'
 import { ackNote, applyAck } from './acks'
 import { NextRun } from './NextRun'
@@ -109,6 +110,9 @@ export default function JobsView() {
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
   // The failed job whose shelve length is being chosen.
   const [shelveTarget, setShelveTarget] = useState<CronJob | null>(null)
+  // The keys an Acknowledge all would send, while its confirmation is open.
+  const [confirmingAll, setConfirmingAll] = useState<string[] | null>(null)
+  const ackActions = useAckActions()
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   // The last write succeeded but the server could not confirm its follow-up reading yet.
   const [writeNote, setWriteNote] = useState<'stale' | 'unconfirmed' | null>(null)
@@ -562,47 +566,37 @@ export default function JobsView() {
                 {refusals[job.id]}
               </span>
             )}
-            {job.ackKey && isNewFailure(job) && (
-              <span className={styles.ackRow}>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  loading={pendingAction === `ack-${job.id}`}
-                  onClick={() => handleAck(job, 'ack')}
-                  aria-label={`Acknowledge ${job.name}`}
-                >
-                  Acknowledge
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={pendingAction === `ack-${job.id}`}
-                  onClick={() => requestShelve(job)}
-                  aria-label={`Shelve ${job.name}`}
-                >
-                  Shelve…
-                </Button>
-              </span>
-            )}
-            {job.ack && state.standing && (
-              <span className={styles.ackRow}>
-                <span className={styles.ackNote}>{ackNote(job.ack)}</span>
-                {job.ackKey && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    loading={pendingAction === `ack-${job.id}`}
-                    onClick={() => handleUndoAck(job)}
-                    aria-label={`Undo for ${job.name}`}
-                  >
-                    Undo
-                  </Button>
-                )}
-              </span>
-            )}
           </div>
         )
       },
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      width: '240px',
+      cell: (job) =>
+        job.ackKey && isNewFailure(job) ? (
+          <AckActions
+            name={job.name}
+            busy={pendingAction === `ack-${job.id}`}
+            onAcknowledge={() => void handleAck(job, 'ack')}
+            onShelve={() => requestShelve(job)}
+          />
+        ) : job.ack && jobState(job).standing ? (
+          <span className={styles.ackRow} onClick={stopRowClick} onKeyDown={stopRowClick}>
+            <span className={styles.ackNote}>{ackNote(job.ack)}</span>
+            {job.ackKey && (
+              <Button
+                size="sm"
+                loading={pendingAction === `ack-${job.id}`}
+                onClick={() => handleUndoAck(job)}
+                aria-label={`Undo for ${job.name}`}
+              >
+                Undo
+              </Button>
+            )}
+          </span>
+        ) : null,
     },
     {
       key: 'last',
@@ -714,6 +708,13 @@ export default function JobsView() {
       : alarmNames.length <= 3
         ? joinList(alarmNames)
         : `${joinList(alarmNames.slice(0, 3))} and ${alarmNames.length - 3} more`
+  // The new failures in the list as shown (search and filters narrow it): what Acknowledge all would act on.
+  const bulkKeys = filteredJobs.flatMap((job) => (job.ackKey && isNewFailure(job) ? [job.ackKey] : []))
+  const acknowledgeAll = async () => {
+    const keys = confirmingAll ?? []
+    setConfirmingAll(null)
+    await ackActions.acknowledgeAll(keys)
+  }
   const activeHint = summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : undefined
   const notReadHint = incomplete ? `${joinNames(notRead)} not read` : undefined
   const filteredUnread = schedulerFilter !== 'all' && readings[schedulerFilter].state === 'not-read'
@@ -744,14 +745,14 @@ export default function JobsView() {
         </Notice>
       ))}
 
-      <StatRow aria-label="Automations summary">
-        <Stat
+      <ReadingsRow aria-label="Automations summary">
+        <Reading
           label="Active"
           value={incomplete ? null : summary.active}
           hint={incomplete ? notReadHint : defined(activeHint, data?.summary?.definitions?.active)}
         />
-        <Stat label="Paused" value={incomplete ? null : summary.paused} hint={notReadHint} />
-        <Stat
+        <Reading label="Paused" value={incomplete ? null : summary.paused} hint={notReadHint} />
+        <Reading
           label="Failed"
           value={incomplete ? null : summary.failed}
           state={!incomplete && summary.failed > 0 ? 'critical' : undefined}
@@ -762,18 +763,18 @@ export default function JobsView() {
           }
         />
         {!incomplete && summary.standingFailed > 0 && (
-          <Stat
+          <Reading
             label="Standing failures"
             value={summary.standingFailed}
             hint={defined('Acknowledged or shelved', data?.summary?.definitions?.standingFailed)}
           />
         )}
-        <Stat
+        <Reading
           label="Next run"
           value={!incomplete && summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
           hint={incomplete ? notReadHint : (summary.nextRun?.name ?? undefined)}
         />
-      </StatRow>
+      </ReadingsRow>
 
       <div className={styles.toolbar}>
         <FilterChips
@@ -816,9 +817,16 @@ export default function JobsView() {
         </Notice>
       )}
 
+      <BulkAckNotice error={ackActions.bulkError} />
+
       <Block
         title="Automations"
         meta={<span aria-live="polite">{filteredJobs.length !== jobs.length ? `Showing ${filteredJobs.length} of ${jobs.length}` : jobs.length}</span>}
+        actions={
+          bulkKeys.length > 1 ? (
+            <AckAllButton count={bulkKeys.length} busy={ackActions.bulkBusy} onClick={() => setConfirmingAll(bulkKeys)} />
+          ) : undefined
+        }
         padding="none"
       >
         <DataTable
@@ -948,6 +956,8 @@ export default function JobsView() {
           </>
         }
       />
+
+      <AckAllDialog count={confirmingAll?.length ?? 0} onCancel={() => setConfirmingAll(null)} onConfirm={() => void acknowledgeAll()} />
 
       <Dialog
         open={runTarget !== null}

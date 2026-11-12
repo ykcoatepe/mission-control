@@ -546,6 +546,75 @@ describe('AttentionView: Acknowledge all', () => {
   })
 })
 
+describe('AttentionView: Acknowledge all in the alarm line, and one action cell', () => {
+  const finding = (n: number, extra: Record<string, unknown> = {}) => ({
+    project: `proj${n}`,
+    kind: 'finding',
+    severity: 'warning',
+    code: 'ROUND_CAP_REACHED',
+    subject: `r${n}`,
+    detail: null,
+    summary: `Round limit reached for work ${n}`,
+    at: '2026-11-04T09:25:15Z',
+    key: `finding:proj${n}:ROUND_CAP_REACHED:00000000000${n}`,
+    ackable: true,
+    ack: null,
+    ...extra,
+  })
+  const withItems = (...items: unknown[]): LoopsData => ({ ...DATA, attention: items as LoopsData['attention'] })
+  const alarm = (host: HTMLElement) => host.querySelector('[role="status"][data-state], [role="alert"][data-state]') as HTMLElement | null
+  const posts = (calls: Call[]) => calls.filter((call) => call.method === 'POST')
+
+  it('with two or more new ackable items the alarm line carries Acknowledge all (N) as its single action, and the New block keeps its own', async () => {
+    stubFetch()
+    const { host, root } = await mount(withItems(finding(1), finding(2), finding(3)))
+    const line = alarm(host)!
+    expect(line.querySelectorAll('button')).toHaveLength(1)
+    expect(buttonIn(line, 'Acknowledge all (3)')).toBeTruthy()
+    expect(buttonIn(line, 'Acknowledge')).toBeUndefined()
+    expect(buttonIn(block(host, 'New'), 'Acknowledge all (3)')).toBeTruthy()
+    await act(async () => root.unmount())
+  })
+
+  it('the alarm line asks first with the same words, then acknowledges every item one request after the other', async () => {
+    const calls = stubFetch()
+    const { host, root } = await mount(withItems(finding(1), finding(2)))
+    await click(buttonIn(alarm(host), 'Acknowledge all (2)'))
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(dialog.textContent).toContain('Acknowledge 2 items?')
+    expect(dialog.textContent).toContain('alerts you again')
+    expect(posts(calls)).toHaveLength(0)
+    await click(buttonIn(dialog, 'Acknowledge 2'))
+    expect(posts(calls).map((call) => call.body?.kind)).toEqual(['ack', 'ack'])
+    await act(async () => root.unmount())
+  })
+
+  it('a single new item keeps the plain Acknowledge in the alarm line', async () => {
+    stubFetch()
+    const { host, root } = await mount(withItems(finding(1)))
+    expect(buttonIn(alarm(host), 'Acknowledge')).toBeTruthy()
+    expect(host.textContent).not.toContain('Acknowledge all')
+    await act(async () => root.unmount())
+  })
+
+  it('every new row has Acknowledge then Shelve… as two same-kind buttons in an Actions column', async () => {
+    stubFetch()
+    const { host, root } = await mount(withItems(finding(1), finding(2)))
+    const headers = [...(block(host, 'New')?.querySelectorAll('thead th') ?? [])].map((th) => th.textContent?.trim())
+    expect(headers).toContain('Actions')
+    const rows = [...(block(host, 'New')?.querySelectorAll('tbody tr') ?? [])]
+    const cells = rows.map((row) => row.querySelector('[data-ack-actions]') as HTMLElement)
+    expect(cells.every((cell) => cell !== null)).toBe(true)
+    for (const cell of cells) {
+      const buttons = [...cell.querySelectorAll('button')]
+      expect(buttons.map((b) => b.textContent)).toEqual(['Acknowledge', 'Shelve…'])
+      expect(buttons[0].className).toBe(buttons[1].className)
+      expect(buttons.every((b) => !b.disabled)).toBe(true)
+    }
+    await act(async () => root.unmount())
+  })
+})
+
 describe('AttentionView: acknowledgements not read', () => {
   const UNREAD: LoopsData = {
     ...DATA,

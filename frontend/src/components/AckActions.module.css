@@ -1,0 +1,22 @@
+.actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: var(--control-h-sm);
+}
+
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--state-critical);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.error svg {
+  flex: none;
+  margin-top: 3px;
+}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildDiagram, shortSourceName } from './diagram'
 import { synoptic, sources } from './fixtures'
-import { PROFILE_SCALE_PX, buildProfile, lineHeight, middleTruncate, sourceLabels, visibleCounts } from './profile'
+import { PROFILE_SCALE_PX, axisTicks, buildProfile, lineHeight, middleTruncate, shortLabels, sourceLabels, staggerRows, visibleCounts } from './profile'
 import type { GBrainSynoptic } from './types'
 
 describe('line heights are on one true linear scale', () => {
@@ -149,5 +149,47 @@ describe('counts that would collide are left out of the picture', () => {
   it('does not hide counts that are at different heights', () => {
     const lines = [line('a', 18005, 140), line('b', 3237, 25)]
     expect(visibleCounts(lines, 30, text).size).toBe(2)
+  })
+})
+
+describe('short labels', () => {
+  const ids19 = [
+    'default', 'aviation-standards', 'a320-manuals', 'gstack-code-github-com-garrytan', 'finance-analyzer', 'tk-a320-line-ops',
+    'portfolio-exporter', 'mission-control', 'tk-omc-ain', 'codeforge-powerlaw-trader', 'trader-assistant', 'gbrain', 'pdfquickfix',
+    'japanesebuddy', 'japanesebuddy-dev-yordam-dl', 'japanesebuddy-main-dl', 'hermes-agent', 'openclaw-memories', 'codex-memories',
+  ]
+
+  it('strips generic tails and keeps the distinguishing words, the same way every time', () => {
+    const labels = shortLabels(ids19)
+    expect(labels[ids19.indexOf('gstack-code-github-com-garrytan')]).toBe('gstack')
+    expect(labels[ids19.indexOf('tk-a320-line-ops')]).toBe('tk-a320')
+    expect(labels[ids19.indexOf('aviation-standards')]).toBe('aviation')
+    expect(labels[ids19.indexOf('hermes-agent')]).toBe('hermes')
+    expect(shortLabels(ids19)).toEqual(labels)
+  })
+
+  it('never gives two sources one label, and every label stays short unless it is the last resort', () => {
+    const labels = shortLabels(ids19)
+    expect(new Set(labels).size).toBe(ids19.length)
+    expect(labels.every((label) => label.length <= 19)).toBe(true)
+    // Clashes: the three japanesebuddy ids are told apart by their own words or the middle cut.
+    const jp = labels.filter((_, i) => ids19[i].startsWith('japanesebuddy'))
+    expect(new Set(jp).size).toBe(3)
+    expect(shortLabels(['abcdefghijklmnopqrstuvwxyz1', 'abcdefghijklmnopqrstuvwxyz2'])).toHaveLength(2)
+    expect(new Set(shortLabels(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2'])).size).toBe(2)
+  })
+
+  it('staggers labels onto two rows only when neighbours would touch', () => {
+    expect(staggerRows(['a', 'b', 'c'], 100)).toEqual([0, 0, 0])
+    const rows = staggerRows(['abcdefgh', 'abcdefgh', 'abcdefgh', 'abcdefgh'], 40)
+    expect(rows).toContain(1)
+    expect(rows[0]).toBe(0)
+    expect(staggerRows(['x', 'y'], null)).toEqual([0, 0])
+  })
+
+  it('draws round axis ticks from zero up to the tallest line', () => {
+    expect(axisTicks(18032)).toEqual([0, 5000, 10000, 15000])
+    expect(axisTicks(84)).toEqual([0, 20, 40, 60, 80])
+    expect(axisTicks(null)).toEqual([])
   })
 })

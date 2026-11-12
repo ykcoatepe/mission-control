@@ -318,6 +318,14 @@ describe('Trend', () => {
     await act(async () => root.unmount())
   })
 
+  it('a flat series fully inside the band never draws the band as a block (the Health score trend)', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([100, 100, 100, 100, 100]), band: [85, 100], height: 40, minSpan: 2 }))
+    expect(host.querySelector('rect')).toBeNull()
+    expect(host.querySelector('svg')?.getAttribute('data-band')).toBe('covers')
+    expect(new Set(ys(host.querySelector('svg') as Element))).toEqual(new Set([20]))
+    await act(async () => root.unmount())
+  })
+
   it('a series that leaves the band shows the band only where it intersects the plot, as a faint tint', async () => {
     const { host, root } = await render(createElement(Trend, { points: series([99, 97, 94, 93]), band: [95, 100], height: 40 }))
     const rect = host.querySelector('rect') as SVGRectElement

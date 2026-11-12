@@ -75,9 +75,17 @@
   --series-5: #5fb8b0;
   --series-6: #9aa6b6;
 
+  /* Chart categories outside the Brain page: muted, and away from amber, red, the accent and the four line colours. */
+  --chart-1: #8d8654;
+  --chart-2: #7a7ea8;
+  --chart-3: #b39a85;
+  --chart-4: #a5747b;
+  --chart-5: #8a94a3;
+  --chart-6: #5f8a99;
+
   /* Analog bars */
-  --band: rgba(95, 184, 176, 0.28); /* the normal band */
-  --bar-fill: #a9b4c2;
+  --band: rgba(221, 227, 234, 0.2); /* the normal band: a lighter strip, distinct from the track and from the fill */
+  --bar-fill: #4fa59e; /* the bar's fill: teal family, 4.3:1 on the track; state colours replace it only when abnormal */
 
   /* Type */
   --font-sans: 'Barlow', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', system-ui, sans-serif;
@@ -176,18 +184,25 @@
   --accent-bg: rgba(31, 111, 107, 0.1);
   --accent-line: rgba(31, 111, 107, 0.4);
 
-  --line-reference: #2b76b0;
-  --line-projects: #2f8558;
+  --line-reference: #27699c;
+  --line-projects: #2a7a50;
   --line-agent: #6a55c8;
-  --line-curated: #b0477a;
+  --line-curated: #ad4577;
 
-  --series-1: #2b76b0;
+  --series-1: #27699c;
   --series-2: #6a55c8;
-  --series-3: #2f8558;
-  --series-4: #b0477a;
+  --series-3: #2a7a50;
+  --series-4: #ad4577;
   --series-5: #1f6f6b;
   --series-6: #6b6660;
 
-  --band: rgba(31, 111, 107, 0.18);
-  --bar-fill: #8c8780;
+  --chart-1: #777046;
+  --chart-2: #6c6f9c;
+  --chart-3: #9c6847;
+  --chart-4: #8a5d6a;
+  --chart-5: #7d828a;
+  --chart-6: #4a7580;
+
+  --band: rgba(42, 40, 38, 0.2);
+  --bar-fill: #2a7873; /* 3.7:1 on the track */
 }
