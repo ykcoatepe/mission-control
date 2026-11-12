@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 
 const { buildOperationsOverview } = require('../server/services/operationsOverview');
 const { buildGBrainVerdict } = require('../server/sources/gbrain/verdict');
-const { attentionItems, countedSystems, fingerprintOf, textReasonId, worseThan } = require('../server/sources/mloop/attention');
+const { attentionItems, countedSystems, fingerprintOf, isAcknowledgeable, isFingerprint, textReasonId, worseThan } = require('../server/sources/mloop/attention');
 
 const T0 = Date.parse('2026-11-12T10:00:00Z');
 const MINUTE = 60_000;
@@ -115,16 +115,53 @@ test('reason ids are stored hashed and never carry text; many reasons stay bound
   assert.ok(fp.reasonIds.every((id) => /^[0-9a-f]{12}$/.test(id)));
   assert.deepEqual(Object.keys(fp.counts).sort(), fp.reasonIds);
   assert.doesNotMatch(JSON.stringify(fingerprints(reading(T0))), /minutes|waiting|codex|alpha-secret/);
-  const many = (n) => fingerprintOf(2, Object.fromEntries(Array.from({ length: n }, (_, i) => [`reason:${i}`, 1])));
-  assert.equal(many(400).reasonIds.length, 128);
-  assert.ok(worseThan(many(400), many(401)), 'one more reason beyond the limit is still worse');
 });
 
-test('a reason with only free text gets its id from the text with numbers masked: a ticking number keeps it, another message changes it', () => {
+// Finding 1: reasons are never folded or cut. More than the cap marks the fingerprint `overflow`,
+// which cannot be compared: such an item is not acknowledgeable and never held.
+test('more reasons than the cap: the fingerprint is overflow, never comparable, so nothing beyond the cap can hide', () => {
+  const many = (n, change = {}) => fingerprintOf(2, { ...Object.fromEntries(Array.from({ length: n }, (_, i) => [`reason:${i}`, 1])), ...change });
+  assert.equal(many(128).reasonIds.length, 128);
+  assert.equal(isFingerprint(many(128)), true);
+  assert.equal(isAcknowledgeable({ fingerprint: many(128) }), true);
+  const over = many(129);
+  assert.deepEqual(over, { rank: 2, reasonIds: [], counts: {}, overflow: true });
+  assert.equal(isFingerprint(over), false);
+  assert.equal(isAcknowledgeable({ fingerprint: over }), false);
+  // The reviewer's cases: the same 129 reasons, one replaced by another, one count 1 -> 99.
+  for (const current of [many(129), { ...many(128, { 'reason:new': 1 }) }, many(129, { 'reason:128': 99 })]) {
+    assert.equal(worseThan(over, current), 'overflow');
+  }
+  assert.equal(worseThan(many(128), many(129)), 'overflow', 'an acknowledged item that grows past the cap counts');
+  assert.equal(worseThan(over, many(1)), 'overflow', 'an overflow acknowledgement holds nothing');
+  for (const malformed of [null, {}, { rank: 2, reasonIds: ['zz'], counts: { zz: 1 } }, { ...many(2), overflow: false }, { rank: 2, reasonIds: [], counts: {}, extra: 1, overflow: true }]) {
+    assert.equal(worseThan(malformed, many(1)), 'overflow');
+    assert.equal(worseThan(many(1), malformed), 'overflow');
+  }
+});
+
+// Finding 5: only what tells time is masked; every other number stays in the identity.
+test('a reason with only free text: durations and clock values are masked, every other number is part of the identity', () => {
   const id = (text) => textReasonId('gbrain:legacy-caveat', text);
+  const same = (a, b) => assert.equal(id(a), id(b), `${a} / ${b}`);
+  const different = (a, b) => assert.notEqual(id(a), id(b), `${a} / ${b}`);
   assert.match(id('Embedding unavailable for 5 minutes.'), /^gbrain:legacy-caveat:[0-9a-f]{12}$/);
-  assert.equal(id('Embedding unavailable for 5 minutes.'), id('embedding   UNAVAILABLE for 1234 minutes.\n'));
-  assert.equal(id('12 of 3400 chunks waiting since 09:41'), id('7 of 9 chunks waiting since 23:05'));
-  assert.notEqual(id('Embedding unavailable.'), id('Source sync failed.'));
-  assert.notEqual(id('Embedding unavailable for 5 minutes.'), id('Embedding unavailable for 5 hours.'));
+  same('waiting 5 minutes', 'waiting 6 minutes');
+  same('Embedding unavailable for 5 minutes.', 'embedding   UNAVAILABLE for 1234 minutes.\n');
+  for (const unit of ['s', 'sec', 'secs', 'second', 'seconds', 'm', 'min', 'mins', 'minute', 'minutes', 'h', 'hr', 'hrs', 'hour', 'hours', 'd', 'day', 'days', 'w', 'week', 'weeks', 'ms']) {
+    same(`stale for 3${unit} now`, `stale for 41${unit} now`);
+    same(`stale for 3 ${unit} now`, `stale for 41 ${unit} now`);
+  }
+  same('last sync 3 ago', 'last sync 17 ago');
+  same('silent since 2026-11-03T09:25:15+00:00', 'silent since 2026-11-12T01:02:03Z');
+  same('silent since 2026-11-03', 'silent since 2026-11-12');
+  same('job failed at 09:41', 'job failed at 23:05:59');
+  same('down 1h 5m 30s', 'down 2h 59m 1s');
+  different('job 1 failed', 'job 2 failed');
+  different('3 chunks missing', '9 chunks missing');
+  different('12 of 3400 chunks waiting', '7 of 9 chunks waiting');
+  different('error 500 from source 3', 'error 502 from source 3');
+  different('Embedding unavailable.', 'Source sync failed.');
+  different('unavailable for 5 minutes', 'unavailable for 5 monkeys');
+  different('5 sources stale', '6 sources stale'); // "s" must be a whole word to be a unit
 });

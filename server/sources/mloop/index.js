@@ -40,7 +40,7 @@ const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
 const { scrubText } = require('../../core/scrub');
 const {
-  CONFIRMATION_CODES, NO_ACKS, OVERDUE_CODES, attentionItems, confirmationKey, findingItemKey, needsOperator, projectNeeds, subjectHash,
+  CONFIRMATION_CODES, NO_ACKS, OVERDUE_CODES, attentionItems, confirmationKey, findingItemKey, isAcknowledgeable, needsOperator, projectNeeds, subjectHash,
   systemKey,
 } = require('./attention');
 const {
@@ -523,7 +523,8 @@ function ackDecorator(countable, acks) {
   return (key) => {
     if (!key) return { key: null, ackable: false, ack: null };
     const item = countable.get(key);
-    if (item) return { key, ackable: true, ack: store.resolve(item).ack ?? null };
+    // An item with too many reasons to compare is listed as new and cannot be acknowledged.
+    if (item) return { key, ackable: isAcknowledgeable(item), ack: store.resolve(item).ack ?? null };
     return { key, ackable: false, ack: store.peek(key) ?? null };
   };
 }

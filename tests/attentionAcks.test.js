@@ -653,7 +653,25 @@ test('the store file cannot be written: the write answers 503, acks are unavaila
     assert.deepEqual(signals.acks, { available: false, reason: 'ack_store_unwritable' });
     assert.equal(signals.attention.count, 2, 'nothing is treated as acknowledged');
     assert.equal(signals.attention.standing, 0);
+    // Finding 2: a request that changes nothing does not make a failed store available again.
+    const unknown = await f.request('DELETE', '/api/attention/acks/system%3Aopenclaw');
+    assert.equal(unknown.status, 503, 'not 404: the store is failed');
+    assert.equal(unknown.body.error.code, 'ack_store_unavailable');
+    assert.deepEqual((await f.signals()).acks, { available: false, reason: 'ack_store_unwritable' });
+    assert.equal((await f.both()).signals.attention.standing, 0, 'the old acknowledgement does not hold while the store is failed');
   } finally { fs.chmodSync(dir, 0o700); }
+  // Writable again, but nothing has been written yet: reading the file is not proof.
+  for (const [method, url, body] of [
+    ['DELETE', '/api/attention/acks/system%3Aopenclaw'],
+    ['POST', '/api/attention/acks', { key: 'system:openclaw', kind: 'ack' }], // healthy: would be 409
+    ['POST', '/api/attention/acks', { key: 'system:nosuch', kind: 'ack' }], // would be 404
+  ]) {
+    const response = await f.request(method, url, body);
+    assert.notEqual(response.status, 200, `${method} ${url}`);
+    assert.deepEqual((await f.signals()).acks, { available: false, reason: 'ack_store_unwritable' }, `${method} ${url} did not write`);
+    assert.equal((await f.both()).signals.attention.standing, 0);
+  }
+  assert.equal((await f.request('DELETE', '/api/attention/acks/system%3Aopenclaw')).status, 503);
   assert.equal((await f.ack('system:gbrain')).status, 200);
   const { signals } = await f.both();
   assert.deepEqual(signals.acks, { available: true, reason: null });
@@ -762,4 +780,53 @@ test('legacy caveats: the same caveat with a ticking number holds; a different c
   ({ signals } = await f.both());
   assert.equal(signals.attention.standing, 1, 'only the acknowledged caveat again: it holds');
   assert.doesNotMatch(fs.readFileSync(f.storeFile, 'utf8'), /mbedding|sync/i, 'the stored fingerprint carries no caveat text');
+}));
+
+// Finding 1, through the routes: an item with more reasons than a fingerprint can hold.
+test('an item with more reasons than the cap is listed as new, is not ackable (409), and no acknowledgement holds it', () => run({}, async (f) => {
+  const reasons = (n) => Array.from({ length: n }, (_, i) => ({
+    id: `hermes:reason-${i}`, system: 'hermes', severity: 'warning', reasonCode: 'x', title: 't', detail: 'd', detailHref: '/services', evidenceRefs: [],
+  }));
+  f.state.systems.hermes = system('hermes', 'warning');
+  f.state.attention = reasons(128);
+  assert.equal((await f.loopsData()).systems.find((entry) => entry.id === 'hermes').ackable, true);
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  assert.equal((await f.both()).signals.attention.standing, 1);
+
+  f.state.attention = reasons(129);
+  let { signals, loops } = await f.both();
+  assert.equal(signals.attention.count, 1, 'past the cap nothing can be compared: it counts as new');
+  assert.equal(signals.attention.standing, 0);
+  const row = loops.systems.find((entry) => entry.id === 'hermes');
+  assert.equal(row.ack, null);
+  assert.equal(row.ackable, false);
+  for (const kind of ['ack', 'shelve']) {
+    const refused = await f.ack('system:hermes', kind);
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.error.code, 'not_ackable');
+    assert.match(refused.body.error.message, /too many reasons/);
+  }
+  // 129 reasons with one replaced, or one count raised: still new, whatever is stored.
+  f.state.attention = [...reasons(128), { ...reasons(1)[0], id: 'hermes:other', count: 99 }];
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.count, 1);
+
+  f.state.attention = reasons(128);
+  assert.equal((await f.both()).signals.attention.standing, 1, 'back inside the cap and the acknowledged set: it holds');
+}));
+
+test('a stored acknowledgement whose fingerprint is overflow or malformed holds nothing', () => withLiveLoop(async () => {
+  const record = (key, fingerprint) => ({ key, kind: 'ack', at: new Date(T0).toISOString(), until: null, id: 'a'.repeat(12), absentSince: null, fingerprint });
+  const f = fixture({ storeContent: JSON.stringify({ version: 3, acks: [
+    record('system:hermes', { rank: 2, reasonIds: [], counts: {}, overflow: true }),
+    record('system:gbrain', { rank: 2, reasonIds: ['nothex'], counts: { nothex: 1 } }),
+    record('system:openclaw', { rank: 3, reasonIds: [], counts: {} }),
+  ] }) });
+  try {
+    await f.start();
+    for (const id of ['hermes', 'gbrain', 'openclaw']) f.state.systems[id] = system(id, 'warning');
+    const { signals } = await f.both();
+    assert.equal(signals.attention.standing, 1, 'only the well-formed one holds');
+    assert.equal(signals.attention.count, 2);
+  } finally { await f.cleanup(); }
 }));

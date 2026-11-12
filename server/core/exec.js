@@ -3,8 +3,7 @@
 // The one async process runner. Every child process Mission Control starts for
 // a read or a bounded action goes through here:
 //   - spawn with an argv array, never a shell string;
-//   - a per-call timeout and a maximum output size; `deadlineMs` bounds the
-//     lane wait and the run together (the run gets what the wait left);
+//   - a per-call timeout and a maximum output size;
 //   - named lanes with concurrency limits (OpenClaw corrupts its own state
 //     under parallel CLI calls, so its lane runs one call at a time);
 //   - single flight by key, so identical concurrent reads share one child;
@@ -169,8 +168,6 @@ function createExec({
   function start(lane, job) {
     const startedAt = now();
     const queuedMs = startedAt - job.enqueuedAt;
-    // A call with a deadline spends what its queue wait left of it, never more.
-    if (job.deadlineMs !== null) job.timeoutMs = Math.max(1, Math.min(job.timeoutMs, job.deadlineMs - queuedMs));
     let slotHeld = true;
     const releaseSlot = () => {
       if (!slotHeld) return;
@@ -499,14 +496,12 @@ function createExec({
         env: options.env,
         timeoutMs: Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : defaultTimeoutMs,
         maxOutputBytes: Number(options.maxOutputBytes) > 0 ? Number(options.maxOutputBytes) : defaultMaxOutputBytes,
-        deadlineMs: Number(options.deadlineMs) > 0 ? Number(options.deadlineMs) : null,
         enqueuedAt: now(),
         resolve,
         settled: false,
         queueTimer: null,
       };
-      const laneWaitMs = Number(options.queueTimeoutMs) > 0 ? Number(options.queueTimeoutMs) : lane.queueTimeoutMs;
-      const queueTimeoutMs = job.deadlineMs === null ? laneWaitMs : Math.min(laneWaitMs, job.deadlineMs);
+      const queueTimeoutMs = Number(options.queueTimeoutMs) > 0 ? Number(options.queueTimeoutMs) : lane.queueTimeoutMs;
       lane.queue.push(job);
       if (lane.running >= lane.concurrency) {
         job.queueTimer = setTimeoutImpl(() => {

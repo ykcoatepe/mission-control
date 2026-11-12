@@ -353,8 +353,7 @@ test('the scheduled health reader reads the embed jobs when chunks wait, so the 
     'embed-catch-up:completed:default', 'embed-catch-up:failed:default', 'embed-catch-up:dead:default',
     'embed:waiting:default', 'embed-catch-up:waiting:default',
   ]);
-  assert.ok(listed.every((call) => call.options.json === false && call.options.deadlineMs <= 20_000 && call.options.timeoutMs <= call.options.deadlineMs),
-    'every read carries what is left of the one deadline, for its lane wait and its run together');
+  assert.ok(listed.every((call) => call.options.json === false && call.options.timeoutMs <= 10_000), 'bounded reads, parsed by the probe chain');
 
   // A failed latest job is an overdue cause, read from the same chain.
   world = sourcesWith({ missing: 3, listJobs: (params) => JSON.stringify(
@@ -378,72 +377,95 @@ test('the scheduled health reader reads the embed jobs when chunks wait, so the 
   assert.equal(world.calls.length, 1);
 });
 
-// The whole embed-job chain has ONE deadline. Every read is given the time left as the bound for its
-// lane wait AND its run together, so however slow the lane or the reads are, the chain cannot outlast it.
-test('the embed-job chain can never exceed its budget: every read is bounded by the time left, then the chain stops', async () => {
+// The embed-job chain has ONE deadline, kept on the caller's side: each read is awaited in a race
+// against the time left. Whatever the runner does (a read that joined a shared in-flight call, a child
+// that ignores termination, a full lane) the caller sees the chain end at the budget, as unavailable.
+function fakeTime(start = 1_000_000) {
+  const state = { now: start, timers: [] };
+  return {
+    state,
+    now: () => state.now,
+    setTimeoutImpl: (fn, ms) => { const timer = { fn, at: state.now + ms }; state.timers.push(timer); return timer; },
+    clearTimeoutImpl: (timer) => { const i = state.timers.indexOf(timer); if (i >= 0) state.timers.splice(i, 1); },
+    // Run the earliest timer, moving the clock to it. Returns false when there is none.
+    async step() {
+      await new Promise((resolve) => setImmediate(resolve));
+      const next = state.timers.sort((a, b) => a.at - b.at).shift();
+      if (!next) return false;
+      state.now = Math.max(state.now, next.at);
+      next.fn();
+      await new Promise((resolve) => setImmediate(resolve));
+      return true;
+    },
+  };
+}
+
+const { probeEmbedJobs } = require('../server/routes/gbrain/liveProbes');
+
+test('the embed-job chain never outlasts its budget for the caller, whatever the runner does', { timeout: 15_000 }, async () => {
   const BUDGET = 20_000;
-  for (const spend of [
-    (left) => left, // every read uses everything it is allowed (queue wait + run)
-    () => 2_999, // 2.999 s per read: the 7th starts with 2,006 ms left and must be given no more
-    (left, n) => (n < 3 ? 9_999 : left), // slow lane first, then hung
-    () => 1,
-  ]) {
-    let clock = 1_000_000;
-    const allowed = [];
-    const violations = []; // collected, not thrown: the reader swallows a read's error by design
-    const client = { run: async (args, options = {}) => {
-      if (args.includes('get_health')) return { page_count: 12, brain_score: 99, stale_pages: 0, missing_embeddings: 3, missing_embeddings_oldest_age_seconds: 30 };
-      // The runner's contract: lane wait + run together never exceed deadlineMs.
-      if (!(options.deadlineMs > 0 && options.timeoutMs <= options.deadlineMs)) {
-        violations.push(`read ${allowed.length + 1} has no deadline that also caps its run: ${JSON.stringify(options)}`);
-      }
-      // Without a deadline the lane wait (10 s) and the run (timeoutMs) are separate bounds.
-      const bound = options.deadlineMs > 0 ? options.deadlineMs : 10_000 + (options.timeoutMs ?? 45_000);
-      allowed.push(bound);
-      const used = Math.min(bound, spend(bound, allowed.length));
-      clock += used;
-      if (used >= bound) throw Object.assign(new Error('timeout'), { code: 'gbrain_timeout' });
-      return '[]';
-    } };
-    const { sources } = createGBrainSources({ client, now: () => clock, buildIntegrationRuntime: () => ({ systems: {}, readers: [] }), hermesProxyBaseUrl: 'invalid:' });
-    const started = clock;
-    await sources.health.refresh();
-    const elapsed = clock - started;
-    assert.deepEqual(violations, []);
-    assert.ok(elapsed <= BUDGET, `the chain took ${elapsed} ms of a ${BUDGET} ms budget`);
-    let left = BUDGET;
-    for (const deadline of allowed) {
-      assert.ok(deadline <= left, `a read was allowed ${deadline} ms with ${left} ms left`);
-      left -= Math.min(deadline, spend(deadline, allowed.indexOf(deadline) + 1));
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const shared = new Promise(() => {}); // an in-flight call another caller started; it never settles
+    const scenarios = {
+      // A child that ignores termination: the read never settles.
+      'a read that never settles': () => () => new Promise(() => {}),
+      // Every read joins the same shared in-flight call (single flight by key).
+      'reads that join a shared in-flight call': () => () => shared,
+      // Reads that settle long after the deadline, some by rejecting.
+      'reads that reject late': (time) => (n) => new Promise((_, reject) => { time.setTimeoutImpl(() => reject(new Error(`late ${n}`)), 60_000); }),
+      // Slow but working reads: 2,999 ms each; the 7th is cut at the budget.
+      'slow reads': (time) => () => new Promise((resolve) => { time.setTimeoutImpl(() => resolve({ ok: true, stdout: '[]' }), 2_999); }),
+      // The runner lies about time left and answers 9,999 ms later, twice, then hangs.
+      'two slow reads, then a hang': (time) => (n) => (n > 2 ? new Promise(() => {}) : new Promise((resolve) => { time.setTimeoutImpl(() => resolve({ ok: true, stdout: '[]' }), 9_999); })),
+    };
+    for (const [name, make] of Object.entries(scenarios)) {
+      const time = fakeTime();
+      const read = make(time);
+      let reads = 0;
+      const started = time.now();
+      let settled = null;
+      const chain = probeEmbedJobs(async () => read(reads += 1), null, null, { budgetMs: BUDGET, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl })
+        .then((result) => { settled = { result, at: time.now() }; });
+      while (!settled && await time.step()) { /* advance the fake clock timer by timer */ }
+      await chain;
+      assert.ok(settled, `${name}: the chain settled`);
+      assert.ok(settled.at - started <= BUDGET, `${name}: the caller waited ${settled.at - started} ms of a ${BUDGET} ms budget`);
+      assert.equal(settled.at - started, BUDGET, `${name}: it stopped exactly at the deadline`);
+      assert.deepEqual({ available: settled.result.available, pending: settled.result.pending }, { available: false, pending: true }, name);
+      // Late settlements after the caller has gone are handled, not unhandled.
+      while (await time.step()) { /* fire what is left */ }
     }
-    const metrics = sources.health.snapshot().data.metrics;
-    if (elapsed >= BUDGET || allowed.length < 8) assert.equal(metrics.embedJobProbeUnavailable, true, 'a chain cut short is unavailable, never clean');
-    else assert.equal(allowed.length, 8, 'a fast chain makes all eight reads');
-  }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, [], 'no late rejection is left unhandled');
+
+    // A fast chain is untouched: eight reads, available, and no deadline timer left behind.
+    const time = fakeTime();
+    let reads = 0;
+    const result = await probeEmbedJobs(async () => { reads += 1; return { ok: true, stdout: '[]' }; }, null, null,
+      { budgetMs: BUDGET, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl });
+    assert.equal(reads, 8); assert.equal(result.available, true); assert.deepEqual(time.state.timers, []);
+    // A runner that throws stops the chain as unavailable.
+    const thrown = await probeEmbedJobs(async () => { throw new Error('boom'); }, null, null, { budgetMs: BUDGET });
+    assert.equal(thrown.available, false);
+  } finally { process.off('unhandledRejection', onUnhandled); }
 });
 
-test('the gbrain client turns a deadline into one bound for the lane wait and the run; the core runner gives the run what the wait left', async () => {
-  const seen = [];
-  const client = createGBrainClient({ exec: { run: async (_bin, _args, options) => { seen.push(options); return { ok: true, stdout: '[]' }; } } });
-  await client.run(['call', 'list_jobs', '{}'], { json: false, timeoutMs: 4_000, deadlineMs: 4_000 });
-  assert.equal(seen[0].deadlineMs, 4_000); assert.equal(seen[0].timeoutMs, 4_000); assert.equal(seen[0].queueTimeoutMs, 4_000);
-  await client.run(['stats'], { json: false });
-  assert.equal(seen[1].deadlineMs, undefined); assert.equal(seen[1].queueTimeoutMs, 10_000);
-  const lateWait = createGBrainClient({ exec: { run: async () => ({ ok: false, timedOut: true, error: { code: 'queue_timeout' } }) } });
-  await assert.rejects(lateWait.run(['call', 'list_jobs', '{}'], { json: false, deadlineMs: 5 }), { code: 'gbrain_timeout' });
-
-  // The real runner, fake clock and timers: 1 slot; the second call waits 3 s of its 5 s deadline.
-  let now = 0; const timers = []; const children = [];
-  const runner = createExec({ now: () => now, lanes: { gbrain: { concurrency: 1 } },
-    setTimeoutImpl: (fn, ms) => { const t = { fn, at: now + ms, unref() {} }; timers.push(t); return t; },
-    clearTimeoutImpl: (t) => { const i = timers.indexOf(t); if (i >= 0) timers.splice(i, 1); },
-    execFileImpl: (_bin, _args, options, callback) => { children.push({ options, callback }); return { pid: 0, kill() {} }; } });
-  const first = runner.run('gbrain', ['a'], { lane: 'gbrain', timeoutMs: 60_000 });
-  const second = runner.run('gbrain', ['b'], { lane: 'gbrain', timeoutMs: 5_000, queueTimeoutMs: 5_000, deadlineMs: 5_000 });
-  assert.ok(timers.some((t) => t.at === 5_000), 'the lane wait is bounded by the deadline');
-  now = 3_000; children[0].callback(null, '[]', ''); await first;
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(children.length, 2, 'the second call started after 3 s in the queue');
-  assert.ok(timers.some((t) => t.at === 5_000) && !timers.some((t) => t.at === 8_000), 'its run may last 2 s, not another 5');
-  children[1].callback(null, '[]', ''); await second; runner.killAll();
+test('the scheduled health reader keeps the same deadline: a hung list_jobs read ends the reading at the budget, unavailable', { timeout: 15_000 }, async () => {
+  const time = fakeTime();
+  const client = { run: async (args) => {
+    if (args.includes('get_health')) return { page_count: 12, brain_score: 99, stale_pages: 0, missing_embeddings: 3, missing_embeddings_oldest_age_seconds: 30 };
+    return new Promise(() => {});
+  } };
+  const { sources } = createGBrainSources({ client, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl,
+    buildIntegrationRuntime: () => ({ systems: {}, readers: [] }), hermesProxyBaseUrl: 'invalid:' });
+  const started = time.now();
+  let done = false;
+  const refresh = sources.health.refresh().then(() => { done = true; });
+  while (!done && await time.step()) { /* advance */ }
+  await refresh;
+  assert.equal(time.now() - started, 20_000);
+  assert.equal(sources.health.snapshot().data.metrics.embedJobProbeUnavailable, true);
 });

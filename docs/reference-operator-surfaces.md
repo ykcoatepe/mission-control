@@ -140,7 +140,7 @@ going away is never worse.
 | system (GBrain verdict) | `gbrain:embed-job-probe` | chunks waiting |
 | system (GBrain verdict) | `gbrain:queue` | stalled jobs |
 | system (GBrain verdict) | `gbrain:gbrain-core`, `gbrain:stale-pages`, `gbrain:sources`, `gbrain:readers`, `gbrain:gbrain.<probe>`, `gbrain:<source id>`, `gbrain:<reader id>` | 1 |
-| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, every run of digits replaced by '#'>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
+| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, durations and clock values masked (a number with a time unit, "N ago", ISO and clock timestamps), every other number kept>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
 | system (GBrain, legacy overview) | `gbrain:stale-sources` | stale sources |
 | system (GBrain) | `gbrain:capabilities-unavailable`, `gbrain:unavailable` | 1 |
 | system (any) | `source:<source name>` (its read failed) | 1 |
@@ -153,6 +153,9 @@ going away is never worse.
   listed as new; when it is back at the acknowledged level or better, the acknowledgement applies
   again.** This is computed on every read; nothing about it is stored or scheduled. The system still
   adds at most one to the count.
+- A fingerprint holds at most 128 reasons and is never folded or cut: an item with more is listed as
+  new, is not ackable (`409 not_ackable`) and is held by no acknowledgement; the same goes for a
+  stored acknowledgement whose fingerprint is not well formed.
 - `shelve` silences until `until` (or until removed with `null`), except that a shelved item counts
   while its rank is critical.
 - GETs are pure: they read the stored records and the current readings and write nothing.
@@ -166,7 +169,8 @@ going away is never worse.
   data directory, one store instance per file per process, synchronous writes.
 - When the store file cannot be read or written, `/api/signals`, `/api/loops` and `/api/cron` carry
   `acks: { available: false, reason }`, nothing is treated as acknowledged, and POST/DELETE answer
-  `503 ack_store_unavailable` until a write succeeds again.
+  `503 ack_store_unavailable` until a write actually succeeds again (reading the file again, or a
+  request that changes nothing, never clears it).
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.

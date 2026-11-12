@@ -30,9 +30,10 @@
 // or older-version file starts empty; its content is copied to
 // acks.json.corrupt-<time> before the first write replaces it, and a write
 // that cannot keep that copy fails instead. When the file cannot be read
-// (permissions) or a write failed, the store is unavailable: available() is
-// false, nothing is treated as acknowledged and writes answer 503, until a
-// later write attempt finds it readable and writable again.
+// (permissions) or a write failed, the store is unavailable and stays so
+// until a later write actually SUCCEEDS (reading the file again never clears
+// it): available() is false, nothing is treated as acknowledged, and every
+// write that does not succeed answers 503.
 
 const fs = require('fs');
 const path = require('path');
@@ -112,35 +113,35 @@ function createAttentionAckStore({
   let closed = false;
   let seq = 0;
 
-  // Read the file into memory. Sets `failure` when it exists but cannot be read.
+  // Read the file into memory. Returns false when it exists but cannot be
+  // read. Never clears `failure`: only a successful write does.
   function load() {
     entries = new Map();
     corruptOnDisk = false;
-    failure = null;
     let text;
     try {
       const stat = fsImpl.statSync(file);
       if (stat.size > maxFileBytes) {
         corruptOnDisk = true;
-        return;
+        return true;
       }
       text = fsImpl.readFileSync(file, 'utf8');
     } catch (error) {
-      if (error?.code === 'ENOENT') return;
+      if (error?.code === 'ENOENT') return true;
       failure = 'ack_store_unreadable';
       logger?.error?.(`[attention-acks] the store cannot be read (${error?.code || 'error'}); acknowledgements are unavailable`);
-      return;
+      return false;
     }
     let parsed;
     try {
       parsed = JSON.parse(text);
     } catch {
       corruptOnDisk = true;
-      return;
+      return true;
     }
     if (!parsed || typeof parsed !== 'object' || parsed.version !== STORE_VERSION || !Array.isArray(parsed.acks)) {
       corruptOnDisk = true;
-      return;
+      return true;
     }
     for (const raw of parsed.acks.slice(0, maxEntries)) {
       const entry = validEntry(raw);
@@ -151,6 +152,7 @@ function createAttentionAckStore({
       entries.set(entry.key, entry);
     }
     if (parsed.acks.length > maxEntries) corruptOnDisk = true;
+    return true;
   }
 
   function persist() {
@@ -206,23 +208,31 @@ function createAttentionAckStore({
 
   // One write: memory and the file change together, or neither does.
   function write(change, current) {
-    if (closed) throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
-    // After a failure every write starts from the file again.
-    if (failure) load();
-    if (failure) throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
+    const refused = () => httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
+    if (closed) throw refused();
+    // After a failure every write starts from the file again; the failure
+    // itself stays until this write (or a later one) has reached the file.
+    const failed = failure !== null;
+    if (failed && !load()) throw refused();
     const before = new Map(entries);
     try {
       const nowMs = now();
       collect(current, nowMs);
       const value = change(nowMs);
       persist();
+      failure = null;
       return value;
     } catch (error) {
       entries = before;
-      if (error?.status && error?.code) throw error; // an httpError from change()
+      if (error?.status && error?.code) {
+        // A request that changes nothing (404, 409, 400) proves nothing about
+        // the file: while the store is failed it is still unavailable.
+        if (failed) throw refused();
+        throw error;
+      }
       failure = 'ack_store_unwritable';
       logger?.error?.(`[attention-acks] could not save (${error?.code || error?.message || error}); acknowledgements are unavailable`);
-      throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
+      throw refused();
     }
   }
 

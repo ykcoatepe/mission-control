@@ -64,7 +64,9 @@ Single-process assumption: one Mission Control process uses a data directory
 (as for the calendar and config files), so the store has no cross-process
 locking; one instance per file per process, synchronous atomic writes. When the
 file cannot be read or written, reads treat nothing as acknowledged, envelopes
-carry `acks: { available: false }` and writes answer 503.
+carry `acks: { available: false }` and writes answer 503, until a write
+actually succeeds. An item with more than 128 reasons is never held and not
+ackable (no folding).
 Contract: `docs/reference-operator-surfaces.md`.
 
 ## Worked example: OpenClaw status

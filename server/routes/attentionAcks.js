@@ -20,7 +20,7 @@
 const express = require('express');
 const { asyncHandler, httpError } = require('../core/http');
 const { validateAckRequest } = require('../services/attentionAcks');
-const { attentionItems, countedSystems, isAckKey, keyDomain, keyProject } = require('../sources/mloop/attention');
+const { attentionItems, countedSystems, isAcknowledgeable, isAckKey, keyDomain, keyProject } = require('../sources/mloop/attention');
 const { isRestrictedId, restrictedMarkers } = require('../sources/mloop/restricted');
 const { isFailedJob } = require('../sources/openclaw/automations');
 
@@ -95,6 +95,9 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
     if (!item) {
       if (current.listed.has(key)) throw httpError(409, 'not_ackable', 'That item does not need the operator now, so it cannot be acknowledged');
       throw httpError(404, 'ack_key_not_found', 'No attention item has that key');
+    }
+    if (!isAcknowledgeable(item)) {
+      throw httpError(409, 'not_ackable', 'That item has too many reasons to be acknowledged; it stays listed as new');
     }
     const ack = acks.set({ key, kind, until, fingerprint: item.fingerprint }, current);
     return res.json({ ok: true, key, ack });

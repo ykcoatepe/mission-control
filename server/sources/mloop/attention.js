@@ -210,11 +210,10 @@ const KEY_SHAPES = Object.freeze({
 // its reading was read).
 const KEY_DOMAINS = Object.freeze({ system: 'systems', finding: 'loops', confirmation: 'loops', cron: 'cron' });
 const HASH12 = /^[0-9a-f]{12}$/;
-// At most this many reason identities are kept in a fingerprint; the rest
-// are counted under MORE_REASONS, so a new reason beyond the limit still
-// raises a count and voids an acknowledgement.
+// At most this many reason identities fit a fingerprint. An item with more is
+// never folded or cut: its fingerprint is marked `overflow`, and an overflow
+// fingerprint is not acknowledgeable and is never held by an acknowledgement.
 const MAX_REASON_IDS = 128;
-const MORE_REASONS = '~more';
 const MAX_COUNT = Number.MAX_SAFE_INTEGER;
 
 function hash12(text) {
@@ -226,14 +225,25 @@ function subjectHash(text) {
   return hash12(typeof text === 'string' ? text : '');
 }
 
+// What only tells time in a free text: ISO and clock timestamps, a number
+// followed by a time unit, and "N ago". Nothing else is masked.
+const TIME_PATTERNS = Object.freeze([
+  /\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?/g,
+  /\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?(?:am|pm)\b)?/g,
+  /\b\d+(?:\.\d+)?\s?(?:ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\b/g,
+  /\b\d+(?:\.\d+)?\s+ago\b/g,
+]);
+
 /**
  * The reason id of a reason that has only free text and no semantic id:
- * `<prefix>:<12 hex>` of the text lower-cased, whitespace collapsed and every
- * run of digits replaced by '#'. A number that ticks ("waiting 5 minutes" ->
- * "6 minutes") keeps its id; a different message is a different reason.
+ * `<prefix>:<12 hex>` of the text lower-cased, whitespace collapsed, with
+ * durations and clock values masked (TIME_PATTERNS) and every other number
+ * kept. "waiting 5 minutes" and "waiting 6 minutes" are one reason; "job 1
+ * failed" and "job 2 failed", or "3 chunks" and "9 chunks", are different ones.
  */
 function textReasonId(prefix, text) {
-  const normalised = String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim().replace(/\d+/g, '#');
+  let normalised = String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
+  for (const pattern of TIME_PATTERNS) normalised = normalised.replace(pattern, '<time>');
   return `${prefix}:${hash12(normalised)}`;
 }
 
@@ -248,28 +258,36 @@ function fingerprintOf(rank, reasonCounts) {
     hashed.set(key, Math.min(MAX_COUNT, (hashed.get(key) || 0) + itemCount(n)));
   }
   const ids = [...hashed.keys()].sort();
-  const kept = ids.length > MAX_REASON_IDS ? ids.slice(0, MAX_REASON_IDS - 1) : ids;
-  const counts = Object.fromEntries(kept.map((id) => [id, hashed.get(id)]));
-  if (kept.length < ids.length) counts[MORE_REASONS] = ids.length - kept.length;
-  return { rank: Number.isInteger(rank) && rank >= 0 ? rank : 0, reasonIds: Object.keys(counts).sort(), counts };
+  const safeRank = Number.isInteger(rank) && rank >= 0 ? rank : 0;
+  // Too many reasons to compare faithfully: never folded, never cut.
+  if (ids.length > MAX_REASON_IDS) return { rank: safeRank, reasonIds: [], counts: {}, overflow: true };
+  return { rank: safeRank, reasonIds: ids, counts: Object.fromEntries(ids.map((id) => [id, hashed.get(id)])) };
+}
+
+/** Whether an item can be compared with an acknowledgement at all (a complete, well-formed fingerprint). */
+function isAcknowledgeable(item) {
+  return isFingerprint(item?.fingerprint);
 }
 
 function isFingerprint(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
   const { rank, reasonIds, counts } = value;
+  if (value.overflow !== undefined) return false; // an overflow fingerprint is never a comparable one
   if (!Number.isInteger(rank) || rank < 0 || !Array.isArray(reasonIds) || reasonIds.length > MAX_REASON_IDS) return false;
   if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return false;
   const keys = Object.keys(counts).sort();
   if (keys.length !== reasonIds.length || keys.some((key, index) => key !== reasonIds[index])) return false;
-  return keys.every((key) => (HASH12.test(key) || key === MORE_REASONS) && Number.isInteger(counts[key]) && counts[key] >= 1);
+  return keys.every((key) => HASH12.test(key) && Number.isInteger(counts[key]) && counts[key] >= 1);
 }
 
 /**
  * The one rule for "worse": why `current` is worse than the acknowledged
  * fingerprint ('rank' | 'reason' | 'count'), or null when it is not. A count
- * falling or a reason going away is never worse.
+ * falling or a reason going away is never worse. A fingerprint that is
+ * overflowed or malformed cannot be compared and is always worse ('overflow').
  */
 function worseThan(acknowledged, current) {
+  if (!isFingerprint(acknowledged) || !isFingerprint(current)) return 'overflow';
   if (current.rank > acknowledged.rank) return 'rank';
   for (const id of current.reasonIds) if (!Object.hasOwn(acknowledged.counts, id)) return 'reason';
   for (const id of current.reasonIds) if (current.counts[id] > acknowledged.counts[id]) return 'count';
@@ -581,7 +599,7 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
 
 module.exports = {
   CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, SYSTEM_SOURCES, KEY_MAX_LENGTH, NO_ACKS,
-  attentionItems, confirmationKey, countedSystems, cronItem, cronKey, findingItemKey, findingKey, fingerprintOf, isAckKey,
+  attentionItems, confirmationKey, countedSystems, cronItem, cronKey, findingItemKey, findingKey, fingerprintOf, isAckKey, isAcknowledgeable,
   isFingerprint, keyDomain, keyKind, keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator,
   textReasonId, worseThan,
 };
