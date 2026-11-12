@@ -11,7 +11,7 @@ const assert = require('node:assert/strict');
 
 const { buildOperationsOverview } = require('../server/services/operationsOverview');
 const { buildGBrainVerdict } = require('../server/sources/gbrain/verdict');
-const { attentionItems, countedSystems, fingerprintOf, worseThan } = require('../server/sources/mloop/attention');
+const { attentionItems, countedSystems, fingerprintOf, textReasonId, worseThan } = require('../server/sources/mloop/attention');
 
 const T0 = Date.parse('2026-11-12T10:00:00Z');
 const MINUTE = 60_000;
@@ -101,9 +101,9 @@ test('what is really worse changes the fingerprint, each in its own way; what is
   assert.equal(judge({ blocked: 0 }, 'system:hermes'), null);
   const noBlocked = fingerprints(reading(T0, { blocked: 0 }));
   assert.equal(worseThan(noBlocked['system:hermes'], base['system:hermes']), 'reason');
-  // Legacy caveats: their number is the count.
+  // Legacy caveats: each distinct caveat is its own reason.
   const legacy = fingerprints(reading(T0, { legacy: true }));
-  assert.equal(worseThan(legacy['system:gbrain'], fingerprints(reading(T0 + MINUTE, { legacy: true, extraCaveat: true }))['system:gbrain']), 'count');
+  assert.equal(worseThan(legacy['system:gbrain'], fingerprints(reading(T0 + MINUTE, { legacy: true, extraCaveat: true }))['system:gbrain']), 'reason');
   assert.equal(worseThan(legacy['system:gbrain'], fingerprints(reading(T0 + MINUTE, { legacy: true, staleSources: 3 }))['system:gbrain']), 'count');
   // Rank.
   assert.equal(worseThan(fingerprintOf(2, { a: 1 }), fingerprintOf(3, { a: 1 })), 'rank');
@@ -118,4 +118,13 @@ test('reason ids are stored hashed and never carry text; many reasons stay bound
   const many = (n) => fingerprintOf(2, Object.fromEntries(Array.from({ length: n }, (_, i) => [`reason:${i}`, 1])));
   assert.equal(many(400).reasonIds.length, 128);
   assert.ok(worseThan(many(400), many(401)), 'one more reason beyond the limit is still worse');
+});
+
+test('a reason with only free text gets its id from the text with numbers masked: a ticking number keeps it, another message changes it', () => {
+  const id = (text) => textReasonId('gbrain:legacy-caveat', text);
+  assert.match(id('Embedding unavailable for 5 minutes.'), /^gbrain:legacy-caveat:[0-9a-f]{12}$/);
+  assert.equal(id('Embedding unavailable for 5 minutes.'), id('embedding   UNAVAILABLE for 1234 minutes.\n'));
+  assert.equal(id('12 of 3400 chunks waiting since 09:41'), id('7 of 9 chunks waiting since 23:05'));
+  assert.notEqual(id('Embedding unavailable.'), id('Source sync failed.'));
+  assert.notEqual(id('Embedding unavailable for 5 minutes.'), id('Embedding unavailable for 5 hours.'));
 });

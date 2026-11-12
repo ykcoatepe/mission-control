@@ -549,7 +549,7 @@ describe('AttentionView: Acknowledge all', () => {
 describe('AttentionView: acknowledgements not read', () => {
   const UNREAD: LoopsData = {
     ...DATA,
-    acks: { available: false, reason: 'ack_store_owned' },
+    acks: { available: false, reason: 'ack_store_unreadable' },
     attention: [
       ...DATA.attention.map((item) => ('ack' in item ? { ...item, ack: null } : item)),
       {

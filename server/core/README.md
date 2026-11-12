@@ -53,16 +53,19 @@ invalid file kept as `.corrupt-<time>`). Keys and fingerprints
 `server/sources/mloop/attention.js` (`attentionItems()`);
 `needsOperator({ ..., acks })`, `loopsView(..., { acks })` and
 `projectCronAcks(cron, acks)` (`sources/openclaw/automations.js`) apply it on
-read: pure, no write, no memory. Writes are `POST /api/attention/acks` and
-`DELETE /api/attention/acks/:key` (`server/routes/attentionAcks.js`), guarded
-and audited like every mutation, plus one non-request path: the scheduler job
-`attention.acks` (`acks.reconcile()`, after every refresh of a contributing
-source via `source.onRefresh()` and every 5 s), the only place a void is
-decided; it writes the tombstone before it returns. One process owns the file
-(`acks.json.owner`: pid + process start time, never displaced while alive, no
-time-based takeover); `runtime.start()` opens the store, and while it cannot be
-owned reads treat nothing as acknowledged and envelopes carry
-`acks: { available: false }`. Contract: `docs/reference-operator-surfaces.md`.
+read. Holding is a pure function, computed on every read: **while an item is
+worse than what was acknowledged it counts as new, and when it is back at the
+acknowledged level or better the acknowledgement applies again.** Nothing is
+scheduled and nothing about a void is stored. The only writers are
+`POST /api/attention/acks` and `DELETE /api/attention/acks/:key`
+(`server/routes/attentionAcks.js`), guarded and audited like every mutation;
+they also collect acknowledgements whose item has been absent for 7 days.
+Single-process assumption: one Mission Control process uses a data directory
+(as for the calendar and config files), so the store has no cross-process
+locking; one instance per file per process, synchronous atomic writes. When the
+file cannot be read or written, reads treat nothing as acknowledged, envelopes
+carry `acks: { available: false }` and writes answer 503.
+Contract: `docs/reference-operator-surfaces.md`.
 
 ## Worked example: OpenClaw status
 

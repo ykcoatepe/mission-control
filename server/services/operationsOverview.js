@@ -1,6 +1,7 @@
 const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
 const { STATE_RANK, worstState, stateRank } = require('../core/state');
 const { scrubText } = require('../core/scrub');
+const { textReasonId } = require('../sources/mloop/attention');
 const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 // The one place screen links are chosen. Every value must be a screen that
@@ -730,13 +731,13 @@ function adaptGBrain(overview, generatedAt) {
     '/api/gbrain/overview',
     detailHref('gbrain'),
   ) : null;
-  // Legacy caveats are free text with no element id. Text is never an
-  // identity (a caveat that says "waiting 5 minutes" changes every minute), so
-  // they share one reason id and their number is its count: one more caveat
-  // voids an acknowledgement, a reworded one does not.
+  // Legacy caveats are free text with no element id: each distinct caveat is
+  // one reason, identified by its text with every number masked
+  // (textReasonId), so "waiting 5 minutes" -> "6 minutes" is the same reason
+  // and a different message is a new one.
   const attention = caveats.map((detail, index) => ({
     id: `gbrain:caveat:${index}`,
-    reasonId: 'gbrain:legacy-caveat',
+    reasonId: textReasonId('gbrain:legacy-caveat', detail),
     system: 'gbrain',
     severity: state === 'critical' ? 'critical' : 'warning',
     reasonCode: 'gbrain_active_caveat',

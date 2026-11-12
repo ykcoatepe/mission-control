@@ -5,10 +5,12 @@
 // restricted. An acknowledgement is void when the item gets worse (severity
 // or count rises); a shelve holds until `until` passes or the item becomes
 // critical. Restricted items are never counted and never ackable. The store
-// is a 0600 JSON file in the data directory, written atomically, owned by one
-// process; GET never writes. A void is a tombstone written by the scheduler's
-// reconcile (the `attention.acks` job), never by a request. Fake exec, fake
-// overview, fake automations; no real CLI.
+// is a 0600 JSON file in the data directory, written atomically by POST and
+// DELETE only; GET never writes. Whether an acknowledgement holds is computed
+// on every read from the stored fingerprint and the item as it is now: a worse
+// item counts as new, and the acknowledgement applies again when the item is
+// back at the acknowledged level (intended). Fake exec, fake overview, fake
+// automations; no real CLI.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -21,8 +23,7 @@ const { createApp } = require('../server/app');
 const { loadConfig } = require('../server/core/config');
 const { createMloopSource } = require('../server/sources/mloop');
 const { buildOperationsOverview } = require('../server/services/operationsOverview');
-const { createAttentionAckStore, runnerProcessInfo, AckStoreUnavailableError } = require('../server/services/attentionAcks');
-const { createExec } = require('../server/core/exec');
+const { createAttentionAckStore } = require('../server/services/attentionAcks');
 const { withLiveLoop } = require('./helpers/liveLoop');
 
 const T0 = Date.parse('2026-11-12T10:00:00Z');
@@ -52,12 +53,7 @@ function cronJob(id, { enabled = true, status = 'ok' } = {}) {
   };
 }
 
-// A process identity for the store: `table` maps pid -> start time (absent = no such process).
-const identity = (pid, table) => ({ pid, startTime: (other) => (Object.hasOwn(table, other) ? table[other] : null) });
-const realExec = createExec();
-
-// processInfo: the identity the ack store runs under (default: a fixed one for this process).
-function fixture({ storeContent, rootDir: reuseDir, state: carried, processInfo } = {}) {
+function fixture({ storeContent, rootDir: reuseDir, state: carried } = {}) {
   const rootDir = reuseDir || fs.mkdtempSync(path.join(os.tmpdir(), 'mc-acks-'));
   fs.writeFileSync(path.join(rootDir, 'mc-config.json'), JSON.stringify({ name: 'Acks Test', gateway: { port: 1, token: '' }, modules: {} }));
   fs.writeFileSync(path.join(rootDir, 'package.json'), '{"version":"test"}');
@@ -132,9 +128,6 @@ function fixture({ storeContent, rootDir: reuseDir, state: carried, processInfo 
     fetch: async () => { throw new Error('No network'); },
     logger: silent,
     scheduler: { register(target) { jobs.set(target.id, target); }, start() {}, stop() {}, status: () => ({ jobs: [] }) },
-    // The identity the ack store owns its file under. 'system' = the real one,
-    // read with ps through a real runner (the fixture's exec is a fake).
-    processInfo: processInfo === 'system' ? runnerProcessInfo(realExec) : processInfo || identity(process.pid, { [process.pid]: 'test start' }),
     services: {
       operationsOverviewService: overview,
       usageService: { summary: () => ({ data: null, meta: {} }), dispose() {} },
@@ -149,8 +142,6 @@ function fixture({ storeContent, rootDir: reuseDir, state: carried, processInfo 
   let server;
   let port;
   async function start() {
-    // The app opens the ack store when it starts (never while building, never in a request).
-    await app.locals.runtime.start();
     await loops.refresh();
     server = app.listen(0, '127.0.0.1');
     await new Promise((resolve) => server.once('listening', resolve));
@@ -240,11 +231,8 @@ const finding = (project, code, subject, severity = 'warning', extra = {}) => ({
 const attentionRow = (loops, code) => loops.attention.find((item) => item.code === code);
 const stored = (f) => JSON.parse(fs.readFileSync(f.storeFile, 'utf8')).acks;
 const storeKeys = (f) => stored(f).map((entry) => entry.key).sort();
-// Keys whose acknowledgement is live (not a tombstone).
-const liveKeys = (f) => stored(f).filter((entry) => entry.voidedAt === null).map((entry) => entry.key).sort();
-const tombstones = (f) => Object.fromEntries(stored(f).filter((entry) => entry.voidedAt !== null).map((entry) => [entry.key, entry.voidReason]));
-// The scheduler's reconcile, the way it runs after the readings refresh.
-const reconcile = (f) => f.runJob('attention.acks');
+// The stored records hold the acknowledgement and its fingerprint, nothing about voids.
+const RECORD_FIELDS = ['absentSince', 'at', 'fingerprint', 'id', 'key', 'kind', 'until'];
 
 test('ack removes an item from the count and adds it to standing; unack brings it back', () => run({}, async (f) => {
   f.state.systems.hermes = system('hermes', 'warning');
@@ -288,31 +276,32 @@ test('ack removes an item from the count and adds it to standing; unack brings i
   assert.equal((fs.statSync(f.storeFile).mode & 0o777), 0o600, 'the store file is 0600');
 }));
 
-test('a severity rise voids an acknowledgement, and it stays void when the severity falls back', () => run({}, async (f) => {
+test('worse than acknowledged counts as new; back at the acknowledged level the acknowledgement applies again (intended)', () => run({}, async (f) => {
   f.state.systems.hermes = system('hermes', 'warning');
   assert.equal((await f.ack('system:hermes')).status, 200);
   assert.equal((await f.both()).signals.attention.count, 0);
+  const before = fs.readFileSync(f.storeFile, 'utf8');
 
   f.state.systems.hermes = system('hermes', 'critical');
   let { signals, loops } = await f.both();
-  assert.equal(signals.attention.count, 1, 'worse than acknowledged: counts again, before any reconcile');
+  assert.equal(signals.attention.count, 1, 'worse than acknowledged: counts as new');
   assert.equal(signals.attention.worst, 'critical');
   assert.equal(signals.attention.standing, 0);
-  assert.equal(loops.systems.find((entry) => entry.id === 'hermes').ack, null);
-  await reconcile(f);
-  assert.deepEqual(tombstones(f), { 'system:hermes': 'rank' }, 'the reconcile wrote the void as a tombstone');
+  assert.equal(loops.systems.find((entry) => entry.id === 'hermes').ack, null, 'and is shown as new');
 
   f.state.systems.hermes = system('hermes', 'warning');
-  await reconcile(f);
-  ({ signals } = await f.both());
-  assert.equal(signals.attention.count, 1, 'a voided acknowledgement does not come back');
+  ({ signals, loops } = await f.both());
+  assert.equal(signals.attention.count, 0, 'back at the acknowledged level: the acknowledgement applies again');
+  assert.equal(signals.attention.standing, 1);
+  assert.equal(loops.systems.find((entry) => entry.id === 'hermes').ack.kind, 'ack');
 
-  assert.equal((await f.ack('system:hermes')).status, 200, 'the operator can acknowledge again');
-  assert.deepEqual(tombstones(f), {}, 'which replaces the tombstone');
-  assert.equal((await f.both()).signals.attention.count, 0);
+  assert.equal(fs.readFileSync(f.storeFile, 'utf8'), before, 'nothing about it was written');
+  assert.deepEqual(Object.keys(stored(f)[0]).sort(), RECORD_FIELDS);
+  assert.ok(!f.jobIds().includes('attention.acks'), 'no scheduled job decides anything');
 }));
 
-test('a count rise voids an acknowledgement', () => run({}, async (f) => {
+
+test('a count above the acknowledged one counts as new; at or below it the acknowledgement holds', () => run({}, async (f) => {
   f.state.checkRows = [finding('alpha', 'BINDING_DEAD', 'BINDING_DEAD', 'warning', { count: 3 })];
   await f.loops.refresh();
   const { loops } = await f.both();
@@ -326,9 +315,15 @@ test('a count rise voids an acknowledgement', () => run({}, async (f) => {
 
   f.state.checkRows = [finding('alpha', 'BINDING_DEAD', 'BINDING_DEAD', 'warning', { count: 5 })];
   await f.loops.refresh();
-  const { signals } = await f.both();
+  let { signals } = await f.both();
   assert.equal(signals.attention.count, 1);
   assert.equal(signals.attention.standing, 0);
+
+  f.state.checkRows = [finding('alpha', 'BINDING_DEAD', 'BINDING_DEAD', 'warning', { count: 2 })];
+  await f.loops.refresh();
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.count, 0, 'fewer than acknowledged: the acknowledgement applies again');
+  assert.equal(signals.attention.standing, 1);
 }));
 
 test('an overdue confirmation can be acknowledged; more overdue confirmations count as new', () => run({}, async (f) => {
@@ -372,7 +367,7 @@ test('a shelve holds until `until` passes, then the item counts again', () => ru
   assert.equal(past.body.error.code, 'invalid_until');
 }));
 
-test('a shelved item that becomes critical counts again', () => run({}, async (f) => {
+test('a shelved item counts while it is critical, and is silent again when it is no longer critical', () => run({}, async (f) => {
   f.state.checkRows = [finding('alpha', 'ESCALATED_ROUNDS', 'P1', 'warning')];
   await f.loops.refresh();
   const key = attentionRow(await f.loopsData(), 'ESCALATED_ROUNDS').key;
@@ -381,11 +376,25 @@ test('a shelved item that becomes critical counts again', () => run({}, async (f
 
   f.state.checkRows = [finding('alpha', 'ESCALATED_ROUNDS', 'P1', 'error')];
   await f.loops.refresh();
-  const { signals } = await f.both();
+  let { signals, loops } = await f.both();
   assert.equal(signals.attention.count, 1);
   assert.equal(signals.attention.worst, 'critical');
   assert.equal(signals.attention.standing, 0);
+  assert.equal(attentionRow(loops, 'ESCALATED_ROUNDS').ack, null);
+
+  f.state.checkRows = [finding('alpha', 'ESCALATED_ROUNDS', 'P1', 'warning')];
+  await f.loops.refresh();
+  ({ signals, loops } = await f.both());
+  assert.equal(signals.attention.count, 0, 'no longer critical: the shelve holds again');
+  assert.equal(signals.attention.standing, 1);
+  assert.equal(attentionRow(loops, 'ESCALATED_ROUNDS').ack.kind, 'shelve');
+
+  // A shelve ignores counts and reasons: only critical breaks through.
+  f.state.checkRows = [finding('alpha', 'ESCALATED_ROUNDS', 'P1', 'warning', { count: 9 })];
+  await f.loops.refresh();
+  assert.equal((await f.both()).signals.attention.count, 0);
 }));
+
 
 test('restricted items are never counted, never keyed and never ackable', () => run({}, async (f) => {
   f.state.checkRows = [
@@ -502,48 +511,34 @@ test('GET never writes, not even when an acknowledged item got worse', () => run
   for (const url of ['/api/signals', '/api/loops', '/api/cron', '/api/signals', '/api/loops']) await f.get(url);
   assert.equal((await f.signals()).attention.count, 1);
   assert.deepEqual(treeState(f.rootDir), before);
-  assert.deepEqual(tombstones(f), {}, 'no GET decided a void');
 }));
 
-test('an acknowledgement for an item that is gone is removed after 7 days absent, not at once', () => run({}, async (f) => {
+test('an acknowledgement for an item that is gone is dropped after 7 days absent, and only by a write', () => run({}, async (f) => {
   f.state.systems.hermes = system('hermes', 'warning');
-  assert.equal((await f.ack('system:hermes')).status, 200);
-  f.clock.ms = T0 + DAY;
-  await reconcile(f); // last seen needing the operator on day 1
-  f.state.systems.hermes = system('hermes', 'healthy');
-  f.clock.ms = T0 + 2 * DAY;
-  await reconcile(f);
-  assert.deepEqual(storeKeys(f), ['system:hermes'], 'one day absent: kept (items flap)');
-
-  f.state.systems.hermes = system('hermes', 'warning');
-  const { signals } = await f.both();
-  assert.equal(signals.attention.count, 0, 'it came back at the same level: still acknowledged');
-  f.state.systems.hermes = system('hermes', 'healthy');
-
-  f.clock.ms = T0 + 7 * DAY;
-  await reconcile(f);
-  assert.deepEqual(storeKeys(f), ['system:hermes'], 'last seen on day 1, now day 7: not yet 7 days absent');
-  f.clock.ms = T0 + 8 * DAY + HOUR;
-  await reconcile(f);
-  assert.deepEqual(storeKeys(f), [], 'absent for more than 7 days: collected');
-}));
-
-test('a tombstone is collected with its item, and an expired shelve is dropped by the reconcile', () => run({}, async (f) => {
-  f.state.systems.hermes = system('hermes', 'warning');
+  f.state.systems.gbrain = system('gbrain', 'warning');
   f.state.systems.openclaw = system('openclaw', 'warning');
   assert.equal((await f.ack('system:hermes')).status, 200);
   assert.equal((await f.ack('system:openclaw', 'shelve', new Date(T0 + HOUR).toISOString())).status, 200);
-  f.state.systems.hermes = system('hermes', 'critical');
-  await reconcile(f);
-  assert.deepEqual(tombstones(f), { 'system:hermes': 'rank' });
   f.state.systems.hermes = system('hermes', 'healthy');
-  f.clock.ms = T0 + 2 * HOUR;
-  await reconcile(f);
-  assert.deepEqual(storeKeys(f), ['system:hermes'], 'the shelve ran out and is gone; the tombstone stays while the item may return');
-  f.clock.ms = T0 + 8 * DAY;
-  await reconcile(f);
-  assert.deepEqual(storeKeys(f), []);
+  f.clock.ms = T0 + DAY;
+  assert.equal((await f.ack('system:gbrain')).status, 200); // a write: hermes is seen absent from now
+  assert.deepEqual(storeKeys(f), ['system:gbrain', 'system:hermes'], 'absent: kept (items flap); the shelve that ran out is gone');
+
+  f.state.systems.hermes = system('hermes', 'warning');
+  assert.equal((await f.both()).signals.attention.breakdown.systems, 1, 'it came back at the same level: still acknowledged (openclaw counts)');
+  f.state.systems.hermes = system('hermes', 'healthy');
+
+  f.clock.ms = T0 + 7 * DAY;
+  const tree = treeState(f.rootDir);
+  await f.both();
+  assert.deepEqual(treeState(f.rootDir), tree, 'a read collects nothing');
+  assert.equal((await f.request('DELETE', '/api/attention/acks/system%3Agbrain')).status, 200);
+  assert.deepEqual(storeKeys(f), ['system:hermes'], 'absent since day 1, now day 7: not yet 7 days');
+  f.clock.ms = T0 + 8 * DAY + HOUR;
+  assert.equal((await f.ack('system:gbrain')).status, 200);
+  assert.deepEqual(storeKeys(f), ['system:gbrain'], 'absent for more than 7 days: dropped by this write');
 }));
+
 
 test('cron: every job carries ackKey and ack; failed splits into failed and standingFailed', () => run({}, async (f) => {
   f.state.cron = [
@@ -573,35 +568,12 @@ test('cron: every job carries ackKey and ack; failed splits into failed and stan
   assert.equal(disabled.status, 409, 'a disabled job is not counted, so not ackable');
 }));
 
-// --- restart, reason identity, full-subject keys, ownership ---
+// --- restart, reason identity, full-subject keys ---
 
-const { execFileSync } = require('node:child_process');
-const ACKS_MODULE = path.join(__dirname, '..', 'server', 'services', 'attentionAcks.js');
-const EXEC_MODULE = path.join(__dirname, '..', 'server', 'core', 'exec.js');
-const { fingerprintOf } = require('../server/sources/mloop/attention');
 
-test('a void is written by the scheduled reconcile and never revives after a restart', () => run({}, async (f) => {
+test('an acknowledgement still holds after a restart', () => run({}, async (f) => {
   f.state.systems.hermes = system('hermes', 'warning');
   assert.equal((await f.ack('system:hermes')).status, 200);
-  f.state.systems.hermes = system('hermes', 'critical');
-  assert.ok(f.jobIds().includes('attention.acks'), 'the reconcile is a scheduler job');
-  await reconcile(f);
-  assert.deepEqual(liveKeys(f), [], 'the reconcile (not a request) wrote the void');
-  assert.deepEqual(tombstones(f), { 'system:hermes': 'rank' });
-  f.state.systems.hermes = system('hermes', 'warning');
-  await f.stop();
-  const g = await restarted(f);
-  try {
-    const { signals } = await g.both();
-    assert.equal(signals.attention.count, 1, 'back at the acknowledged level after a restart: still void');
-    assert.equal(signals.attention.standing, 0);
-  } finally { await g.stop(); }
-}));
-
-test('an acknowledgement still holds after a clean restart when nothing got worse', () => run({}, async (f) => {
-  f.state.systems.hermes = system('hermes', 'warning');
-  assert.equal((await f.ack('system:hermes')).status, 200);
-  await f.runJob('attention.acks');
   await f.stop();
   const g = await restarted(f);
   try {
@@ -611,125 +583,14 @@ test('an acknowledgement still holds after a clean restart when nothing got wors
   } finally { await g.stop(); }
 }));
 
-// --- finding A: a void never comes back, whatever happens to the process ---
+// --- the store: one instance, unreadable / unwritable -----------------------
 
-test('A: a void survives a crash, and a reused pid does not bring it back', () => withLiveLoop(async () => {
-  const procs = { 4242: 'Thu Nov 12 09:00:00 2026' };
-  const f = fixture({ processInfo: identity(4242, procs) });
-  let g = null;
-  try {
-    await f.start();
-    f.state.systems.hermes = system('hermes', 'warning');
-    assert.equal((await f.ack('system:hermes')).status, 200);
-    f.state.systems.hermes = system('hermes', 'critical');
-    await reconcile(f);
-    assert.deepEqual(tombstones(f), { 'system:hermes': 'rank' }, 'the void is on disk the moment it is decided');
-    f.state.systems.hermes = system('hermes', 'warning');
-    // The process dies here: no dispose, no final write, its owner file stays.
-    // Its pid is reused by an unrelated process (same pid, another start time).
-    procs[4242] = 'Thu Nov 12 11:30:00 2026';
-    procs[5151] = 'Thu Nov 12 11:31:00 2026';
-    g = fixture({ rootDir: f.rootDir, state: f.state, processInfo: identity(5151, procs) });
-    await g.start();
-    const { signals } = await g.both();
-    assert.equal(signals.acks.available, true, 'the dead owner was replaced');
-    assert.equal(signals.attention.count, 1, 'the voided acknowledgement does not hold again');
-    assert.equal(signals.attention.standing, 0);
-    await reconcile(g);
-    assert.deepEqual(tombstones(g), { 'system:hermes': 'rank' }, 'and it is still a tombstone after the new process reconciled');
-  } finally {
-    if (g) await g.stop();
-    await f.cleanup();
-  }
+test('one store per file per process: a second instance on the same file is refused', () => run({}, async (f) => {
+  assert.throws(() => createAttentionAckStore({ file: f.storeFile, logger: silent }), /already open/);
 }));
 
-test('A: nothing about a void lives in memory only (a store reading the same file agrees at once)', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-acks-a-'));
-  try {
-    const file = path.join(dir, 'acks.json');
-    const procs = { 1: 's1' };
-    const store = await createAttentionAckStore({ file, now: () => T0, logger: silent, processInfo: identity(1, procs) });
-    const item = (rank, counts = { x: 1 }) => ({ key: 'system:hermes', fingerprint: fingerprintOf(rank, counts) });
-    store.set({ key: 'system:hermes', kind: 'ack', fingerprint: item(2).fingerprint });
-    assert.equal(store.resolve(item(3)).holds, false, 'worse now: does not hold in this answer');
-    assert.equal(store.resolve(item(2)).holds, true, 'a read decided nothing: no reconcile saw it worse');
-    const current = { countable: new Map([['system:hermes', item(3)]]), domains: new Set(['systems']) };
-    assert.deepEqual(store.reconcile(current), { voided: ['system:hermes'], wrote: true });
-    assert.equal(store.resolve(item(2)).holds, false);
-    // The process is gone without closing; another one takes the file over.
-    delete procs[1];
-    procs[2] = 's2';
-    const next = await createAttentionAckStore({ file, now: () => T0, logger: silent, processInfo: identity(2, procs) });
-    assert.equal(next.resolve(item(2)).holds, false, 'the tombstone was read from the file');
-    assert.equal(next.list()[0].voidReason, 'rank');
-    next.close();
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-// --- finding C: one owner, never displaced by time --------------------------
-
-test('C: a live owner is never displaced, however old its claim is; nothing it writes is lost', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-acks-c-'));
-  try {
-    const file = path.join(dir, 'acks.json');
-    const procs = { 1: 's1', 2: 's2' };
-    let ms = T0;
-    const owner = await createAttentionAckStore({ file, now: () => ms, logger: silent, processInfo: identity(1, procs) });
-    const fp = fingerprintOf(2, { x: 1 });
-    owner.set({ key: 'system:gbrain', kind: 'ack', fingerprint: fp });
-    // A day later the owner file is as old as it gets; the owner is still running.
-    ms = T0 + DAY;
-    fs.utimesSync(`${file}.owner`, new Date(T0 - 30 * DAY), new Date(T0 - 30 * DAY));
-    await assert.rejects(
-      createAttentionAckStore({ file, now: () => ms, logger: silent, processInfo: identity(2, procs) }),
-      (error) => error instanceof AckStoreUnavailableError && error.code === 'ack_store_owned',
-    );
-    owner.set({ key: 'system:hermes', kind: 'ack', fingerprint: fp });
-    assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).acks.map((entry) => entry.key).sort(), ['system:gbrain', 'system:hermes']);
-    assert.deepEqual(fs.readdirSync(dir).sort(), ['acks.json', 'acks.json.owner'], 'no lock, temp or stale file');
-    assert.equal(fs.statSync(file).mode & 0o777, 0o600);
-    assert.equal(fs.statSync(`${file}.owner`).mode & 0o777, 0o600);
-
-    // An owner whose liveness cannot be told, or whose record cannot be read, is not displaced either.
-    const cannotTell = { pid: 2, startTime: (pid) => { if (pid === 1) throw new Error('ps failed'); return 's2'; } };
-    await assert.rejects(createAttentionAckStore({ file, logger: silent, processInfo: cannotTell }), { code: 'ack_store_owned' });
-    owner.close();
-    assert.equal(fs.existsSync(`${file}.owner`), false, 'a clean close releases the file');
-    fs.writeFileSync(`${file}.owner`, 'not json');
-    await assert.rejects(createAttentionAckStore({ file, logger: silent, processInfo: identity(2, procs) }), { code: 'ack_store_owned' });
-    fs.rmSync(`${file}.owner`);
-
-    // Stale: the pid is gone, or the same pid is a different process.
-    for (const table of [{ 2: 's2' }, { 1: 'another start', 2: 's2' }]) {
-      fs.writeFileSync(`${file}.owner`, JSON.stringify({ pid: 1, startTime: 's1', token: 'a'.repeat(24), at: new Date(T0).toISOString() }));
-      const taken = await createAttentionAckStore({ file, now: () => ms, logger: silent, processInfo: identity(2, table) });
-      assert.equal(taken.resolve({ key: 'system:hermes', fingerprint: fp }).holds, true, 'the new owner reads what the old one wrote');
-      taken.close();
-    }
-    // A process that cannot identify itself cannot own the file.
-    await assert.rejects(createAttentionAckStore({ file, logger: silent, processInfo: identity(9, {}) }), { code: 'ack_store_identity_unknown' });
-  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
-});
-
-test('C: a second process cannot open the store while this one runs (real pids and start times)', () => run({ processInfo: 'system' }, async (f) => {
-  f.state.systems.gbrain = system('gbrain', 'warning');
-  assert.equal((await f.ack('system:gbrain')).status, 200);
-  const before = fs.readFileSync(f.storeFile, 'utf8');
-  assert.deepEqual((await f.signals()).acks, { available: true, reason: null }, 'this process owns the store under its real identity');
-  const out = execFileSync(process.execPath, ['-e', `
-    const { createAttentionAckStore, runnerProcessInfo } = require(${JSON.stringify(ACKS_MODULE)});
-    const { createExec } = require(${JSON.stringify(EXEC_MODULE)});
-    createAttentionAckStore({ file: process.argv[1], logger: { warn() {}, error() {} }, processInfo: runnerProcessInfo(createExec()) })
-      .then(() => 'opened', (error) => error.code).then((line) => { console.log(line); process.exit(0); });
-  `, f.storeFile], { encoding: 'utf8', timeout: 20_000 });
-  assert.equal(out.trim(), 'ack_store_owned');
-  assert.equal(fs.readFileSync(f.storeFile, 'utf8'), before, 'the other process changed nothing');
-  assert.equal((await f.both()).signals.attention.standing, 1);
-}));
-
-test('acks unavailable: reads treat nothing as acknowledged, the envelope says so, writes are refused; it recovers when the owner stops', () => withLiveLoop(async () => {
-  const procs = { 1: 's1', 2: 's2' };
-  const f = fixture({ processInfo: identity(1, procs) });
+test('the store file cannot be read: acks unavailable, nothing treated as acknowledged, writes answer 503', () => withLiveLoop(async () => {
+  const f = fixture({});
   let g = null;
   try {
     await f.start();
@@ -738,38 +599,69 @@ test('acks unavailable: reads treat nothing as acknowledged, the envelope says s
     assert.equal((await f.ack('system:hermes')).status, 200);
     assert.equal((await f.ack('cron:openclaw:j1')).status, 200);
     assert.deepEqual((await f.signals()).acks, { available: true, reason: null });
+    assert.equal((await f.both()).signals.attention.standing, 1);
+    await f.stop();
 
-    g = fixture({ rootDir: f.rootDir, state: f.state, processInfo: identity(2, procs) });
+    // The file is there but cannot be read as a file (works for any user, root included).
+    const kept = `${f.storeFile}.kept`;
+    fs.renameSync(f.storeFile, kept);
+    fs.mkdirSync(f.storeFile);
+    g = fixture({ rootDir: f.rootDir, state: f.state });
     await g.start();
     const { signals, loops } = await g.both();
-    assert.deepEqual(signals.acks, { available: false, reason: 'ack_store_owned' });
-    assert.deepEqual(loops.acks, { available: false, reason: 'ack_store_owned' });
+    assert.deepEqual(signals.acks, { available: false, reason: 'ack_store_unreadable' });
+    assert.deepEqual(loops.acks, signals.acks);
     assert.equal(signals.attention.count, 1, 'not "everything acknowledged": the item counts');
     assert.equal(signals.attention.standing, 0);
     assert.equal(signals.automations.failed, 1);
+    assert.equal(signals.automations.standingFailed, 0);
     const cron = await g.cron();
-    assert.deepEqual(cron.acks, { available: false, reason: 'ack_store_owned' });
+    assert.deepEqual(cron.acks, signals.acks);
     assert.equal(cron.jobs[0].ack, null);
     const refused = await g.ack('system:hermes');
     assert.equal(refused.status, 503);
     assert.equal(refused.body.error.code, 'ack_store_unavailable');
     assert.equal((await g.request('DELETE', '/api/attention/acks/system%3Ahermes')).status, 503);
-    await reconcile(g);
-    assert.equal((await g.signals()).acks.available, false, 'still owned: a reconcile does not take it');
-    assert.equal((await f.both()).signals.attention.standing, 1, 'the owner is untouched');
+    assert.equal(fs.statSync(g.storeFile).isDirectory(), true, 'nothing was overwritten');
 
-    await f.stop();
-    await reconcile(g);
+    // Readable again: the next write reads the file first, and what was stored holds as before.
+    fs.rmdirSync(g.storeFile);
+    fs.renameSync(kept, g.storeFile);
+    g.state.systems.gbrain = system('gbrain', 'warning');
+    assert.equal((await g.ack('system:gbrain')).status, 200);
     const after = await g.both();
-    assert.deepEqual(after.signals.acks, { available: true, reason: null }, 'the owner stopped: the next reconcile opens the store');
-    assert.equal(after.signals.attention.standing, 1);
+    assert.deepEqual(after.signals.acks, { available: true, reason: null });
+    assert.equal(after.signals.attention.standing, 2);
+    assert.deepEqual(storeKeys(g), ['cron:openclaw:j1', 'system:gbrain', 'system:hermes']);
   } finally {
     if (g) await g.stop();
     await f.cleanup();
   }
 }));
 
-test('a system acknowledgement covers the reasons it was given for: a new or different reason voids it, a reason going away does not', () => run({}, async (f) => {
+test('the store file cannot be written: the write answers 503, acks are unavailable until a write succeeds', { skip: process.getuid?.() === 0 }, () => run({}, async (f) => {
+  f.state.systems.hermes = system('hermes', 'warning');
+  f.state.systems.gbrain = system('gbrain', 'warning');
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  const dir = path.dirname(f.storeFile);
+  fs.chmodSync(dir, 0o500);
+  try {
+    const refused = await f.ack('system:gbrain');
+    assert.equal(refused.status, 503);
+    assert.equal(refused.body.error.code, 'ack_store_unavailable');
+    const { signals } = await f.both();
+    assert.deepEqual(signals.acks, { available: false, reason: 'ack_store_unwritable' });
+    assert.equal(signals.attention.count, 2, 'nothing is treated as acknowledged');
+    assert.equal(signals.attention.standing, 0);
+  } finally { fs.chmodSync(dir, 0o700); }
+  assert.equal((await f.ack('system:gbrain')).status, 200);
+  const { signals } = await f.both();
+  assert.deepEqual(signals.acks, { available: true, reason: null });
+  assert.equal(signals.attention.standing, 2);
+  assert.deepEqual(fs.readdirSync(dir).filter((name) => name.includes('.tmp')), [], 'no temp file left behind');
+}));
+
+test('a system acknowledgement covers the reasons it was given for: a reason id outside that set counts as new, a reason going away does not', () => run({}, async (f) => {
   const reason = (id) => ({ id, system: 'hermes', severity: 'warning', reasonCode: id.replace(/\W/g, '_'), title: id, detail: id, detailHref: '/services', evidenceRefs: [] });
   f.state.systems.hermes = system('hermes', 'warning');
   f.state.attention = [reason('hermes:gateway-stale'), reason('hermes:kanban-blocked')];
@@ -783,8 +675,6 @@ test('a system acknowledgement covers the reasons it was given for: a new or dif
   let { signals } = await f.both();
   assert.equal(signals.attention.count, 1, 'a second, different warning is new');
   assert.equal(signals.attention.standing, 0);
-  await reconcile(f);
-  assert.deepEqual(tombstones(f), { 'system:hermes': 'reason' });
 
   // Replaced: one acknowledged reason, then a different one in its place.
   f.state.systems.openclaw = system('openclaw', 'warning');
@@ -792,7 +682,8 @@ test('a system acknowledgement covers the reasons it was given for: a new or dif
   assert.equal((await f.ack('system:openclaw')).status, 200);
   f.state.attention = [{ ...reason('openclaw:session-conflict'), system: 'openclaw' }];
   ({ signals } = await f.both());
-  assert.equal(signals.attention.breakdown.systems, 2, 'hermes and the replaced openclaw reason both count');
+  assert.equal(signals.attention.breakdown.systems, 1, 'the replaced openclaw reason counts');
+  assert.equal(signals.attention.standing, 1, 'hermes no longer has a reason outside its acknowledged set');
 }));
 
 test('two findings that differ only after the shown part of the subject have different keys', () => run({}, async (f) => {
@@ -823,18 +714,17 @@ const legacyGBrain = (caveats, at = T0) => ({
   caveats, live: { sources: { freshness: { staleCount: 0 } } },
 });
 
-test('B: a count rising inside one stable reason voids the acknowledgement (Hermes blocked tasks 1 -> 10)', () => run({}, async (f) => {
+test('a count rising inside one stable reason counts as new (Hermes blocked tasks 1 -> 10), and holds again at or below the acknowledged count', () => run({}, async (f) => {
   f.state.operations = { hermes: hermesBoard(1) };
   let { signals, loops } = await f.both();
   assert.equal(loops.systems.find((entry) => entry.id === 'hermes').ackable, true);
   assert.equal((await f.ack('system:hermes')).status, 200);
   ({ signals } = await f.both());
-  assert.equal(signals.attention.breakdown.systems, 0, 'hermes is standing');
+  assert.equal(signals.attention.breakdown.systems, 0);
   assert.equal(signals.attention.standing, 1);
 
   f.state.operations = { hermes: hermesBoard(1, T0 + HOUR) };
   f.clock.ms = T0 + HOUR;
-  await reconcile(f);
   assert.equal((await f.both()).signals.attention.standing, 1, 'the same one blocked task, read later: still acknowledged');
 
   f.state.operations = { hermes: hermesBoard(10, T0 + 2 * HOUR) };
@@ -843,51 +733,33 @@ test('B: a count rising inside one stable reason voids the acknowledgement (Herm
   assert.equal(signals.attention.standing, 0, 'ten blocked tasks are not what was acknowledged');
   assert.equal(signals.attention.breakdown.systems, 1);
   assert.equal(loops.systems.find((entry) => entry.id === 'hermes').ack, null);
-  await reconcile(f);
-  assert.deepEqual(tombstones(f), { 'system:hermes': 'count' });
 
   f.state.operations = { hermes: hermesBoard(1, T0 + 3 * HOUR) };
   f.clock.ms = T0 + 3 * HOUR;
-  await reconcile(f);
-  assert.equal((await f.both()).signals.attention.standing, 0, 'falling back to one does not bring the acknowledgement back');
-
-  // A count that falls is never worse.
-  f.state.operations = { hermes: hermesBoard(5, T0 + 3 * HOUR) };
-  assert.equal((await f.ack('system:hermes')).status, 200);
-  f.state.operations = { hermes: hermesBoard(2, T0 + 3 * HOUR) };
-  await reconcile(f);
-  assert.equal((await f.both()).signals.attention.standing, 1);
+  assert.equal((await f.both()).signals.attention.standing, 1, 'back to one: the acknowledgement applies again');
 }));
 
-test('E: a caveat whose wording ticks does not void the acknowledgement; one more caveat does', () => run({}, async (f) => {
-  f.state.operations = { gbrain: legacyGBrain(['Embedding has been waiting 5 minutes.']) };
+test('legacy caveats: the same caveat with a ticking number holds; a different caveat is a new reason and counts', () => run({}, async (f) => {
+  f.state.operations = { gbrain: legacyGBrain(['Embedding unavailable for 5 minutes.']) };
   assert.equal((await f.ack('system:gbrain')).status, 200);
   for (let minute = 6; minute <= 30; minute += 1) {
     f.clock.ms = T0 + (minute - 5) * 60_000;
-    f.state.operations = { gbrain: legacyGBrain([`Embedding has been waiting ${minute} minutes.`], f.clock.ms) };
-    await reconcile(f);
+    f.state.operations = { gbrain: legacyGBrain([`Embedding  unavailable for ${minute} minutes.`], f.clock.ms) };
     const { signals, loops } = await f.both();
     assert.equal(loops.systems.find((entry) => entry.id === 'gbrain').ack?.kind, 'ack', `still acknowledged at ${minute} minutes`);
     assert.equal(signals.attention.standing, 1);
   }
-  assert.deepEqual(tombstones(f), {});
-  f.state.operations = { gbrain: legacyGBrain(['Embedding has been waiting 31 minutes.', 'Link extraction is behind.'], f.clock.ms) };
-  await reconcile(f);
-  assert.deepEqual(tombstones(f), { 'system:gbrain': 'count' }, 'a second caveat is more than was acknowledged');
+  // One caveat replaced by another: the same number of caveats, a different problem.
+  f.state.operations = { gbrain: legacyGBrain(['Source sync failed.'], f.clock.ms) };
+  let { signals, loops } = await f.both();
+  assert.equal(signals.attention.standing, 0, 'a different message is not what was acknowledged');
+  assert.equal(signals.attention.breakdown.systems, 1);
+  assert.equal(loops.systems.find((entry) => entry.id === 'gbrain').ack, null);
+  // One more caveat next to the acknowledged one counts too.
+  f.state.operations = { gbrain: legacyGBrain(['Embedding unavailable for 31 minutes.', 'Source sync failed.'], f.clock.ms) };
+  assert.equal((await f.both()).signals.attention.standing, 0);
+  f.state.operations = { gbrain: legacyGBrain(['Embedding unavailable for 99 minutes.'], f.clock.ms) };
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.standing, 1, 'only the acknowledged caveat again: it holds');
+  assert.doesNotMatch(fs.readFileSync(f.storeFile, 'utf8'), /mbedding|sync/i, 'the stored fingerprint carries no caveat text');
 }));
-
-test('process identity comes from the system through the core runner: a start time for a live pid, null for a dead one, an error when it cannot be told', async () => {
-  const info = runnerProcessInfo(realExec);
-  const mine = await info.startTime(process.pid);
-  assert.match(mine, /\d{4}$/, 'ps lstart ends with the year');
-  assert.equal(await info.startTime(process.pid), mine, 'stable for a running process');
-  const child = require('node:child_process').spawnSync(process.execPath, ['-e', 'console.log(process.pid)'], { encoding: 'utf8' });
-  assert.equal(await info.startTime(Number(child.stdout.trim())), null, 'a process that has exited');
-  const broken = runnerProcessInfo({ run: async () => ({ ok: false, code: null, stdout: '', error: { code: 'ENOENT', message: 'x' } }) });
-  await assert.rejects(broken.startTime(1), /could not be read/);
-  // Building an app opens nothing and spawns nothing; until start() the store is "not open".
-  const f = fixture({});
-  try {
-    assert.equal(fs.existsSync(`${f.storeFile}.owner`), false);
-  } finally { fs.rmSync(f.rootDir, { recursive: true, force: true }); }
-});

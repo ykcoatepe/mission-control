@@ -664,15 +664,17 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
 // EMBED_JOB_PROBE_BUDGET_MS (each call's soft window is capped to the budget
 // left). The first failed / timed-out / unparseable call stops the chain; a
 // timed-out one is reported as `pending` so the caller stops probing too.
-async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, { budgetMs = EMBED_JOB_PROBE_BUDGET_MS, now = Date.now } = {}) {
+async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, {
+  budgetMs = EMBED_JOB_PROBE_BUDGET_MS, now = Date.now, softTimeoutMs = HEALTH_PROBE_SOFT_TIMEOUT_MS,
+} = {}) {
   const started = now();
   const call = async (params) => {
     const remaining = budgetMs - (now() - started);
-    if (remaining <= 0) return { stop: true, error: 'embed-job probe budget exhausted' };
+    if (remaining <= 0) return { stop: true, pending: true, error: 'embed-job probe budget exhausted' };
     const result = await runProbe(
       execFilePromise,
       ['call', 'list_jobs', JSON.stringify(params)],
-      { suppressStartupHooks: true, softTimeoutMs: Math.min(HEALTH_PROBE_SOFT_TIMEOUT_MS, remaining) },
+      { suppressStartupHooks: true, softTimeoutMs: Math.min(softTimeoutMs, remaining) },
     );
     if (result.pending) return { stop: true, pending: true, error: result.error || 'list_jobs timed out' };
     if (!result.ok) return { stop: true, error: result.error || 'list_jobs failed' };

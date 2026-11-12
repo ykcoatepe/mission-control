@@ -140,7 +140,7 @@ going away is never worse.
 | system (GBrain verdict) | `gbrain:embed-job-probe` | chunks waiting |
 | system (GBrain verdict) | `gbrain:queue` | stalled jobs |
 | system (GBrain verdict) | `gbrain:gbrain-core`, `gbrain:stale-pages`, `gbrain:sources`, `gbrain:readers`, `gbrain:gbrain.<probe>`, `gbrain:<source id>`, `gbrain:<reader id>` | 1 |
-| system (GBrain, legacy overview) | `gbrain:legacy-caveat` | number of caveats |
+| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, every run of digits replaced by '#'>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
 | system (GBrain, legacy overview) | `gbrain:stale-sources` | stale sources |
 | system (GBrain) | `gbrain:capabilities-unavailable`, `gbrain:unavailable` | 1 |
 | system (any) | `source:<source name>` (its read failed) | 1 |
@@ -149,27 +149,24 @@ going away is never worse.
 | cron job | `cron:failed` | 1 |
 
 - `ack` ("seen, it will stay like this") holds while the item is not worse than its fingerprint at
-  the acknowledgement. The system still adds at most one to the count.
-- `shelve` silences until `until` (or until removed with `null`); a shelved item that becomes
-  critical counts again.
-- A void is a tombstone on the stored record (`voidedAt`, `voidReason`). It is decided in one place,
-  the scheduler job `attention.acks` (after every refresh of a reading the items come from, and every
-  5 s), and written to the file before that job returns. A tombstoned acknowledgement never holds
-  again, across restarts and crashes; it goes when the item is acknowledged again or collected.
-- GETs are pure: they read the stored records and the current readings, write nothing and remember
-  nothing. An item that is worse than its acknowledgement does not hold in that answer.
-- Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes any stored
-  acknowledgement. The reconcile drops an acknowledgement whose item has been absent for 7 days and
-  a shelve that ran out.
-- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries, version 2). A
-  file that is not valid (or is an older version) starts empty and is copied to
-  `acks.json.corrupt-<time>` before the first write replaces it.
-- One process owns the store: `acks.json.owner` (created with `O_EXCL`) holds its pid and its start
-  time (`ps -o lstart=`, through the core runner). The owner is stale only when that pid is gone or
-  has another start time; a live owner is never displaced and nothing is taken over by age. The app
-  opens the store when it starts. While it cannot be owned, `/api/signals`, `/api/loops` and
-  `/api/cron` carry `acks: { available: false, reason }`, nothing is treated as acknowledged, and
-  POST/DELETE answer `503 ack_store_unavailable`; the scheduled job tries again.
+  the acknowledgement. **While an item is worse than what was acknowledged it counts as new and is
+  listed as new; when it is back at the acknowledged level or better, the acknowledgement applies
+  again.** This is computed on every read; nothing about it is stored or scheduled. The system still
+  adds at most one to the count.
+- `shelve` silences until `until` (or until removed with `null`), except that a shelved item counts
+  while its rank is critical.
+- GETs are pure: they read the stored records and the current readings and write nothing.
+- Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes a stored
+  acknowledgement. POST and DELETE are the only writers; each also drops shelves that ran out and
+  acknowledgements whose item has been absent, as seen at those writes, for 7 days.
+- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries, version 3:
+  `{ key, kind, at, until, id, absentSince, fingerprint }`). A file that is not valid (or is an older
+  version) starts empty and is copied to `acks.json.corrupt-<time>` before the first write replaces it.
+- Single writer by construction, like the app's other data files: one Mission Control process per
+  data directory, one store instance per file per process, synchronous writes.
+- When the store file cannot be read or written, `/api/signals`, `/api/loops` and `/api/cron` carry
+  `acks: { available: false, reason }`, nothing is treated as acknowledged, and POST/DELETE answer
+  `503 ack_store_unavailable` until a write succeeds again.
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.

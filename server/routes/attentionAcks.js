@@ -6,8 +6,12 @@
 // The badge rule's writes (server/services/attentionAcks.js). A key must have a
 // known shape and name an item the readings show NOW as countable (ackable);
 // its fingerprint ({ rank, reasonIds, counts }) is taken from that reading.
-// While the store is unavailable (another process owns the file) both answer
-// 503 ack_store_unavailable.
+// An acknowledgement holds while the item is not worse than that fingerprint:
+// a worse item counts as new, and the acknowledgement applies again when the
+// item is back at the acknowledged level or better. These two routes are the
+// only writers; each write also drops acknowledgements whose item has been
+// absent for 7 days. While the store file cannot be read or written both
+// answer 503 ack_store_unavailable.
 // Restricted items have no key: a guessed one is unknown (404), and the
 // response says nothing about it. Both routes go through the write guard and
 // the audit log like every mutating /api request. Errors: { error: { code,
@@ -79,9 +83,6 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
   }
 
   router.post('/api/attention/acks', asyncHandler(async (req, res) => {
-    if (typeof acks.available === 'function' && !acks.available()) {
-      throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
-    }
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'invalid_body', 'A JSON object body is required');
     const key = checkedKey(body.key);
@@ -95,16 +96,19 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
       if (current.listed.has(key)) throw httpError(409, 'not_ackable', 'That item does not need the operator now, so it cannot be acknowledged');
       throw httpError(404, 'ack_key_not_found', 'No attention item has that key');
     }
-    const ack = acks.set({ key, kind, until, fingerprint: item.fingerprint });
+    const ack = acks.set({ key, kind, until, fingerprint: item.fingerprint }, current);
     return res.json({ ok: true, key, ack });
   }));
 
   router.delete('/api/attention/acks/:key', asyncHandler(async (req, res) => {
     const key = checkedKey(String(req.params.key || ''));
-    if (typeof acks.available === 'function' && !acks.available()) {
-      throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
+    let current = null;
+    try {
+      current = await readAttention();
+    } catch {
+      // Without a reading nothing is known absent; the removal still applies.
     }
-    acks.remove(key);
+    acks.remove(key, current);
     return res.json({ ok: true, key, ack: null });
   }));
 

@@ -55,7 +55,9 @@
 //   system    one per Operations attention item: its `reasonId`, else its
 //             fixed `id` (operationsOverview.js), with the item's `count`
 //             (default 1; several items of one id add up), plus
-//             `source:<name>` for every source whose read failed
+//             `source:<name>` for every source whose read failed. The one
+//             producer without semantic ids, the legacy GBrain caveats, gets
+//             textReasonId(): a hash of the caveat with its digits masked
 //   finding   `finding`, count = mloop's aggregated row count (else 1)
 //   confirmation  `confirmation`, count = the aggregate's count (else 1)
 //   cron job  `cron:failed`, count 1
@@ -222,6 +224,17 @@ function hash12(text) {
 /** The opaque identity of a subject or id as mloop wrote it (before scrubbing or shortening). */
 function subjectHash(text) {
   return hash12(typeof text === 'string' ? text : '');
+}
+
+/**
+ * The reason id of a reason that has only free text and no semantic id:
+ * `<prefix>:<12 hex>` of the text lower-cased, whitespace collapsed and every
+ * run of digits replaced by '#'. A number that ticks ("waiting 5 minutes" ->
+ * "6 minutes") keeps its id; a different message is a different reason.
+ */
+function textReasonId(prefix, text) {
+  const normalised = String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim().replace(/\d+/g, '#');
+  return `${prefix}:${hash12(normalised)}`;
 }
 
 /**
@@ -569,5 +582,6 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
 module.exports = {
   CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, SYSTEM_SOURCES, KEY_MAX_LENGTH, NO_ACKS,
   attentionItems, confirmationKey, countedSystems, cronItem, cronKey, findingItemKey, findingKey, fingerprintOf, isAckKey,
-  isFingerprint, keyDomain, keyKind, keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator, worseThan,
+  isFingerprint, keyDomain, keyKind, keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator,
+  textReasonId, worseThan,
 };

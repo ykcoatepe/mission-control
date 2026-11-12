@@ -14,9 +14,9 @@ const REFRESH_INTERVAL_MS = 180_000;
 const STALE_AFTER_MS = 360_000;
 const COMPONENT_KEYS = ['embed_coverage_score', 'link_density_score', 'timeline_coverage_score', 'no_orphans_score', 'no_dead_links_score'];
 // Embed-job reading (only when chunks are missing embeddings): up to 8 serialized `list_jobs` reads
-// on the gbrain lane (about 0.4 s each, measured 2026-11-12), one total budget, one cap per read.
+// on the gbrain lane (about 0.4 s each, measured 2026-11-12) under ONE deadline. Every read gets the
+// time left as the bound for its lane wait and its run together, so the chain never outlasts it.
 const EMBED_JOBS_BUDGET_MS = 20_000;
-const EMBED_JOBS_CALL_TIMEOUT_MS = 10_000;
 const number = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 function requireShape(ok) { if (!ok) throw readError('gbrain_invalid_payload'); }
 function createGBrainSources(options = {}) {
@@ -26,10 +26,11 @@ function createGBrainSources(options = {}) {
   // The embed-job chain of liveProbes.js, run through this client (same lane, caps and environment as
   // every other scheduled read). A failed, timed-out or unparseable read stops the chain and the
   // signal is unavailable; it is never read as clean.
+  // softTimeoutMs is what probeEmbedJobs has left of the budget for this read.
   const listJobsProbe = async (_exec, args, { softTimeoutMs } = {}) => {
     try {
-      const timeoutMs = Math.max(1, Math.min(EMBED_JOBS_CALL_TIMEOUT_MS, Number.isFinite(softTimeoutMs) ? softTimeoutMs : EMBED_JOBS_CALL_TIMEOUT_MS));
-      return { ok: true, stdout: await client.run(args, { json: false, timeoutMs }) };
+      const left = Number.isFinite(softTimeoutMs) && softTimeoutMs > 0 ? softTimeoutMs : EMBED_JOBS_BUDGET_MS;
+      return { ok: true, stdout: await client.run(args, { json: false, timeoutMs: left, deadlineMs: left }) };
     } catch (error) {
       return { ok: false, stdout: '', pending: error?.code === 'gbrain_timeout', error: error?.code || 'gbrain_read_failed' };
     }
@@ -38,7 +39,7 @@ function createGBrainSources(options = {}) {
     const { count } = readMissingEmbeddingsRecord(healthPayload);
     // Job state can only change the verdict when something waits to be embedded.
     if (!(Number.isInteger(count) && count > 0)) return undefined;
-    return probeEmbedJobs(listJobsProbe, null, null, { budgetMs: options.embedJobsBudgetMs ?? EMBED_JOBS_BUDGET_MS });
+    return probeEmbedJobs(listJobsProbe, null, null, { budgetMs: options.embedJobsBudgetMs ?? EMBED_JOBS_BUDGET_MS, softTimeoutMs: Infinity, now });
   };
   const reads = {
     health: async () => {
