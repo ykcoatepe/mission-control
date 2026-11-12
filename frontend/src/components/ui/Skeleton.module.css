@@ -1,3 +1,4 @@
+/* A loading placeholder is static: motion is for state changes only. */
 .stack {
   display: flex;
   flex-direction: column;
@@ -10,22 +11,11 @@
   height: var(--sp-3);
   background: var(--surface-2);
   border-radius: var(--r-sm);
-  animation: skeleton-pulse 1.6s var(--ease) infinite;
-}
-
-@keyframes skeleton-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
 }
 
 .block {
   height: 96px;
-  border-radius: var(--r-lg);
+  border-radius: var(--r-md);
 }
 
 .blockLg {

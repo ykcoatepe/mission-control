@@ -1,70 +1,120 @@
-# Design System Reference — "Dark cockpit"
+# Design System Reference — a supervisory HMI
 
-This is the binding design reference for the Mission Control frontend. It
-replaces the macOS-glass and "Quiet Observatory" styles. Tokens live in
-`frontend/src/styles/tokens.css`; shared components live in
-`frontend/src/components/ui/`.
+This is the binding design reference for the Mission Control frontend. One
+world for every page: a supervisory human-machine interface in the manner of a
+railway signalling centre. Tokens live in `frontend/src/styles/tokens.css`;
+shared components live in `frontend/src/components/ui/`. The approved Brain page
+and its light theme are the visual reference
+(`/Volumes/External SSD/Yordam-Agent-Work/mission-control-rehaul/hmi/`).
 
-## 1. Idea
+## 1. The HMI rules
 
-Mission Control borrows one rule from the Airbus flight deck: **the dark
-cockpit**. When everything is normal the screen is quiet. Only an abnormal
-condition lights up, and it lights up once, in one place, with the action that
-resolves it next to it.
+These twelve rules are binding on every page.
 
-It is a modern flat tool, not a cockpit costume: no gauges, bezels, glow,
-glass, gradients or blur.
+1. **Normal is quiet.** A normal state has no colour: neutral grey-white marks
+   and text. There is no green "OK" anywhere.
+2. **Colour has exactly three jobs.** (a) Abnormal state: amber = caution, soft
+   red = critical, always paired with a shape and a word. (b) Teal = what the
+   operator can do (links, primary action, focus) or what is selected. (c) The
+   four line colours identify the four GBrain source groups and are used only
+   for that (and as chart series where a chart needs categories). Nothing
+   decorative is coloured.
+3. **State is never colour alone.** Normal = small filled circle (neutral);
+   caution = triangle (amber); critical = filled square (soft red); not read =
+   hollow circle (neutral); off / intentionally inactive = short horizontal
+   dash (neutral).
+4. **One alarm line per page**, at the top of the work area, only when the page
+   has something abnormal: state word, a plain sentence and at most one action at
+   its right end. When nothing is abnormal the line is absent (not a green "all
+   good" banner); the page may show one quiet sentence instead.
+5. **A number with a normal range is an analog bar**: track, normal band,
+   pointer and fill at the value, limits labelled, value as digits, and a
+   24-hour trend line when history really exists. Never invent history; with no
+   history there is no trend.
+6. **Blocks, not cards.** 1px outline, small radius, header in condensed
+   capitals with the count or total at the right. No shadows, gradients, glow or
+   blur, no nested cards. Equal-weight card grids are not a page structure.
+7. **Tables for lists.** Tabular numerals wherever numbers align. Times are real
+   observed times.
+8. **A reading carries where it came from only when stale or unread.** Stale =
+   "as of 12:41" with a caution mark; unread = hollow circle + "not read". Fresh
+   readings are not annotated.
+9. **Plain English**, no engineer jargon. Sentence case in text; condensed
+   capitals only in block headers and the alarm state word.
+10. **Keyboard.** Every control is reachable with a visible focus ring (2px teal,
+    2px offset) and is at least 24px high. `prefers-reduced-motion` is respected.
+    Motion is 120–180 ms and only for state changes.
+11. **375px to 1600px+**, no horizontal page scroll. The Brain diagram has a
+    narrow-list fallback.
+12. **Standard web controls only.** The app borrows a signalling centre's type,
+    palette, density and one signature move (tracks and a line profile on Brain).
+    No fake hardware, bezels or instrument costumes. Other pages do not draw
+    tracks: they use the alarm line, blocks, bars, trends and tables.
 
 Consequences that every screen must follow:
 
-1. **One question per screen, answered above the fold.** Each page states its
-   question (section 7) and the first viewport answers it.
-2. **Every signal appears once.** A number or state shown in the page summary
-   is not repeated in a card, a pill and a chart legend. Pick the one place.
-3. **Colour means state or action, nothing else.** Green = confirmed normal,
-   amber = caution, red = act now, grey = could not be read or switched off,
-   cyan = you can act on this. Decorative colour is not allowed. Charts use the
-   `--series-*` tokens only.
-4. **Normal is quiet.** A healthy item is plain text with at most a small dot.
-   Filled or tinted surfaces are reserved for warning and critical.
-5. **Absence of evidence is not green.** Unread, unknown and stale values keep
-   their own grey/amber treatment and say so in words. Never render a missing
-   number as `0`, and never invent a fallback value.
-6. **Plain words.** Say what the operator would say. See section 6.
-7. **Evidence stays one click away.** Provenance, observed time, source and
-   caveats live in the detail drawer of an item, not in the row.
+- **One question per screen, answered above the fold.** Each page states its
+  question (section 7) and the first viewport answers it.
+- **Every signal appears once.** Pick the one place.
+- **Absence of evidence is not normal.** Unread, unknown and stale values keep
+  their own treatment and say so in words. Never render a missing number as `0`
+  and never invent a fallback value.
+- **Evidence stays one click away.** Provenance, observed time, source and
+  caveats live in the detail drawer of an item, not in the row.
 
 ## 2. Tokens
 
 Use only tokens from `styles/tokens.css`. No hex, `rgb()` or `rgba()` literals
 in component CSS or TSX. No inline `style` except for values computed from data
-(a bar width, a chart colour taken from a `--series-*` token).
+(a bar position, a chart colour taken from a `--series-*` token).
+
+Two themes: **Slate dusk** (`:root`, dark, the default) and **Soft daylight**
+(`:root[data-theme='light']`).
 
 | Group | Tokens | Notes |
 | --- | --- | --- |
-| Surface | `--bg`, `--surface-1/2/3`, `--line`, `--line-strong`, `--scrim` | Elevation is a lightness step. No `box-shadow`, no `backdrop-filter`. |
-| Text | `--text-1/2/3`, `--text-disabled` | 1 = values and titles, 2 = body, 3 = labels and metadata. |
-| State | `--state-{healthy,warning,critical,unavailable,inactive}` with `-bg` and `-line` | Text/dot uses the base token; a tinted block uses `-bg` + `-line`. |
-| Action | `--accent`, `--accent-hover`, `--accent-bg`, `--accent-line` | Links, primary button, selection, focus. |
-| Series | `--series-1..6` | Charts only. |
-| Type | `--font-sans`, `--font-mono`, `--fs-*`, `--fw-*` | Three weights only: 400, 500, 600. |
+| Surface | `--bg`, `--rail` (side rail and top bar ground), `--surface-1/2/3`, `--line`, `--line-strong`, `--track` (neutral track and diagram line), `--control-line` (outline of an input or button), `--scrim` | Elevation is a lightness step. No `box-shadow` for depth, no `backdrop-filter`. |
+| Text | `--text-1/2/3`, `--text-disabled`, `--text-on-accent` | 1 = values and titles, 2 = body, 3 = labels and metadata (12px and larger only). |
+| State | `--state-normal` (neutral), `--state-warning`, `--state-critical`, `--state-unavailable`, `--state-inactive`; tints `--state-warning-bg/-line`, `--state-critical-bg/-line` | `--state-healthy*` are aliases of the neutral normal values; healthy renders neutral. New code uses `--state-normal`. |
+| Action | `--accent`, `--accent-hover`, `--accent-bg`, `--accent-line` | Links, primary action, focus, selection. |
+| Line colours | `--line-reference`, `--line-projects`, `--line-agent`, `--line-curated` | The four GBrain source groups. Identity only. |
+| Series | `--series-1..6` | Chart categories only, never state. |
+| Bars | `--band` (the normal band), `--bar-fill` | Used by `AnalogBar`. |
+| Type | `--font-sans`, `--font-caps`, `--font-mono`, `--fs-*`, `--fw-*` | See below. |
 | Space | `--sp-1..12` | 4px grid. No 7/9/13px values. |
-| Shape | `--r-sm/md/lg/full` | Controls `md`, panels `lg`, pills `full`. |
-| Motion | `--dur-fast`, `--dur-base`, `--ease` | Opacity/transform only. No blur, no entrance animation on data. |
+| Shape | `--r-sm` 3px, `--r-md` 4px, `--r-lg` 6px, `--r-full` | Controls and blocks `md`. |
+| Motion | `--dur-fast` 120ms, `--dur-base` 180ms, `--ease` | State changes only. No entrance animation on data. |
 
-Typography roles:
+**Type.** Body and UI: Barlow (400, 500, 600), via `@fontsource/barlow`. Block
+headers and the alarm state word: Barlow Semi Condensed 600, uppercase,
+letter-spacing 0.04em, via `@fontsource/barlow-semi-condensed` (the `caps`
+class in `index.css`, or `--font-caps`). Code, ids and cron expressions:
+JetBrains Mono Variable. Numbers use `font-variant-numeric: tabular-nums
+lining-nums` (set on `body`). Fixed scale in px: micro 12, small 13, body 14,
+lead 15, h3 17, h2 21, h1 26. Line height 1.45 for body, 1.2 for headings.
 
 | Role | Size / weight | Use |
 | --- | --- | --- |
 | Page title | `--fs-h2` / 600 | One per page, shown once in the top bar. `Page` publishes it; a page never renders its own `h1`. |
-| Headline | `--fs-h1` / 600 | Only the Overview sentence. |
-| Section title | `--fs-lead` / 600 | `Panel` title. |
+| Block header | `--fs-body` / 600 caps | `Block` and `Panel` title. |
+| Alarm state word | `--fs-h3` / 600 caps | "CAUTION", "CRITICAL". |
 | Body | `--fs-body` / 400 | Default. |
-| Label | `--fs-small` / 500, `--text-3` | Field and column labels. Sentence case. No letter-spaced capitals. |
-| Data | `--font-mono`, tabular numerals | Ids, cron expressions, counts, money, durations. |
+| Label | `--fs-small` / 500, `--text-2` or `--text-3` | Field and column labels. Sentence case. |
+| Data | tabular numerals; `--font-mono` for ids and expressions | Counts, money, durations. |
 
-Both themes are defined (`:root` dark, `:root[data-theme='light']`). Dark is the
-default. A page is "theme-safe" only when it uses no colour literals.
+**Contrast** is computed from the tokens by `styles/tokens.contrast.test.ts` in
+both themes. Grounds: `--text-1/2` are read on bg, rail and surface-1/2/3;
+`--text-3` and the state and accent colours on bg, rail, surface-1 and
+surface-2 (never on surface-3), and on their own tints. Text on a selected
+(teal-tinted) row uses `--text-1` or `--text-2`. Line colours carry the block
+header label at 4.5:1 and show as marks at 3:1. Disabled text and the
+`--state-inactive` tone are exempt: they never carry the only copy of a
+message. Values adjusted from the first draft of the palette to reach the
+ratios: dark `--text-3` / `--state-unavailable` #8793a3 → #8995a5, dark
+`--state-critical` #e8736b → #ea8079; light `--text-3` / `--state-unavailable`
+#6b6660 → #635e59, `--state-warning` #9a5f00 → #825000, `--state-critical`
+#b3372f → #ac352d, `--accent` #1f6f6b → #1b615d (`--accent-hover` #144e4b).
+`--control-line` is an added token (outline of controls, at least 3:1).
 
 ## 3. State vocabulary
 
@@ -72,20 +122,31 @@ One vocabulary across the app, in `frontend/src/lib/state.ts`:
 
 `UiState = 'healthy' | 'warning' | 'critical' | 'unavailable' | 'inactive'`
 
+| State | Word (`stateLabel`) | Shape (`stateShape`) | Colour |
+| --- | --- | --- | --- |
+| `healthy` | Normal | filled circle | neutral |
+| `warning` | Caution | triangle | amber |
+| `critical` | Critical | filled square | soft red |
+| `unavailable` | Not read | hollow circle | neutral |
+| `inactive` | Off | short dash | neutral |
+
 `toUiState(raw)` maps every legacy word: `ok, active, running, success, done,
 connected, healthy, fresh` → healthy; `warning, stale, degraded, paused-by-error,
 blocked, overdue` → warning; `failed, error, critical, down` → critical;
 `unavailable, unknown, no-data` → unavailable; `disabled, paused, off, idle,
 inactive, archived` → inactive. Unknown input maps to `unavailable`, never to a
-neutral "off" look.
+neutral "off" look. `worstState` ranks critical > warning > unavailable >
+healthy > inactive; an empty list is `unavailable`. `isAbnormal(state)` is true
+for warning and critical only: the only states that take a colour.
 
-State is always shown as a dot **plus a word**; never colour alone.
+State is always a shape **plus a word**; never colour alone.
 
 ## 4. Components (`components/ui`)
 
-Import from `components/ui` (barrel `index.ts`). Pages do not hand-roll these.
-All components use tokens only, have visible focus, and contain no entrance
-animation, hover lift, shadow or blur. Props not listed in a table are the
+Import from `components/ui` (barrel `index.ts`). Pages do not hand-roll these;
+a page that needs something missing builds it in its own folder and reports it.
+All components use tokens only, have a visible focus ring, and contain no
+entrance animation, hover lift, shadow or blur. Props not listed in a table are the
 native props of the underlying element (`Button`, `IconButton`, `TextInput`,
 `Select` accept everything a `<button>`/`<input>`/`<select>` does).
 
@@ -104,22 +165,29 @@ shell supplies the page padding (24/32px, 16px on mobile) and scrolling.
 | `description` | `ReactNode` | One line: the question this page answers. |
 | `actions` | `ReactNode` | Page-level buttons, right-aligned on the description row. |
 | `tabs` | `ReactNode` | A `<Tabs>` row between the header row and the content. |
-| `width` | `'default' \| 'narrow' \| 'full'` | 1480px frame (default), 960px, or unbounded. |
+| `width` | `'default' \| 'narrow' \| 'full'` | 1600px frame (default), 960px, or unbounded. |
 | `className` | `string` | Frame class. |
 
 Content is a flex column with `--sp-4` gap, so siblings need no margins.
 
-### Surfaces and readings
+### Alarm, blocks and readings
 
 | Component | Props | Notes |
 | --- | --- | --- |
-| `Panel` | `title?`, `description?`, `actions?`, `padding?: 'md' \| 'sm' \| 'none'`, `titleAs?: 'h2' \| 'h3'`, `id?`, `className?`, `aria-label?` | Flat bordered surface; header (title row) only when `title` or `actions` is given. `padding="none"` for tables and lists. Not clickable, no hover. |
-| `Stat` | `label`, `value`, `unit?`, `hint?`, `state?: UiState`, `className?` | Label above a mono value. `value` of `null`/`undefined`/`''` renders "—" with "not read" for screen readers, never `0`. `state` adds a dot before the label and colours the value for `warning`/`critical`. |
-| `StatRow` | `children`, `aria-label?`, `className?` | One bordered strip of `Stat`s separated by 1px dividers; wraps with `auto-fit` (min 160px). |
-| `StateDot` | `state: UiState`, `label?`, `className?` | 8px dot. `unavailable` is a hollow ring. Decorative unless `label` is given (then `role="img"`). |
-| `StatePill` | `state: UiState`, `label?`, `className?` | Dot plus word (default `stateLabel(state)`). Tinted only for `warning`/`critical`. |
-| `Meter` | `value: number \| null \| undefined`, `max?` (100), `label`, `state?` (`healthy`), `className?` | 6px proportion bar, `role="meter"`. A missing value draws an empty track. |
-| `Notice` | `tone?: UiState \| 'info'` (`info`), `title?`, `action?`, `className?`, children | Inline message. Tinted for `warning`/`critical`; `critical` uses `role="alert"`. |
+| `AlarmLine` | `state: 'warning' \| 'critical'`, `title`, `detail?`, `action?: { label, onClick, busy? }`, `since?`, `className?` | Rule 4. State word in condensed capitals with its shape, the plain sentence, at most one primary action at the right end. `role="alert"` for critical, `role="status"` for caution. `since` shows a real time ("since 10:41"); an unreadable time shows nothing. Render it only when something is abnormal. |
+| `Block` | `title?`, `meta?`, `actions?`, `tone?: 'reference' \| 'projects' \| 'agent' \| 'curated'`, `description?`, `padding?`, `titleAs?`, `id?`, `className?`, `aria-label?` | Rule 6. 1px outline, header in condensed capitals with `meta` (the count or total) at the right. `tone` fills the header with the GBrain source group's line colour: identity only. `padding="none"` for tables and lists. Never nest a block in a block. |
+| `Panel` | same as `Block` without `tone` | The old name of `Block`, kept so existing pages compile. |
+| `AnalogBar` | `label`, `value`, `min`, `max`, `band?: [lo, hi]`, `limits?`, `unit?`, `format?`, `state?`, `trend?: { t, v }[]`, `unread?`, `className?` | Rule 5. `role="meter"` with `aria-valuenow/min/max` and a text alternative ("99, normal 95 – 100, below normal"). Neutral in band; outside the band it takes caution with a triangle and "below/above normal"; `state` overrides. `unread` (or a missing value) shows a hollow circle and "not read", with no value, pointer or trend. The trend appears only with at least two real readings, with their average. Limit labels that would crowd another are dropped; the "Normal: 95 – 100" caption states the band. |
+| `Trend` | `points: { t, v }[]`, `band?`, `height?`, `label?`, `className?` | Inline SVG line, no chart library. Fewer than two usable points draws nothing. |
+| `Meter` | `value`, `max?`, `label`, `state?`, `band?`, `min?`, `unit?`, `format?`, `trend?` | Thin proportion bar (`role="meter"`), neutral fill. With a `band` it is an `AnalogBar`. A missing value draws an empty track. |
+| `StateMark` | `state: UiState`, `label?`, `className?` | The shapes of rule 3 (inline SVG, `data-shape`). Hidden from assistive tech beside a word; with `label` it is `role="img"`. |
+| `StateDot` | as `StateMark` | Alias of `StateMark`. |
+| `StatePill` | `state`, `label?`, `className?` | Mark plus word. Neutral for normal, not read and off; amber or red for caution and critical. |
+| `NavBadge` | `count`, `state`, `word?`, `className?` | A rail badge: the count with the state's shape. Renders nothing at 0 or when the count is not a positive number. Caps the shown number at 999+. |
+| `Stat` | `label`, `value`, `unit?`, `hint?`, `state?`, `className?` | Label above a value. `value` of `null`/`undefined`/`''` renders "—" with "not read" for screen readers, never `0`. `state` adds a mark and colours the value for caution and critical. |
+| `StatRow` | `children`, `aria-label?`, `className?` | One outlined strip of `Stat`s separated by 1px dividers. |
+| `Notice` | `tone?: UiState \| 'info'` (`info`), `title?`, `action?`, `className?`, children | Inline message. Tinted, with its shape, only for caution and critical (`critical` is `role="alert"`); otherwise quiet and neutral. |
+| `Freshness` | `observedAt`, `state?`, `staleAfterMs?` (15 min), `className?` | Rule 8. Fresh renders nothing; stale = caution mark + "as of 12:41" (or "as of 11 Nov, 12:41"); unread = hollow circle + "not read". |
 | `Kbd` | `children`, `className?` | Keyboard hint. |
 | `Mono` | `children`, `muted?`, `truncate?`, `className?` | Monospace span, tabular numerals. |
 
@@ -127,7 +195,7 @@ Content is a flex column with `--sp-4` gap, so siblings need no margins.
 
 | Component | Props | Notes |
 | --- | --- | --- |
-| `Button` | `variant?: 'primary' \| 'secondary' \| 'ghost' \| 'danger'` (`secondary`), `size?: 'sm' \| 'md'` (`md`), `loading?`, `icon?: ReactNode`, children, native button props | `type` defaults to `button`. `loading` disables and shows a spinner, sets `aria-busy`. One `primary` per view. |
+| `Button` | `variant?: 'primary' \| 'secondary' \| 'ghost' \| 'danger'` (`secondary`), `size?: 'sm' \| 'md'` (`md`), `loading?`, `icon?: ReactNode`, children, native button props | `type` defaults to `button`. `primary` is a teal outline with teal text, filled only on hover and while pressed; `danger` is a red outline. `loading` disables and shows a spinner, sets `aria-busy`. One `primary` per view. |
 | `IconButton` | `label` (required, becomes `aria-label` and tooltip), `icon`, `variant?: 'ghost' \| 'secondary'`, `size?: 'sm' \| 'md'`, `pressed?` (`aria-pressed`), `badge?`, native button props | Square control. Never use an unlabelled icon button. |
 | `TextInput` | `invalid?`, native input props | `--control-h` high. |
 | `SearchInput` | `value: string`, `onChange(value: string)`, `label?` ("Search"; accessible name and placeholder), native input props | Search icon, clear button, Esc clears. |
@@ -184,15 +252,14 @@ labelled by their title.
 | `Skeleton` | `variant?: 'line' \| 'block'`, `lines?`, `size?: 'md' \| 'lg'` (block), `width?`, `height?`, `label?`, `className?` | Loading placeholder with `role="status"`. |
 | `ToastProvider` / `useToast()` | `useToast()` returns `{ show(tone, message, { duration? }) => id, dismiss(id) }`; `tone` is `'success' \| 'error' \| 'warning' \| 'info'` | One implementation app-wide (provider is in `App.tsx`). Auto-dismiss 4s (8s for errors); at most 4 visible; polite live region. |
 | `TimeAgo` | `value: string \| number \| Date \| null \| undefined`, `fallback?` ("—"), `className?` | `<time>` with relative text and exact time in the tooltip. Ticks every 15s from a shared clock (`lib/useNow`), never calls `Date.now()` in render. |
-| `Freshness` | `observedAt`, `state?: 'fresh' \| 'stale' \| 'unknown' \| 'unavailable'`, `staleAfterMs?` (15 min), `className?` | "fresh · 1m", "stale · 3h" (amber), "not read" (missing time). A server `state` overrides the age test. |
 
 Also exported: `cx` (class joiner), `resolveTab`, `usePageTitle`,
 `usePublishPageTitle`, `PageTitleProvider`, `PageTitleContext`.
 
 State helpers live in `lib/state.ts`: `UiState`, `toUiState`, `stateLabel`,
-`worstState` (critical > warning > unavailable > healthy > inactive; an empty
-list is `unavailable`). `toUiState` also accepts the legacy health colours
-(`green`, `yellow`, `red`, `gray`) and a few spelling variants.
+`stateShape`, `isAbnormal`, `worstState` (section 3). `toUiState` also accepts
+the legacy health colours (`green`, `yellow`, `red`, `gray`) and a few spelling
+variants.
 
 ### Legacy adapters
 
@@ -219,67 +286,92 @@ Pages talk to the backend through one module.
 ## 5. Shell
 
 ```
-┌──────────┬───────────────────────────────────────────────────────────┐
-│ Sidebar  │ Top bar: page title │ annunciators │ attention │ ⌘K │ age │
-│ 232px    ├───────────────────────────────────────────────────────────┤
-│ (56 rail)│ Page (scrolls, max width 1480, padding 24/32)              │
-└──────────┴───────────────────────────────────────────────────────────┘
+┌──────────┬────────────────────────────────────────────────────────────┐
+│ Side rail│ Top bar: page title │ GBrain · Hermes · OpenClaw │ search │ ⟳ ◐ │
+│ 224px    ├────────────────────────────────────────────────────────────┤
+│ (56 rail)│ Alarm line (only when abnormal) · page (scrolls, max 1600) │
+└──────────┴────────────────────────────────────────────────────────────┘
 ```
 
-- **Where the shell reads.** The page-title/top bar and the sidebar badges read `GET /api/signals`
-  (30 s poll): system annunciators, the attention count, failed automations and down services.
+Both the rail and the top bar sit on `--rail`.
+
+- **Where the shell reads.** The top bar and the rail badges read `GET /api/signals`
+  (30 s poll): system annunciators, the attention count and failed automations.
   The brand name and the module list come from `GET /api/config`, an allowlist of `name`,
-  `subtitle`, `modules` and `aws.enabled`; nothing else exists there. No page reads another
-  field from it.
-- **Sidebar.** Brand (mark + name from `/api/config`), then single-line items
-  (icon + label) in groups: Brain (no label), Operate, Know, Run; Settings
-  and Audit at the bottom. A count appears on an item only when something there
-  is abnormal (from `/api/signals`): Automations = enabled jobs whose last run failed (red),
-  Attention = `attention.count` (the same number as the top-bar pill and the Attention page's first
-  stat; its breakdown is secondary text, a part that was not read says "not read"). Collapses
-  to a 56px icon rail with tooltips (choice persists in `localStorage`
+  `subtitle`, `modules` and `aws.enabled`; nothing else exists there.
+- **Side rail.** Brand (mark + name from `/api/config`), then one flat list: Brain,
+  Attention, Automations, Usage, Services, Local models, then Settings and Audit
+  at the bottom. The selected item is a teal tint ground, teal text and icon and a
+  2px teal bar at the left edge. Icons are lucide at one stroke weight. Collapses
+  to a 56px icon rail with tooltips (persisted in `localStorage`
   `mc-sidebar-collapsed`). Under 900px it is an off-canvas drawer opened from the
   top bar's menu button (scrim, Esc, closes on navigation).
-- **Top bar.** The page title is the single `h1`, taken from the `Page` title
-  (fallback: the route label). Right side: system annunciators (GBrain, Hermes,
-  OpenClaw: dim when healthy, lit in the state colour with the state word when
-  not, each links to its `detailHref` when that is a live screen, and shows the server's `reason`
-  as its tooltip; neutral "reading…" until the first load
-  completes; a "healthy" system whose reading is stale or unread is lit as
-  stale or not read), the attention pill ("2 need attention" is `attention.count`, never a sum or a maximum made in
-  the browser; its breakdown "3 systems · 23 findings · 3 overdue" is secondary text; links to
-  `/attention`, hidden at zero), the command palette trigger, data age of the signals reading with a
-  refresh button (refetches all on-screen API reads) and theme toggle (dark/light,
-  `data-theme` on `<html>`, persisted as `mc-theme`, default dark). There is no
-  assistant chat.
+- **Top bar.** The page title is the single `h1` (from the `Page` title; fallback:
+  the route label). Then three system signals, each `mark + name + word`
+  ("GBrain caution", "Hermes normal", "OpenClaw not read"); the mark and word take a
+  colour only when abnormal. Each links to its `detailHref` when that is a live
+  screen and shows the server's `reason` as its tooltip; "reading…" until the first
+  load completes; a "healthy" system whose reading is stale or unread is shown as
+  stale or not read. Then the command palette field "Search or run…", refresh and the
+  theme toggle (dark/light, `data-theme` on `<html>`, persisted as `mc-theme`, default
+  dark). If the signals themselves are stale the bar says "Signals as of 12:41" with
+  a caution mark (rule 8); a fresh reading is not annotated. There is **no attention
+  pill** in the top bar: the rail badge and the Attention page carry it. As the bar
+  narrows it yields in a fixed order: stale note, system words, names, search text,
+  then one status button with a list.
 - **Command palette (⌘K / Ctrl+K).** Sections: Pages (all nav routes),
-  Automations (`/automations?job=<id>`),
-  Commands (Refresh data, Toggle theme). Substring ranking, at
-  most 8 per section; automations are fetched only while it is open
-  and listed only once you type.
+  Automations (`/automations?job=<id>`), Commands (Refresh data, Toggle theme).
+  Substring ranking, at most 8 per section; automations are fetched only while it is
+  open and listed only once you type.
 - **Error boundary** around the routed page: a failing page shows `ErrorState`
-  inside the shell (Reload page / Try again) instead of a blank app. The Suspense
-  fallback is a `Skeleton`. `/setup` renders without sidebar or top bar.
+  inside the shell instead of a blank app. The Suspense fallback is a `Skeleton`.
+  `/setup` renders without rail or top bar.
+
+### Badge rule (alarm management)
+
+A badge that stays lit for a standing condition stops meaning anything. A badge
+counts only **new, actionable, unacknowledged** items.
+
+- Restricted-project counts are never part of a badge: they are information on
+  the Attention page only.
+- The operator can **acknowledge** an item ("seen, it will stay like this") or
+  **shelve** it (silence, forever or until a date). Both remove it from the badge.
+  It stays listed on its page in a quiet "Standing" group.
+- An acknowledged item that gets worse (severity rises, or its count rises) counts
+  as new again. A shelved item stays silent until `until` passes or it is unshelved,
+  except that a shelved item that becomes critical counts again.
+- No new items: the badge is not rendered at all. A count that could not be read
+  gets a hollow circle (`count not read`), never a number and never silence.
+
+Contract (`lib/signals.ts` consumes it; the older payload still reads):
+
+- `GET /api/signals` → `data.attention = { count, worst, standing, restricted,
+  breakdown: { systems, findings, overdueConfirmations }, partial, missing }`;
+  `count` and `worst` cover new items only (`worst` is `'healthy'` at 0);
+  `data.automations = { failed, standingFailed, … }`.
+- Rail badges: **Attention = `attention.count`**; **Automations = `automations.failed`**.
+  There is no Services badge: a service that stays down is a standing condition.
+- `GET /api/loops` items carry `key`, `ackable`, `ack`; `GET /api/cron` jobs carry
+  `ackKey` and `ack`; `POST /api/attention/acks` and `DELETE /api/attention/acks/:key`
+  write them with the `X-MC-Request: 1` header.
 
 Navigation (order is pinned by `appRoutes.test.ts`):
 
-| Group | Label | Path | Notes |
-| --- | --- | --- | --- |
-| none | Brain | `/` | home; Knowledge is a view of it (`?view=knowledge`) |
-| Operate | Attention | `/attention` | |
-| Operate | Automations | `/automations` | Calendar as the "Schedule" view |
-| Know | Usage | `/usage` | |
-| Run | Services | `/services` | |
-| Run | Local models | `/ollama` | |
-| Utility | Settings | `/settings` | |
-| Utility | Audit | `/councils` | |
+| Label | Path | Notes |
+| --- | --- | --- |
+| Brain | `/` | home; Knowledge is a view of it (`?view=knowledge`) |
+| Attention | `/attention` | |
+| Automations | `/automations` | Calendar as the "Schedule" view |
+| Usage | `/usage` | |
+| Services | `/services` | |
+| Local models | `/ollama` | |
+| Settings | `/settings` | utility |
+| Audit | `/councils` | utility |
 
 `/gbrain` and `/calendar` stay routed with `nav: false`. The removed screens
 (`/work`, `/sessions`, `/systems`, `/workshop`, `/office`, `/team`,
 `/diagnostics`, `/kanban`, `/conversations`, `/agents`, `/memory`, `/scout`,
-`/aws`, `/skills`) redirect to `/`.
-
-Old URLs keep working through redirects. Route `section` is `'operate' | 'know' | 'run'`
+`/aws`, `/skills`) redirect to `/`. Route `section` is `'operate' | 'know' | 'run'`
 (Brain has none); `description` is a plain-words subtitle used only by the
 command palette.
 
@@ -297,18 +389,18 @@ command palette.
 
 ## 7. Page blueprints
 
-Each page: `Page` frame → **summary line** (the answer) → **the list or chart
+Each page: `Page` frame → **alarm line** (only when abnormal) → **summary line** (the answer) → **the list or chart
 that matters** → detail in a `Drawer`. Remove duplicated signals rather than
 restyling them.
 
 | Page | Question | First viewport |
 | --- | --- | --- |
-| Brain | Is the brain healthy and does anything need me? | One verdict line with a Run check button; views Health and Knowledge (`?view=`). Health: the system synoptic, maintenance actions (Check and Change groups, Change asks first) and readings. Knowledge: knowledge search and the page reader. |
-| Attention | What is waiting for you? | Summary strip (need attention: the same number as the pill and the badge, projects with open items, open findings, pending confirmations); tables show a finding's bounded `summary`, the drawer its full `detail`; filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
+| Brain | Is the brain healthy and does anything need me? | The alarm line when something is abnormal (one action at its right end); views Health and Knowledge (`?view=`). Health: the system synoptic, maintenance actions (Check and Change groups, Change asks first) and readings. Knowledge: knowledge search and the page reader. |
+| Attention | What is waiting for you? | Summary strip (new items: the same number as the rail badge; standing and restricted counts are information, projects with open items, open findings, pending confirmations); tables show a finding's bounded `summary`, the drawer its full `detail`; filter chips; "Needs you" table; "Projects" table; project detail in a drawer. |
 | Automations | Did my jobs run, what runs next? | Summary strip (active, paused, failed, next run); filter chips; dense table with paused rows dimmed; job detail drawer. "Schedule" view = week grid; when the calendar read reports malformed or duplicate rows and `meta.repairAvailable`, its notice offers "Repair calendar" (a confirmation, then one guarded `POST /api/calendar/repair`). |
 | Usage | What did I spend, am I on track? | One figure for the period with budget meter and projection; daily chart; drivers table (model/agent/source tabs). Estimate vs billed is explained once, in a note. |
 | Services | Is everything that should be running, running? | Reachability strip (OpenClaw gateway, Hermes gateway, Ollama); the verdict and the All, Down and Unidentified chips read the server's `summary`; filter chips and search; launchd services table. |
-| Local models | Is Ollama OK? | Verdict line; `StatRow` (health, memory, GPU, loaded); models table with expandable detail. |
+| Local models | Is Ollama OK? | Alarm line when abnormal; `StatRow` (health, memory, GPU, loaded); models table with expandable detail. |
 | Audit | What was decided? | Archive notice (one line); decisions table with search and filters; decision drawer. |
 | Settings | — | Sections as panels: Models, Heartbeat, Budget, Appearance (theme), Connection, Backup. Real values only; a failed read shows `ErrorState`. |
 
@@ -335,6 +427,7 @@ and the assertion together, and keep every behavioural assertion.
 3. Delete duplicated signals; apply the blueprint order.
 4. CSS Module: tokens only, 4px grid, three weights, CSS media/container
    queries instead of `useIsMobile()` branching where practical.
-5. No colour literals, no inline static styles, no emoji as icons.
+5. No colour literals, no inline static styles, no emoji as icons. Healthy is neutral: no green.
+   Colour only for abnormal state (with shape and word), the teal action colour, and the four line colours.
 6. Rename labels per section 6.
 7. `npm --prefix frontend run lint && npm --prefix frontend test && npm --prefix frontend run build`.

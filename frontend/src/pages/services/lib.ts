@@ -370,3 +370,60 @@ export function servicesVerdict(data: ServicesData | null | undefined, systems?:
     note,
   }
 }
+
+// ---- alarm line ----
+
+/** What the alarm line's one action does. */
+export type AlarmTarget =
+  | { kind: 'filter'; filter: ServiceFilter; label: string }
+  | { kind: 'link'; link: VerdictLink; label: string }
+
+/** The page's one alarm line (HMI rule 4). */
+export interface ServiceAlarm {
+  state: 'warning' | 'critical'
+  /** The most severe condition, in one sentence. */
+  title: string
+  /** Every other abnormal condition, and the system's own reasons. */
+  detail: string | null
+  /** At most one: list the services that are down, or go to the place the condition is explained. */
+  action: AlarmTarget | null
+}
+
+export const isAlarmState = (state: UiState): state is 'warning' | 'critical' => state === 'warning' || state === 'critical'
+
+/**
+ * The verdict lines that are abnormal (caution or critical) collapse into one alarm line.
+ * Lines that are only "not read" or normal are not alarms: they stay quiet sentences (see `quietLines`).
+ * No abnormal line means no alarm at all.
+ */
+export function serviceAlarm(
+  verdict: Verdict,
+  data: ServicesData | null | undefined,
+  activeFilter: ServiceFilter = 'all',
+): ServiceAlarm | null {
+  const abnormal = verdict.lines.filter((entry) => isAlarmState(entry.state))
+  const [first, ...rest] = abnormal
+  if (!first || !isAlarmState(first.state)) return null
+
+  const parts: string[] = []
+  if (first.reason) parts.push(first.reason)
+  for (const entry of rest) parts.push(entry.reason ? `${entry.text}: ${entry.reason}` : entry.text)
+
+  // Services that are down come first among the critical lines, so they are the title when there are any.
+  const downCount = data?.summary?.down ?? 0
+  let action: AlarmTarget | null = null
+  if (first.state === 'critical' && downCount > 0) {
+    if (activeFilter !== 'down') {
+      action = { kind: 'filter', filter: 'down', label: downCount === 1 ? 'Show it' : 'Show them' }
+    }
+  } else if (first.link) {
+    action = { kind: 'link', link: first.link, label: first.link.label }
+  }
+
+  return { state: first.state, title: first.text, detail: parts.length ? parts.join(' · ') : null, action }
+}
+
+/** The verdict lines that are not alarms: normal, or not read. Shown as quiet sentences. */
+export function quietLines(verdict: Verdict): VerdictLine[] {
+  return verdict.lines.filter((entry) => !isAlarmState(entry.state))
+}

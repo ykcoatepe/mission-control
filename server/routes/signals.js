@@ -7,14 +7,21 @@
 //
 // data: {
 //   systems:     { gbrain|hermes|openclaw: { state, observedAt, reason, detailHref } } | null
-//   attention:   { count, worst, breakdown: { systems, systemReasons, findings,
-//                  overdueConfirmations, restricted }, partial, missing } | null
-//                systems = systems needing the operator, one each, held through
-//                a refresh; systemReasons = overview attention items, not counted
+//   attention:   { count, worst, standing, restricted, breakdown: { systems,
+//                  systemReasons, findings, overdueConfirmations, restricted },
+//                  partial, missing } | null
 //                the one needs-the-operator number (sources/mloop/attention.js),
-//                equal to /api/loops totals.needsOperator; a part not read is
+//                equal to /api/loops totals.needsOperator. Badge rule: count and
+//                worst cover NEW items only (not acknowledged, not shelved, not
+//                restricted; worst 'healthy' when count is 0); standing =
+//                acknowledged + shelved; restricted = counts-only projects
+//                (information, never counted). systems = systems needing the
+//                operator, one each, held through a refresh; systemReasons =
+//                overview attention items, not counted; a part not read is
 //                null and named in `missing`; null when nothing was read
-//   automations: { failed, nextRunAt } | null
+//   automations: { failed, standingFailed, nextRunAt } | null
+//                failed = enabled jobs whose last run failed and that are not
+//                acknowledged/shelved; standingFailed = those that are
 //   loops:       { openFindings, overdueConfirmations } | null
 //   services:    { down } | null                  launchd down/failed + unreachable endpoints
 //   usage:       { todayUsd, budgetUsedPct } | null
@@ -26,6 +33,7 @@ const { composeMeta } = require('../services/operationsOverview');
 const { scrubText } = require('../core/scrub');
 const { loopsView } = require('../sources/mloop');
 const { countedSystems, needsOperator } = require('../sources/mloop/attention');
+const { isFailedJob, projectCronAcks } = require('../sources/openclaw/automations');
 
 const SYSTEM_LABELS = Object.freeze({ gbrain: 'GBrain', hermes: 'Hermes', openclaw: 'OpenClaw' });
 const MAX_REASON = 200;
@@ -73,28 +81,37 @@ function systemsSignal(overview) {
   return out;
 }
 
-function attentionSignal(overview, loopsData, { memoKey, now }) {
+function attentionSignal(overview, loopsData, { memoKey, now, acks }) {
   return needsOperator({
     systems: countedSystems(overview, { memoKey, now }),
     systemsAttention: Array.isArray(overview?.attention) ? overview.attention : null,
     loops: loopsData,
+    acks,
   });
 }
 
 // Prefer the automations source's summary; otherwise derive it from the
-// Operations cron reading when its scheduler proof succeeded.
-function automationsSignal(automations, operationsCron) {
-  const summary = automations?.data?.cron?.summary;
-  if (summary && Number.isInteger(summary.failed)) {
-    return { failed: summary.failed, nextRunAt: typeof summary.nextRunAt === 'string' ? summary.nextRunAt : null };
+// Operations cron reading when its scheduler proof succeeded. Either way the
+// failed jobs split by the acknowledgements (badge rule).
+function automationsSignal(automations, operationsCron, acks) {
+  const cron = automations?.data?.cron;
+  if (cron?.summary && Number.isInteger(cron.summary.failed)) {
+    const summary = Array.isArray(cron.jobs) ? projectCronAcks(cron, acks).summary : cron.summary;
+    return {
+      failed: summary.failed,
+      standingFailed: Number.isInteger(summary.standingFailed) ? summary.standingFailed : 0,
+      nextRunAt: typeof summary.nextRunAt === 'string' ? summary.nextRunAt : null,
+    };
   }
-  const cron = operationsCron?.data;
-  if (!cron || cron.operationsSource?.sourceSucceeded !== true || !Array.isArray(cron.jobs)) return null;
-  const next = cron.jobs
+  const operations = operationsCron?.data;
+  if (!operations || operations.operationsSource?.sourceSucceeded !== true || !Array.isArray(operations.jobs)) return null;
+  const next = operations.jobs
     .map((job) => job?.nextRun)
     .filter((value) => typeof value === 'string' && Number.isFinite(Date.parse(value)))
     .sort((a, b) => Date.parse(a) - Date.parse(b));
-  return { failed: cron.jobs.filter((job) => job?.status === 'failed').length, nextRunAt: next[0] || null };
+  const jobs = projectCronAcks({ jobs: operations.jobs.filter((job) => job?.status === 'failed').map((job) => ({ ...job, enabled: true })) }, acks).jobs;
+  const standing = jobs.filter((job) => isFailedJob(job) && job.ack !== null).length;
+  return { failed: jobs.length - standing, standingFailed: standing, nextRunAt: next[0] || null };
 }
 
 function servicesSignal(launchd, reachability) {
@@ -148,6 +165,7 @@ function buildSignalsRouter({
   reachabilitySource,
   automationsSnapshot = () => null,
   usageSummary = () => null,
+  acks = null,
   now = Date.now,
 } = {}) {
   if (typeof operationsOverviewService?.getOverview !== 'function') throw new TypeError('buildSignalsRouter: operationsOverviewService required');
@@ -177,8 +195,8 @@ function buildSignalsRouter({
       data: {
         generatedAt: new Date(now()).toISOString(),
         systems: systemsSignal(overview),
-        attention: attentionSignal(overview, loops.data, { memoKey: operationsOverviewService, now }),
-        automations: automationsSignal(automations, operationsCron),
+        attention: attentionSignal(overview, loops.data, { memoKey: operationsOverviewService, now, acks }),
+        automations: automationsSignal(automations, operationsCron, acks),
         loops: loopsData
           ? { openFindings: loopsData.totals.openFindings, overdueConfirmations: loopsData.totals.overdueConfirmations }
           : null,

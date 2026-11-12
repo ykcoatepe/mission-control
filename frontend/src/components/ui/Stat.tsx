@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { UiState } from '../../lib/state'
 import { cx } from './cx'
-import { StateDot } from './StateDot'
+import { StateMark } from './StateMark'
 import styles from './Stat.module.css'
 
 export interface StatProps {
@@ -22,7 +22,7 @@ export function Stat({ label, value, unit, hint, state, className }: StatProps) 
   return (
     <div className={cx(styles.stat, className)} data-state={state}>
       <div className={styles.label}>
-        {state && <StateDot state={state} />}
+        {state && <StateMark state={state} />}
         <span>{label}</span>
       </div>
       <div className={styles.value}>

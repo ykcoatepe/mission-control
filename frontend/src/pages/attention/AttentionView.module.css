@@ -44,7 +44,7 @@
 }
 
 /* The tag stays on the name's line for every row. */
-.restricted {
+.tag {
   flex: none;
   color: var(--text-3);
   font-size: var(--fs-small);
@@ -88,9 +88,42 @@
   white-space: nowrap;
 }
 
-.readingAge {
-  color: var(--text-3);
+/* Nothing new: one quiet sentence, not a banner. */
+.calm {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-lead);
+}
+
+.calmBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+
+.unread {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--text-2);
   font-size: var(--fs-small);
+}
+
+/* The one information row for restricted projects: counts only. */
+.restrictedRow {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  color: var(--text-1);
+}
+
+.restrictedRow .sub {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1);
   font-variant-numeric: tabular-nums;
 }
 
@@ -107,7 +140,7 @@
   display: inline-flex;
   align-items: center;
   gap: var(--sp-1);
-  color: var(--state-critical);
+  color: var(--state-warning);
   font-weight: var(--fw-medium);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -135,6 +168,10 @@
 }
 
 @media (max-width: 700px) {
+  .what {
+    min-width: 0;
+  }
+
   .toolbarEnd {
     width: 100%;
     margin-left: 0;

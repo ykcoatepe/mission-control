@@ -1,7 +1,9 @@
 import { X } from 'lucide-react'
+import type { UiState } from '../../lib/state'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { IconButton } from './IconButton'
+import { StateMark } from './StateMark'
 import { ToastContext } from './toastContext'
 import type { ToastApi, ToastTone } from './toastContext'
 import styles from './Toast.module.css'
@@ -20,6 +22,13 @@ const TONE_LABEL: Record<ToastTone, string> = {
   info: 'Note',
 }
 
+const TONE_STATE: Record<ToastTone, UiState> = {
+  success: 'healthy',
+  error: 'critical',
+  warning: 'warning',
+  info: 'inactive',
+}
+
 function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: (id: number) => void }) {
   const { id, duration } = item
   useEffect(() => {
@@ -30,6 +39,7 @@ function ToastView({ item, onDismiss }: { item: ToastItem; onDismiss: (id: numbe
 
   return (
     <div className={styles.toast} data-tone={item.tone} role={item.tone === 'error' ? 'alert' : 'status'}>
+      <StateMark state={TONE_STATE[item.tone]} className={styles.mark} />
       <span className={styles.tone}>{TONE_LABEL[item.tone]}</span>
       <span className={styles.message}>{item.message}</span>
       <IconButton label="Dismiss notification" size="sm" icon={<X size={14} />} onClick={() => onDismiss(id)} />

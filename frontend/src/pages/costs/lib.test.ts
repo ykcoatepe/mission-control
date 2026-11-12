@@ -11,7 +11,6 @@ import {
   savedBudgetCap,
   canonicalModelName,
   formatSessionName,
-  hashColor,
   codexbarRowsForPeriod,
   buildCodexbarChartData,
   calendarRefreshQueryKeys,
@@ -492,25 +491,6 @@ describe('formatSessionName', () => {
   it('falls back to last segment (truncated to 12 chars)', () => {
     // substring(0, 12) keeps 12 characters (indices 0–11)
     expect(formatSessionName('a:b:verylongsessionname')).toBe('verylongsess')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// hashColor
-// ---------------------------------------------------------------------------
-
-describe('hashColor', () => {
-  it('returns a string starting with # for any input', () => {
-    const color = hashColor('test-model')
-    expect(color).toMatch(/^#|^rgba/)
-  })
-  it('is deterministic — same input returns same color', () => {
-    expect(hashColor('some-model')).toBe(hashColor('some-model'))
-  })
-  it('returns a value from the palette for an empty string', () => {
-    const color = hashColor('')
-    expect(typeof color).toBe('string')
-    expect(color.length).toBeGreaterThan(0)
   })
 })
 

@@ -365,6 +365,8 @@ export interface Verdict {
   conditions: Condition[]
   /** What the verdict could not observe, said next to a normal verdict so it never claims more than was read. */
   caveat: string | null
+  /** The reading itself is stale (the one case the page raises a caution without a reason from the payload). */
+  staleReading?: boolean
 }
 
 const KNOWN_STATES: readonly UiState[] = ['healthy', 'warning', 'critical', 'unavailable', 'inactive']
@@ -415,7 +417,7 @@ export function deriveVerdict(
   if (!first) {
     if (payload.state === 'healthy' || payload.state === 'inactive') {
       return meta?.stale
-        ? { state: 'warning', text: 'GBrain needs attention: the last reading is stale', conditions, caveat: null }
+        ? { state: 'warning', text: 'GBrain needs attention: the last reading is stale', conditions, caveat: null, staleReading: true }
         : { state: payload.state, text: 'GBrain is normal', conditions, caveat }
     }
     const generic = payload.state === 'unavailable' ? 'GBrain readings are incomplete' : 'GBrain needs attention'
@@ -879,12 +881,13 @@ function completeEntry(entry: TimelineEntry): TimelineEntry {
   }
 }
 
+/** The recorded state in the interface's own words (state.ts): normal, caution, critical, not read, off. */
 const RECORDED_WORD: Record<UiState, string> = {
-  healthy: 'normal',
-  warning: 'warning',
-  critical: 'critical',
-  unavailable: 'unavailable',
-  inactive: 'inactive',
+  healthy: stateLabel('healthy').toLowerCase(),
+  warning: stateLabel('warning').toLowerCase(),
+  critical: stateLabel('critical').toLowerCase(),
+  unavailable: stateLabel('unavailable').toLowerCase(),
+  inactive: stateLabel('inactive').toLowerCase(),
 }
 
 const SIGNATURE_KEYS = [

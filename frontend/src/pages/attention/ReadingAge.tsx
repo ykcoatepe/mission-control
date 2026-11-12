@@ -1,10 +1,4 @@
-import { Freshness, TimeAgo } from '../../components/ui'
-import { parseTime } from '../../lib/time'
-import { useNow } from '../../lib/useNow'
-import styles from './AttentionView.module.css'
-
-/** A reading older than this is called stale (same limit as `Freshness`). */
-const STALE_AFTER_MS = 15 * 60_000
+import { Freshness } from '../../components/ui'
 
 interface ReadingAgeProps {
   observedAt: string | null | undefined
@@ -13,17 +7,9 @@ interface ReadingAgeProps {
 }
 
 /**
- * When this page's reading was taken, in the shell's wording ("Updated 2m ago"). An old or
- * flagged reading says so in amber ("stale · 3h"); a missing time says "not read".
+ * Where this page's reading came from, only when that matters (HMI rule 8): a flagged or old reading says
+ * "as of 12:41", a missing time says "not read", and a fresh reading says nothing.
  */
 export default function ReadingAge({ observedAt, stale }: ReadingAgeProps) {
-  const now = useNow()
-  const ms = parseTime(observedAt)
-  if (ms === null) return <Freshness observedAt={null} />
-  if (stale || now - ms > STALE_AFTER_MS) return <Freshness observedAt={observedAt} state="stale" />
-  return (
-    <span className={styles.readingAge}>
-      Updated <TimeAgo value={observedAt} />
-    </span>
-  )
+  return <Freshness observedAt={observedAt} state={stale ? 'stale' : undefined} />
 }

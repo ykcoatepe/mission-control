@@ -226,6 +226,25 @@ export interface TimelineReading {
   meta: Meta
 }
 
+/** GET /api/gbrain/trends: real readings recorded in the last 24 hours. A series with fewer than two readings is empty. */
+export interface TrendSeriesPoint {
+  t: number
+  v: number
+}
+
+export interface TrendsReading {
+  enabled?: boolean
+  since?: string
+  until?: string
+  entryCount?: number
+  series: {
+    quality?: TrendSeriesPoint[]
+    embeddedPercent?: TrendSeriesPoint[]
+    queue?: TrendSeriesPoint[]
+  }
+  meta: Meta
+}
+
 // ---- GET /api/operations/overview (capabilities) ----
 
 export type SafetyClass = 'R0' | 'W1' | 'W2'

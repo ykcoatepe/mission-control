@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 import { Play, Trash2 } from 'lucide-react'
-import { Button, Drawer, Meter, Mono, Notice, Select, StatePill, Switch, TimeAgo } from '../../components/ui'
+import { Button, Drawer, Meter, Mono, Notice, Select, StateMark, StatePill, Switch, TimeAgo } from '../../components/ui'
 import { calcSuccessRate, getCronSchedulerLabel, normalizeCronModelValue } from './lib'
 import type { CronJob, CronOverlapMarker, ModelOption } from './types'
 import { jobState } from './jobState'
+import { ackNote } from './acks'
 import { NextRun } from './NextRun'
 import { scheduleDisplay } from './cronSchedule'
 import { LIST_DESCRIPTION_LIMIT, describeJobText, describeRunKind, failureReason, isInternalKey } from './jobWords'
@@ -27,6 +28,9 @@ interface JobDrawerProps {
   onToggle: (job: CronJob) => void
   onRun: (job: CronJob) => void
   onDelete: (job: CronJob) => void
+  onAcknowledge: (job: CronJob) => void
+  onShelve: (job: CronJob) => void
+  onUndoAck: (job: CronJob) => void
   onModelChange: (job: CronJob, model: string) => void
 }
 
@@ -52,6 +56,9 @@ export default function JobDrawer({
   onToggle,
   onRun,
   onDelete,
+  onAcknowledge,
+  onShelve,
+  onUndoAck,
   onModelChange,
 }: JobDrawerProps) {
   const now = useNow()
@@ -124,7 +131,14 @@ export default function JobDrawer({
         <dl className={styles.facts}>
           <Fact label="State">
             <span className={styles.inline}>
-              <StatePill state={state.state} label={state.label} />
+              {state.standing ? (
+                <span className={styles.standing}>
+                  <StateMark state="critical" className={styles.standingMark} />
+                  {state.label}
+                </span>
+              ) : (
+                <StatePill state={state.state} label={state.label} />
+              )}
               {canToggle && (
                 <Switch
                   checked={job.enabled}
@@ -176,6 +190,27 @@ export default function JobDrawer({
             ) : null}
           </Fact>
           {job.thinking ? <Fact label="Thinking">{job.thinking}</Fact> : null}
+          {failed && job.ackKey ? (
+            <Fact label="Failure">
+              {job.ack ? (
+                <span className={styles.inline}>
+                  <span className={styles.note}>{ackNote(job.ack)}</span>
+                  <Button size="sm" variant="ghost" loading={pendingAction === `ack-${job.id}`} onClick={() => onUndoAck(job)}>
+                    Undo
+                  </Button>
+                </span>
+              ) : (
+                <span className={styles.inline}>
+                  <Button size="sm" loading={pendingAction === `ack-${job.id}`} onClick={() => onAcknowledge(job)}>
+                    Acknowledge
+                  </Button>
+                  <Button size="sm" disabled={pendingAction === `ack-${job.id}`} data-return-focus="shelve" onClick={() => onShelve(job)}>
+                    Shelve…
+                  </Button>
+                </span>
+              )}
+            </Fact>
+          ) : null}
           {failed ? (
             <Fact label="Why it failed">
               {reason ?? <span className={styles.note}>No reason reported</span>}

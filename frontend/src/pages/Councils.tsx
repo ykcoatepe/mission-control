@@ -2,6 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { RefreshCcw } from 'lucide-react'
 import { fetchJson, useApi } from '../lib/hooks'
+import { useNow } from '../lib/useNow'
 import {
   isOpenDecisionStatus,
   normalizeDecisionStatus,
@@ -10,6 +11,8 @@ import {
 } from '../lib/status'
 import { stateLabel, toUiState, type UiState } from '../lib/state'
 import {
+  AlarmLine,
+  Block,
   Button,
   DataTable,
   Drawer,
@@ -17,18 +20,18 @@ import {
   ErrorState,
   FilterChips,
   Mono,
-  Notice,
   Page,
-  Panel,
   SearchInput,
   Select,
   Skeleton,
-  Stat,
+  StateMark,
   StatePill,
-  StatRow,
-  TimeAgo,
+  type AlarmLineProps,
   type DataTableColumn,
+  cx,
 } from '../components/ui'
+import { formatAsOf } from '../components/ui/asOf'
+import { parseTime } from '../lib/time'
 import styles from './Councils.module.css'
 
 type CouncilFilter = 'ALL' | 'EC' | 'OC' | 'TFC' | 'CROSS'
@@ -160,6 +163,40 @@ const councilName = (council: string) => councilLabels[council as CouncilFilter]
 function StatusCell({ status }: { status: string }) {
   if (isOpenDecisionStatus(status)) return <StatePill state="warning" label="Open" />
   return <span>{statusLabel(status)}</span>
+}
+
+/** A real observed time, as the clock reads it: "12:41" today, "11 Nov, 12:41" before. No time means "—", never a made-up one. */
+function ObservedTime({ value }: { value: string | number | Date | null | undefined }) {
+  const now = useNow()
+  const ms = parseTime(value)
+  if (ms === null) return <span>—</span>
+  const text = formatAsOf(ms, now)?.replace(/^as of /, '') ?? '—'
+  return (
+    <time className={styles.time} dateTime={new Date(ms).toISOString()} title={new Date(ms).toLocaleString()}>
+      {text}
+    </time>
+  )
+}
+
+/** A value that could not be read: hollow circle and "not read" (HMI rule 8). */
+function NotRead({ children = 'not read' }: { children?: ReactNode }) {
+  return (
+    <span className={styles.notRead}>
+      <StateMark state="unavailable" />
+      {children}
+    </span>
+  )
+}
+
+/** One reading of the governance block: what it is, its value (right-aligned digits), and where it comes from. */
+function Reading({ label, note, children }: { label: string; note?: string; children: ReactNode }) {
+  return (
+    <li className={styles.reading}>
+      <span className={styles.readingLabel}>{label}</span>
+      <span className={styles.readingValue}>{children}</span>
+      {note ? <span className={styles.readingNote}>{note}</span> : <span />}
+    </li>
+  )
 }
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -302,6 +339,12 @@ export default function Councils() {
 
   const columns: DataTableColumn<Decision>[] = [
     {
+      key: 'updated',
+      header: 'Time',
+      width: '120px',
+      cell: (decision) => <ObservedTime value={decision.updatedAt || decision.createdAt} />,
+    },
+    {
       key: 'decision',
       header: 'Decision',
       width: '18%',
@@ -320,17 +363,11 @@ export default function Councils() {
     {
       key: 'status',
       header: 'Status',
-      width: '160px',
+      width: '140px',
       cell: (decision) => <StatusCell status={decisionStatus(decision)} />,
     },
     { key: 'owner', header: 'Owner', width: '120px', cell: (decision) => decision.owner || '—' },
     { key: 'risk', header: 'Risk', width: '88px', cell: (decision) => decision.risk || '—' },
-    {
-      key: 'updated',
-      header: 'Updated',
-      width: '112px',
-      cell: (decision) => <TimeAgo value={decision.updatedAt || decision.createdAt} />,
-    },
     {
       key: 'task',
       header: 'Task',
@@ -343,25 +380,54 @@ export default function Councils() {
   const loadingFirst = (summary.loading || decisionsApi.loading) && !summary.data && !decisionsApi.data
   const readError = decisionsApi.error || summary.error
 
-  const archiveNotice = () => {
+  // The page's one alarm line: the worst thing first, the others named in its detail. Nothing abnormal: no line.
+  const alarms: Array<Pick<AlarmLineProps, 'state' | 'title' | 'detail' | 'action'>> = []
+  if (infraFailures !== null && infraFailures > 0) {
+    alarms.push({
+      state: 'critical',
+      title: `${infraFailures} automatic task ${infraFailures === 1 ? 'attempt' : 'attempts'} failed`,
+      detail: 'Failed for infrastructure reasons, not because of a decision.',
+    })
+  }
+  if (hasOpenApprovals) {
+    const canShowOpen = allDecisions.some((decision) => decisionStatus(decision) === 'open')
+    alarms.push({
+      state: 'warning',
+      title: `${openApprovals} council ${openApprovals === 1 ? 'decision is' : 'decisions are'} still open`,
+      detail: 'Open approvals should be rare.',
+      action: canShowOpen ? { label: 'Show open decisions', onClick: () => setStatusFilter('open') } : undefined,
+    })
+  }
+  if (governanceOnly) {
+    alarms.push({
+      state: 'warning',
+      title: 'Only audit activity, no real work',
+      detail: silenceHours === null ? undefined : `No real-work event for ${Math.round(silenceHours)} h.`,
+    })
+  }
+  const alarm = alarms[0] ?? null
+  const alsoNamed = alarms.slice(1).map((item) => item.title)
+
+  // One quiet line under the Decisions header: what the archive is. Open approvals are the alarm line's to say.
+  const archiveLine = () => {
     if (!summary.data) return null
     const lead = hasOpenApprovals
-      ? 'Open approvals should be rare. Review them below.'
+      ? null
       : openApprovals === null
         ? 'Open approvals could not be read.'
         : 'Read-only archive: councils no longer run live work.'
+    if (!lead && totalDecisions === null) return null
     return (
-      <Notice
-        tone={hasOpenApprovals ? 'warning' : 'info'}
-        title={hasOpenApprovals ? `${openApprovals} council ${openApprovals === 1 ? 'decision is' : 'decisions are'} still open` : undefined}
-      >
+      <>
         {lead}
-        {totalDecisions !== null ? ` ${totalDecisions} ${totalDecisions === '1' ? 'decision' : 'decisions'} on record` : null}
-        {totalDecisions !== null && archive.lastDecisionAt ? <>, last <TimeAgo value={archive.lastDecisionAt} /></> : null}
+        {totalDecisions !== null ? `${lead ? ' ' : ''}${totalDecisions} ${totalDecisions === '1' ? 'decision' : 'decisions'} on record` : null}
+        {totalDecisions !== null && archive.lastDecisionAt ? <>, last <ObservedTime value={archive.lastDecisionAt} /></> : null}
         {totalDecisions !== null ? '.' : null}
-      </Notice>
+      </>
     )
   }
+
+  const shownCount = Math.min(filteredDecisions.length, MAX_ROWS)
 
   return (
     <Page
@@ -373,55 +439,77 @@ export default function Councils() {
         </Button>
       }
     >
-      {archiveNotice()}
-
-      {scorecard.error && !scorecard.data ? (
-        <Notice tone="unavailable" title="Governance check could not be read">
-          {scorecard.error}
-        </Notice>
-      ) : (
-        <>
-          {scorecard.loading && !scorecard.data ? (
-            <Skeleton variant="block" label="Reading governance check" />
-          ) : (
-            <StatRow aria-label="Governance versus real workflow, last 24 hours">
-              <Stat
-                label="Overall"
-                value={overallValue}
-                state={workflowUi}
-                hint={review ? 'audit activity against real work' : overallHint}
-              />
-              <Stat label="Real work" value={formatCount(review?.workflowSurfaceLive24h)} hint="events, last 24 hours" />
-              <Stat label="Audit's own events" value={formatCount(review?.governanceEventsLive24h)} hint="logged automatically, last 24 hours" />
-              <Stat
-                label="Time without real work"
-                value={silenceHours === null ? null : Math.round(silenceHours)}
-                unit={silenceHours === null ? undefined : 'h'}
-                state={governanceOnly ? 'warning' : undefined}
-                hint="since the last real-work event"
-              />
-              <Stat label="Automatic task attempts" value={formatCount(scorecard.data?.metrics?.delegationAutorunAttempts)} />
-              <Stat
-                label="Failed attempts"
-                hint="infrastructure problems"
-                value={formatCount(infraFailures)}
-                state={infraFailures !== null && infraFailures > 0 ? 'critical' : undefined}
-              />
-            </StatRow>
-          )}
-
-          {(governanceOnly || review?.rcaTaskActive || review?.idleAdvisories?.length) ? (
-            <Notice tone={governanceOnly ? 'warning' : 'info'} title={governanceOnly ? 'Only audit activity, no real work' : undefined}>
-              {review?.rcaTaskActive ? <p className={styles.noticeLine}>Investigation task open: <Mono>{review.rcaTaskActive}</Mono></p> : null}
-              {review?.idleAdvisories?.length ? (
-                <ul className={styles.advisories}>
-                  {review.idleAdvisories.slice(0, 6).map((item: string) => <li key={item}>{item}</li>)}
-                </ul>
-              ) : null}
-            </Notice>
-          ) : null}
-        </>
+      {alarm && (
+        <AlarmLine
+          state={alarm.state}
+          title={alarm.title}
+          detail={
+            <>
+              {alarm.detail}
+              {alarm.detail && alsoNamed.length > 0 ? ' ' : null}
+              {alsoNamed.length > 0 ? `Also: ${alsoNamed.join('; ')}.` : null}
+            </>
+          }
+          action={alarm.action}
+        />
       )}
+
+      <Block title="Governance against real work" meta="Last 24 hours" padding="none">
+        {scorecard.loading && !scorecard.data ? (
+          <div className={styles.pad}>
+            <Skeleton variant="block" label="Reading governance check" />
+          </div>
+        ) : scorecard.error && !scorecard.data ? (
+          <p className={cx(styles.pad, styles.notReadLine)}>
+            <NotRead>Governance check not read. {scorecard.error}</NotRead>
+          </p>
+        ) : (
+          <>
+            <ul className={styles.readings} aria-label="Governance versus real workflow, last 24 hours">
+              <Reading label="Overall" note={review ? 'audit activity against real work' : overallHint}>
+                <StatePill state={workflowUi} label={overallValue} />
+              </Reading>
+              <Reading label="Real work" note="events, last 24 hours">
+                {formatCount(review?.workflowSurfaceLive24h) ?? <NotRead />}
+              </Reading>
+              <Reading label="Audit's own events" note="logged automatically, last 24 hours">
+                {formatCount(review?.governanceEventsLive24h) ?? <NotRead />}
+              </Reading>
+              <Reading label="Time without real work" note="since the last real-work event">
+                {silenceHours === null ? (
+                  <NotRead />
+                ) : governanceOnly ? (
+                  <StatePill state="warning" label={`${Math.round(silenceHours)} h`} />
+                ) : (
+                  `${Math.round(silenceHours)} h`
+                )}
+              </Reading>
+              <Reading label="Automatic task attempts">
+                {formatCount(scorecard.data?.metrics?.delegationAutorunAttempts) ?? <NotRead />}
+              </Reading>
+              <Reading label="Failed attempts" note="infrastructure problems">
+                {infraFailures === null ? (
+                  <NotRead />
+                ) : infraFailures > 0 ? (
+                  <StatePill state="critical" label={String(infraFailures)} />
+                ) : (
+                  formatCount(infraFailures)
+                )}
+              </Reading>
+            </ul>
+            {(review?.rcaTaskActive || review?.idleAdvisories?.length) ? (
+              <div className={styles.advisoryBox}>
+                {review?.rcaTaskActive ? <p className={styles.noticeLine}>Investigation task open: <Mono>{review.rcaTaskActive}</Mono></p> : null}
+                {review?.idleAdvisories?.length ? (
+                  <ul className={styles.advisories}>
+                    {review.idleAdvisories.slice(0, 6).map((item: string) => <li key={item}>{item}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
+      </Block>
 
       {loadingFirst ? (
         <Skeleton variant="block" size="lg" label="Reading decisions" />
@@ -432,7 +520,12 @@ export default function Councils() {
           onRetry={() => { void Promise.all([summary.refetch(), decisionsApi.refetch()]) }}
         />
       ) : (
-        <Panel title="Decisions" padding="none">
+        <Block
+          title="Decisions"
+          meta={`Showing ${shownCount} of ${allDecisions.length}`}
+          description={archiveLine()}
+          padding="none"
+        >
           <div className={styles.toolbar}>
             <SearchInput
               value={search}
@@ -460,6 +553,7 @@ export default function Councils() {
             columns={columns}
             rows={filteredDecisions.slice(0, MAX_ROWS)}
             rowKey={(decision) => decision.decisionId}
+            rowLabel={(decision) => `Decision ${decision.decisionId}`}
             onRowClick={(decision) => { void openDecision(decision) }}
             selectedKey={selectedDecision?.decisionId ?? null}
             empty={
@@ -476,7 +570,7 @@ export default function Councils() {
           {filteredDecisions.length > MAX_ROWS && (
             <p className={styles.more}>Showing {MAX_ROWS} of {filteredDecisions.length} decisions. Narrow the filters to see the rest.</p>
           )}
-        </Panel>
+        </Block>
       )}
 
       <Drawer
@@ -494,7 +588,7 @@ export default function Councils() {
                 <Fact label="Owner">{selectedDecision.owner || '—'}</Fact>
                 <Fact label="Risk">{selectedDecision.risk || '—'}</Fact>
                 <Fact label="Revisit">{selectedDecision.revisitDate || '—'}</Fact>
-                <Fact label="Updated"><TimeAgo value={selectedDecision.updatedAt || selectedDecision.createdAt} /></Fact>
+                <Fact label="Updated"><ObservedTime value={selectedDecision.updatedAt || selectedDecision.createdAt} /></Fact>
                 {selectedDecision.delegatedTaskState ? <Fact label="Task state">{selectedDecision.delegatedTaskState}</Fact> : null}
                 {selectedDecision.linkedTaskId ? <Fact label="Task"><Mono>{selectedDecision.linkedTaskId}</Mono></Fact> : null}
                 {selectedDecision.quorum ? (
@@ -547,7 +641,7 @@ export default function Councils() {
                       <div className={styles.timelineHead}>
                         <span className={styles.timelineType}>{event.eventType || event.type || 'event'}</span>
                         <span className={styles.timelineMeta}>
-                          {event.source || 'unknown source'} · <TimeAgo value={event.timestamp || event.createdAt} />
+                          <ObservedTime value={event.timestamp || event.createdAt} /> · {event.source || 'unknown source'}
                         </span>
                       </div>
                       {event.payload?.note ? <p className={styles.text}>{event.payload.note}</p> : null}

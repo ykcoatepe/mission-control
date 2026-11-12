@@ -1,78 +1,98 @@
 /*
- * Mission Control design tokens — "Dark cockpit".
+ * Mission Control design tokens — a supervisory HMI in the manner of a railway signalling centre.
  *
- * Rule of the system: the screen is quiet when everything is normal.
- * Colour is reserved for state and for things the operator can act on.
- * See docs/reference-design-system.md before adding a token.
+ * Rules of the system (docs/reference-design-system.md):
+ *   - Normal is quiet: a normal state has no colour.
+ *   - Colour has three jobs: abnormal state (amber caution, soft red critical, always with a shape and a word),
+ *     teal = what the operator can do or what is selected, and the four line colours that identify the four
+ *     GBrain source groups (also chart series). Nothing decorative is coloured.
+ *   - Elevation is a step in lightness: no shadows, gradients, glow or blur.
+ *
+ * Two themes: "Slate dusk" (dark, default) and "Soft daylight" (light).
  */
 
 :root {
   color-scheme: dark;
 
-  /* Surfaces: elevation is a step in lightness, never a shadow or blur. */
-  --bg: #0b0d10;
-  --surface-1: #101317;
-  --surface-2: #161a1f;
-  --surface-3: #1d2228;
-  --line: #22272e;
-  --line-strong: #2f3640;
-  --scrim: rgba(4, 6, 8, 0.62);
+  /* Surfaces */
+  --bg: #1a2029;
+  --rail: #161b23; /* side rail and top bar ground */
+  --surface-1: #1f2632;
+  --surface-2: #242c3a;
+  --surface-3: #2b3444;
+  --line: #303a4a;
+  --line-strong: #45526a;
+  --track: #7d8aa0; /* neutral track and diagram line */
+  --control-line: #7d8aa0; /* outline of an input or button: at least 3:1 on the grounds it sits on */
+  --scrim: rgba(10, 13, 18, 0.6);
 
-  /* Text */
-  --text-1: #e9ebee;
-  --text-2: #a7aeb8;
-  --text-3: #8b939f;
-  --text-disabled: #4a525c;
-  --text-on-accent: #06222c;
+  /* Text. text-3 is for 12px and larger, on bg, rail, surface-1 and surface-2 (not surface-3). */
+  --text-1: #dde3ea;
+  --text-2: #a9b4c2;
+  --text-3: #8995a5; /* #8793a3 nudged to reach 4.5:1 on surface-2 */
+  --text-disabled: #56617a;
+  --text-on-accent: #0f1d1c;
 
-  /* State. healthy = confirmed normal, warning = caution, critical = act now,
+  /* State. normal = neutral mark (no colour), warning = caution, critical = act now,
      unavailable = could not be read, inactive = intentionally off. */
-  --state-healthy: #3dd68c;
-  --state-warning: #ffb224;
-  --state-critical: #ff5c5c;
-  --state-unavailable: #7a8490;
-  --state-inactive: #555e69;
+  --state-normal: #c2ccd8;
+  --state-warning: #e0b060;
+  --state-critical: #ea8079; /* #e8736b lifted so critical text passes 4.5:1 on its own tint over surface-1 and surface-2 */
+  --state-unavailable: #8995a5;
+  --state-inactive: #56617a;
 
-  --state-healthy-bg: rgba(61, 214, 140, 0.1);
-  --state-warning-bg: rgba(255, 178, 36, 0.1);
-  --state-critical-bg: rgba(255, 92, 92, 0.11);
-  --state-unavailable-bg: rgba(122, 132, 144, 0.12);
-  --state-inactive-bg: rgba(85, 94, 105, 0.12);
+  --state-warning-bg: rgba(224, 176, 96, 0.1);
+  --state-warning-line: rgba(224, 176, 96, 0.45);
+  --state-critical-bg: rgba(232, 115, 107, 0.11);
+  --state-critical-line: rgba(232, 115, 107, 0.45);
+  --state-unavailable-bg: transparent;
+  --state-unavailable-line: var(--line-strong);
+  --state-inactive-bg: transparent;
+  --state-inactive-line: var(--line);
 
-  --state-healthy-line: rgba(61, 214, 140, 0.32);
-  --state-warning-line: rgba(255, 178, 36, 0.36);
-  --state-critical-line: rgba(255, 92, 92, 0.4);
-  --state-unavailable-line: rgba(122, 132, 144, 0.34);
-  --state-inactive-line: rgba(85, 94, 105, 0.34);
+  /* Legacy aliases: "healthy" is the normal state and renders neutral. New code uses --state-normal. */
+  --state-healthy: var(--state-normal);
+  --state-healthy-bg: transparent;
+  --state-healthy-line: var(--line-strong);
 
-  /* Action: the only non-state colour. Links, primary buttons, focus, selection. */
-  --accent: #4cc9f0;
-  --accent-hover: #74d6f4;
-  --accent-bg: rgba(76, 201, 240, 0.1);
-  --accent-line: rgba(76, 201, 240, 0.38);
-  --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+  /* Action: links, primary action, focus, selection. */
+  --accent: #5fb8b0;
+  --accent-hover: #7ccbc4;
+  --accent-bg: rgba(95, 184, 176, 0.12);
+  --accent-line: rgba(95, 184, 176, 0.45);
 
-  /* Categorical series for charts only (never for state). */
-  --series-1: #4cc9f0;
-  --series-2: #9d8cf5;
-  --series-3: #f0a35e;
-  --series-4: #6ad0a8;
-  --series-5: #e58fb1;
-  --series-6: #8f9bab;
+  /* The four GBrain line colours: source-group identity only. */
+  --line-reference: #6fb1e0;
+  --line-projects: #7fc49a;
+  --line-agent: #a99be8;
+  --line-curated: #e08fb0;
+
+  /* Chart series (categories only, never state). */
+  --series-1: #6fb1e0;
+  --series-2: #a99be8;
+  --series-3: #7fc49a;
+  --series-4: #e08fb0;
+  --series-5: #5fb8b0;
+  --series-6: #9aa6b6;
+
+  /* Analog bars */
+  --band: rgba(95, 184, 176, 0.28); /* the normal band */
+  --bar-fill: #a9b4c2;
 
   /* Type */
-  --font-sans: 'Inter Variable', 'Inter', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'SF Pro Text',
-    'Helvetica Neue', system-ui, sans-serif;
+  --font-sans: 'Barlow', ui-sans-serif, -apple-system, BlinkMacSystemFont, 'Helvetica Neue', system-ui, sans-serif;
+  --font-caps: 'Barlow Semi Condensed', 'Barlow', ui-sans-serif, -apple-system, BlinkMacSystemFont, system-ui,
+    sans-serif;
   --font-mono: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas,
     monospace;
 
-  --fs-micro: 11px;
-  --fs-small: 12px;
-  --fs-body: 13px;
-  --fs-lead: 14px;
-  --fs-h3: 16px;
-  --fs-h2: 20px;
-  --fs-h1: 28px;
+  --fs-micro: 12px;
+  --fs-small: 13px;
+  --fs-body: 14px;
+  --fs-lead: 15px;
+  --fs-h3: 17px;
+  --fs-h2: 21px;
+  --fs-h1: 26px;
 
   --lh-tight: 1.2;
   --lh-body: 1.45;
@@ -80,6 +100,8 @@
   --fw-regular: 400;
   --fw-medium: 500;
   --fw-semibold: 600;
+
+  --caps-spacing: 0.04em;
 
   /* Space: 4px grid */
   --sp-1: 4px;
@@ -92,21 +114,21 @@
   --sp-12: 48px;
 
   /* Shape */
-  --r-sm: 4px;
-  --r-md: 6px;
-  --r-lg: 10px;
+  --r-sm: 3px;
+  --r-md: 4px;
+  --r-lg: 6px;
   --r-full: 999px;
 
-  /* Motion: opacity and transform only, short. */
+  /* Motion: 120-180 ms, state changes only. */
   --dur-fast: 120ms;
   --dur-base: 180ms;
   --ease: cubic-bezier(0.2, 0, 0, 1);
 
   /* Layout */
-  --sidebar-w: 232px;
+  --sidebar-w: 224px;
   --sidebar-w-collapsed: 56px;
   --topbar-h: 48px;
-  --content-max: 1480px;
+  --content-max: 1600px;
   --control-h: 32px;
   --control-h-sm: 26px;
 
@@ -121,47 +143,51 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --bg: #f5f6f7;
-  --surface-1: #ffffff;
-  --surface-2: #f0f1f3;
-  --surface-3: #e7e9ec;
-  --line: #e1e4e8;
-  --line-strong: #cbd0d6;
-  --scrim: rgba(20, 23, 26, 0.32);
+  --bg: #e7e5e0;
+  --rail: #dcd9d3;
+  --surface-1: #f0eee9;
+  --surface-2: #e9e6e0;
+  --surface-3: #dedad3;
+  --line: #cfcac2;
+  --line-strong: #a9a39a;
+  --track: #8c8780;
+  --control-line: #7a746d;
+  --scrim: rgba(42, 40, 38, 0.32);
 
-  --text-1: #14171a;
-  --text-2: #4b5560;
-  --text-3: #5b646f;
-  --text-disabled: #b1b8c0;
+  --text-1: #2a2826;
+  --text-2: #55504a;
+  --text-3: #635e59; /* #6b6660 darkened to reach 4.5:1 on the rail */
+  --text-disabled: #a8a39b;
   --text-on-accent: #ffffff;
 
-  --state-healthy: #107242;
-  --state-warning: #905500;
-  --state-critical: #bd2828;
-  --state-unavailable: #6b7480;
-  --state-inactive: #98a1ab;
+  --state-normal: #55504a;
+  --state-warning: #825000; /* #9a5f00 darkened to reach 4.5:1 on the warning tint and on the rail */
+  --state-critical: #ac352d; /* #b3372f darkened to reach 4.5:1 on the critical tint and on the rail */
+  --state-unavailable: #635e59;
+  --state-inactive: #a8a39b;
 
-  --state-healthy-bg: rgba(16, 114, 66, 0.09);
-  --state-warning-bg: rgba(144, 85, 0, 0.1);
-  --state-critical-bg: rgba(189, 40, 40, 0.08);
-  --state-unavailable-bg: rgba(107, 116, 128, 0.1);
-  --state-inactive-bg: rgba(152, 161, 171, 0.12);
+  --state-warning-bg: #f3e3bd;
+  --state-warning-line: rgba(130, 80, 0, 0.4);
+  --state-critical-bg: #f4d9d5;
+  --state-critical-line: rgba(172, 53, 45, 0.4);
 
-  --state-healthy-line: rgba(16, 114, 66, 0.3);
-  --state-warning-line: rgba(144, 85, 0, 0.32);
-  --state-critical-line: rgba(189, 40, 40, 0.32);
-  --state-unavailable-line: rgba(107, 116, 128, 0.3);
-  --state-inactive-line: rgba(152, 161, 171, 0.34);
+  --accent: #1b615d; /* #1f6f6b darkened to reach 4.5:1 as text on the rail and on the accent tint */
+  --accent-hover: #144e4b;
+  --accent-bg: rgba(31, 111, 107, 0.1);
+  --accent-line: rgba(31, 111, 107, 0.4);
 
-  --accent: #096c8f;
-  --accent-hover: #096585;
-  --accent-bg: rgba(9, 108, 143, 0.08);
-  --accent-line: rgba(9, 108, 143, 0.34);
+  --line-reference: #2b76b0;
+  --line-projects: #2f8558;
+  --line-agent: #6a55c8;
+  --line-curated: #b0477a;
 
-  --series-1: #096c8f;
-  --series-2: #6a57d6;
-  --series-3: #c2702a;
-  --series-4: #2f9a72;
-  --series-5: #c25583;
-  --series-6: #6b7480;
+  --series-1: #2b76b0;
+  --series-2: #6a55c8;
+  --series-3: #2f8558;
+  --series-4: #b0477a;
+  --series-5: #1f6f6b;
+  --series-6: #6b6660;
+
+  --band: rgba(31, 111, 107, 0.18);
+  --bar-fill: #8c8780;
 }

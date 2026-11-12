@@ -4,10 +4,7 @@
   gap: var(--sp-2);
   min-width: 0;
   max-width: 100%;
-  padding: 0 var(--sp-2);
   height: 20px;
-  border: 1px solid transparent;
-  border-radius: var(--r-full);
   color: var(--text-2);
   font-size: var(--fs-small);
   font-weight: var(--fw-medium);
@@ -20,22 +17,7 @@
   text-overflow: ellipsis;
 }
 
-.pill[data-state='warning'] {
-  background: var(--state-warning-bg);
-  border-color: var(--state-warning-line);
-  color: var(--state-warning);
-}
-
-.pill[data-state='critical'] {
-  background: var(--state-critical-bg);
-  border-color: var(--state-critical-line);
-  color: var(--state-critical);
-}
-
-.pill[data-state='unavailable'] {
-  color: var(--text-3);
-}
-
-.pill[data-state='inactive'] {
-  color: var(--text-3);
-}
+.pill[data-state='warning'] { color: var(--state-warning); }
+.pill[data-state='critical'] { color: var(--state-critical); }
+.pill[data-state='unavailable'],
+.pill[data-state='inactive'] { color: var(--text-3); }

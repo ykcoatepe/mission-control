@@ -1,5 +1,6 @@
-import { Notice, Panel } from '../../components/ui'
+import { Block, Notice } from '../../components/ui'
 import { ActionList } from './ActionList'
+import { Disclosure } from './Disclosure'
 import { visibleActions } from './lib'
 import styles from './MaintenancePanel.module.css'
 import type { OperationCapability } from './types'
@@ -17,12 +18,13 @@ export function MaintenancePanel({
   const checks = visible?.filter((action) => action.safetyClass === 'R0') ?? []
   const changes = visible?.filter((action) => action.safetyClass === 'W1') ?? []
   return (
-    <Panel title="Maintenance" description="Checks run at once. Changes ask before they run.">
+    <Block title="Maintenance" meta="Tools" description="Checks run at once. Changes ask before they run.">
       {visible === null ? (
         <Notice tone="warning">Maintenance actions could not be read, so none are offered.</Notice>
       ) : visible.length === 0 ? (
         <p className={styles.none}>No maintenance actions are available.</p>
       ) : (
+        <Disclosure summary={`Show ${visible.length} maintenance ${visible.length === 1 ? 'action' : 'actions'}`}>
         <div className={styles.groups}>
           {checks.length > 0 && (
             <section aria-labelledby="maint-check">
@@ -41,7 +43,8 @@ export function MaintenancePanel({
             </section>
           )}
         </div>
+        </Disclosure>
       )}
-    </Panel>
+    </Block>
   )
 }

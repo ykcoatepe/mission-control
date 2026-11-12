@@ -6,7 +6,7 @@ import styles from './Button.module.css'
 export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
 
 export interface ButtonProps extends Omit<ComponentProps<'button'>, 'children'> {
-  /** `primary` (cyan) is for the single main action of a view. */
+  /** `primary` (teal outline) is for the single main action of a view. */
   variant?: ButtonVariant
   size?: 'sm' | 'md'
   /** Disables the button and shows a spinner. The label stays for layout and screen readers. */

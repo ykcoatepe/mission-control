@@ -44,6 +44,18 @@ Shared plumbing for every area. Binding design:
    pure-GET sweep in `tests/appBootSmoke.test.js` when it becomes pure, and
    update `EXPECTED_ROUTES` when the route table changes.
 
+## Attention acknowledgements (badge rule)
+
+`server/services/attentionAcks.js` is the one store for acknowledged and
+shelved attention items (`data/attention/acks.json`, 0600, atomic, bounded,
+serialized writes, a corrupt file kept as `.corrupt-<time>`). Keys and
+fingerprints come from `server/sources/mloop/attention.js`
+(`attentionItems()`); `needsOperator({ ..., acks })`, `loopsView(..., { acks })`
+and `projectCronAcks(cron, acks)` (`sources/openclaw/automations.js`) apply it
+on read without touching the disk. Writes are `POST /api/attention/acks` and
+`DELETE /api/attention/acks/:key` (`server/routes/attentionAcks.js`), guarded
+and audited like every mutation. Contract: `docs/reference-operator-surfaces.md`.
+
 ## Worked example: OpenClaw status
 
 The status/heartbeat read is the first path converted. Files:

@@ -2,6 +2,7 @@ import { RotateCw } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { Button } from './Button'
 import { cx } from './cx'
+import { StateMark } from './StateMark'
 import styles from './ErrorState.module.css'
 
 export interface ErrorStateProps {
@@ -26,7 +27,7 @@ export function ErrorState({
 }: ErrorStateProps) {
   return (
     <div className={cx(styles.wrap, className)} role="alert">
-      <span className={styles.mark} aria-hidden="true" />
+      <StateMark state="critical" className={styles.mark} />
       <p className={styles.title}>{title}</p>
       {message && <p className={styles.message}>{message}</p>}
       {(onRetry || action) && (

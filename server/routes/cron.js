@@ -3,6 +3,7 @@ const { httpError } = require('../core/http');
 const { withWriteThrough } = require('../sources/openclaw/writeThrough');
 const { commitCronMutation } = require('../sources/openclaw/cronMutations');
 const { parseFirstJson } = require('../services/cronData');
+const { projectCronAcks } = require('../sources/openclaw/automations');
 
 const CRON_MODEL_ALIASES = {
   'local-qwen3.6-35b-a3b-nvfp4': 'ollama/qwen3.6:35b-a3b-nvfp4',
@@ -66,7 +67,7 @@ function validateCreateJob(job) {
   if (job.payload.model !== undefined && (typeof job.payload.model !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/.test(job.payload.model))) throw httpError(400, 'invalid_model', 'Invalid model');
 }
 
-function buildCronRouter({ cronService, openclawExec, automationSource, afterCronWrite }) {
+function buildCronRouter({ cronService, openclawExec, automationSource, afterCronWrite, acks = null }) {
   const router = express.Router();
   withWriteThrough(automationSource);
   async function committed(mutation) {
@@ -84,7 +85,9 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
   router.get('/api/cron', (req, res) => {
     const snap = automationSource.snapshot();
     if (!snap.data) throw httpError(503, 'automations_unavailable', 'Automation data has not been observed');
-    return res.json({ ...snap.data.cron, meta: snap.meta });
+    // Badge rule: every job carries ackKey (cron:<job id>) and ack; the
+    // summary splits failed into failed and standingFailed.
+    return res.json({ ...projectCronAcks(snap.data.cron, acks), meta: snap.meta });
   });
 
   router.post('/api/cron/:id/toggle', async (req, res, next) => {

@@ -3,7 +3,8 @@
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
-import { Synoptic } from './Synoptic'
+import { TrackDiagram } from './TrackDiagram'
+import { buildDiagram } from './diagram'
 import { NotesPanel } from './NotesPanel'
 import { buildBrainModel, currentNotes, deriveVerdict } from './lib'
 import { synoptic, withVerdict } from './fixtures'
@@ -112,10 +113,8 @@ describe('the Notes card', () => {
   })
 })
 
-const codexHeight = (host: HTMLElement) => (host.querySelector('[data-syn-id="reader:codex"]') as HTMLElement).style.height
-
 describe('reader blocks', () => {
-  const readerBlock = (host: HTMLElement, id: string) => host.querySelector(`[data-syn-id="reader:${id}"]`) as HTMLElement
+  const readerBlock = (host: HTMLElement, id: string) => host.querySelector(`[data-syn-id="reader:${id}"]`) as SVGElement
 
   function readerSyn() {
     const syn = synoptic()
@@ -128,79 +127,69 @@ describe('reader blocks', () => {
     return syn
   }
 
-  it('shows a set-up reader as a compact block with its name only: no dot, no subline, no line label', async () => {
-    const syn = readerSyn()
-    const host = await mount(createElement(Synoptic, { model: buildBrainModel(syn), selectedId: null, onSelect: () => undefined }))
+  const diagramFor = (syn = readerSyn(), onSelect: (id: string) => void = () => undefined) =>
+    createElement(TrackDiagram, {
+      syn,
+      model: buildBrainModel(syn),
+      diagram: buildDiagram(syn, null),
+      health: undefined,
+      selectedId: null,
+      onSelect,
+    })
+
+  it('labels a set-up reader "set up" and shows no mark, no state and no live connection', async () => {
+    const host = await mount(diagramFor())
     const hermes = readerBlock(host, 'hermes')
     expect(hermes.getAttribute('data-presence')).toBe('set_up')
     expect(hermes.hasAttribute('data-state')).toBe(false)
     expect(hermes.querySelector('[data-state]')).toBeNull()
-    expect(hermes.textContent).toBe('Hermes')
-    expect(hermes.getAttribute('data-compact')).toBe('true')
-    expect(host.querySelector('[data-syn-id="reader:codex"]')?.hasAttribute('data-compact')).toBe(false)
-    expect(hermes.getAttribute('aria-label')).toBe('Hermes: Set up')
-    expect(hermes.style.height).toBe('36px')
-    expect(codexHeight(host)).toBe('56px')
-    expect(host.querySelector('[data-syn-id="edge:reader:hermes"]')).toBeNull()
-    expect(host.textContent).not.toMatch(/configured/i)
+    expect(hermes.textContent).toBe('Hermesset up')
+    expect(host.textContent).not.toMatch(/configured|connected|online|offline/i)
   })
 
-  it('shows a reader that is not set up as different and honest, still without a dot', async () => {
-    const host = await mount(createElement(Synoptic, { model: buildBrainModel(readerSyn()), selectedId: null, onSelect: () => undefined }))
+  it('labels a reader that is not set up "not set up", still without a mark', async () => {
+    const host = await mount(diagramFor())
     const codex = readerBlock(host, 'codex')
     expect(codex.getAttribute('data-presence')).toBe('not_set_up')
-    expect(codex.textContent).toBe('CodexNot set up')
+    expect(codex.textContent).toBe('Codexnot set up')
     expect(codex.querySelector('[data-state]')).toBeNull()
   })
 
-  it('keeps the state dot and the state word for a reader with a real observed state', async () => {
-    const host = await mount(createElement(Synoptic, { model: buildBrainModel(readerSyn()), selectedId: null, onSelect: () => undefined }))
+  it('keeps the state mark and word only for a reader with a real observed state', async () => {
+    const host = await mount(diagramFor())
     const observed = readerBlock(host, 'claude-code')
     expect(observed.getAttribute('data-state')).toBe('warning')
     expect(observed.querySelector('[data-state="warning"]')).not.toBeNull()
-    expect(observed.textContent).toContain('warning')
-    expect(host.querySelector('[data-syn-id="edge:reader:claude-code"]')?.textContent).toBe('warning')
+    expect(observed.textContent).toContain('caution')
   })
 
-  it('says once under Readers what cannot be read, and drops the old legend entry', async () => {
-    const host = await mount(createElement(Synoptic, { model: buildBrainModel(readerSyn()), selectedId: null, onSelect: () => undefined }))
+  it('says once under the readers that live connections cannot be read', async () => {
+    const host = await mount(diagramFor())
     const text = host.textContent ?? ''
-    expect(text.split("Set up to use GBrain. Live connections can't be read from this machine.")).toHaveLength(2)
+    // The narrow list says it in one sentence; the diagram wraps the same sentence over lines.
+    expect(text.split("Live connections can't be read from this machine.")).toHaveLength(2)
+    const wrapped = [...host.querySelectorAll('svg tspan')].map((line) => line.textContent).join(' ')
+    expect(wrapped).toBe("Live connections can't be read from this machine.")
     expect(host.querySelector('ul[aria-label="Legend"]')?.textContent).not.toMatch(/configured/i)
   })
 
-  it('selecting a reader block opens its detail', async () => {
+  it('selecting a reader block opens its detail, by click and by keyboard', async () => {
     const picked: string[] = []
-    const host = await mount(createElement(Synoptic, { model: buildBrainModel(readerSyn()), selectedId: null, onSelect: (id: string) => picked.push(id) }))
-    await act(async () => readerBlock(host, 'hermes').click())
-    expect(picked).toEqual(['reader:hermes'])
+    const host = await mount(diagramFor(readerSyn(), (id) => picked.push(id)))
+    await act(async () => {
+      readerBlock(host, 'hermes').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await act(async () => {
+      readerBlock(host, 'codex').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    })
+    expect(picked).toEqual(['reader:hermes', 'reader:codex'])
   })
 
-  it('draws the narrow list with the caption once, set-up readers by name only and no dot', async () => {
-    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
-    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 375 })
-    class Observer {
-      constructor(private cb: () => void) {}
-      observe() { this.cb() }
-      disconnect() {}
-    }
-    const previous = globalThis.ResizeObserver
-    globalThis.ResizeObserver = Observer as never
-    try {
-      const host = await mount(createElement(Synoptic, { model: buildBrainModel(readerSyn()), selectedId: null, onSelect: () => undefined }))
-      const rows = [...host.querySelectorAll('section[aria-label="Readers"] button')] as HTMLElement[]
-      expect(rows.map((row) => row.getAttribute('data-presence'))).toEqual(['set_up', 'not_set_up', null])
-      expect(rows[0].querySelector('[data-state]')).toBeNull()
-      expect(rows[0].textContent).toBe('Hermes')
-    expect(rows[1].textContent).toBe('CodexNot set up')
-      expect(rows[2].querySelector('[data-state="warning"]')).not.toBeNull()
-      expect(host.textContent).not.toMatch(/configured/i)
-      expect((host.textContent ?? '').split("Live connections can't be read from this machine.")).toHaveLength(2)
-    } finally {
-      globalThis.ResizeObserver = previous
-      if (original) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original)
-      else delete (HTMLElement.prototype as unknown as Record<string, unknown>).clientWidth
-    }
+  it('lists the readers in the narrow layout with the same words and no mark for set-up ones', async () => {
+    const host = await mount(diagramFor())
+    const rows = [...host.querySelectorAll('ul[data-list-id="readers"] li')] as HTMLElement[]
+    expect(rows.map((row) => row.textContent)).toEqual(['Hermesset up', 'Codexnot set up', 'Claude Codecaution'])
+    expect(rows[0].querySelector('[data-state]')).toBeNull()
   })
 })
 

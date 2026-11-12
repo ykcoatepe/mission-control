@@ -27,7 +27,28 @@ export interface FindingCounts {
   byCode: Record<string, number>
 }
 
-export interface Confirmation {
+/** `kind: 'ack'` = seen, it will stay like this; `'shelve'` = silenced, until `until` (null: until undone). */
+export type AckKind = 'ack' | 'shelve'
+
+/** An acknowledgement the server holds for an item (GET /api/attention/acks write results and every listed item). */
+export interface AckRecord {
+  kind: AckKind
+  at: string
+  until: string | null
+}
+
+/**
+ * Badge-rule fields every listed item carries: `key` (stable; null for restricted rows), `ackable` (it counts
+ * now, so it can be acknowledged or shelved) and `ack` (null = new, unacknowledged). All optional so an older
+ * payload still reads: an item without them is not ackable.
+ */
+export interface AckFields {
+  key?: string | null
+  ackable?: boolean
+  ack?: AckRecord | null
+}
+
+export interface Confirmation extends AckFields {
   id: string | null
   unit: string | null
   verification: string | null
@@ -78,7 +99,7 @@ export interface RestrictedProject {
 
 export type LoopProject = OpenProject | RestrictedProject
 
-export interface LoopFinding {
+export interface LoopFinding extends AckFields {
   code: string
   subject: string | null
   severity: Severity
@@ -90,7 +111,7 @@ export interface LoopFinding {
   count?: number
 }
 
-export interface AttentionFinding {
+export interface AttentionFinding extends AckFields {
   project: string
   kind: 'finding'
   severity: Severity
@@ -123,11 +144,24 @@ export interface LoopsTotals {
   needsOperator?: AttentionSignal | null
 }
 
+/** An overview system as the attention count sees it (`data.systems` of GET /api/loops, when the overview was read). */
+export interface LoopSystem {
+  id: string
+  state: string
+  held: boolean
+  /** A source of this system could not be read. */
+  failed: boolean
+  key: string | null
+  ackable: boolean
+  ack: AckRecord | null
+}
+
 export interface LoopsData {
   observedAt: string | null
   totals: LoopsTotals
   projects: LoopProject[]
   attention: AttentionEntry[]
+  systems?: LoopSystem[] | null
 }
 
 export interface OpenProjectDetail extends OpenProject {
@@ -154,6 +188,9 @@ export type AttentionRow =
       summary: string | null
       at: string | null
       count: number | null
+      ackKey: string | null
+      ackable: boolean
+      ack: AckRecord | null
     }
   | {
       key: string
@@ -164,6 +201,22 @@ export type AttentionRow =
       unit: string | null
       kind: string | null
       deadline: string | null
+      ackKey: string | null
+      ackable: boolean
+      ack: AckRecord | null
+    }
+  | {
+      key: string
+      type: 'system'
+      /** `system:<id>`: never a project id. */
+      project: string
+      systemId: string
+      state: string
+      failed: boolean
+      held: boolean
+      ackKey: string | null
+      ackable: boolean
+      ack: AckRecord | null
     }
   | {
       key: string

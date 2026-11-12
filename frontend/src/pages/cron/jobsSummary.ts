@@ -15,8 +15,10 @@ export interface JobsSummary {
   /** Jobs switched on (includes failed ones and ones still waiting for a first result). */
   active: number
   paused: number
-  /** Jobs switched on whose last run failed. */
+  /** Jobs switched on whose last run failed and that nobody has acknowledged or shelved: the new failures. */
   failed: number
+  /** Failed jobs that are acknowledged or shelved: standing, counted apart and never as new. */
+  standingFailed: number
   /** Jobs switched on that have not reported a result yet. */
   waiting: number
   nextRun: { at: number; name: string | null } | null
@@ -33,13 +35,17 @@ const isCount = (value: unknown): value is number => typeof value === 'number' &
 export function summarizeJobs(jobs: CronJob[], apiSummary: CronSummary | null | undefined, now: number): JobsSummary {
   let on = 0
   let failed = 0
+  let standingFailed = 0
   let waiting = 0
   let nextRun: { at: number; name: string | null } | null = null
   for (const job of jobs) {
     const status = normalizeCronStatus(job.status, job.enabled)
     if (status === 'disabled') continue
     on++
-    if (status === 'failed') failed++
+    if (status === 'failed') {
+      if (job.ack) standingFailed++
+      else failed++
+    }
     else if (status !== 'active') waiting++
     // An overdue run is not "next": the scheduler has not run it when it said it would.
     const at = job.nextRunOverdue || job.nextRunDue ? null : parseTime(job.nextRun)
@@ -53,6 +59,7 @@ export function summarizeJobs(jobs: CronJob[], apiSummary: CronSummary | null | 
     active: isCount(apiSummary?.active) ? apiSummary.active : on,
     paused: isCount(apiSummary?.paused) ? apiSummary.paused : jobs.length - on,
     failed: isCount(apiSummary?.failed) ? apiSummary.failed : failed,
+    standingFailed: isCount(apiSummary?.standingFailed) ? apiSummary.standingFailed : standingFailed,
     waiting,
     nextRun,
   }

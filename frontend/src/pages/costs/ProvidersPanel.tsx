@@ -68,6 +68,7 @@ export default function ProvidersPanel({ periodName, rows, pending = false }: Pr
   return (
     <Panel
       title="Platforms"
+      meta={pending || rows.length === 0 ? undefined : `${rows.length} ${rows.length === 1 ? 'platform' : 'platforms'}`}
       description={`${periodName}: what each platform used.`}
       padding="none"
       id="usage-platforms"

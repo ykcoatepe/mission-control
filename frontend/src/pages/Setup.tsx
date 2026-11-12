@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { Eye, EyeOff } from 'lucide-react'
 import {
+  AlarmLine,
   Button,
   ErrorState,
   Field,
@@ -104,6 +105,7 @@ function DetectStep({ status, onContinue, takeFocus }: { status: SetupStatus; on
   const detected = detectedLines(status, modelNames)
   return (
     <div ref={frame} className={styles.step}>
+      {status.gatewayRunning === false && <AlarmLine state="critical" title="The OpenClaw gateway is not running" />}
       <Panel title="OpenClaw gateway" description="What this machine reports. Reachability is checked on the Services page.">
         <dl className={styles.rows}>
           {gateway.map((line) => (

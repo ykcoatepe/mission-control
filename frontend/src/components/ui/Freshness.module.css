@@ -1,6 +1,10 @@
 .freshness {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
   color: var(--text-3);
   font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
   white-space: nowrap;
 }
 

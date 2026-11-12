@@ -31,7 +31,7 @@
 
 .content {
   min-width: 0;
-  padding: var(--sp-6) var(--sp-8);
+  padding: var(--sp-4) var(--sp-6);
 }
 
 .setup {

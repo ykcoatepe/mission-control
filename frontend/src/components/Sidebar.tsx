@@ -4,11 +4,14 @@ import { NavLink } from 'react-router-dom'
 import type { AppRouteDefinition } from '../appRoutes'
 import { useApi } from '../lib/hooks'
 import { SIGNALS_POLL_MS, SIGNALS_URL, navBadges, navUnread } from '../lib/signals'
-import type { NavBadge, SignalsEnvelope } from '../lib/signals'
+import type { SignalsEnvelope } from '../lib/signals'
+import type { NavBadge as NavBadgeReading } from '../lib/signals'
 import { useNavigation } from '../lib/useNavigation'
 import { MissionControlMark } from './MissionControlMark'
 import { cx } from './ui/cx'
 import { IconButton } from './ui/IconButton'
+import { NavBadge } from './ui/NavBadge'
+import { StateMark } from './ui/StateMark'
 import { useMediaQuery } from './ui/useMediaQuery'
 import { useModal } from './ui/useModal'
 import styles from './Sidebar.module.css'
@@ -24,18 +27,15 @@ interface SidebarProps {
 
 type Section = NonNullable<AppRouteDefinition['section']>
 
-const GROUPS: Array<{ key: Section | 'overview'; label: string | null }> = [
-  { key: 'overview', label: null },
-  { key: 'operate', label: 'Operate' },
-  { key: 'know', label: 'Know' },
-  { key: 'run', label: 'Run' },
-]
+/** The rail is one flat list in the order of the routes; the groups only add a little air between them. */
+const GROUPS: Array<{ key: Section | 'overview' }> = [{ key: 'overview' }, { key: 'operate' }, { key: 'know' }, { key: 'run' }]
 
 /**
- * Abnormal-only counts from the shell signals: nothing is shown when a count is a real zero. A count that
- * could not be read gets a grey "not read" ring, because silence would read as "all quiet".
+ * Badges follow the badge rule: only NEW, actionable, unacknowledged items are counted, and nothing is
+ * drawn at zero. A count that could not be read gets a hollow "not read" mark, because silence would read
+ * as "nothing is new".
  */
-function useNavBadges(): { badges: Record<string, NavBadge | undefined>; unread: Record<string, true | undefined> } {
+function useNavBadges(): { badges: Record<string, NavBadgeReading | undefined>; unread: Record<string, true | undefined> } {
   const { data, loading } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
   const signals = data?.data ?? null
   return useMemo(
@@ -81,14 +81,10 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
       >
         <Icon className={styles.icon} size={16} strokeWidth={1.75} aria-hidden="true" />
         <span className={styles.label}>{route.label}</span>
-        {badge && (
-          <span className={styles.badge} data-tone={badge.tone}>
-            {badge.count}
-            <span className="visually-hidden"> {badge.word}</span>
-          </span>
-        )}
+        {badge && <NavBadge count={badge.count} state={badge.tone} word={badge.word} className={styles.badge} />}
         {notRead && (
-          <span className={styles.badge} data-tone="unread" title="Count not read">
+          <span className={styles.unread} title="Count not read">
+            <StateMark state="unavailable" />
             <span className="visually-hidden">count not read</span>
           </span>
         )}
@@ -108,7 +104,7 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
     >
       <div className={styles.brand}>
         <span className={styles.mark}>
-          <MissionControlMark size={18} />
+          <MissionControlMark size={20} />
         </span>
         <span className={styles.brandName}>{name}</span>
         <IconButton
@@ -123,7 +119,6 @@ export default function Sidebar({ collapsed, onToggleCollapsed, open, onClose }:
       <nav className={styles.nav} aria-label="Primary">
         {groups.map((group) => (
           <div key={group.key} className={styles.group}>
-            {group.label && <h2 className={styles.groupLabel}>{group.label}</h2>}
             {group.items.map(renderLink)}
           </div>
         ))}

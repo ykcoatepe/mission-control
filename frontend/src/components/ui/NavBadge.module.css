@@ -1,0 +1,16 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: var(--sp-1);
+  height: 20px;
+  padding: 0 var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+  line-height: 1;
+}
+
+.badge[data-state='warning'] { color: var(--state-warning); }
+.badge[data-state='critical'] { color: var(--state-critical); }

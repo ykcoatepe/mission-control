@@ -1,5 +1,6 @@
 /**
  * One state vocabulary for the whole app (docs/reference-design-system.md, section 3).
+ * `healthy` is the normal state: it renders neutral, with no colour of its own.
  *
  * Every legacy status word maps onto one of five states. Unknown input maps to
  * `unavailable`: absence of evidence is never rendered as healthy or as "off".
@@ -66,16 +67,36 @@ export function toUiState(raw: unknown): UiState {
 }
 
 const LABELS: Record<UiState, string> = {
-  healthy: 'Healthy',
-  warning: 'Warning',
+  healthy: 'Normal',
+  warning: 'Caution',
   critical: 'Critical',
-  unavailable: 'Unavailable',
-  inactive: 'Inactive',
+  unavailable: 'Not read',
+  inactive: 'Off',
 }
 
-/** The word shown next to a state dot. State is never colour alone. */
+/** The word shown next to a state mark. State is never colour alone. */
 export function stateLabel(state: UiState): string {
   return LABELS[state]
+}
+
+export type StateShape = 'circle' | 'triangle' | 'square' | 'ring' | 'dash'
+
+const SHAPES: Record<UiState, StateShape> = {
+  healthy: 'circle', // small filled circle, neutral
+  warning: 'triangle', // amber
+  critical: 'square', // filled square, soft red
+  unavailable: 'ring', // hollow circle, neutral: not read
+  inactive: 'dash', // short horizontal dash, neutral: off on purpose
+}
+
+/** The shape that carries a state, so it never relies on colour alone (HMI rule 3). */
+export function stateShape(state: UiState): StateShape {
+  return SHAPES[state]
+}
+
+/** Warning and critical are the only states that take a colour; everything else is neutral. */
+export function isAbnormal(state: UiState): boolean {
+  return state === 'warning' || state === 'critical'
 }
 
 // Higher rank = worse. Unavailable outranks healthy: an unread system is not a good one.

@@ -80,13 +80,13 @@ describe('Costs: saving the budget', () => {
   it('shows the saved cap at once and says calmly when the reading is behind', async () => {
     const s = stub(() => json({ status: 'saved', budget: { monthly: 300 }, meta: { ok: false, stale: true } }))
     const { host, root } = await mount()
-    expect(host.textContent).toContain('of $100.00')
+    expect(host.textContent).toContain('$100.00 a month')
     expect(host.textContent).not.toContain(STALE_WRITE_NOTE)
     await saveBudget(host, '250')
     expect(s.posts).toEqual([{ path: '/api/settings/budget', body: { monthly: 250 } }])
     // The refetch of the ledger is held: the page has only the answer to the write.
     // The server's committed cap (300) wins over what was sent (250).
-    expect(host.textContent).toContain('of $300.00')
+    expect(host.textContent).toContain('$300.00 a month')
     expect(host.textContent).toContain(STALE_WRITE_NOTE)
     s.release()
     await act(async () => root.unmount())

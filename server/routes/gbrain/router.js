@@ -7,6 +7,8 @@ const { limitInput, slugInput } = require('../../sources/gbrain/lookups');
 const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
 const { requiresExplicitConfirmation } = require('./actionPolicy');
+const { readTimeline } = require('../../services/gbrainTimeline');
+const { projectTrends, createTrendsReader } = require('../../sources/gbrain/trends');
 
 // The action result keeps every field the frontend reads (status, pending,
 // refreshAfter, summary, checkedAt, ...); only `error` takes the one error
@@ -102,6 +104,30 @@ function buildGBrainRouter(options = {}) {
     res.json({ ...(snap.data || { enabled: overviewService.timelineService?.enabled !== false, entries: null,
       warnings: ['Timeline has not been read'], malformedLineCount: null, retainedEntryCount: null,
       schemaVersion: 1, truncated: false, limit: limitInput(req.query.limit, 50, 200) }), meta: snap.meta });
+  });
+
+  // 24-hour series for the analog bars, projected read-only from the readings ledger. A ledger that cannot
+  // be read is the same 503 as the timeline; a series with fewer than two real readings is empty.
+  const readTrends = createTrendsReader({ readTimeline });
+  const clock = typeof options.now === 'function' ? options.now : Date.now;
+  router.get('/api/gbrain/trends', (_req, res) => {
+    const timelineService = overviewService.timelineService;
+    const now = clock();
+    if (timelineService?.enabled === false) {
+      return res.json({ enabled: false, ...projectTrends([], { now }),
+        meta: { ok: true, stale: false, observedAt: null, ageMs: null, error: null, source: 'gbrain.trends' } });
+    }
+    if (!timelineService?.ledgerPath) throw httpError(503, 'gbrain_timeline_unavailable', 'Timeline ledger unavailable');
+    let ledger;
+    try {
+      ledger = readTrends(timelineService.ledgerPath);
+    } catch (error) {
+      throw httpError(503, 'gbrain_timeline_unavailable', 'Timeline ledger unavailable');
+    }
+    const observed = ledger.observedAt ? Date.parse(ledger.observedAt) : null;
+    return res.json({ enabled: true, ...projectTrends(ledger.entries, { now }),
+      meta: { ok: true, stale: false, observedAt: ledger.observedAt, ageMs: observed === null ? null : Math.max(0, now - observed),
+        error: null, source: 'gbrain.trends' } });
   });
 
   router.get('/api/gbrain/synoptic', (_req, res) => sendEnvelope(res, overviewService.synopticSnapshot()));

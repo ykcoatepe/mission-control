@@ -247,13 +247,13 @@ export default function DailySpendSection({
   const description = chartDayCount > 0
     ? ledgerActive
       ? apiEquivalentUnavailable
-        ? dayWord
-        : `${dayWord} · API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
+        ? null
+        : `API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
       : codexbarActive
-        ? `${dayWord} · CodexBar estimate`
+        ? 'CodexBar estimate'
         : hasSessionEstimateChart
-          ? `${dayWord} · tokens only, no cost data`
-          : dayWord
+          ? 'Tokens only, no cost data'
+          : null
     : 'Waiting for daily history.'
 
   let body
@@ -308,13 +308,13 @@ export default function DailySpendSection({
               <XAxis
                 dataKey="fullDate"
                 tickFormatter={val => { const d = new Date(val); return `${d.getMonth() + 1}/${d.getDate()}` }}
-                tick={{ fill: 'var(--text-3)', fontSize: 11 }}
+                tick={{ fill: 'var(--text-3)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
                 tickFormatter={value => formatPreciseCurrency(Number(value || 0))}
-                tick={{ fill: 'var(--text-3)', fontSize: 11 }}
+                tick={{ fill: 'var(--text-3)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
                 width={64}
@@ -431,7 +431,7 @@ export default function DailySpendSection({
   }
 
   return (
-    <Panel title="Daily usage" description={description}>
+    <Panel title="Daily usage" meta={chartDayCount > 0 ? dayWord : undefined} description={description}>
       <div className={styles.body}>{body}</div>
     </Panel>
   )

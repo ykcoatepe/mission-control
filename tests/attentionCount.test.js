@@ -100,8 +100,9 @@ const FIXTURES = [
     // systems 1 (hermes critical; an unavailable reading is not counted, its
     // 2 reasons are systemReasons, outside the count); findings: alpha BINDING_DEAD + beta ESCALATED_ROUNDS (TEYIT_STALE is
     // the overdue confirmations, info is not operator work); overdue 2; restricted
-    // argus: 1 finding + 3 overdue.
-    expected: { count: 9, worst: 'critical', breakdown: { systems: 1, systemReasons: 2, findings: 2, overdueConfirmations: 2, restricted: 4 }, partial: false, missing: [] },
+    // argus: 1 finding + 3 overdue. Badge rule: restricted is information,
+    // never part of the count.
+    expected: { count: 5, worst: 'critical', standing: 0, restricted: 4, breakdown: { systems: 1, systemReasons: 2, findings: 2, overdueConfirmations: 2, restricted: 4 }, partial: false, missing: [] },
   },
   {
     name: 'restricted only',
@@ -110,13 +111,14 @@ const FIXTURES = [
       { project: 'argus-live', code: 'DEPLOYED_UNCONFIRMED', subject: 'P2', severity: 'warning', detail: `${SECRET}`, ts: '2026-11-10T00:00:00Z' },
     ],
     attention: [],
-    expected: { count: 2, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 2 }, partial: false, missing: [] },
+    // Badge rule: restricted counts never make a badge; no new item -> healthy.
+    expected: { count: 0, worst: 'healthy', standing: 0, restricted: 2, breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 2 }, partial: false, missing: [] },
   },
   {
     name: 'nothing needs the operator',
     checkRows: [{ project: 'quiet', code: 'TEYIT_DUE', subject: 'T1', severity: 'info', detail: 'due', ts: '2026-11-10T00:00:00Z' }],
     attention: [],
-    expected: { count: 0, worst: 'healthy', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [] },
+    expected: { count: 0, worst: 'healthy', standing: 0, restricted: 0, breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [] },
   },
 ];
 
@@ -137,6 +139,8 @@ test('without a loop reading the number is partial: unknown parts are null, neve
   assert.deepEqual(signals.data.attention, {
     count: 1,
     worst: 'critical',
+    standing: 0,
+    restricted: null,
     breakdown: { systems: 1, systemReasons: 2, findings: null, overdueConfirmations: null, restricted: null },
     partial: true,
     missing: ['findings', 'overdueConfirmations', 'restricted'],
@@ -192,8 +196,10 @@ test('reproduced: a failed confirmation reading plus TEYIT_STALE is never a comp
   const loopsSource = createMloopSource({ exec, fsImpl, ledgerDir: '/fake', bin: '/fake/mloop', now: () => NOW });
   await loopsSource.refresh();
   const { loops, signals } = await both({ loopsSource, overview: overviewWith([]) });
+  // The item is not lost: it is reported by count under restricted (badge
+  // rule: restricted counts are information, never part of the badge).
   assert.deepEqual(signals.data.attention, {
-    count: 1, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 1 }, partial: false, missing: [],
+    count: 0, worst: 'healthy', standing: 0, restricted: 1, breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 0, restricted: 1 }, partial: false, missing: [],
   });
   assert.deepEqual(loops.data.totals.needsOperator, signals.data.attention);
 
@@ -224,7 +230,7 @@ test('reproduced: a TEYIT_UNRESOLVED finding and an overdue confirmation with th
     },
   });
   assert.deepEqual(result, {
-    count: 1, worst: 'warning', breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 1, restricted: 0 }, partial: false, missing: [],
+    count: 1, worst: 'warning', standing: 0, restricted: 0, breakdown: { systems: 0, systemReasons: 0, findings: 0, overdueConfirmations: 1, restricted: 0 }, partial: false, missing: [],
   });
 });
 
@@ -251,7 +257,7 @@ test('unread parts are null and listed; a missing restricted count is null; noth
     loops: { projects: [{ id: 'argus-x', restricted: true, operatorFindings: 2 }] },
   });
   assert.deepEqual(restricted, {
-    count: 1, worst: 'warning', breakdown: { systems: 1, systemReasons: 1, findings: 0, overdueConfirmations: 0, restricted: null }, partial: true, missing: ['restricted'],
+    count: 1, worst: 'warning', standing: 0, restricted: null, breakdown: { systems: 1, systemReasons: 1, findings: 0, overdueConfirmations: 0, restricted: null }, partial: true, missing: ['restricted'],
   });
   const unreadFindings = needsOperator({ systems: [], systemsAttention: [], loops: { projects: [{ id: 'p', restricted: false, findings: null, pendingConfirmations: [] }] } });
   assert.equal(unreadFindings.breakdown.findings, null);
@@ -294,7 +300,7 @@ test('reproduced spike: one system with 30 reasons contributes 1, the reasons ar
   const overview = overviewWith(gbrainReasons(30), { gbrain: { id: 'gbrain', state: 'warning', observedAt: null, caveats: [], detailHref: '/' } });
   const { loops, signals } = await both({ loopsSource, overview });
   assert.deepEqual(signals.data.attention, {
-    count: 1, worst: 'warning', breakdown: { systems: 1, systemReasons: 30, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [],
+    count: 1, worst: 'warning', standing: 0, restricted: 0, breakdown: { systems: 1, systemReasons: 30, findings: 0, overdueConfirmations: 0, restricted: 0 }, partial: false, missing: [],
   });
   assert.deepEqual(loops.data.totals.needsOperator, signals.data.attention);
 });

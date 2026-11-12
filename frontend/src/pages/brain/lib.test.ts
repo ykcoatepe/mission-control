@@ -573,7 +573,7 @@ describe('history rows are history, never a second current state', () => {
   it('shows a row\'s recorded state from the verdict', () => {
     const withVerdictState = (entry: TimelineEntry, state: string): TimelineEntry => ({ ...entry, verdict: { state, reasons: [] } })
     const rows = recentReadings([withVerdictState(ledger('a', 1, 'critical'), 'unavailable'), ledger('b', 5, 'healthy')])
-    expect(rows[0]).toMatchObject({ state: 'unavailable', stateWord: 'unavailable' })
+    expect(rows[0]).toMatchObject({ state: 'unavailable', stateWord: 'not read' })
   })
 
   it('does not collapse two readings whose verdict reasons differ', () => {
@@ -648,8 +648,8 @@ describe('configured is not observed healthy', () => {
     syn.readers[0] = { ...syn.readers[0], observation: 'observed', state: 'warning' }
     syn.readers[1] = { ...syn.readers[1], observation: 'not_configured', state: 'inactive' }
     const model = buildBrainModel(syn)
-    expect(model.readers[0]).toMatchObject({ neutral: false, sub: 'warning', state: 'warning' })
-    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ neutral: false, label: 'warning' })
+    expect(model.readers[0]).toMatchObject({ neutral: false, sub: 'caution', state: 'warning' })
+    expect(model.edges.find((e) => e.blockId === readerBlockId('hermes'))).toMatchObject({ neutral: false, label: 'caution' })
     // A reader that is not set up is a fact too: no dot, no state word, but it says so.
     expect(model.readers[1]).toMatchObject({ neutral: true, sub: 'Not set up', presence: 'not_set_up' })
     expect(model.edges.find((e) => e.blockId === readerBlockId('codex'))).toMatchObject({ neutral: true, label: '' })
@@ -702,11 +702,11 @@ describe('the sync word comes from one helper and the server policy flag', () =>
     expect(syncWord({ state: 'inactive', excludedByPolicy: true, reason: 'sync disabled' })).toBe('sync off')
     expect(syncWord({ state: 'inactive', excludedByPolicy: true, reason: 'not sync-tracked' })).toBe('sync off')
     expect(syncWord({ state: 'healthy', excludedByPolicy: false })).toBe('fresh')
-    expect(syncWord({ state: 'warning', excludedByPolicy: false, reason: 'never synced' })).toBe('warning')
+    expect(syncWord({ state: 'warning', excludedByPolicy: false, reason: 'never synced' })).toBe('caution')
     // An inactive state without the policy flag is not guessed to be "sync off".
-    expect(syncWord({ state: 'inactive', excludedByPolicy: null })).toBe('inactive')
-    expect(syncWord({ state: 'inactive' })).toBe('inactive')
-    expect(syncWord(null)).toBe('unavailable')
+    expect(syncWord({ state: 'inactive', excludedByPolicy: null })).toBe('off')
+    expect(syncWord({ state: 'inactive' })).toBe('off')
+    expect(syncWord(null)).toBe('not read')
     expect(isSyncOff({ excludedByPolicy: true })).toBe(true)
     expect(isSyncOff({ excludedByPolicy: false })).toBe(false)
     expect(isSyncOff(undefined)).toBe(false)
@@ -731,7 +731,7 @@ describe('the sync word comes from one helper and the server policy flag', () =>
     syn.sources[0].items[0] = { ...syn.sources[0].items[0], state: 'warning', reason: 'never synced', lastSyncAt: null }
     const detail = describeElement(groupBlockId('projects'), syn, buildBrainModel(syn))
     const item = detail?.items.find((entry) => entry.id === 'mission-control')
-    expect(item).toMatchObject({ word: 'warning', note: 'never synced' })
+    expect(item).toMatchObject({ word: 'caution', note: 'never synced' })
     expect(detail?.items.find((entry) => entry.id === 'off')).toMatchObject({ word: 'sync off', note: null })
   })
 })

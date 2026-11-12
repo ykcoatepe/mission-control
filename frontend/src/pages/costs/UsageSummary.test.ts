@@ -155,9 +155,11 @@ describe('UsageSummary', () => {
     expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('info')
   })
 
-  it('a platform that was not read keeps the warning tone', async () => {
+  it('a platform that was not read is a missing reading (hollow mark), not a coloured fault', async () => {
     const host = await render({ platformCoverage: coverage({ unread: ['Hermes'] }) })
-    expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('warning')
+    expect(host.querySelector('[data-tone]')?.getAttribute('data-tone')).toBe('unread')
+    expect(host.querySelector('[data-tone] svg')).not.toBeNull()
+    expect(host.querySelector('[data-state="warning"], [data-state="critical"]')).toBeNull()
     expect(host.textContent).toContain('Hermes could not be read and is not counted.')
   })
 
@@ -174,7 +176,7 @@ describe('UsageSummary', () => {
     ))
     const strip = host.querySelector('[aria-label="Usage for This month"]')
     const slot = host.querySelector('[data-testid="slot"]')
-    expect(strip?.parentElement?.nextElementSibling).toBe(slot)
+    expect(strip?.nextElementSibling).toBe(slot)
     expect(slot?.nextElementSibling?.textContent).toContain('Estimate, not an invoice')
   })
 })

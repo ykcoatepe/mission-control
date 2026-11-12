@@ -189,6 +189,21 @@ describe('Setup', () => {
     await act(async () => root.unmount())
   })
 
+  it('raises one critical alarm line when the gateway is reported not running, and none otherwise', async () => {
+    stubServer(() => json({ success: true }))
+    const calm = await mount()
+    expect(calm.host.querySelector('[data-state="critical"][role="alert"]')).toBeNull()
+    await act(async () => calm.root.unmount())
+    document.body.innerHTML = ''
+
+    vi.stubGlobal('fetch', vi.fn(async () => json({ ...STATUS, gatewayRunning: false })))
+    const down = await mount()
+    const lines = down.host.querySelectorAll('[data-state="critical"][role="alert"]')
+    expect(lines).toHaveLength(1)
+    expect(lines[0].textContent).toContain('The OpenClaw gateway is not running')
+    await act(async () => down.root.unmount())
+  })
+
   it('shows an error state, not a form, when the machine could not be read', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => json({ error: { code: 'settings_config_unavailable', message: 'OpenClaw configuration could not be read' } }, 503)))
     const { host, root } = await mount()

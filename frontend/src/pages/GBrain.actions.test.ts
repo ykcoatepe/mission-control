@@ -115,18 +115,18 @@ describe('Brain home: verdict and readings', () => {
     const { host, render, root } = mount()
     await render()
     expect(host.textContent).toContain('GBrain is normal')
-    expect(host.textContent).toContain('last probe')
+    // A fresh reading carries no annotation (HMI rule 8), and normal raises no alarm line.
+    expect(host.textContent).not.toContain('last probe')
+    expect(host.querySelector('div[data-state="warning"], div[data-state="critical"], [role="alert"]')).toBeNull()
     expect(host.textContent).toContain('Link extraction')
     expect(host.textContent).not.toMatch(/proof|evidence|caveat|allowlisted|R0|W1|Living Brain Map/i)
-    // A set-up reader is a present, ordinary block: no state dot, no state attribute, "Set up" under the name.
+    // A set-up reader is a neutral block labelled "set up": no state mark, no state attribute.
     const reader = host.querySelector('[data-syn-id="reader:hermes"]')
     expect(reader?.hasAttribute('data-state')).toBe(false)
     expect(reader?.getAttribute('data-presence')).toBe('set_up')
-    // Only the name: the caption under the column says "set up" once.
-    expect(reader?.textContent).toBe('Hermes')
-    expect(reader?.getAttribute('data-compact')).toBe('true')
+    expect(reader?.textContent).toBe('Hermesset up')
     expect(reader?.querySelector('[data-state]')).toBeNull()
-    expect(host.textContent).toContain("Set up to use GBrain. Live connections can't be read from this machine.")
+    expect(host.textContent).toContain("Live connections can't be read from this machine.")
     expect(host.textContent).not.toContain('Configured, not observed')
     expect(host.textContent).not.toContain('Connection telemetry is not observable locally.')
     expect(host.textContent).not.toContain('Reader connections are not observed')
@@ -142,8 +142,10 @@ describe('Brain home: verdict and readings', () => {
     await render()
     expect(host.textContent).not.toContain('GBrain is normal')
     expect(host.textContent).toContain('GBrain readings are incomplete: GBrain core reading unavailable')
-    expect(host.textContent).toContain('stale')
-    expect(host.querySelector('[data-syn-id="core"]')?.textContent).toContain('—')
+    // A stale reading says when it was read, and not that it is "fresh" (rule 8).
+    expect(host.textContent).toMatch(/as of (Nov 11|11 Nov), \d{2}:\d{2}/)
+    // The page count that was not read is "not read" beside the core, never a zero.
+    expect(host.querySelector('[data-reading="Pages"]')?.textContent).toContain('not read')
     await act(async () => root.unmount())
   })
 
@@ -213,6 +215,49 @@ describe('Brain home: verdict and readings', () => {
     expect(host.querySelector('ul[aria-label="Recovered on their own"] [data-state]')).toBeNull()
     await act(async () => button('Acknowledge all 2')?.click())
     expect(host.textContent).not.toContain('recovered on their own')
+    await act(async () => root.unmount())
+  })
+})
+
+describe('Brain home: the alarm line', () => {
+  const BACKFILL = capability({
+    id: 'embed-missing',
+    label: 'Backfill missing embeddings',
+    kind: 'maintenance',
+    safetyClass: 'W1',
+    requiresConfirmation: true,
+    refreshAfter: true,
+  })
+
+  it('appears for a reason that needs action, with the one matching action, and a change still asks first', async () => {
+    const syn = withVerdict(synoptic(), { elementId: 'missing-embeddings', state: 'warning', kind: 'action', text: '9 chunks are missing embeddings past the tolerance.' })
+    setup({ synoptic: { data: syn, meta: meta('2026-11-11T08:00:00.000Z') }, capabilities: [...CAPABILITIES, BACKFILL] })
+    const { host, render, root } = mount()
+    await render()
+    const line = host.querySelector('[role="status"][data-state="warning"]') as HTMLElement
+    expect(line).not.toBeNull()
+    expect(line.textContent).toContain('Caution')
+    expect(line.textContent).toContain('9 chunks are missing embeddings past the tolerance')
+    expect(line.querySelectorAll('button')).toHaveLength(1)
+    expect(host.querySelectorAll('[role="status"][data-state="warning"]')).toHaveLength(1)
+    await act(async () => (line.querySelector('button') as HTMLButtonElement).click())
+    expect(mocks.postGBrainAction).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('embed-missing')
+    await act(async () => button('Cancel')?.click())
+    await act(async () => root.unmount())
+  })
+
+  it('is absent when the only reasons are information', async () => {
+    const syn = withVerdict(
+      synoptic(),
+      { elementId: 'embed-job-probe', state: 'unavailable', kind: 'info', text: "Embedding job status couldn't be read, so missing embeddings are judged by age only." },
+      { elementId: 'off', state: 'inactive', kind: 'info', text: 'off: sync off.' },
+    )
+    setup({ synoptic: { data: syn, meta: meta('2026-11-11T08:00:00.000Z') } })
+    const { host, render, root } = mount()
+    await render()
+    expect(host.querySelector('div[data-state="warning"], div[data-state="critical"], [role="alert"]')).toBeNull()
+    expect(host.textContent).toContain('Embedding job status')
     await act(async () => root.unmount())
   })
 })
@@ -352,7 +397,9 @@ describe('Brain home: maintenance actions', () => {
     })
     const { host, render, root } = mount()
     await render()
-    await act(async () => (host.querySelector('[data-syn-id="group:projects"]') as HTMLButtonElement).click())
+    await act(async () => {
+      host.querySelector('[data-syn-id="group:projects"]')?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
     const drawer = document.querySelector('[role="dialog"]')
     expect(drawer?.textContent).toContain('Retry failed syncs')
     await act(async () => [...(drawer?.querySelectorAll('button') ?? [])].find((b) => b.textContent === 'Retry failed syncs')?.click())

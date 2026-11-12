@@ -48,6 +48,82 @@
 
 .noticeLine {
   margin: 0;
+  color: var(--text-2);
+}
+
+.pad {
+  padding: var(--sp-3);
+}
+
+.time {
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+
+/* A value that could not be read: hollow circle and the words, no colour. */
+.notRead {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-regular);
+}
+
+.notRead svg {
+  flex: 0 0 auto;
+  color: var(--state-unavailable);
+}
+
+.notReadLine {
+  margin: 0;
+}
+
+/* The governance readings: one line each, label at the left, digits aligned at the right of their column. */
+.readings {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.reading {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(96px, auto) minmax(0, 2fr);
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 32px;
+  padding: var(--sp-1) var(--sp-3);
+  border-bottom: 1px solid var(--line);
+}
+
+.reading:last-child {
+  border-bottom: 0;
+}
+
+.readingLabel {
+  color: var(--text-2);
+}
+
+.readingValue {
+  color: var(--text-1);
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: end;
+  overflow-wrap: anywhere;
+}
+
+.readingNote {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+.advisoryBox {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border-top: 1px solid var(--line);
 }
 
 .advisories {
@@ -169,6 +245,18 @@
 .timelineMeta {
   color: var(--text-3);
   font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+@media (max-width: 600px) {
+  .reading {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 0;
+  }
+
+  .readingNote {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 700px) {

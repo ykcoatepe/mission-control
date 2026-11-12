@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Button, Panel, StateDot, TimeAgo } from '../../components/ui'
+import { Block, Button, StateMark, TimeAgo } from '../../components/ui'
 import { Disclosure } from './Disclosure'
 import { recoveredLines, type NoteGroups } from './lib'
 import styles from './NotesPanel.module.css'
@@ -34,7 +34,7 @@ export function NotesPanel({
   // Only action notes are something to do: recovered history and information are not.
   const nothingToDo = action.length === 0
   return (
-    <Panel
+    <Block
       title="Notes"
       actions={
         lines.length > 0 ? (
@@ -54,7 +54,7 @@ export function NotesPanel({
             <ul className={styles.list} aria-label="Needs action">
               {action.map((note) => (
                 <li key={note.id} className={styles.item}>
-                  <StateDot state={note.state} />
+                  <StateMark state={note.state} />
                   <span>{note.text}</span>
                 </li>
               ))}
@@ -72,7 +72,7 @@ export function NotesPanel({
           )}
         </div>
       )}
-    </Panel>
+    </Block>
   )
 }
 

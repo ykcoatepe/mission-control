@@ -153,3 +153,37 @@ export function describeTokenUsage(split: LocalTokenSplit, periodLabel: string, 
   parts.push(period)
   return parts.join(' · ')
 }
+
+/** One reading of the telemetry history, as far as a trend needs it. */
+export interface HistoryReading {
+  generatedAt: string
+}
+
+export interface SeriesPoint {
+  t: number
+  v: number
+}
+
+/**
+ * A trend series from the history the API really returned: one point per reading that has a finite value,
+ * in time order. Readings without the value (null, missing) are left out, never filled in. A long history is
+ * thinned by taking evenly spaced readings (always keeping the last), so the drawing stays small.
+ */
+export function historySeries<T extends HistoryReading>(
+  history: readonly T[] | null | undefined,
+  pick: (item: T) => number | null | undefined,
+  maxPoints = 288,
+): SeriesPoint[] {
+  const points: SeriesPoint[] = []
+  for (const item of history ?? []) {
+    const t = Date.parse(item.generatedAt)
+    const v = finiteNumber(pick(item))
+    if (Number.isFinite(t) && v !== null) points.push({ t, v })
+  }
+  points.sort((a, b) => a.t - b.t)
+  if (points.length <= maxPoints || maxPoints < 2) return points
+  const step = (points.length - 1) / (maxPoints - 1)
+  const thinned: SeriesPoint[] = []
+  for (let i = 0; i < maxPoints; i += 1) thinned.push(points[Math.round(i * step)])
+  return thinned
+}

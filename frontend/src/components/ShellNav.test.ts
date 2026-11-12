@@ -22,8 +22,8 @@ const SIGNALS = {
       hermes: { state: 'warning', observedAt: new Date().toISOString(), reason: 'Hermes has a caveat.', detailHref: '/work' },
       openclaw: null,
     },
-    attention: { count: 30, worst: 'critical', breakdown: { systems: 3, findings: 2, overdueConfirmations: 4, restricted: 21 } },
-    automations: { failed: 0, nextRunAt: null },
+    attention: { count: 30, worst: 'critical', standing: 117, restricted: 21, breakdown: { systems: 3, findings: 23, overdueConfirmations: 4 } },
+    automations: { failed: 0, standingFailed: 2, nextRunAt: null },
     loops: { openFindings: 146, overdueConfirmations: 24 },
     services: { down: 0 },
     usage: null,
@@ -103,44 +103,108 @@ describe('mobile navigation drawer', () => {
   })
 })
 
-describe('one attention number', () => {
-  it('shows the count once in words (top-bar pill, with the breakdown) and as a bare number in the sidebar badge', async () => {
+const noop = () => undefined
+const topBar = () => createElement(TopBar, { onOpenMenu: noop, onOpenPalette: noop })
+const rail = () => createElement(Sidebar, { collapsed: false, onToggleCollapsed: noop, open: false, onClose: noop })
+
+describe('the shell reads the badge rule', () => {
+  it('has no attention pill in the top bar: the rail badge carries the count', async () => {
     stubShell(false)
-    const { host, root } = await mount(
-      createElement('div', null, createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }), createElement(Sidebar, { collapsed: false, onToggleCollapsed: () => undefined, open: false, onClose: () => undefined })),
-    )
-    const pill = host.querySelector('a[href="/attention"][aria-label]') as HTMLAnchorElement
-    expect(pill.getAttribute('aria-label')).toBe('30 need attention, 3 systems · 2 findings · 4 overdue · 21 restricted')
-    const badge = [...host.querySelectorAll('nav a[href="/attention"]')].map((a) => a.textContent ?? '').join(' ')
-    expect(badge).toContain('30')
-    expect(badge).toContain('need attention')
-    // The sidebar badge is the number only: the breakdown belongs to the top-bar pill.
-    expect(badge).not.toContain('systems')
-    expect(host.querySelector('nav a[href="/attention"] [title]')).toBeNull()
-    // The loops signal's overdue count (24) is a different number and must not stand in for the attention count.
-    expect(badge).not.toContain('24')
+    const { host, root } = await mount(topBar())
+    expect(host.querySelector('a[href="/attention"]')).toBeNull()
+    expect(host.textContent).not.toMatch(/need attention/)
     await act(async () => root.unmount())
   })
 
-  it('annunciators show the server reason and follow detailHref only to a screen that exists', async () => {
+  it('counts only new items in the Attention badge: not standing, not restricted', async () => {
     stubShell(false)
-    const { host, root } = await mount(
-      createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }),
-    )
+    const { host, root } = await mount(rail())
+    const link = host.querySelector('nav a[href="/attention"]') as HTMLAnchorElement
+    const badge = link.querySelector('[data-testid="nav-badge"]') as HTMLElement
+    expect(badge.getAttribute('data-state')).toBe('critical')
+    expect(badge.textContent).toContain('30')
+    expect(badge.textContent).toContain('need attention')
+    expect(link.textContent).not.toContain('117')
+    expect(link.textContent).not.toContain('21')
+    // The loops signal's overdue count (24) is a different number and must not stand in for it.
+    expect(link.textContent).not.toContain('24')
+    // The badge shows a shape, not colour alone.
+    expect(badge.querySelector('svg')?.getAttribute('data-shape')).toBe('square')
+    await act(async () => root.unmount())
+  })
+
+  it('draws no Attention badge when only standing items remain', async () => {
+    stubSignals({ data: { ...SIGNALS.data, attention: { count: 0, worst: 'healthy', standing: 147, restricted: 129 } }, meta: SIGNALS.meta })
+    const { host, root } = await mount(rail())
+    const link = host.querySelector('nav a[href="/attention"]') as HTMLAnchorElement
+    expect(link.querySelector('[data-testid="nav-badge"]')).toBeNull()
+    expect(link.querySelector('[data-state]')).toBeNull()
+    expect(link.textContent).toBe('Attention')
+    await act(async () => root.unmount())
+  })
+
+  it('badges Automations with failed jobs that are not acknowledged, and has no Services badge', async () => {
+    stubSignals({ data: { ...SIGNALS.data, automations: { failed: 3, standingFailed: 2, nextRunAt: null }, services: { down: 4 } }, meta: SIGNALS.meta })
+    const { host, root } = await mount(rail())
+    const automations = host.querySelector('nav a[href="/automations"] [data-testid="nav-badge"]') as HTMLElement
+    expect(automations.textContent).toContain('3')
+    expect(automations.textContent).toContain('failed')
+    expect(host.querySelector('nav a[href="/services"] [data-testid="nav-badge"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('lists the routes flat, in the order of the spec', async () => {
+    stubShell(false)
+    const { host, root } = await mount(rail())
+    const labels = [...host.querySelectorAll('nav a')].map((a) => a.querySelector('span')?.textContent)
+    expect(labels).toEqual(['Brain', 'Attention', 'Automations', 'Usage', 'Services', 'Local models', 'Settings', 'Audit'])
+    expect(host.querySelectorAll('nav h2')).toHaveLength(0)
+    await act(async () => root.unmount())
+  })
+
+  it('annunciators read mark + name + word, with the server reason, and follow detailHref only to a screen that exists', async () => {
+    stubShell(false)
+    const { host, root } = await mount(topBar())
     const gbrain = host.querySelector('ul[aria-label="Systems"] a[href="/gbrain"]') as HTMLAnchorElement
-    expect(gbrain.getAttribute('title')).toBe('GBrain: warning. Embed-job could not be read.')
+    expect(gbrain.getAttribute('title')).toBe('GBrain: caution. Embed-job could not be read.')
+    expect(gbrain.textContent).toBe('GBraincaution')
+    expect(gbrain.querySelector('svg')?.getAttribute('data-shape')).toBe('triangle')
     // "/work" is a removed screen: the link falls back to the Services page instead of redirecting home.
     const hermes = [...host.querySelectorAll('ul[aria-label="Systems"] a')].find((a) => a.textContent?.includes('Hermes')) as HTMLAnchorElement
     expect(hermes.getAttribute('href')).toBe('/services')
-    expect(hermes.getAttribute('title')).toBe('Hermes: warning. Hermes has a caveat.')
+    expect(hermes.getAttribute('title')).toBe('Hermes: caution. Hermes has a caveat.')
+    const openclaw = [...host.querySelectorAll('ul[aria-label="Systems"] a')].find((a) => a.textContent?.includes('OpenClaw')) as HTMLAnchorElement
+    expect(openclaw.textContent).toBe('OpenClawnot read')
+    expect(openclaw.querySelector('svg')?.getAttribute('data-shape')).toBe('ring')
+    await act(async () => root.unmount())
+  })
+
+  it('a normal system stays neutral: its word is shown, with the plain circle', async () => {
+    const now = new Date().toISOString()
+    stubSignals({
+      data: { ...SIGNALS.data, systems: { gbrain: { state: 'healthy', observedAt: now }, hermes: { state: 'healthy', observedAt: now }, openclaw: { state: 'healthy', observedAt: now } } },
+      meta: SIGNALS.meta,
+    })
+    const { host, root } = await mount(topBar())
+    const first = host.querySelector('ul[aria-label="Systems"] a') as HTMLAnchorElement
+    expect(first.textContent).toBe('GBrainnormal')
+    expect(first.getAttribute('data-state')).toBe('healthy')
+    expect(first.querySelector('svg')?.getAttribute('data-shape')).toBe('circle')
     await act(async () => root.unmount())
   })
 
   it('gives the page title a title attribute so it is readable when shortened', async () => {
     stubShell(false)
-    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
+    const { host, root } = await mount(topBar())
     const h1 = host.querySelector('h1') as HTMLHeadingElement
     expect(h1.getAttribute('title')).toBe(h1.textContent)
+    await act(async () => root.unmount())
+  })
+
+  it('offers the command palette as "Search or run…"', async () => {
+    stubShell(false)
+    const { host, root } = await mount(topBar())
+    expect(host.querySelector('button[aria-label="Open command palette"]')?.textContent).toContain('Search or run…')
     await act(async () => root.unmount())
   })
 })
@@ -165,48 +229,54 @@ describe('an unread count is not quiet', () => {
     meta: SIGNALS.meta,
   }
 
-  it('shows a grey "not read" pill in the top bar instead of hiding the attention count', async () => {
+  it('marks the rail items whose count was not read with a hollow circle and no number', async () => {
     stubSignals(unreadSignals)
-    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
-    const pill = host.querySelector('a[href="/attention"]') as HTMLAnchorElement
-    expect(pill).not.toBeNull()
-    expect(pill.getAttribute('aria-label')).toBe('Attention not read')
-    expect(pill.getAttribute('data-state')).toBe('unavailable')
-    expect(pill.textContent).not.toMatch(/\b0\b/)
-    await act(async () => root.unmount())
-  })
-
-  it('marks the sidebar items whose count was not read, without a number', async () => {
-    stubSignals(unreadSignals)
-    const { host, root } = await mount(
-      createElement(Sidebar, { collapsed: false, onToggleCollapsed: () => undefined, open: false, onClose: () => undefined }),
-    )
-    for (const path of ['/attention', '/automations', '/services']) {
+    const { host, root } = await mount(rail())
+    for (const path of ['/attention', '/automations']) {
       const link = host.querySelector(`nav a[href="${path}"]`) as HTMLAnchorElement
-      expect(link.querySelector('[data-tone="unread"]')).not.toBeNull()
+      expect(link.querySelector('svg[data-shape="ring"]')).not.toBeNull()
       expect(link.textContent).toContain('count not read')
       expect(link.textContent).not.toMatch(/\d/)
     }
     await act(async () => root.unmount())
   })
 
-  it('shows neither a pill nor a marker for a real zero', async () => {
-    stubSignals({ data: { ...SIGNALS.data, attention: { count: 0, worst: null }, services: { down: 0 } }, meta: SIGNALS.meta })
-    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
-    expect(host.querySelector('a[href="/attention"]')).toBeNull()
+  it('shows every system as not read, never as normal', async () => {
+    stubSignals(unreadSignals)
+    const { host, root } = await mount(topBar())
+    const words = [...host.querySelectorAll('ul[aria-label="Systems"] a')].map((a) => a.textContent)
+    expect(words).toEqual(['GBrainnot read', 'Hermesnot read', 'OpenClawnot read'])
+    await act(async () => root.unmount())
+  })
+
+  it('shows neither a badge nor a marker for a real zero', async () => {
+    stubSignals({ data: { ...SIGNALS.data, attention: { count: 0, worst: 'healthy' }, automations: { failed: 0, nextRunAt: null } }, meta: SIGNALS.meta })
+    const { host, root } = await mount(rail())
+    expect(host.querySelector('[data-testid="nav-badge"]')).toBeNull()
+    expect(host.querySelector('nav svg[data-shape="ring"]')).toBeNull()
     await act(async () => root.unmount())
   })
 })
 
 describe('top bar data age', () => {
-  it('names the shell signals in its tooltip so it does not contradict a page freshness', async () => {
+  it('annotates only a stale reading, and names the shell signals in the tooltip', async () => {
     stubShell(false)
-    const { host, root } = await mount(createElement(TopBar, { onOpenMenu: () => undefined, onOpenPalette: () => undefined }))
+    const { host, root } = await mount(topBar())
     const age = host.querySelector('[title^="Signals updated"]') as HTMLElement
     expect(age).not.toBeNull()
-    expect(age.textContent).toMatch(/^Updated /)
+    // A fresh reading carries no annotation.
+    expect(age.textContent).toBe('')
     const refresh = host.querySelector('button[aria-label="Refresh data"]') as HTMLButtonElement
     expect(refresh.getAttribute('title')).toMatch(/^Refresh data\. Signals updated /)
+    await act(async () => root.unmount())
+  })
+
+  it('says "as of" with a caution mark when the signals are stale', async () => {
+    stubSignals({ ...SIGNALS, meta: { ...SIGNALS.meta, stale: true } })
+    const { host, root } = await mount(topBar())
+    const note = host.querySelector('[title="The server is serving an older reading."]') as HTMLElement
+    expect(note.textContent).toMatch(/^Signals as of \d{2}:\d{2}$/)
+    expect(note.querySelector('svg')?.getAttribute('data-shape')).toBe('triangle')
     await act(async () => root.unmount())
   })
 })
@@ -222,10 +292,10 @@ describe('top bar layout contract', () => {
     expect(css.slice(css.indexOf('.bar {'), css.indexOf('}', css.indexOf('.bar {')))).toMatch(/container-type:\s*inline-size/)
   })
 
-  it('yields in a fixed order as the bar narrows: age, breakdown, words, annunciators, search, systems menu', () => {
+  it('yields in a fixed order as the bar narrows: stale note, system words, names, search, systems menu', () => {
     const steps = [...css.matchAll(/@container \(max-width: (\d+)px\)\s*{([^]*?)\n}\n/g)].map((match) => ({ width: Number(match[1]), body: match[2] }))
     const find = (needle: RegExp) => steps.find((step) => needle.test(step.body))?.width ?? 0
-    const order = [find(/\.ageText/), find(/\.attentionSecondary/), find(/\.attentionWords/), find(/\.annName/), find(/\.paletteText/), find(/\.systemsMenu/)]
+    const order = [find(/\.staleText/), find(/\.annWord/), find(/\.annName/), find(/\.paletteText/), find(/\.systemsMenu/)]
     expect(order.every((width) => width > 0)).toBe(true)
     expect([...order].sort((a, b) => b - a)).toEqual(order)
     expect(new Set(order).size).toBe(order.length)

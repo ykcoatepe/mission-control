@@ -1,26 +1,66 @@
 'use strict';
 const { createSource, SourceReadError } = require('../../core/source');
 const { isNextRunOverdue, isNextRunDue } = require('./overdue');
+const { cronKey } = require('../mloop/attention');
+const { stateRank } = require('../../core/state');
 
 const AUTOMATIONS_REFRESH_INTERVAL_MS = 30_000;
 
-function summarizeJobs(jobs, nowMs) {
+// Match the page/sidebar normalizeCronStatus rule; unknown history is not
+// evidence of a failed last run.
+function isFailedJob(job) {
+  return Boolean(job?.enabled) && ['failed', 'error', 'errored'].includes(String(job.status || '').trim().toLowerCase());
+}
+
+// acks (optional): the attention ack store. A failed job whose
+// acknowledgement holds is standing, not failed (badge rule).
+function cronAckItem(job) {
+  return { key: cronKey(job?.id), rank: stateRank('warning'), count: 1 };
+}
+
+function summarizeJobs(jobs, nowMs, { acks = null } = {}) {
   const enabled = jobs.filter(job => job.enabled);
   const nextRuns = enabled.map(job => job.nextRun)
     .filter(value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && Date.parse(value) > nowMs)
     .sort((a, b) => Date.parse(a) - Date.parse(b));
+  const failedJobs = enabled.filter(isFailedJob);
+  const standing = acks ? failedJobs.filter(job => cronAckItem(job).key && acks.resolve(cronAckItem(job)).holds).length : 0;
   return {
     active: enabled.length,
     paused: jobs.length - enabled.length,
-    // Match the page/sidebar normalizeCronStatus rule; unknown history is
-    // not evidence of a failed last run.
-    failed: enabled.filter(job => ['failed', 'error', 'errored'].includes(String(job.status || '').trim().toLowerCase())).length,
+    failed: failedJobs.length - standing,
+    standingFailed: standing,
     nextRunAt: nextRuns[0] || null,
     definitions: {
       active: 'Counts every enabled job, including enabled jobs whose last run failed.',
-      failed: 'Enabled jobs whose last run failed; a subset of active, not a separate population.',
+      failed: 'Enabled jobs whose last run failed and that are not acknowledged or shelved; a subset of active.',
+      standingFailed: 'Enabled jobs whose last run failed and that are acknowledged or shelved.',
     },
   };
+}
+
+// The cron list as routes show it: every job carries ackKey (cron:<job id>)
+// and ack (null | { kind, at, until }); summary.failed / standingFailed split
+// by the acknowledgements. Pure: the summary's other fields are kept.
+function projectCronAcks(cron, acks = null) {
+  if (!cron || !Array.isArray(cron.jobs)) return cron;
+  const jobs = cron.jobs.map((job) => {
+    const item = cronAckItem(job);
+    let ack = null;
+    if (acks && item.key) ack = isFailedJob(job) ? acks.resolve(item).ack : acks.peek(item.key);
+    return { ...job, ackKey: item.key, ack };
+  });
+  const failedJobs = jobs.filter(isFailedJob);
+  const standing = failedJobs.filter(job => job.ack !== null).length;
+  const summary = cron.summary && typeof cron.summary === 'object'
+    ? {
+      ...cron.summary,
+      failed: failedJobs.length - standing,
+      standingFailed: standing,
+      definitions: { ...cron.summary.definitions, ...summarizeJobs([], 0).definitions },
+    }
+    : cron.summary;
+  return { ...cron, jobs, summary };
 }
 
 function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
@@ -86,4 +126,4 @@ function createAutomationSource({ cronService, now = Date.now, logger } = {}) {
   };
   return source;
 }
-module.exports = { createAutomationSource, AUTOMATIONS_REFRESH_INTERVAL_MS };
+module.exports = { createAutomationSource, AUTOMATIONS_REFRESH_INTERVAL_MS, isFailedJob, projectCronAcks, summarizeJobs };

@@ -1,0 +1,52 @@
+.block {
+  height: 100%;
+  container-type: inline-size;
+  container-name: bars;
+}
+
+.bars {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Three readings in one block, separated by hairlines: not three cards. */
+.bars > * + * {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-4);
+  border-top: 1px solid var(--line);
+}
+
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.note {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* When the block is wide (stacked under the diagram) the three readings sit side by side. */
+@container bars (min-width: 640px) {
+  .bars {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .bars > * {
+    flex: 1 1 0;
+  }
+
+  .bars > * + * {
+    margin-top: 0;
+    padding-top: 0;
+    padding-left: var(--sp-4);
+    margin-left: var(--sp-4);
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}

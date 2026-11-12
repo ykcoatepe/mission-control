@@ -46,25 +46,37 @@ export interface SystemSignal {
 /**
  * The parts of the one attention count (server/sources/mloop/attention.js).
  * count is the sum of the parts that were read; a part that was not read is null.
+ * `restricted` is information, never part of the count (the older payload still carried it here).
  */
 export interface AttentionBreakdown {
   systems: number | null
   findings: number | null
   overdueConfirmations: number | null
-  restricted: number | null
+  restricted?: number | null
 }
 
+/**
+ * `GET /api/signals` -> `data.attention` (badge rule). `count` and `worst` cover NEW items only: items that are
+ * actionable and neither acknowledged nor shelved. `worst` is 'healthy' when count is 0. `standing` is the
+ * acknowledged plus shelved items, `restricted` the restricted-project count (information only).
+ * Every field is optional so the older shape (count that included standing and restricted items) still reads.
+ */
 export interface AttentionSignal {
   count: number | null
   worst: string | null
+  standing?: number | null
+  restricted?: number | null
   breakdown?: AttentionBreakdown | null
+  partial?: boolean
+  missing?: string[] | null
 }
 
 export interface SignalsData {
   generatedAt?: string
   systems: Partial<Record<SystemId, SystemSignal | null>> | null
   attention: AttentionSignal | null
-  automations: { failed: number | null; nextRunAt: string | null } | null
+  /** `failed` = enabled jobs whose last run failed and that are not acknowledged or shelved; `standingFailed` = the ones that are. */
+  automations: { failed: number | null; standingFailed?: number | null; nextRunAt: string | null } | null
   loops: { openFindings: number | null; overdueConfirmations: number | null } | null
   services: { down: number | null } | null
   usage: { todayUsd: number | null; budgetUsedPct: number | null } | null
@@ -117,9 +129,9 @@ export interface Annunciator {
   href: string
   /** `reading` until the first load completes. */
   state: UiState | 'reading'
-  /** Always set: "reading…", "healthy", "stale", "not read", "critical"… */
+  /** Always set and always shown: "reading…", "normal", "caution", "stale", "not read", "critical"… */
   word: string
-  /** Show the word next to the name (everything except a plain healthy system). */
+  /** Abnormal or not read: the mark and word take their state colour. A normal system stays neutral. */
   lit: boolean
   /** The server's one-line reason this system is not healthy; null when none was given. */
   reason: string | null
@@ -197,17 +209,20 @@ export function annunciators(signals: SignalsData | null | undefined, options: A
 // ---- attention (one number, three places) ----
 
 /**
- * The one definition of "needs attention": `signals.attention.count`, computed by
- * the server (system attention items, manager-loop findings rated warning or
- * error, overdue confirmations, restricted projects by count). The top-bar pill,
- * the sidebar badge and the Attention page summary all show exactly this number;
- * nothing here adds or compares counts. The breakdown is secondary text.
+ * The one definition of "needs attention": `signals.attention.count`, computed by the server and covering
+ * NEW, actionable, unacknowledged items only (the badge rule). The rail badge and the Attention page summary
+ * show exactly this number; nothing here adds or compares counts. Standing items (acknowledged or shelved) and
+ * restricted projects are information and never part of it. The breakdown is secondary text.
  */
 export interface AttentionReading {
-  /** Items that need the operator; null when the server could not read it. */
+  /** New items that need the operator; null when the server could not read it. */
   count: number | null
   /** The parts of the count; a part the server did not read is null. */
   breakdown: AttentionBreakdown | null
+  /** Acknowledged plus shelved items: listed quietly, not counted. Null when the server did not say. */
+  standing: number | null
+  /** Restricted-project count (information only). Null when the server did not say. */
+  restricted: number | null
   state: UiState
 }
 
@@ -217,7 +232,7 @@ function breakdownOf(raw: AttentionBreakdown | null | undefined): AttentionBreak
     systems: countOrNull(raw.systems),
     findings: countOrNull(raw.findings),
     overdueConfirmations: countOrNull(raw.overdueConfirmations),
-    restricted: countOrNull(raw.restricted),
+    restricted: raw.restricted === undefined ? undefined : countOrNull(raw.restricted),
   }
 }
 
@@ -233,7 +248,13 @@ export function attentionFrom(attention: AttentionSignal | null | undefined): At
   const count = countOrNull(attention.count)
   const breakdown = breakdownOf(attention.breakdown)
   if (count === null && breakdown === null) return null
-  return { count, breakdown, state: readingState(attention.worst) }
+  return {
+    count,
+    breakdown,
+    standing: countOrNull(attention.standing),
+    restricted: countOrNull(attention.restricted ?? breakdown?.restricted),
+    state: readingState(attention.worst),
+  }
 }
 
 export function attentionReading(signals: SignalsData | null | undefined): AttentionReading | null {
@@ -245,16 +266,17 @@ export function attentionWords(count: number): string {
   return count === 1 ? '1 needs attention' : `${count} need attention`
 }
 
-const PART_WORDS: ReadonlyArray<readonly [keyof AttentionBreakdown, (n: number) => string, string]> = [
+const PART_WORDS: ReadonlyArray<readonly [keyof AttentionBreakdown, (n: number) => string, string | null]> = [
   ['systems', (n) => `${n} ${n === 1 ? 'system' : 'systems'}`, 'systems not read'],
   ['findings', (n) => `${n} ${n === 1 ? 'finding' : 'findings'}`, 'findings not read'],
   ['overdueConfirmations', (n) => `${n} overdue`, 'overdue not read'],
-  ['restricted', (n) => `${n} restricted`, 'restricted not read'],
+  ['restricted', (n) => `${n} restricted`, null],
 ]
 
 /**
- * "3 systems · 23 findings · 3 overdue · 129 restricted" for secondary text.
- * A part that is zero is left out; a part that was not read says so (never "0").
+ * "3 systems · 23 findings · 3 overdue" for secondary text.
+ * A part that is zero is left out; a counted part that was not read says so (never "0").
+ * Restricted is information: mentioned only when the server sent it and it is above zero.
  * null when there is no breakdown or nothing to mention.
  */
 export function breakdownWords(breakdown: AttentionBreakdown | null | undefined): string | null {
@@ -262,45 +284,23 @@ export function breakdownWords(breakdown: AttentionBreakdown | null | undefined)
   const parts: string[] = []
   for (const [key, words, unread] of PART_WORDS) {
     const value = breakdown[key]
-    if (value === null) parts.push(unread)
-    else if (value > 0) parts.push(words(value))
+    if (value === null || value === undefined) {
+      if (value === null && unread) parts.push(unread)
+    } else if (value > 0) parts.push(words(value))
   }
   return parts.length > 0 ? parts.join(' · ') : null
 }
 
-export interface AttentionPill {
-  count: number
-  state: UiState
-  /** The pill's words: "30 need attention". */
-  text: string
-  /** Secondary text: the breakdown, or null. */
-  secondary: string | null
-}
-
-/** The top-bar pill. Hidden when nothing needs attention or the count was not read. */
-export function attentionPill(signals: SignalsData | null | undefined): AttentionPill | null {
-  const reading = attentionReading(signals)
-  if (!reading || reading.count === null || reading.count === 0) return null
-  return {
-    count: reading.count,
-    state: reading.state,
-    text: attentionWords(reading.count),
-    secondary: breakdownWords(reading.breakdown),
-  }
-}
-
 /**
  * Signals arrived (or the request failed with nothing to show) but the attention count was not read.
- * A pill that simply vanished would read as "nothing needs attention", so the shell shows a grey
- * "not read" marker instead. Still loading is not unread.
+ * A badge that simply vanished would read as "nothing is new", so the rail shows a hollow "not read"
+ * mark instead. Still loading is not unread.
  */
 export function attentionUnread(signals: SignalsData | null | undefined, options: { loading: boolean }): boolean {
   if (!signals) return !options.loading
   const reading = attentionReading(signals)
   return reading === null || reading.count === null
 }
-
-export const ATTENTION_NOT_READ = 'Attention not read'
 
 // ---- data age of the signals reading ----
 
@@ -335,7 +335,11 @@ export interface NavBadge {
   word: string
 }
 
-/** Abnormal-only counts by route path. A path with no entry shows no badge. */
+/**
+ * Rail badges (badge rule): a count of NEW, actionable, unacknowledged items, by route path.
+ * Attention = `attention.count`; Automations = `automations.failed`. Restricted and standing items never
+ * count. A path with no entry (a real zero, or a count that was not read) shows no badge.
+ */
 export function navBadges(signals: SignalsData | null | undefined): Record<string, NavBadge | undefined> {
   const badges: Record<string, NavBadge | undefined> = {}
   if (!signals) return badges
@@ -343,22 +347,21 @@ export function navBadges(signals: SignalsData | null | undefined): Record<strin
   const failed = countOrNull(signals.automations?.failed)
   if (failed !== null && failed > 0) badges['/automations'] = { count: failed, tone: 'critical', word: 'failed' }
 
-  // The same number as the top-bar pill. The pill carries the breakdown; the badge is the number only.
-  const pill = attentionPill(signals)
-  if (pill) {
-    const tone = pill.state === 'critical' ? 'critical' : 'warning'
-    badges['/attention'] = { count: pill.count, tone, word: pill.text.replace(/^\d+ /, '') }
+  const reading = attentionReading(signals)
+  if (reading && reading.count !== null && reading.count > 0) {
+    badges['/attention'] = {
+      count: reading.count,
+      tone: reading.state === 'critical' ? 'critical' : 'warning',
+      word: reading.count === 1 ? 'needs attention' : 'need attention',
+    }
   }
-
-  const down = countOrNull(signals.services?.down)
-  if (down !== null && down > 0) badges['/services'] = { count: down, tone: 'critical', word: 'down' }
 
   return badges
 }
 
 /**
- * Routes whose badge count could not be read. A missing badge means "nothing abnormal", so an unread
- * count gets its own grey marker instead of silence. Before the first load nothing is unread yet.
+ * Routes whose badge count could not be read. A missing badge means "nothing new", so an unread
+ * count gets its own hollow mark instead of silence. Before the first load nothing is unread yet.
  */
 export function navUnread(signals: SignalsData | null | undefined, options: { loading: boolean }): Record<string, true | undefined> {
   const unread: Record<string, true | undefined> = {}
@@ -366,11 +369,9 @@ export function navUnread(signals: SignalsData | null | undefined, options: { lo
     if (options.loading) return unread
     unread['/attention'] = true
     unread['/automations'] = true
-    unread['/services'] = true
     return unread
   }
   if (attentionUnread(signals, options)) unread['/attention'] = true
   if (countOrNull(signals.automations?.failed) === null) unread['/automations'] = true
-  if (countOrNull(signals.services?.down) === null) unread['/services'] = true
   return unread
 }

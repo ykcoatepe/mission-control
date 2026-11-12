@@ -1,3 +1,4 @@
+/* Quiet sentences under the (optional) alarm line: normal and "not read" conditions, no colour. */
 .verdict {
   display: flex;
   flex-direction: column;
@@ -7,7 +8,7 @@
 .verdictLines {
   display: flex;
   flex-direction: column;
-  gap: var(--sp-2);
+  gap: var(--sp-1);
   margin: 0;
   padding: 0;
   list-style: none;
@@ -15,51 +16,43 @@
 
 .verdictLine {
   display: flex;
-  align-items: baseline;
-  gap: var(--sp-3);
+  align-items: center;
+  gap: var(--sp-2);
   color: var(--text-1);
   font-size: var(--fs-lead);
-  font-weight: var(--fw-semibold);
   line-height: var(--lh-tight);
 }
 
 .verdictLine > :first-child {
   flex: none;
-  align-self: center;
+  color: var(--state-normal);
 }
 
-.verdictLine[data-state='critical'] {
-  color: var(--state-critical);
+.verdictLine[data-state='unavailable'] > :first-child {
+  color: var(--state-unavailable);
 }
 
-.verdictLine[data-state='warning'] {
-  color: var(--state-warning);
-}
-
-.verdictBody {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-1);
+.verdictText {
   min-width: 0;
-}
-
-.verdictReason {
-  color: var(--text-2);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-regular);
-  line-height: var(--lh-body);
-}
-
-.link {
-  color: var(--accent);
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .verdictDetail {
-  padding-left: var(--sp-5);
-  color: var(--text-3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.verdictDetail:empty {
+  display: none;
+}
+
+.fresh {
+  flex: none;
 }
 
 /* A remark, not a fault: quiet text with a way to list the services it is about. */
@@ -68,14 +61,23 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--sp-2);
-  padding-left: var(--sp-5);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
 }
 
 .readings {
   min-width: 0;
   scroll-margin-top: var(--sp-4);
+}
+
+.endpointNote {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-3);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
 }
 
 .toolbar {
@@ -85,22 +87,9 @@
   gap: var(--sp-3);
 }
 
-.toolbarEnd {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--sp-3);
-  margin-left: auto;
-}
-
 .search {
+  margin-left: auto;
   width: 240px;
-}
-
-.count {
-  color: var(--text-3);
-  font-size: var(--fs-small);
-  font-variant-numeric: tabular-nums;
 }
 
 .service {
@@ -122,7 +111,7 @@
 }
 
 .muted {
-  color: var(--text-3);
+  color: var(--text-2);
 }
 
 /* The note for a service: its own line under the name, wrapping inside the cell. */
@@ -139,16 +128,7 @@
 @media (max-width: 700px) {
   .search {
     width: 100%;
-  }
-
-  .toolbarEnd {
-    width: 100%;
     margin-left: 0;
-  }
-
-  .verdictDetail,
-  .verdictNote {
-    padding-left: 0;
   }
 
   .hint {
@@ -161,7 +141,7 @@
   }
 }
 
-/* Labels, PIDs and exit codes are never broken in the middle; a narrow table scrolls sideways instead. */
+/* Labels, PIDs and exit codes are never broken in the middle; a narrow table stacks its rows instead. */
 .label {
   overflow-wrap: normal;
   word-break: normal;

@@ -17,19 +17,23 @@
   padding: var(--sp-2) var(--sp-2) var(--sp-2) var(--sp-3);
   background: var(--surface-3);
   border: 1px solid var(--line-strong);
-  border-left-width: 3px;
   border-radius: var(--r-md);
   pointer-events: auto;
 }
 
-.toast[data-tone='success'] { border-left-color: var(--state-healthy); }
-.toast[data-tone='warning'] { border-left-color: var(--state-warning); }
-.toast[data-tone='error'] { border-left-color: var(--state-critical); }
-.toast[data-tone='info'] { border-left-color: var(--accent); }
+.toast[data-tone='warning'] { border-color: var(--state-warning-line); }
+.toast[data-tone='error'] { border-color: var(--state-critical-line); }
+
+.mark {
+  flex: 0 0 auto;
+}
+
+.toast[data-tone='warning'] .mark { color: var(--state-warning); }
+.toast[data-tone='error'] .mark { color: var(--state-critical); }
 
 .tone {
   flex: 0 0 auto;
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
   font-weight: var(--fw-medium);
 }

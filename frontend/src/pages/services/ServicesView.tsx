@@ -1,21 +1,20 @@
 import { useMemo } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
+  AlarmLine,
+  Block,
   Button,
   DataTable,
   EmptyState,
   ErrorState,
   FilterChips,
+  Freshness,
   Mono,
   Notice,
-  Panel,
   SearchInput,
   Skeleton,
-  Stat,
+  StateMark,
   StatePill,
-  StateDot,
-  StatRow,
-  TimeAgo,
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
@@ -28,12 +27,14 @@ import {
   filterServices,
   kindLabel,
   parseServiceFilter,
+  quietLines,
   scheduleNote,
+  serviceAlarm,
   serviceHint,
   serviceStatus,
   servicesVerdict,
 } from './lib'
-import type { EndpointReading } from './lib'
+import type { AlarmTarget } from './lib'
 import type { Endpoint, ServiceFilter, ServiceRow, ServicesEnvelope } from './types'
 import styles from './ServicesView.module.css'
 
@@ -55,6 +56,15 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
     },
   },
   {
+    key: 'state',
+    header: 'State',
+    width: '120px',
+    cell: (row) => {
+      const status = serviceStatus(row)
+      return <StatePill state={status.state} label={status.label} />
+    },
+  },
+  {
     key: 'kind',
     header: 'Kind',
     cell: (row) => {
@@ -67,15 +77,6 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
           {note && <span className={styles.muted}>{note}</span>}
         </span>
       )
-    },
-  },
-  {
-    key: 'state',
-    header: 'State',
-    width: '112px',
-    cell: (row) => {
-      const status = serviceStatus(row)
-      return <StatePill state={status.state} label={status.label} />
     },
   },
   {
@@ -101,21 +102,53 @@ const SERVICE_COLUMNS: DataTableColumn<ServiceRow>[] = [
   },
 ]
 
-function reachabilityHint(reading: EndpointReading) {
-  if (!reading.at) return 'not read'
+interface EndpointRow {
+  id: string
+  name: string
+  endpoint: Endpoint | null | undefined
+}
+
+/** Where the reading came from, only when it is stale or unread (HMI rule 8); a fresh reading says nothing. */
+function EndpointNote({ endpoint }: { endpoint: Endpoint | null | undefined }) {
+  const reading = endpointReading(endpoint)
+  if (reading.state === 'unavailable') return null
+  const error = reading.state === 'critical' && typeof endpoint?.error === 'string' ? endpoint.error.trim() : ''
   return (
-    <>
-      {reading.atLabel} <TimeAgo value={reading.at} />
-    </>
+    <span className={styles.endpointNote}>
+      {error && <span>{error}</span>}
+      <Freshness
+        observedAt={reading.at}
+        state={reading.state === 'warning' ? 'stale' : undefined}
+        staleAfterMs={5 * 60_000}
+      />
+    </span>
   )
 }
 
-function ReachabilityStat({ label, endpoint }: { label: string; endpoint: Endpoint | null | undefined }) {
-  const reading = endpointReading(endpoint)
-  return <Stat label={label} value={reading.word} state={reading.state} hint={reachabilityHint(reading)} />
-}
+const ENDPOINT_COLUMNS: DataTableColumn<EndpointRow>[] = [
+  {
+    key: 'name',
+    header: 'Endpoint',
+    cell: (row) => <span className={styles.label}>{row.name}</span>,
+  },
+  {
+    key: 'state',
+    header: 'State',
+    width: '120px',
+    cell: (row) => {
+      const reading = endpointReading(row.endpoint)
+      return <StatePill state={reading.state} label={reading.word} />
+    },
+  },
+  {
+    key: 'reading',
+    header: 'Reading',
+    cell: (row) => <EndpointNote endpoint={row.endpoint} />,
+  },
+]
 
 export default function ServicesView() {
+  const navigate = useNavigate()
   const { data: envelope, loading, error, refetch } = useApi<ServicesEnvelope>('/api/services', POLL_MS)
   // The shell's reading of the gateways: the verdict must not contradict the top bar.
   const { data: signalsEnvelope } = useApi<SignalsEnvelope>(SIGNALS_URL, SIGNALS_POLL_MS)
@@ -143,6 +176,8 @@ export default function ServicesView() {
   const visible = useMemo(() => filterServices(rows, filter, query), [rows, filter, query])
   const counts = useMemo(() => filterCounts(rows, data?.summary), [rows, data])
   const verdict = useMemo(() => servicesVerdict(data, gatewaySystems), [data, gatewaySystems])
+  const alarm = useMemo(() => serviceAlarm(verdict, data, filter), [verdict, data, filter])
+  const quiet = useMemo(() => quietLines(verdict), [verdict])
 
   if (loading && !envelope) {
     return (
@@ -180,42 +215,50 @@ export default function ServicesView() {
   ]
   const filtered = filter !== 'all' || query.trim() !== ''
 
+  const endpointRows: EndpointRow[] = [
+    { id: 'openclaw', name: 'OpenClaw gateway', endpoint: data.gateways?.openclaw },
+    { id: 'hermes', name: 'Hermes gateway', endpoint: data.gateways?.hermes },
+    { id: 'ollama', name: 'Ollama', endpoint: data.ollama },
+  ]
+
+  const runAlarmAction = (target: AlarmTarget) => {
+    if (target.kind === 'filter') {
+      setFilter(target.filter)
+    } else if (target.link.kind === 'anchor') {
+      document.getElementById(GATEWAY_READINGS_ID)?.scrollIntoView?.({ block: 'start' })
+    } else {
+      navigate(target.link.to)
+    }
+  }
+
+  const showFreshness = Boolean(observedAt) || stale
+
   return (
     <>
+      {alarm && (
+        <AlarmLine
+          state={alarm.state}
+          title={alarm.title}
+          detail={alarm.detail ?? undefined}
+          action={alarm.action ? { label: alarm.action.label, onClick: () => runAlarmAction(alarm.action!) } : undefined}
+        />
+      )}
+
       <div className={styles.verdict}>
-        <ul className={styles.verdictLines} aria-label="Verdict">
-          {verdict.lines.map((entry) => (
-            <li key={entry.text} className={styles.verdictLine} data-state={entry.state}>
-              <StateDot state={entry.state} />
-              <span className={styles.verdictBody}>
+        {quiet.length > 0 && (
+          <ul className={styles.verdictLines} aria-label="Verdict">
+            {quiet.map((entry) => (
+              <li key={entry.text} className={styles.verdictLine} data-state={entry.state}>
+                <StateMark state={entry.state} />
                 <span className={styles.verdictText}>{entry.text}</span>
-                {(entry.reason || entry.link) && (
-                  <span className={styles.verdictReason}>
-                    {entry.reason}
-                    {entry.reason && entry.link && ' '}
-                    {entry.link &&
-                      (entry.link.kind === 'anchor' ? (
-                        <a className={styles.link} href={entry.link.to}>
-                          {entry.link.label}
-                        </a>
-                      ) : (
-                        <Link className={styles.link} to={entry.link.to}>
-                          {entry.link.label}
-                        </Link>
-                      ))}
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ul>
+              </li>
+            ))}
+          </ul>
+        )}
         <p className={styles.verdictDetail}>
           {verdict.detail}
-          {verdict.detail && observedAt && ' · '}
-          {observedAt && (
-            <>
-              read <TimeAgo value={observedAt} />
-            </>
+          {showFreshness && (
+            <Freshness observedAt={observedAt} state={stale ? 'stale' : undefined} staleAfterMs={120_000} className={styles.fresh} />
           )}
         </p>
         {verdict.note && (
@@ -228,21 +271,21 @@ export default function ServicesView() {
         )}
       </div>
 
-      {(stale || error) && (
-        <Notice tone="warning" title={error ? 'The latest read failed' : 'This reading is out of date'}>
-          {error
-            ? 'Showing the previous reading until the next read succeeds.'
-            : 'The server could not refresh these services and is showing its last good reading.'}
+      {error && (
+        <Notice tone="warning" title="The latest read failed">
+          Showing the previous reading until the next read succeeds.
         </Notice>
       )}
 
-      <div id={GATEWAY_READINGS_ID} className={styles.readings}>
-        <StatRow aria-label="Reachability">
-          <ReachabilityStat label="OpenClaw gateway" endpoint={data.gateways?.openclaw} />
-          <ReachabilityStat label="Hermes gateway" endpoint={data.gateways?.hermes} />
-          <ReachabilityStat label="Ollama" endpoint={data.ollama} />
-        </StatRow>
-      </div>
+      <Block id={GATEWAY_READINGS_ID} className={styles.readings} title="Reachability" padding="none">
+        <DataTable
+          caption="Reachability"
+          columns={ENDPOINT_COLUMNS}
+          rows={endpointRows}
+          rowKey={(row) => row.id}
+          maxHeight="none"
+        />
+      </Block>
 
       <div className={styles.toolbar}>
         <FilterChips
@@ -251,17 +294,18 @@ export default function ServicesView() {
           value={filter}
           onChange={(value) => setFilter(parseServiceFilter(value))}
         />
-        <div className={styles.toolbarEnd}>
-          {filtered && (
-            <span className={styles.count} aria-live="polite">
-              Showing {visible.length} of {rows.length}
-            </span>
-          )}
-          <SearchInput className={styles.search} value={query} onChange={setQuery} label="Search services" />
-        </div>
+        <SearchInput className={styles.search} value={query} onChange={setQuery} label="Search services" />
       </div>
 
-      <Panel padding="none">
+      <Block
+        title="Services"
+        meta={
+          <span aria-live="polite">
+            {filtered ? `Showing ${visible.length} of ${rows.length}` : `${rows.length} ${rows.length === 1 ? 'service' : 'services'}`}
+          </span>
+        }
+        padding="none"
+      >
         <DataTable
           caption="Launchd services"
           columns={SERVICE_COLUMNS}
@@ -278,7 +322,7 @@ export default function ServicesView() {
             />
           }
         />
-      </Panel>
+      </Block>
     </>
   )
 }

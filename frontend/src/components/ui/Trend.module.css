@@ -1,0 +1,17 @@
+.trend {
+  display: block;
+  width: 100%;
+  min-width: 48px;
+  overflow: visible;
+}
+
+.band {
+  fill: var(--band);
+}
+
+.line {
+  stroke: var(--text-2);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}

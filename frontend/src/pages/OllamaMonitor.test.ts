@@ -66,6 +66,7 @@ let calls: string[] = []
 let telemetryBody: unknown = telemetry
 let modelBody: unknown | null = null
 let costsBody: unknown = costs
+let historyBody: unknown = { generatedAt: telemetry.generatedAt, history: [], total: 0 }
 let estimated = true
 let root: Root | null = null
 let host: HTMLElement | null = null
@@ -76,7 +77,7 @@ function stubFetch() {
     calls.push(`${init?.method ?? 'GET'} ${url.pathname}${url.search}`)
     const bodies: Record<string, unknown> = {
       '/api/ollama/telemetry': telemetryBody,
-      '/api/ollama/telemetry/history': { generatedAt: telemetry.generatedAt, history: [], total: 0 },
+      '/api/ollama/telemetry/history': historyBody,
       '/api/ollama/telemetry/models': modelBody ?? modelTelemetry(estimated),
       '/api/costs': costsBody,
     }
@@ -108,6 +109,7 @@ beforeEach(() => {
   telemetryBody = telemetry
   modelBody = null
   costsBody = costs
+  historyBody = { generatedAt: telemetry.generatedAt, history: [], total: 0 }
   stubFetch()
 })
 
@@ -286,5 +288,104 @@ describe('Local models page: unknown values stay unknown', () => {
     expect(text).not.toContain('not accepting requests')
     expect(text).not.toContain('Ollama is running normally')
     expect(text).not.toContain('of null')
+  })
+})
+
+describe('Local models page: alarm line, bars and trends', () => {
+  const reading = (minute: number, health: number, memory: number) => ({
+    generatedAt: new Date(Date.UTC(2026, 7, 15, 9, minute)).toISOString(),
+    healthScore: health,
+    status: 'online',
+    latencyMs: 10,
+    memoryUsedPercent: memory,
+    cpuUsagePercent: 5,
+    gpuUtilPercent: null,
+    gpuMemoryPercent: null,
+    runningModels: 1,
+    totalModels: 1,
+    alerts: [],
+  })
+
+  it('has no alarm line when Ollama is normal, only a quiet sentence', async () => {
+    telemetryBody = { ...telemetry, generatedAt: new Date().toISOString() }
+    await mount()
+    expect(host!.querySelector('[role="alert"]')).toBeNull()
+    expect(host!.querySelector('[data-state="critical"], [data-state="warning"]')).toBeNull()
+    expect(host!.textContent).toContain('Ollama is running normally')
+  })
+
+  it('says "as of" only for a stale reading', async () => {
+    await mount()
+    expect(host!.textContent).toMatch(/as of/)
+    await act(async () => root!.unmount())
+    host!.remove()
+    root = null
+    telemetryBody = { ...telemetry, generatedAt: new Date().toISOString() }
+    await mount()
+    expect(host!.textContent).not.toMatch(/as of/)
+  })
+
+  it('raises one alarm line with a single action when Ollama does not respond', async () => {
+    telemetryBody = { ...telemetry, server: { ...telemetry.server, status: 'offline' }, healthScore: 0 }
+    await mount()
+    const alarms = host!.querySelectorAll('[role="alert"]')
+    expect(alarms).toHaveLength(1)
+    expect(alarms[0].textContent).toContain('Critical')
+    expect(alarms[0].textContent).toContain('Ollama is not responding')
+    const buttons = alarms[0].querySelectorAll('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].textContent).toContain('Read again')
+  })
+
+  it('lists active alerts inside the alarm line, with no separate alert box', async () => {
+    telemetryBody = {
+      ...telemetry,
+      alerts: [{ code: 'MEMORY_PRESSURE', severity: 'warning', message: 'High memory usage: 91.0%', triggeredAt: telemetry.generatedAt, suppressed: false, cooldownUntil: telemetry.generatedAt }],
+    }
+    await mount()
+    const alarms = host!.querySelectorAll('[role="status"][data-state="warning"]')
+    expect(alarms).toHaveLength(1)
+    expect(alarms[0].textContent).toContain('Ollama is running with 1 active alert')
+    expect(alarms[0].textContent).toContain('High memory usage: 91.0%')
+    expect(alarms[0].querySelectorAll('button')).toHaveLength(0)
+  })
+
+  it('shows health and memory as analog bars with their real limits', async () => {
+    await mount()
+    const meters = Array.from(host!.querySelectorAll('[role="meter"]'))
+    const memory = meters.find((m) => m.getAttribute('aria-label') === 'Memory')!
+    expect(memory.getAttribute('aria-valuenow')).toBe('50')
+    expect(memory.getAttribute('aria-valuemax')).toBe('100')
+    expect(host!.textContent).toContain('Normal: 0% – 80%')
+    expect(host!.textContent).toContain('Normal: 85 – 100')
+  })
+
+  it('draws a trend only from the history the API returned', async () => {
+    await mount()
+    expect(host!.textContent).not.toContain('24h trend')
+    await act(async () => root!.unmount())
+    host!.remove()
+    root = null
+    historyBody = {
+      generatedAt: telemetry.generatedAt,
+      total: 3,
+      history: [reading(0, 90, 40), reading(5, 95, 50), reading(10, 96, 55)],
+    }
+    await mount()
+    expect(host!.textContent).toContain('24h trend')
+    expect(host!.textContent).toContain('Trends cover the time since')
+  })
+
+  it('marks a model that is not loaded as off, not as a problem', async () => {
+    telemetryBody = {
+      ...telemetry,
+      runtime: { runningModels: 0, totalModels: 1, canAcceptRequests: true },
+      models: [{ name: 'llama3:8b', status: 'ready', sizeLabel: '4.7 GB' }],
+    }
+    await mount()
+    const row = Array.from(host!.querySelectorAll('tbody tr')).find((tr) => tr.textContent?.includes('llama3:8b'))!
+    expect(row.textContent).toContain('Not loaded')
+    expect(row.querySelector('svg[data-shape="dash"]')).not.toBeNull()
+    expect(host!.textContent).toContain('0 of 1 loaded')
   })
 })

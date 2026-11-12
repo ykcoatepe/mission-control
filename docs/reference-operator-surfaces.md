@@ -66,8 +66,8 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | Route | Method | Success | Error codes |
 | --- | --- | --- | --- |
 | `/api/health`, `/healthz` | GET | `{ ok, status: ok\|degraded, service, generatedAt, … }` (`/api/health` adds scheduler, lanes, event loop) | `500` |
-| `/api/signals` | GET | `{ data: { systems, attention, automations, loops, services, usage }, meta }` | `503` (no part read) |
-| `/api/loops` | GET | `{ data: { projects, totals, attention }, meta }` | `503` |
+| `/api/signals` | GET | `{ data: { systems, attention, automations, loops, services, usage }, meta }`; `attention = { count, worst, standing, restricted, breakdown, partial, missing }` (count/worst = NEW items only, see the badge rule below); `automations = { failed, standingFailed, nextRunAt }` | `503` (no part read) |
+| `/api/loops` | GET | `{ data: { projects, totals, attention, systems? }, meta }`; every attention row, pending confirmation and system carries `key`, `ackable`, `ack` | `503` |
 | `/api/loops/:project` | GET | `{ data: project, meta }` | `400 invalid_project`, `404 loop_project_not_found`, `503` |
 | `/api/services` | GET | `{ data: { services, counts, gateways, ollama }, meta }` | `503` |
 | `/api/operations/overview` | GET | overview schema `1` (`systems`, `overall`, `attention`, `evidence`, `capabilities`) + `meta` | `503 operations_unavailable` |
@@ -84,7 +84,9 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | `/api/gbrain/graph?around=` | GET | `{ data, meta }` | `400 graph_around_required`, `429`, `503` |
 | `/api/gbrain/actions` | GET | `{ ok, mode, actions }` (static allowlist) | — |
 | `/api/gbrain/actions` | POST | `200` action result (`ok`, `action`, `status: completed`, `pending`, `refreshAfter`, `summary`, `payload`, `checkedAt`) | the action result with `error: { code, message }`: `400 confirmation_required`, `400 gbrain_action_rejected`, `409 gbrain_action_busy`, `502 gbrain_action_failed`, `504 gbrain_action_timed_out` (`pending` tells a cleanup still running); `503 gbrain_action_quarantined` |
-| `/api/cron` | GET | `{ jobs, summary, …, meta }` | `503 automations_unavailable` |
+| `/api/cron` | GET | `{ jobs, summary, …, meta }`; every job carries `ackKey` (`cron:<job id>`) and `ack`; `summary.failed` excludes acknowledged/shelved jobs, counted in `summary.standingFailed` | `503 automations_unavailable` |
+| `/api/attention/acks` | POST | body `{ key, kind: 'ack'\|'shelve', until?: ISO\|null }` → `{ ok, key, ack: { kind, at, until } }` | `400 invalid_body` / `invalid_key` / `invalid_kind` / `invalid_until`, `404 ack_key_not_found`, `409 not_ackable` / `ack_store_full`, `503 attention_not_read` / `ack_store_unavailable` |
+| `/api/attention/acks/:key` | DELETE | `{ ok, key, ack: null }` | `400 invalid_key`, `404 ack_not_found`, `503 ack_store_unavailable` |
 | `/api/cron/create` | POST | `{ ok, message, job }` | `400 invalid_job` / `invalid_schedule` / `invalid_enabled` / `invalid_session` / `invalid_payload` / `invalid_model`, `500` |
 | `/api/cron/:id/toggle` | POST | `{ ok, message, job? }` | `400 invalid_enabled` / `invalid_scheduler` / `cron_id_required` / `invalid_cron_id`, `404 hermes_cron_job_not_found`, `409 hermes_cron_unavailable`, `500` |
 | `/api/cron/:id/run`, `/api/cron/:id` | POST, DELETE | `{ ok, message }` | `400 invalid_cron_id`, `501 hermes_cron_read_only`, `500` |
@@ -110,6 +112,25 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | `/api/councils/summary`, `/api/councils/decisions`, `/api/councils/governance/scorecard`, `/api/councils/decisions/:id/timeline` | GET | archive reads (no snapshot is persisted) | `503 councils_archive_unavailable` |
 | `/api/councils/decisions/:id/action` | POST | `{ ok, decision }` | `410 council_actions_disabled` (default; with `mode`, `recommendation`), `400 decision_id_required` / `council_action_required` / `council_note_required`, `404 decision_not_found`, `503` |
 | `/cron-search`, any non-API path | GET | static page / SPA shell | JSON `404 not_found` when the file is missing |
+
+### Badge rule (acknowledge / shelve)
+
+A badge counts only NEW items: not acknowledged, not shelved, not restricted.
+Countable items have stable keys: `system:<id>`, `finding:<project>:<CODE>:<12-hex hash of the subject>`,
+`confirmation:<project>:<id>` (an id that is not a short plain id is `h<12-hex hash>`; a confirmation
+finding about an id shares its key) and `cron:<job id>`. Restricted rows have `key: null` and are
+never ackable; their counts are `attention.restricted` and never part of `count` or `worst`.
+
+- `ack` ("seen, it will stay like this") holds while the item is no worse than when it was
+  acknowledged: a rise in severity (the shared state ordering) or in its count voids it for good.
+- `shelve` silences until `until` (or until removed with `null`); a shelved item that becomes
+  critical counts again.
+- Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes any stored
+  acknowledgement. An acknowledgement whose item has been absent for 7 days is dropped at the next
+  write. A failed cron job stays acknowledged while it keeps failing (cron items carry no count).
+- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries). A corrupt file
+  is copied to `acks.json.corrupt-<time>` before the first write replaces it. GETs never write; what
+  a GET learns (a voided ack, when an item was last seen) is kept in memory and saved with the next write.
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.

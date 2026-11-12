@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Clock, Play, Plus, Trash2 } from 'lucide-react'
 import {
+  AlarmLine,
+  Block,
   Button,
   DataTable,
   Dialog,
@@ -12,10 +14,10 @@ import {
   IconButton,
   Mono,
   Notice,
-  Panel,
   SearchInput,
   Skeleton,
   StateDot,
+  StateMark,
   StatePill,
   Stat,
   StatRow,
@@ -25,7 +27,7 @@ import {
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
 import { useApi } from '../../lib/hooks'
-import { applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../../lib/writes'
+import { afterWrite, applyCommitted, isStaleWrite, isUnconfirmedWrite, isUpstreamRefusal } from '../../lib/writes'
 import { StaleWriteNote } from '../../components/StaleWriteNote'
 import { useNow } from '../../lib/useNow'
 import { normalizeCronStatus } from '../../lib/status'
@@ -48,7 +50,8 @@ import type {
   CronScheduler,
   CronStatusFilter,
 } from './types'
-import { jobState } from './jobState'
+import { isNewFailure, isStandingFailure, jobState } from './jobState'
+import { SHELVE_CHOICES, ackNote, acknowledgeJob, applyAck, shelveUntil, undoAcknowledgement } from './acks'
 import { NextRun } from './NextRun'
 import { scheduleDisplay } from './cronSchedule'
 import { isJobOn, summarizeJobs } from './jobsSummary'
@@ -68,12 +71,23 @@ import styles from './JobsView.module.css'
 
 type SchedulerFilter = 'all' | CronScheduler
 
-const STATE_FILTERS = ['all', 'active', 'disabled', 'failed', 'overlap'] as const
+const STATE_FILTERS = ['all', 'active', 'disabled', 'failed', 'standing', 'overlap'] as const
 const SCHEDULER_FILTERS = ['all', 'openclaw', 'hermes'] as const
 
 const stopRowClick = (event: { stopPropagation: () => void }) => event.stopPropagation()
 
 const STATE_RANK = { critical: 0, healthy: 1, unavailable: 1, inactive: 2, warning: 1 } as const
+
+/** New failures first, then everything on, then standing failures sit with them, and paused jobs last. */
+const jobRank = (job: CronJob) => {
+  const state = jobState(job)
+  return state.standing ? 1 : STATE_RANK[state.state]
+}
+
+/** "a, b and c". */
+function joinList(items: string[]) {
+  return items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`
+}
 
 /** A short hint with the server's own definition of the count as its tooltip. */
 function defined(hint: string | undefined, definition: string | undefined) {
@@ -91,6 +105,8 @@ export default function JobsView() {
   const [showCreate, setShowCreate] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<CronJob | null>(null)
   const [runTarget, setRunTarget] = useState<CronJob | null>(null)
+  // The failed job whose shelve length is being chosen.
+  const [shelveTarget, setShelveTarget] = useState<CronJob | null>(null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   // The last write succeeded but the server could not confirm its follow-up reading yet.
   const [writeNote, setWriteNote] = useState<'stale' | 'unconfirmed' | null>(null)
@@ -103,7 +119,7 @@ export default function JobsView() {
   // A created job the current search or filters would hide: said, with a way to see it.
   const [hiddenCreated, setHiddenCreated] = useState<{ id: string; name: string } | null>(null)
   // A confirmation opened from the drawer hides the drawer; when it closes, focus goes back to the button that opened it.
-  const returnFocus = useRef<'run' | 'delete' | null>(null)
+  const returnFocus = useRef<'run' | 'delete' | 'shelve' | null>(null)
   // Filters and search live in the URL, so a reload or a shared link keeps them.
   const [stateParam, setStateParam] = useQueryParam('state')
   const [schedulerParam, setSchedulerParam] = useQueryParam('scheduler')
@@ -168,12 +184,17 @@ export default function JobsView() {
     } else if (statusFilter === 'active') {
       // "Active" is every job switched on, which is what the summary counts too.
       result = result.filter(isJobOn)
+    } else if (statusFilter === 'failed') {
+      // "Failed" is the new failures; the acknowledged and shelved ones are "Standing".
+      result = result.filter(isNewFailure)
+    } else if (statusFilter === 'standing') {
+      result = result.filter(isStandingFailure)
     } else if (statusFilter !== 'all') {
       result = result.filter((job) => normalizeCronStatus(job.status, job.enabled) === statusFilter)
     }
     return [...result].sort((left, right) => {
-      // Failed first, paused last, then by scheduler and name.
-      const rank = STATE_RANK[jobState(left).state] - STATE_RANK[jobState(right).state]
+      // New failures first, paused last, then by scheduler and name.
+      const rank = jobRank(left) - jobRank(right)
       if (rank !== 0) return rank
       const order = { openclaw: 0, hermes: 1 } as const
       const schedulerOrder = order[getCronScheduler(left)] - order[getCronScheduler(right)]
@@ -195,6 +216,8 @@ export default function JobsView() {
       return false
     if (statusFilter === 'overlap') return overlapState.markers.has(job.id)
     if (statusFilter === 'active') return isJobOn(job)
+    if (statusFilter === 'failed') return isNewFailure(job)
+    if (statusFilter === 'standing') return isStandingFailure(job)
     if (statusFilter !== 'all') return normalizeCronStatus(job.status, job.enabled) === statusFilter
     return true
   }
@@ -344,6 +367,48 @@ export default function JobsView() {
     }
   }
 
+  /** Acknowledge ("seen, it will stay like this") or shelve a failed job. The counts and the rail badge follow. */
+  const handleAck = async (job: CronJob, kind: 'ack' | 'shelve', until: string | null = null) => {
+    const key = job.ackKey
+    if (!key) return
+    setPendingAction(`ack-${job.id}`)
+    try {
+      const response = await acknowledgeJob(key, kind, until)
+      const ack = response?.ack ?? { kind, at: new Date().toISOString(), until }
+      await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyAck(current, key, ack))
+      afterWrite(queryClient)
+      toast.show('success', kind === 'ack' ? `"${job.name}" acknowledged` : `"${job.name}" shelved`)
+    } catch (err) {
+      toast.show('error', `"${job.name}" was not ${kind === 'ack' ? 'acknowledged' : 'shelved'}: ${errorMessage(err)}`)
+      void queryClient.invalidateQueries({ queryKey: ['api', '/api/cron'] })
+    } finally {
+      setPendingAction(null)
+      setShelveTarget(null)
+    }
+  }
+
+  const handleUndoAck = async (job: CronJob) => {
+    const key = job.ackKey
+    if (!key) return
+    setPendingAction(`ack-${job.id}`)
+    try {
+      await undoAcknowledgement(key)
+      await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyAck(current, key, null))
+      afterWrite(queryClient)
+      toast.show('success', `"${job.name}" is counted as a new failure again`)
+    } catch (err) {
+      toast.show('error', `Could not undo for "${job.name}": ${errorMessage(err)}`)
+      void queryClient.invalidateQueries({ queryKey: ['api', '/api/cron'] })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  const requestShelve = (job: CronJob, fromDrawer = false) => {
+    returnFocus.current = fromDrawer ? 'shelve' : null
+    setShelveTarget(job)
+  }
+
   const revealCreated = (id: string) => {
     setHiddenCreated(null)
     setJustCreated(id)
@@ -411,7 +476,7 @@ export default function JobsView() {
     }
   }
 
-  const confirming = runTarget !== null || deleteTarget !== null
+  const confirming = runTarget !== null || deleteTarget !== null || shelveTarget !== null
   useEffect(() => {
     if (confirming || !returnFocus.current) return
     const kind = returnFocus.current
@@ -475,7 +540,14 @@ export default function JobsView() {
                 aria-label={`${job.name} enabled`}
               />
             )}
-            <StatePill state={state.state} label={state.label} />
+            {state.standing ? (
+              <span className={styles.standing}>
+                <StateMark state="critical" className={styles.standingMark} />
+                {state.label}
+              </span>
+            ) : (
+              <StatePill state={state.state} label={state.label} />
+            )}
             {job.verified === false && (
               <span className={styles.unconfirmed}>
                 <StateDot state="warning" />
@@ -485,6 +557,44 @@ export default function JobsView() {
             {refusals[job.id] && (
               <span className={styles.refusal} role="alert">
                 {refusals[job.id]}
+              </span>
+            )}
+            {job.ackKey && isNewFailure(job) && (
+              <span className={styles.ackRow}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  loading={pendingAction === `ack-${job.id}`}
+                  onClick={() => handleAck(job, 'ack')}
+                  aria-label={`Acknowledge ${job.name}`}
+                >
+                  Acknowledge
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={pendingAction === `ack-${job.id}`}
+                  onClick={() => requestShelve(job)}
+                  aria-label={`Shelve ${job.name}`}
+                >
+                  Shelve…
+                </Button>
+              </span>
+            )}
+            {job.ack && state.standing && (
+              <span className={styles.ackRow}>
+                <span className={styles.ackNote}>{ackNote(job.ack)}</span>
+                {job.ackKey && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    loading={pendingAction === `ack-${job.id}`}
+                    onClick={() => handleUndoAck(job)}
+                    aria-label={`Undo for ${job.name}`}
+                  >
+                    Undo
+                  </Button>
+                )}
               </span>
             )}
           </div>
@@ -574,6 +684,9 @@ export default function JobsView() {
     stateChip('active', 'Active', summary.active),
     stateChip('disabled', 'Paused', summary.paused),
     stateChip('failed', 'Failed', summary.failed),
+    ...(summary.standingFailed > 0 || statusFilter === 'standing'
+      ? [stateChip('standing', 'Standing', summary.standingFailed)]
+      : []),
     ...(overlapState.affectedJobs > 0 || statusFilter === 'overlap'
       ? [{ value: 'overlap', label: 'Same time slot', count: overlapState.affectedJobs }]
       : []),
@@ -588,7 +701,16 @@ export default function JobsView() {
     ),
   ]
 
-  // The failed count is shown once, in its own card.
+  // The new failures: from the summary, or from the list when a scheduler was not read and the summary is partial.
+  const newFailed = incomplete ? jobs.filter(isNewFailure) : null
+  const alarmCount = newFailed ? newFailed.length : summary.failed
+  const alarmNames = (newFailed ?? jobs.filter(isNewFailure)).map((job) => job.name)
+  const alarmDetail =
+    alarmNames.length === 0
+      ? undefined
+      : alarmNames.length <= 3
+        ? joinList(alarmNames)
+        : `${joinList(alarmNames.slice(0, 3))} and ${alarmNames.length - 3} more`
   const activeHint = summary.waiting > 0 ? `${summary.waiting} waiting for a first result` : undefined
   const notReadHint = incomplete ? `${joinNames(notRead)} not read` : undefined
   const filteredUnread = schedulerFilter !== 'all' && readings[schedulerFilter].state === 'not-read'
@@ -596,6 +718,14 @@ export default function JobsView() {
   return (
     <div className={styles.view}>
       <StaleWriteNote show={writeNote !== null} unconfirmed={writeNote === 'unconfirmed'} />
+      {alarmCount > 0 && (
+        <AlarmLine
+          state="critical"
+          title={alarmCount === 1 ? '1 automation failed its last run' : `${alarmCount} automations failed their last run`}
+          detail={alarmDetail}
+          action={statusFilter === 'failed' ? undefined : { label: 'Show failed', onClick: () => setStatusFilter('failed') }}
+        />
+      )}
       {hiddenCreated && (
         <Notice
           tone="info"
@@ -628,6 +758,13 @@ export default function JobsView() {
               : defined(summary.failed > 0 ? 'Last run failed' : undefined, data?.summary?.definitions?.failed)
           }
         />
+        {!incomplete && summary.standingFailed > 0 && (
+          <Stat
+            label="Standing failures"
+            value={summary.standingFailed}
+            hint={defined('Acknowledged or shelved', data?.summary?.definitions?.standingFailed)}
+          />
+        )}
         <Stat
           label="Next run"
           value={!incomplete && summary.nextRun ? <TimeAgo value={summary.nextRun.at} /> : null}
@@ -650,11 +787,6 @@ export default function JobsView() {
           onChange={(value) => setSchedulerFilter(value as SchedulerFilter)}
         />
         <div className={styles.toolbarEnd}>
-          {filteredJobs.length !== jobs.length && (
-            <span className={styles.count} aria-live="polite">
-              Showing {filteredJobs.length} of {jobs.length}
-            </span>
-          )}
           <SearchInput
             className={styles.search}
             value={jobSearch}
@@ -681,7 +813,11 @@ export default function JobsView() {
         </Notice>
       )}
 
-      <Panel padding="none">
+      <Block
+        title="Automations"
+        meta={<span aria-live="polite">{filteredJobs.length !== jobs.length ? `Showing ${filteredJobs.length} of ${jobs.length}` : jobs.length}</span>}
+        padding="none"
+      >
         <DataTable
           className={styles.table}
           caption="Automations"
@@ -724,11 +860,11 @@ export default function JobsView() {
             />
           }
         />
-      </Panel>
+      </Block>
 
       <JobDrawer
         job={selectedJob}
-        open={Boolean(selectedJob) && !runTarget && !deleteTarget}
+        open={Boolean(selectedJob) && !runTarget && !deleteTarget && !shelveTarget}
         onClose={() => setJobParam(null)}
         overlapMarker={selectedJob ? overlapState.markers.get(selectedJob.id) : undefined}
         modelOptions={modelOptions}
@@ -739,6 +875,9 @@ export default function JobsView() {
         onToggle={handleToggle}
         onRun={(job) => requestRun(job, true)}
         onDelete={(job) => requestDelete(job, true)}
+        onAcknowledge={(job) => handleAck(job, 'ack')}
+        onShelve={(job) => requestShelve(job, true)}
+        onUndoAck={handleUndoAck}
         onModelChange={handleModelChange}
       />
 
@@ -773,6 +912,36 @@ export default function JobsView() {
             <Button variant="danger" onClick={confirmDelete} loading={pendingAction === `delete-${deleteTarget?.id}`}>
               Delete
             </Button>
+          </>
+        }
+      />
+
+      <Dialog
+        open={shelveTarget !== null}
+        onClose={() => {
+          if (!pendingAction?.startsWith('ack-')) setShelveTarget(null)
+        }}
+        title="Shelve this failure?"
+        description={
+          shelveTarget
+            ? `"${shelveTarget.name}" will stay listed as a standing failure and will not count as new. If it gets worse, it counts again.`
+            : undefined
+        }
+        actions={
+          <>
+            <Button data-autofocus onClick={() => setShelveTarget(null)} disabled={pendingAction === `ack-${shelveTarget?.id}`}>
+              Cancel
+            </Button>
+            {SHELVE_CHOICES.map((choice) => (
+              <Button
+                key={choice.id}
+                variant="primary"
+                disabled={pendingAction === `ack-${shelveTarget?.id}`}
+                onClick={() => shelveTarget && handleAck(shelveTarget, 'shelve', shelveUntil(choice.days, now))}
+              >
+                {choice.label}
+              </Button>
+            ))}
           </>
         }
       />

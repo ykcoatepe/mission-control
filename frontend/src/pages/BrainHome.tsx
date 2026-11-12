@@ -8,11 +8,11 @@ import { ActionResultPanel } from './brain/ActionResultPanel'
 import { ActionStatusNotice } from './brain/ActionStatusNotice'
 import { HealthView, type BrainData } from './brain/HealthView'
 import { KnowledgeView } from './brain/KnowledgeView'
-import { VerdictLine } from './brain/VerdictLine'
+import { StatusLine } from './brain/StatusLine'
+import { alarmAction, alarmFrom } from './brain/alarm'
 import { buildBrainModel, deriveVerdict, startSentence } from './brain/lib'
 import { resolveTimeline } from './brain/BrainHomeState'
 import { useGBrainActions } from './brain/useGBrainActions'
-import styles from './brain/BrainHome.module.css'
 import type {
   HealthReading,
   Meta,
@@ -20,6 +20,7 @@ import type {
   SourcesReading,
   SynopticEnvelope,
   TimelineReading,
+  TrendsReading,
 } from './brain/types'
 
 const VIEW_TABS = [
@@ -45,6 +46,8 @@ export default function BrainHome() {
   const sources = useApi<SourcesReading>('/api/gbrain/sources', POLL_MS)
   const timeline = useApi<TimelineReading>('/api/gbrain/timeline?limit=50', 2 * POLL_MS)
   const overview = useApi<OperationsOverview>('/api/operations/overview', POLL_MS)
+  // The 24-hour series come from the ledger. No answer (or an unreadable ledger) means no trend, never a guess.
+  const trends = useApi<TrendsReading>('/api/gbrain/trends', 2 * POLL_MS)
 
   const envelope = synoptic.data
   const syn = envelope?.data ?? null
@@ -81,6 +84,7 @@ export default function BrainHome() {
               key.startsWith('/api/gbrain/health') ||
               key.startsWith('/api/gbrain/sources') ||
               key.startsWith('/api/gbrain/timeline') ||
+              key.startsWith('/api/gbrain/trends') ||
               key.startsWith('/api/operations/overview') ||
               key.startsWith('/api/signals'))
           )
@@ -88,7 +92,6 @@ export default function BrainHome() {
       }),
   })
 
-  const checkAction = capabilities?.find((capability) => capability.id === CHECK_ACTION)
   const data: BrainData | null =
     syn && model
       ? {
@@ -99,12 +102,13 @@ export default function BrainHome() {
           sources: sourcesArg,
           timeline: timelineReading.reading,
           timelineStale: timelineReading.state === 'stale',
+          trends: trends.data && !trends.error ? trends.data : null,
           observedAt: meta?.observedAt ?? null,
           capabilities,
         }
       : null
 
-  const attentionReason = verdict.conditions.find((condition) => condition.state !== 'inactive')
+  const attentionReason = verdict.conditions.find((condition) => condition.kind === 'action' && condition.state !== 'inactive')
   const confirmContext = {
     state: verdict.state,
     observedAt: meta?.observedAt ?? null,
@@ -112,29 +116,32 @@ export default function BrainHome() {
     note: attentionReason ? `${startSentence(attentionReason.text)}.` : null,
   }
 
-  const head = (
-    <div className={styles.head}>
-      {synoptic.loading ? (
-        <Skeleton lines={2} label="Reading GBrain" />
-      ) : (
-        <VerdictLine
-          verdict={verdict}
-          probeAt={meta?.observedAt ?? null}
-          caveat={verdict.caveat}
-          stale={Boolean(meta?.stale)}
-          verifying={actions.verifying}
-          onRunCheck={checkAction ? () => actions.request(checkAction) : undefined}
-          runCheckDisabled={!checkAction?.enabled || actions.running !== null}
-          running={actions.running === CHECK_ACTION}
-        />
-      )}
-      {actions.status && <ActionStatusNotice status={actions.status} />}
-      <Tabs tabs={VIEW_TABS} ariaLabel="Brain views" queryParam="view" defaultValue={defaultView} />
-    </div>
-  )
+  const checkAction = capabilities?.find((capability) => capability.id === CHECK_ACTION)
+  const alarm = alarmFrom(verdict)
+  const alarmChoice = alarm ? alarmAction(alarm.elementId, capabilities) : null
+  const stale = Boolean(meta?.stale)
+
+  const status = synoptic.loading ? (
+    <Skeleton lines={1} label="Reading GBrain" />
+  ) : syn ? (
+    <StatusLine
+      verdict={verdict}
+      alarm={alarm}
+      action={alarmChoice}
+      running={actions.running}
+      stale={stale}
+      observedAt={meta?.observedAt ?? null}
+      onRun={(choice) => actions.request(choice.capability)}
+      onRunCheck={checkAction ? () => actions.request(checkAction) : undefined}
+      runCheckDisabled={!checkAction?.enabled || actions.running !== null}
+      checkRunning={actions.running === CHECK_ACTION}
+    />
+  ) : null
 
   return (
-    <Page title="Brain" tabs={head}>
+    <Page title="Brain" tabs={<Tabs tabs={VIEW_TABS} ariaLabel="Brain views" queryParam="view" defaultValue={defaultView} />}>
+      {status}
+      {actions.status && <ActionStatusNotice status={actions.status} />}
       {actions.report && <ActionResultPanel report={actions.report} onDismiss={actions.dismissReport} />}
       {view === 'knowledge' ? (
         <KnowledgeView />

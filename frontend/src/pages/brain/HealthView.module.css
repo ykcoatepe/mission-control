@@ -1,0 +1,23 @@
+.root {
+  container-type: inline-size;
+  container-name: health;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
+  min-width: 0;
+}
+
+/* The diagram takes what is left; the three bars keep a fixed column. Under 1100px they stack. */
+.top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--sp-4);
+  align-items: start;
+  min-width: 0;
+}
+
+@container health (max-width: 1099px) {
+  .top {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

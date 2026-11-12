@@ -1,3 +1,4 @@
+/* The side rail: the rail ground, a flat list, the selected item in the action colour. */
 .sidebar {
   position: relative;
   z-index: 1;
@@ -5,17 +6,16 @@
   flex-direction: column;
   min-width: 0;
   height: 100%;
-  background: var(--surface-1);
+  background: var(--rail);
   border-right: 1px solid var(--line);
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   height: var(--topbar-h);
   padding: 0 var(--sp-4);
-  border-bottom: 1px solid var(--line);
 }
 
 .mark {
@@ -23,18 +23,14 @@
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  background: var(--accent);
-  border-radius: var(--r-md);
-  color: var(--text-on-accent);
+  color: var(--text-2);
 }
 
 .brandName {
   min-width: 0;
   overflow: hidden;
   color: var(--text-1);
-  font-size: var(--fs-lead);
+  font-size: var(--fs-h3);
   font-weight: var(--fw-semibold);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -44,18 +40,11 @@
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--sp-3) var(--sp-2);
+  padding: var(--sp-2);
 }
 
 .group + .group {
-  margin-top: var(--sp-4);
-}
-
-.groupLabel {
-  padding: 0 var(--sp-3) var(--sp-1);
-  color: var(--text-3);
-  font-size: var(--fs-small);
-  font-weight: var(--fw-medium);
+  margin-top: var(--sp-1);
 }
 
 .utility {
@@ -69,54 +58,47 @@
   align-items: center;
   gap: var(--sp-3);
   width: 100%;
-  height: var(--control-h);
+  height: 36px;
   padding: 0 var(--sp-3);
-  border-radius: var(--r-md);
+  border-radius: var(--r-sm);
   color: var(--text-2);
-  font-size: var(--fs-body);
-  font-weight: var(--fw-medium);
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-regular);
   text-align: start;
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
 }
 
 .item:hover {
-  background: var(--surface-2);
+  background: var(--surface-1);
   color: var(--text-1);
 }
 
 .item:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
+/* Selected: teal tint ground, teal text and icon, a 2px teal bar at the left edge. */
 .itemActive,
 .itemActive:hover {
   background: var(--accent-bg);
-  color: var(--text-1);
+  color: var(--accent);
+  font-weight: var(--fw-medium);
 }
 
 .itemActive::before {
   content: '';
   position: absolute;
   left: 0;
-  top: var(--sp-2);
-  bottom: var(--sp-2);
+  top: 0;
+  bottom: 0;
   width: 2px;
   background: var(--accent);
-  border-radius: var(--r-full);
 }
 
 .icon {
   flex: 0 0 auto;
-  color: var(--text-3);
-}
-
-.itemActive .icon {
-  color: var(--accent);
-}
-
-.item:hover .icon {
-  color: inherit;
+  color: currentColor;
 }
 
 .label {
@@ -129,49 +111,16 @@
 
 .badge {
   flex: 0 0 auto;
-  min-width: 20px;
-  height: 18px;
+}
+
+/* A count that could not be read: a hollow circle, never a number. */
+.unread {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: 20px;
   padding: 0 var(--sp-1);
-  border: 1px solid transparent;
-  border-radius: var(--r-full);
-  font-family: var(--font-mono);
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-semibold);
-  font-variant-numeric: tabular-nums;
-  line-height: 16px;
-  text-align: center;
-}
-
-.badge[data-tone='warning'] {
-  background: var(--state-warning-bg);
-  border-color: var(--state-warning-line);
-  color: var(--state-warning);
-}
-
-.badge[data-tone='critical'] {
-  background: var(--state-critical-bg);
-  border-color: var(--state-critical-line);
-  color: var(--state-critical);
-}
-
-/* A count that could not be read: a hollow grey ring, never a number. */
-.badge[data-tone='unread'] {
-  position: relative;
-  min-width: 18px;
-  background: transparent;
-  border-color: transparent;
-}
-
-.badge[data-tone='unread']::before {
-  content: '';
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--r-full);
-  box-shadow: inset 0 0 0 1.5px var(--state-unavailable);
-  transform: translate(-50%, -50%);
+  color: var(--text-3);
 }
 
 /* Under 900px the sidebar is an off-canvas drawer; the rail toggle does not apply. */
@@ -218,8 +167,7 @@
     padding: 0;
   }
 
-  .collapsed .brandName,
-  .collapsed .groupLabel {
+  .collapsed .brandName {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -253,14 +201,20 @@
     clip-path: inset(50%);
   }
 
-  .collapsed .badge {
+  .collapsed .badge,
+  .collapsed .unread {
     position: absolute;
     top: -2px;
-    right: -4px;
-    min-width: 16px;
+    right: -2px;
     height: 16px;
-    line-height: 14px;
     padding: 0 3px;
+    background: var(--rail);
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-sm);
+  }
+
+  .collapsed .unread {
+    height: 16px;
   }
 
   /* Tooltips for the icon rail (also on keyboard focus). */

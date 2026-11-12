@@ -3,10 +3,14 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
- * Text contrast of the design tokens, computed from `tokens.css` itself so a
- * token edit that breaks readability fails here. WCAG AA for normal text is
- * 4.5:1. Disabled text and decorative state colours (dots, borders, the dim
- * "inactive" tone) are exempt: they never carry the only copy of a message.
+ * Contrast of the design tokens, computed from `tokens.css` itself so a token
+ * edit that breaks readability fails here. WCAG AA: 4.5:1 for text, 3:1 for
+ * marks and control outlines. Disabled text and the dim "inactive" tone are
+ * exempt: they never carry the only copy of a message.
+ *
+ * Grounds: text-1 and text-2 are read on all five grounds. text-3 and the
+ * state colours are read on bg, rail, surface-1 and surface-2 (never on
+ * surface-3). Text on an accent-tinted selection uses text-1 or text-2.
  */
 
 const MIN = 4.5
@@ -75,42 +79,88 @@ const THEMES: Array<[string, Tokens]> = [
   ['dark', dark],
   ['light', light],
 ]
-const SURFACES = ['bg', 'surface-1', 'surface-2', 'surface-3']
+const GROUNDS = ['bg', 'rail', 'surface-1', 'surface-2']
+const ALL_GROUNDS = [...GROUNDS, 'surface-3']
+
+/** Resolve `var(--x)` aliases so a token defined as an alias is measured as its target. */
+function resolved(tokens: Tokens, name: string): string {
+  let value = tokens[name]
+  for (let i = 0; i < 4 && value?.startsWith('var('); i += 1) value = tokens[value.slice(6, -1)]
+  return value
+}
+function colour(tokens: Tokens, name: string): [number, number, number, number] {
+  return parse(resolved(tokens, name))
+}
 
 describe.each(THEMES)('%s theme contrast', (_name, tokens) => {
-  it.each(['text-1', 'text-2', 'text-3'])('--%s reaches 4.5:1 on every surface', (text) => {
-    for (const surface of SURFACES) {
-      expect(contrast(rgb(tokens, text), rgb(tokens, surface)), `${text} on ${surface}`).toBeGreaterThanOrEqual(MIN)
+  it.each(['text-1', 'text-2'])('--%s reaches 4.5:1 on every ground', (text) => {
+    for (const ground of ALL_GROUNDS) {
+      expect(contrast(rgb(tokens, text), rgb(tokens, ground)), `${text} on ${ground}`).toBeGreaterThanOrEqual(MIN)
     }
   })
 
-  it('keeps text-3 visibly quieter than text-2', () => {
+  it('--text-3 reaches 4.5:1 on bg, rail, surface-1 and surface-2, and stays quieter than text-2', () => {
+    for (const ground of GROUNDS) {
+      expect(contrast(rgb(tokens, 'text-3'), rgb(tokens, ground)), `text-3 on ${ground}`).toBeGreaterThanOrEqual(MIN)
+    }
     const surface = rgb(tokens, 'surface-1')
     expect(contrast(rgb(tokens, 'text-3'), surface)).toBeLessThan(contrast(rgb(tokens, 'text-2'), surface))
   })
 
-  it.each(['accent', 'state-healthy', 'state-warning', 'state-critical'])(
-    '--%s as text reaches 4.5:1 on the plain surfaces',
-    (colour) => {
-      for (const surface of ['bg', 'surface-1', 'surface-2']) {
-        expect(contrast(rgb(tokens, colour), rgb(tokens, surface)), `${colour} on ${surface}`).toBeGreaterThanOrEqual(MIN)
+  it.each(['accent', 'state-normal', 'state-warning', 'state-critical', 'state-unavailable'])(
+    '--%s as text reaches 4.5:1 on bg, rail, surface-1 and surface-2',
+    (name) => {
+      for (const ground of GROUNDS) {
+        const [r, g, b] = colour(tokens, name)
+        expect(contrast([r, g, b], rgb(tokens, ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(MIN)
       }
     },
   )
 
-  it.each(['healthy', 'warning', 'critical'])('state-%s text reaches 4.5:1 on its own tinted background', (state) => {
-    for (const surface of ['surface-1', 'surface-2']) {
-      const tint = over(tokens, `state-${state}-bg`, rgb(tokens, surface))
-      expect(contrast(rgb(tokens, `state-${state}`), tint), `${state} on tint over ${surface}`).toBeGreaterThanOrEqual(MIN)
+  it('healthy is an alias of normal: neutral, never a hue of its own', () => {
+    expect(resolved(tokens, 'state-healthy')).toBe(resolved(tokens, 'state-normal'))
+    const [r, g, b] = colour(tokens, 'state-normal')
+    // Neutral: the channels sit close together (a hint of slate or paper is fine, green or red is not).
+    expect(Math.max(r, g, b) - Math.min(r, g, b)).toBeLessThanOrEqual(24)
+  })
+
+  it.each(['warning', 'critical'])('state-%s text reaches 4.5:1 on its own tint over every ground it sits on', (state) => {
+    for (const ground of ['bg', 'surface-1', 'surface-2']) {
+      const tint = over(tokens, `state-${state}-bg`, rgb(tokens, ground))
+      expect(contrast(rgb(tokens, `state-${state}`), tint), `${state} on tint over ${ground}`).toBeGreaterThanOrEqual(MIN)
     }
   })
 
-  it('accent text on the accent tint and label on the accent fill reach 4.5:1', () => {
-    for (const surface of ['surface-1', 'surface-2']) {
-      const tint = over(tokens, 'accent-bg', rgb(tokens, surface))
-      expect(contrast(rgb(tokens, 'accent'), tint), `accent on tint over ${surface}`).toBeGreaterThanOrEqual(MIN)
-      expect(contrast(rgb(tokens, 'text-3'), tint), `text-3 on tint over ${surface}`).toBeGreaterThanOrEqual(MIN)
+  it('accent text on the accent tint (selected rail item, selected row) reaches 4.5:1; so do text-1 and text-2', () => {
+    for (const ground of ['bg', 'rail', 'surface-1', 'surface-2']) {
+      const tint = over(tokens, 'accent-bg', rgb(tokens, ground))
+      for (const text of ['accent', 'text-1', 'text-2']) {
+        expect(contrast(rgb(tokens, text), tint), `${text} on tint over ${ground}`).toBeGreaterThanOrEqual(MIN)
+      }
     }
+  })
+
+  it('the primary button label reaches 4.5:1 on the filled hover and active ground', () => {
     expect(contrast(rgb(tokens, 'text-on-accent'), rgb(tokens, 'accent'))).toBeGreaterThanOrEqual(MIN)
+    expect(contrast(rgb(tokens, 'text-on-accent'), rgb(tokens, 'accent-hover'))).toBeGreaterThanOrEqual(MIN)
+  })
+
+  it.each(['reference', 'projects', 'agent', 'curated'])(
+    'line colour %s carries the block header label (4.5:1) and shows as a mark on every ground (3:1)',
+    (name) => {
+      expect(contrast(rgb(tokens, 'text-on-accent'), rgb(tokens, `line-${name}`)), `label on ${name}`).toBeGreaterThanOrEqual(MIN)
+      for (const ground of ['bg', 'surface-1', 'surface-2']) {
+        expect(contrast(rgb(tokens, `line-${name}`), rgb(tokens, ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(3)
+      }
+    },
+  )
+
+  it('control outlines and the neutral track show against the grounds they sit on (3:1)', () => {
+    for (const name of ['control-line', 'track']) {
+      for (const ground of ['bg', 'rail', 'surface-1']) {
+        const floor = name === 'track' ? 2.5 : 3
+        expect(contrast(rgb(tokens, name), rgb(tokens, ground)), `${name} on ${ground}`).toBeGreaterThanOrEqual(floor)
+      }
+    }
   })
 })

@@ -1,6 +1,6 @@
 .groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: var(--sp-6);
 }
 
@@ -13,5 +13,5 @@
 
 .none {
   margin: 0;
-  color: var(--text-3);
+  color: var(--text-2);
 }

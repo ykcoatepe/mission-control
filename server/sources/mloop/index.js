@@ -39,7 +39,9 @@ const path = require('path');
 const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
 const { scrubText } = require('../../core/scrub');
-const { CONFIRMATION_CODES, OVERDUE_CODES, projectNeeds, needsOperator } = require('./attention');
+const {
+  CONFIRMATION_CODES, NO_ACKS, OVERDUE_CODES, attentionItems, confirmationKey, findingItemKey, needsOperator, projectNeeds, systemKey,
+} = require('./attention');
 const {
   RESTRICTED_MARKERS, collectStrings, containsRestrictedMarker, findMarkerChain, isRestrictedId, restrictedMarkers,
 } = require('./restricted');
@@ -505,11 +507,44 @@ function projectSummary(project) {
   };
 }
 
-// systemsAttention: the Operations overview's attention items (null when not
-// supplied); used only for totals.needsOperator, shared with /api/signals.
-function loopsView(data, { systems = null, systemsAttention = null } = {}) {
+// Badge-rule fields every listed item carries: key (stable string; null for
+// restricted rows and rows without an id), ackable (it counts now, so it can
+// be acknowledged) and ack (null | { kind, at, until }). Restricted rows are
+// never keyed and never ackable.
+function ackDecorator(countable, acks) {
+  const store = acks || NO_ACKS;
+  return (key) => {
+    if (!key) return { key: null, ackable: false, ack: null };
+    const item = countable.get(key);
+    if (item) return { key, ackable: true, ack: store.resolve(item).ack ?? null };
+    return { key, ackable: false, ack: store.peek(key) ?? null };
+  };
+}
+
+function decoratePending(projectId, rows, decorate) {
+  return Array.isArray(rows) ? rows.map((row) => ({ ...row, ...decorate(confirmationKey(projectId, row?.id)) })) : rows;
+}
+
+function decorateAttention(attention, decorate) {
+  return (attention || []).map((item) => {
+    if (item.restricted || item.kind !== 'finding') return { ...item, key: null, ackable: false, ack: null };
+    return { ...item, ...decorate(findingItemKey(item.project, item)) };
+  });
+}
+
+// systems: countedSystems() output and systemsAttention: the Operations
+// overview's attention items (null when not supplied); used for
+// totals.needsOperator, shared with /api/signals, and for the `systems` list.
+// acks: the attention ack store (null = nothing acknowledged).
+function loopsView(data, { systems = null, systemsAttention = null, acks = null } = {}) {
   if (!data) return null;
-  const projects = data.projects.map(projectSummary);
+  const { countable } = attentionItems({ systems, loops: data });
+  const decorate = ackDecorator(countable, acks);
+  const projects = data.projects.map((project) => {
+    const summary = projectSummary(project);
+    if (summary.restricted) return summary;
+    return { ...summary, pendingConfirmations: decoratePending(summary.id, summary.pendingConfirmations, decorate) };
+  });
   const totals = { projects: projects.length, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 };
   for (const project of projects) {
     if (project.restricted) {
@@ -522,16 +557,34 @@ function loopsView(data, { systems = null, systemsAttention = null } = {}) {
       totals.overdueConfirmations += project.pendingConfirmations?.filter((item) => item.overdue).length || 0;
     }
   }
-  totals.needsOperator = needsOperator({ systems, systemsAttention, loops: data });
-  return { observedAt: data.observedAt, totals, projects, attention: data.attention };
+  totals.needsOperator = needsOperator({ systems, systemsAttention, loops: data, acks });
+  const view = { observedAt: data.observedAt, totals, projects, attention: decorateAttention(data.attention, decorate) };
+  if (Array.isArray(systems)) {
+    view.systems = systems.map((system) => ({
+      id: system.id,
+      state: system.state,
+      held: system.held === true,
+      failed: system.failed === true,
+      ...decorate(systemKey(system.id)),
+    }));
+  }
+  return view;
 }
 
-function loopDetailView(data, id) {
+function loopDetailView(data, id, { acks = null } = {}) {
   if (!data) return null;
   const project = data.projects.find((entry) => entry.id === id);
   if (!project) return undefined;
   if (project.restricted) return { ...project };
-  return { ...projectSummary(project), findings: project.findings, statusMarkdown: project.statusMarkdown };
+  const { countable } = attentionItems({ loops: { projects: [project] } });
+  const decorate = ackDecorator(countable, acks);
+  const summary = projectSummary(project);
+  return {
+    ...summary,
+    pendingConfirmations: decoratePending(project.id, summary.pendingConfirmations, decorate),
+    findings: project.findings.map((finding) => ({ ...finding, ...decorate(findingItemKey(project.id, finding)) })),
+    statusMarkdown: project.statusMarkdown,
+  };
 }
 
 module.exports = {

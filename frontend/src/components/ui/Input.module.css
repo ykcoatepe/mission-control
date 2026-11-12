@@ -3,7 +3,7 @@
   height: var(--control-h);
   padding: 0 var(--sp-3);
   background: var(--bg);
-  border: 1px solid var(--line-strong);
+  border: 1px solid var(--control-line);
   border-radius: var(--r-md);
   color: var(--text-1);
   font-size: var(--fs-body);
@@ -19,9 +19,9 @@
 }
 
 .control:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
   border-color: var(--accent);
-  box-shadow: var(--focus-ring);
 }
 
 .control[aria-invalid='true'] {
@@ -75,8 +75,8 @@
 }
 
 .clear:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .selectWrap {

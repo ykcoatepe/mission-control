@@ -54,7 +54,7 @@ body {
   font-family: var(--font-sans);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
-  font-feature-settings: 'cv11', 'ss01';
+  font-variant-numeric: tabular-nums lining-nums;
   /* Code and Mono text must show exactly the characters in the data: no "===" or "->" ligatures. */
   font-variant-ligatures: none;
   -webkit-font-smoothing: antialiased;
@@ -74,6 +74,14 @@ body {
   outline-offset: 2px;
 }
 
+/* One quiet sentence style for the headline caps used in block headers and the alarm state word. */
+.caps {
+  font-family: var(--font-caps);
+  font-weight: var(--fw-semibold);
+  letter-spacing: var(--caps-spacing);
+  text-transform: uppercase;
+}
+
 code,
 kbd,
 pre,
@@ -87,7 +95,7 @@ samp,
 }
 
 .num {
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums lining-nums;
   font-feature-settings: 'tnum';
 }
 
