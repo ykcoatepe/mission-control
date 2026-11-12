@@ -181,3 +181,13 @@
     width: 100%;
   }
 }
+
+/* A bulk acknowledge that stopped on an error: the server's words, with how far it got. */
+.bulkError {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  color: var(--state-critical);
+  font-size: var(--fs-small);
+}

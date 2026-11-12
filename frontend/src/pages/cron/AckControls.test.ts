@@ -7,7 +7,7 @@ import { MemoryRouter } from 'react-router-dom'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ToastProvider } from '../../components/ui'
 import JobsView from './JobsView'
-import { ackNote, applyAck, shelveUntil } from './acks'
+import { ackNote, applyAck } from './acks'
 import { isNewFailure, isStandingFailure, jobState } from './jobState'
 import { summarizeJobs } from './jobsSummary'
 import type { CronAck, CronApiResponse, CronJob } from './types'
@@ -337,9 +337,7 @@ describe('acknowledgement helpers', () => {
     expect(applyAck(base, 'cron:openclaw:b', ACK).summary).toMatchObject({ failed: 1, standingFailed: 0 })
   })
 
-  it('shelveUntil and ackNote', () => {
-    expect(shelveUntil(null, NOW)).toBeNull()
-    expect(shelveUntil(30, NOW)).toBe(new Date(NOW + 30 * 86_400_000).toISOString())
+  it('ackNote', () => {
     expect(ackNote(ACK)).toBe('Acknowledged')
     expect(ackNote(SHELVE)).toBe('Shelved until 19 Nov')
     expect(ackNote({ ...SHELVE, until: null })).toBe('Shelved until undone')

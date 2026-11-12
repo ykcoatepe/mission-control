@@ -21,6 +21,7 @@ import {
   confirmLabel,
   fmtClock,
   ledgerState,
+  readingChanges,
   recentReadings,
   startSentence,
   isSyncOff,
@@ -494,7 +495,7 @@ describe('recent readings', () => {
   it('describes changes and shows unread quality as not read', () => {
     const rows = recentReadings([entry('2', 'warning', null, '3'), entry('1', 'healthy', '100/100')])
     expect(rows[0]).toMatchObject({ state: 'warning', quality: 'not read' })
-    expect(rows[0].headline).toContain('State Normal → Warning')
+    expect(rows[0].headline).toContain('State: normal → caution')
     expect(rows[1]).toMatchObject({ quality: '100/100', headline: 'Earliest reading shown' })
     expect(recentReadings(null)).toEqual([])
 
@@ -503,6 +504,19 @@ describe('recent readings', () => {
     const before = entry('8', 'healthy', '100/100')
     before.metrics = { health: '100/100', embeddings: '100%', queue: '0 / 0 / 0', caveats: '0' }
     expect(recentReadings([many, before])[0].headline).toMatch(/^(.* · ){3}\+\d+ more$/)
+    // Plain phrases: the shared state words, "not read" for what could not be read, and no slash triples.
+    const all = readingChanges(
+      { ...many, trust: { ...many.trust, status: 'warning' } },
+      { ...before, trust: { ...before.trust, status: 'unavailable' } },
+    )
+    expect(all).toContain('State: not read → caution')
+    expect(readingChanges(before, many)).toEqual([
+      'State: caution → normal',
+      'Quality: not read → 100',
+      'Embedded: not read → 100%',
+      'Queue: not read → 0 waiting, 0 active, 0 stalled',
+      'Notes: 3 → 0',
+    ])
     expect(recentReadings([entry('1', 'healthy', '100/100')], 0)).toEqual([])
   })
 })
@@ -601,7 +615,7 @@ describe('history rows are history, never a second current state', () => {
     ])
     expect(rows).toHaveLength(2)
     expect(rows[0]).toMatchObject({ id: 'e', count: 3, since: at(9), state: 'warning' })
-    expect(rows[0].headline).toContain('Missing embeddings 0 → 4 catching up')
+    expect(rows[0].headline).toContain('Missing embeddings: 0 → 4 catching up')
     expect(rows[0].headline).not.toContain('oldest')
     expect(rows[1]).toMatchObject({ id: 'b', count: 1, since: null })
   })

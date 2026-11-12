@@ -1,7 +1,7 @@
 import { describeApiError, isBusyError, isUnavailableError } from '../../lib/hooks'
 import { stateLabel, toUiState, worstState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
-import { timelineDeltaLines } from '../gbrain/presentation'
+import { compiledTruthLabel, missingEmbeddingsLabel } from '../gbrain/presentation'
 import type {
   GBrainSynoptic,
   HealthReading,
@@ -413,7 +413,9 @@ export function deriveVerdict(
       || Number(a.condition.kind === 'info') - Number(b.condition.kind === 'info') || a.index - b.index)
     .map(({ condition }) => condition)
   const attention = conditions.filter((condition) => condition.state !== 'inactive')
-  const first = attention[0]
+  // A normal verdict with only information (a limited reading) is normal: the notes carry the information.
+  const onlyInformation = attention.every((condition) => condition.kind === 'info')
+  const first = payload.state === 'healthy' && onlyInformation ? undefined : attention[0]
   if (!first) {
     if (payload.state === 'healthy' || payload.state === 'inactive') {
       return meta?.stale
@@ -933,6 +935,59 @@ function relationNote(at: string, current: CurrentReading): string {
   return then < now ? 'Older than the current reading' : 'Newer than the current reading'
 }
 
+const NOT_READ = stateLabel('unavailable').toLowerCase()
+
+/** What a recorded text reading says: "Unavailable" is "not read"; text that is empty is no reading at all. */
+function recordedText(value: string | number | null | undefined): string | null {
+  if (value === undefined || value === null) return null
+  const text = String(value).trim()
+  if (!text) return null
+  return /^unavailable$/i.test(text) ? NOT_READ : text
+}
+
+/** "99/100" is a quality of 99; anything else is kept as the ledger wrote it. */
+function qualityOf(entry: TimelineEntry): string | null {
+  const health = recordedText(entry.metrics.health)
+  if (health !== null) return health.replace(/^(\d+(?:\.\d+)?)\s*\/\s*100$/, '$1')
+  const score = entry.trust.score
+  return typeof score === 'number' && Number.isFinite(score) ? String(score) : null
+}
+
+/** "0 / 0 / 0" is waiting, active and stalled, in that order (the ledger's own spelling). */
+function queueOf(entry: TimelineEntry): string | null {
+  const queue = recordedText(entry.metrics.queue)
+  const match = queue?.match(/^(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)$/)
+  return match ? `${match[1]} waiting, ${match[2]} active, ${match[3]} stalled` : queue
+}
+
+const SOURCE_SYNC_WORD: Record<TimelineEntry['sourceFreshness']['status'], string> = {
+  healthy: 'fresh',
+  warning: 'stale',
+  critical: NOT_READ,
+  inactive: 'not tracked',
+}
+
+const lowerCurrent = (text: string | null) => (text === null ? null : text.replace(/^Current/, 'current'))
+
+/**
+ * What changed between two recorded readings, in plain phrases: "Quality: not read → 99",
+ * "Queue: not read → 0 waiting, 0 active, 0 stalled", "State: not read → caution". A part that was
+ * not recorded in one of the two is not a change. States use the shared state words.
+ */
+export function readingChanges(current: TimelineEntry, previous: TimelineEntry): string[] {
+  const parts: Array<[label: string, from: string | null, to: string | null]> = [
+    ['State', RECORDED_WORD[previous.trust.status], RECORDED_WORD[current.trust.status]],
+    ['Quality', qualityOf(previous), qualityOf(current)],
+    ['Embedded', recordedText(previous.metrics.embeddings), recordedText(current.metrics.embeddings)],
+    ['Missing embeddings', missingEmbeddingsLabel(previous, false), missingEmbeddingsLabel(current, false)],
+    ['Link extraction', lowerCurrent(compiledTruthLabel(previous)), lowerCurrent(compiledTruthLabel(current))],
+    ['Queue', queueOf(previous), queueOf(current)],
+    ['Source sync', SOURCE_SYNC_WORD[previous.sourceFreshness.status], SOURCE_SYNC_WORD[current.sourceFreshness.status]],
+    ['Notes', recordedText(previous.metrics.caveats), recordedText(current.metrics.caveats)],
+  ]
+  return parts.flatMap(([label, from, to]) => (from === null || to === null || from === to ? [] : [`${label}: ${from} → ${to}`]))
+}
+
 /**
  * The history list: newest first, each row the state recorded at that time. Consecutive readings that
  * differ only by an age ticking up are one row with a count. The newest row either agrees with the
@@ -952,7 +1007,7 @@ export function recentReadings(
     while (last + 1 < complete.length && signatures[last + 1] === signatures[first]) last += 1
     const entry = complete[first]
     const before = complete[last + 1]
-    const changes = before ? timelineDeltaLines(complete[last], before, { withAge: false }) : []
+    const changes = before ? readingChanges(complete[last], before) : []
     const state = ledgerState(entry)
     rows.push({
       id: entry.id,

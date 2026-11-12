@@ -44,6 +44,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
           state={readings.quality.state}
           unread={quality === null}
           trend={trendOf(trends?.series.quality)}
+          className={styles.fill}
         />
         <div className={styles.bar}>
           <AnalogBar
@@ -56,6 +57,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
             state={embeddedState}
             unread={percent === null}
             trend={trendOf(trends?.series.embeddedPercent)}
+            className={styles.fill}
           />
           {percent !== null && (
             <p className={styles.note}>
@@ -74,6 +76,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
             state={readings.queue.state}
             unread={!queueRead}
             trend={trendOf(trends?.series.queue)}
+            className={styles.fill}
           />
           {queueRead && (
             <p className={styles.note}>

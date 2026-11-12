@@ -452,3 +452,96 @@ describe('AttentionView list', () => {
     await act(async () => root.unmount())
   })
 })
+
+describe('AttentionView: Acknowledge all', () => {
+  const finding = (n: number, extra: Record<string, unknown> = {}) => ({
+    project: `proj${n}`,
+    kind: 'finding',
+    severity: 'warning',
+    code: 'ROUND_CAP_REACHED',
+    subject: `r${n}`,
+    detail: null,
+    summary: `Round limit reached for work ${n}`,
+    at: '2026-11-04T09:25:15Z',
+    key: `finding:proj${n}:ROUND_CAP_REACHED:00000000000${n}`,
+    ackable: true,
+    ack: null,
+    ...extra,
+  })
+  const MANY: LoopsData = {
+    ...DATA,
+    attention: [
+      finding(1),
+      finding(2),
+      finding(3),
+      finding(4, { ack: { kind: 'ack', at: '2026-11-10T08:30:00Z', until: null } }),
+      finding(5, { ackable: false }),
+    ] as LoopsData['attention'],
+  }
+  const KEYS = [1, 2, 3].map((n) => `finding:proj${n}:ROUND_CAP_REACHED:00000000000${n}`)
+  const posts = (calls: Call[]) => calls.filter((call) => call.method === 'POST')
+
+  it('sits in the header of the New block with the number of items it will acknowledge', async () => {
+    stubFetch()
+    const { host, root } = await mount(MANY)
+    expect(buttonIn(block(host, 'New'), 'Acknowledge all (3)')).toBeTruthy()
+    await act(async () => root.unmount())
+  })
+
+  it('is not offered for a single new item, or when there is nothing to acknowledge', async () => {
+    stubFetch()
+    const one = await mount({ ...MANY, attention: [finding(1)] as LoopsData['attention'] })
+    expect(one.host.textContent).not.toContain('Acknowledge all')
+    await act(async () => one.root.unmount())
+    const none = await mount({ ...MANY, attention: [finding(5, { ackable: false })] as LoopsData['attention'] })
+    expect(none.host.textContent).not.toContain('Acknowledge all')
+    await act(async () => none.root.unmount())
+  })
+
+  it('asks first, says how many and that a change alerts again, and sends nothing before the answer', async () => {
+    const calls = stubFetch()
+    const { host, root } = await mount(MANY)
+    await click(buttonIn(block(host, 'New'), 'Acknowledge all (3)'))
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(dialog.textContent).toContain('3 items')
+    expect(dialog.textContent).toContain('alerts you again')
+    expect(posts(calls)).toHaveLength(0)
+    await click(buttonIn(dialog, 'Cancel'))
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(posts(calls)).toHaveLength(0)
+    await act(async () => root.unmount())
+  })
+
+  it('acknowledges every ackable new item, one request after the other, then reads the lists again', async () => {
+    const calls = stubFetch()
+    const invalidated = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+    const { host, root } = await mount(MANY)
+    await click(buttonIn(block(host, 'New'), 'Acknowledge all (3)'))
+    await click(buttonIn(document.querySelector('[role="alertdialog"]'), 'Acknowledge 3'))
+    expect(posts(calls).map((call) => call.body)).toEqual(KEYS.map((key) => ({ key, kind: 'ack' })))
+    expect(posts(calls).every((call) => call.path === '/api/attention/acks')).toBe(true)
+    // The signals and the loops reading are asked again, once, after the last request.
+    expect(invalidated).toHaveBeenCalledTimes(2)
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    invalidated.mockRestore()
+    await act(async () => root.unmount())
+  })
+
+  it('stops at the first error, says how far it got with the server words, and does not try the rest', async () => {
+    const invalidated = vi.spyOn(QueryClient.prototype, 'invalidateQueries')
+    const calls = stubFetch((call) =>
+      call.body?.key === KEYS[1] ? json(409, { error: { code: 'conflict', message: 'The ledger is busy' } }) : json(200, { ok: true }),
+    )
+    const { host, root } = await mount(MANY)
+    await click(buttonIn(block(host, 'New'), 'Acknowledge all (3)'))
+    await click(buttonIn(document.querySelector('[role="alertdialog"]'), 'Acknowledge 3'))
+    expect(posts(calls).map((call) => call.body?.key)).toEqual([KEYS[0], KEYS[1]])
+    const alert = host.querySelector('[role="alert"]') as HTMLElement
+    expect(alert.textContent).toContain('Acknowledged 1 of 3')
+    expect(alert.textContent).toContain('The ledger is busy')
+    // What was accepted is read again.
+    expect(invalidated).toHaveBeenCalledTimes(2)
+    invalidated.mockRestore()
+    await act(async () => root.unmount())
+  })
+})

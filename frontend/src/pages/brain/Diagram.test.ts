@@ -209,6 +209,31 @@ describe('line profile', () => {
     expect(lines(host).every((li) => li.querySelector('span[class*="line"]') !== null)).toBe(true)
   })
 
+  it('has a plot at least 140px tall, and every source label is its full id or a middle cut that keeps the id in the title', async () => {
+    const host = await mount(createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) }))
+    const list = host.querySelector('ul[aria-label="Pages per source"]') as HTMLElement
+    expect(Number.parseFloat(list.style.getPropertyValue('--scale'))).toBeGreaterThanOrEqual(140)
+    const names = lines(host).map((li) => li.querySelector('span[title]') as HTMLElement)
+    expect(names.every((n) => n !== null)).toBe(true)
+    const texts = names.map((n) => n.textContent)
+    expect(new Set(texts).size).toBe(texts.length)
+    // The label is the id itself (none of the fixture's ids is long enough to be cut), not its first word.
+    for (const li of lines(host)) {
+      const name = li.querySelector('span[title]') as HTMLElement
+      expect(name.getAttribute('title')).toBe(li.getAttribute('data-source-id'))
+      expect(name.textContent).toBe(li.getAttribute('data-source-id'))
+    }
+  })
+
+  it('writes the count above each line, and says on hover which counts it left out', async () => {
+    const host = await mount(createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) }))
+    const item = lines(host).find((li) => li.getAttribute('data-source-id') === 'default-x') as HTMLElement
+    const count = item.querySelector('span[class*="value"]') as HTMLElement
+    expect(count.textContent).toBe('18,005')
+    // Without a measured width nothing is hidden (jsdom has no layout): no count is marked crowded.
+    expect(lines(host).every((li) => !(li.querySelector('span[class*="value"]') as HTMLElement).hasAttribute('data-crowded'))).toBe(true)
+  })
+
   it('draws a source whose sync is off dashed, and colours each line by its group', async () => {
     const host = await mount(createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) }))
     const byId = (id: string) => lines(host).find((li) => li.getAttribute('data-source-id') === id) as HTMLElement

@@ -1,37 +1,6 @@
-import { sendJson } from '../../lib/hooks'
 import { parseTime } from '../../lib/time'
 import { isNewFailure, isStandingFailure } from './jobState'
 import type { CronAck, CronApiResponse } from './types'
-
-/** How long a shelve lasts: the choices the operator is offered. `null` days = until I undo. */
-export const SHELVE_CHOICES = [
-  { id: '7d', label: '7 days', days: 7 },
-  { id: '30d', label: '30 days', days: 30 },
-  { id: 'undo', label: 'Until I undo', days: null },
-] as const
-
-export type ShelveChoice = (typeof SHELVE_CHOICES)[number]
-
-/** The end of a shelve, as an ISO date; null when it lasts until the operator undoes it. */
-export function shelveUntil(days: number | null, now: number): string | null {
-  return days === null ? null : new Date(now + days * 86_400_000).toISOString()
-}
-
-interface AckResponse {
-  ok?: boolean
-  key?: string
-  ack?: CronAck | null
-}
-
-/** Acknowledge ("seen, it will stay like this") or shelve a failed job. Keys contain ':' and are sent as given in the body. */
-export function acknowledgeJob(key: string, kind: 'ack' | 'shelve', until: string | null = null) {
-  return sendJson<AckResponse>('/api/attention/acks', 'POST', kind === 'shelve' ? { key, kind, until } : { key, kind })
-}
-
-/** Remove an acknowledgement or shelve. The key must be encoded: it contains ':'. */
-export function undoAcknowledgement(key: string) {
-  return sendJson<AckResponse>(`/api/attention/acks/${encodeURIComponent(key)}`, 'DELETE')
-}
 
 /**
  * Shows an acknowledgement at once in the cached jobs list: the job's `ack`, and the failed / standing counts of

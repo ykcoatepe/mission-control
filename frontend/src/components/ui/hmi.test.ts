@@ -275,13 +275,87 @@ describe('Trend', () => {
     await act(async () => root.unmount())
   })
 
-  it('draws the normal band behind the line only when given one', async () => {
-    const { host, root } = await render(
-      createElement('div', null, createElement(Trend, { points: HISTORY }), createElement(Trend, { points: HISTORY, band: [95, 100] })),
+  const series = (values: number[]) => values.map((v, i) => ({ t: 1_000 * i, v }))
+  const ys = (svg: Element) =>
+    (svg.querySelector('path')?.getAttribute('d') ?? '')
+      .split(/[ML]/)
+      .filter(Boolean)
+      .map((pair) => Number(pair.trim().split(' ')[1]))
+  const mount = (...nodes: ReturnType<typeof createElement>[]) => render(createElement('div', null, ...nodes))
+
+  it('a flat series is a calm line in the middle of the plot, with no min or max labels', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([99.1, 99.1, 99.1, 99.1]), height: 40, minSpan: 2 }))
+    const y = ys(host.querySelector('svg') as Element)
+    expect(new Set(y)).toEqual(new Set([20]))
+    expect(host.querySelector('[data-end]')).toBeNull()
+    expect(host.querySelector('rect')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('a nearly flat series stays calm: it moves less than a quarter of the plot', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([99.1, 99.15, 99.1, 99.12]), height: 40, minSpan: 2 }))
+    const y = ys(host.querySelector('svg') as Element)
+    expect(Math.max(...y) - Math.min(...y)).toBeLessThan(10)
+    await act(async () => root.unmount())
+  })
+
+  it('pads the data range by 15% and labels the lowest and highest only when they differ', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([10, 20, 15]), height: 100, minSpan: 1 }))
+    const y = ys(host.querySelector('svg') as Element)
+    // Domain 8.5 to 21.5: the highest reading sits 15% of its span below the top, the lowest 15% above the bottom.
+    expect(y[1]).toBeCloseTo(100 - ((20 - 8.5) / 13) * 100, 1)
+    expect(y[0]).toBeCloseTo(100 - ((10 - 8.5) / 13) * 100, 1)
+    expect(host.querySelector('[data-end="max"]')?.textContent).toBe('20')
+    expect(host.querySelector('[data-end="min"]')?.textContent).toBe('10')
+    await act(async () => root.unmount())
+  })
+
+  it('a series entirely inside the band is not buried under it: the band is left out', async () => {
+    const { host, root } = await render(createElement(Trend, { points: HISTORY, band: [95, 100] }))
+    expect(host.querySelector('rect')).toBeNull()
+    expect(host.querySelector('svg')?.getAttribute('data-band')).toBe('covers')
+    expect(host.querySelector('path')).not.toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('a series that leaves the band shows the band only where it intersects the plot, as a faint tint', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([99, 97, 94, 93]), band: [95, 100], height: 40 }))
+    const rect = host.querySelector('rect') as SVGRectElement
+    expect(rect).not.toBeNull()
+    const top = Number(rect.getAttribute('y'))
+    const h = Number(rect.getAttribute('height'))
+    expect(top).toBeGreaterThanOrEqual(0)
+    expect(top + h).toBeLessThanOrEqual(40)
+    // Part of the plot, never all of it.
+    expect(h).toBeGreaterThan(0)
+    expect(h).toBeLessThan(40)
+    // The line stays inside the plot.
+    expect(Math.min(...ys(host.querySelector('svg') as Element))).toBeGreaterThanOrEqual(0)
+    expect(Math.max(...ys(host.querySelector('svg') as Element))).toBeLessThanOrEqual(40)
+    await act(async () => root.unmount())
+  })
+
+  it('a band the series never reaches is not drawn', async () => {
+    const { host, root } = await render(createElement(Trend, { points: series([10, 11, 12]), band: [95, 100] }))
+    expect(host.querySelector('rect')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('marks the last reading', async () => {
+    const { host, root } = await mount(createElement(Trend, { points: series([1, 2, 3]), height: 40 }))
+    const dot = host.querySelector('[data-testid="trend-last"]') as HTMLElement
+    const last = ys(host.querySelector('svg') as Element).at(-1) as number
+    expect(Number.parseFloat(dot.style.getPropertyValue('--top'))).toBeCloseTo((last / 40) * 100, 1)
+    await act(async () => root.unmount())
+  })
+
+  it('a single point and an empty series draw nothing', async () => {
+    const { host, root } = await mount(
+      createElement(Trend, { points: series([5]) }),
+      createElement(Trend, { points: [] }),
     )
-    const [plain, banded] = [...host.querySelectorAll('svg')]
-    expect(plain.querySelector('rect')).toBeNull()
-    expect(banded.querySelector('rect')).not.toBeNull()
+    expect(host.querySelector('svg')).toBeNull()
+    expect(host.querySelector('[data-testid="trend-last"]')).toBeNull()
     await act(async () => root.unmount())
   })
 })

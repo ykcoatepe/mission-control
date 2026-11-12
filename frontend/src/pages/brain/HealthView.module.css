@@ -7,12 +7,12 @@
   min-width: 0;
 }
 
-/* The diagram takes what is left; the three bars keep a fixed column. Under 1100px they stack. */
+/* The diagram takes what is left; the three bars keep a fixed column and end where the diagram ends. Under 1100px they stack. */
 .top {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 320px;
   gap: var(--sp-4);
-  align-items: start;
+  align-items: stretch;
   min-width: 0;
 }
 

@@ -4,9 +4,22 @@
   container-name: bars;
 }
 
+/* The block is as tall as the diagram beside it; the extra height goes to the trend charts, not to empty space. */
+.block > :last-child {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
 .bars {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
+}
+
+.bars > *,
+.fill {
+  flex: 1 1 auto;
 }
 
 /* Three readings in one block, separated by hairlines: not three cards. */
@@ -21,6 +34,10 @@
   flex-direction: column;
   gap: var(--sp-1);
   min-width: 0;
+}
+
+.bar > .fill {
+  flex: 1 1 auto;
 }
 
 .note {

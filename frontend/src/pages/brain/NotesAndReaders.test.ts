@@ -74,6 +74,14 @@ describe('notes are two groups, split by the server', () => {
     )
     expect(verdict.text).toBe('GBrain readings are incomplete: Missing-embedding count unavailable (and 1 more)')
   })
+
+  it('a normal verdict with only information is normal: the information is in the notes, not the headline', () => {
+    const syn = withVerdict(synoptic(), LIVE[1])
+    const verdict = deriveVerdict({ ...syn, verdict: { ...syn.verdict!, state: 'healthy' } }, META)
+    expect(verdict.state).toBe('healthy')
+    expect(verdict.text).toBe('GBrain is normal')
+    expect(verdict.conditions.map((c) => c.id)).toContain('embed-job-probe')
+  })
 })
 
 describe('the Notes card', () => {

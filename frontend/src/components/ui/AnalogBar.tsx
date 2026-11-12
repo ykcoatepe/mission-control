@@ -171,7 +171,7 @@ export function AnalogBar({
       {showTrend && (
         <div className={styles.trend}>
           <span className={styles.trendLabel}>24h trend</span>
-          <Trend points={history} band={band} />
+          <Trend points={history} band={band} minSpan={sane ? range * 0.02 : undefined} format={fmt} />
           <span className={styles.trendAvg}>{fmt(average as number)} avg</span>
         </div>
       )}

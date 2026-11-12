@@ -128,7 +128,9 @@
 .trend {
   display: grid;
   grid-template-columns: auto minmax(48px, 1fr) auto;
-  align-items: center;
+  /* The chart takes any height the parent has to spare; the words stay in the middle. */
+  flex: 1 1 auto;
+  align-items: stretch;
   gap: var(--sp-3);
   margin-top: var(--sp-1);
   color: var(--text-3);
@@ -139,4 +141,9 @@
 .trendAvg {
   text-align: end;
   white-space: nowrap;
+}
+
+.trendLabel,
+.trendAvg {
+  align-self: center;
 }

@@ -98,8 +98,9 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
     add('readers', 'inactive', `${listNames(setUp)} ${setUp.length === 1 ? 'is' : 'are'} set up. Live connections can't be read from this machine.`);
   }
   if (readersState === 'unavailable' && !readers.length) add('readers', readersState, 'Reader integration reading unavailable.');
-  // Inactive reasons are listed but never degrade the verdict.
-  const counted = [core.state, ...reasons.map((r) => r.state)].filter((state) => state !== 'inactive');
+  // Inactive reasons and information (a limitation of the reading, not a fault) are listed but never
+  // degrade the verdict: the state follows the core and the reasons that ask for action.
+  const counted = [core.state, ...reasons.filter((r) => r.kind !== 'info').map((r) => r.state)].filter((state) => state !== 'inactive');
   return { state: worstState(['healthy', ...counted]), reasons };
 }
 module.exports = { buildGBrainVerdict, verdictCaveats, isGBrainVerdict, EMBED_JOB_PROBE_TEXT };

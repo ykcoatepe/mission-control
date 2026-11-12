@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { Block, cx } from '../../components/ui'
 import { useNow } from '../../lib/useNow'
 import { agoText, type Diagram } from './diagram'
 import { fmtCount } from './lib'
-import { PROFILE_SCALE_PX, buildProfile, type ProfileLine } from './profile'
+import { PROFILE_SCALE_PX, buildProfile, visibleCounts, type ProfileLine } from './profile'
 import styles from './LineProfile.module.css'
 
 function describe(line: ProfileLine, now: number): string {
@@ -19,17 +19,34 @@ function describe(line: ProfileLine, now: number): string {
  * A line's height is its page count on a true linear scale; a source too small to see still gets a
  * one-pixel line and its label. Sync off is dashed. Hover or focus shows the source's own readings.
  */
+/** Below this width the profile lies down into rows (see the container query in the stylesheet). */
+const WIDE_PX = 900
+
+const countText = (pages: number | null) => (pages === null ? 'not read' : fmtCount(pages))
+
 export function LineProfile({ diagram }: { diagram: Diagram }) {
   const now = useNow()
   const profile = buildProfile(diagram)
   const [active, setActive] = useState<string | null>(null)
   const [focused, setFocused] = useState<string | null>(null)
   const refs = useRef(new Map<string, HTMLLIElement>())
+  const listRef = useRef<HTMLUListElement | null>(null)
+  const [width, setWidth] = useState<number | null>(null)
+  useEffect(() => {
+    const list = listRef.current
+    if (!list || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => setWidth(list.clientWidth))
+    observer.observe(list)
+    setWidth(list.clientWidth)
+    return () => observer.disconnect()
+  }, [profile.lines.length])
   const ids = profile.lines.map((line) => line.id)
   // One tab stop for the whole profile (arrow keys move inside it).
   const stop = focused && ids.includes(focused) ? focused : ids[0]
   // What the pointer is on, else what has focus.
   const shown = profile.lines.find((line) => line.id === (active ?? focused))
+  // Standing up (wide), a count that would sit on another is left out of the picture; lying down, every count has its own column.
+  const counts = visibleCounts(profile.lines, width !== null && width >= WIDE_PX ? width / Math.max(1, profile.lines.length) : null, countText)
 
   const onKey = (event: KeyboardEvent<HTMLLIElement>, index: number) => {
     const last = ids.length - 1
@@ -58,6 +75,7 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
       ) : (
         <div className={styles.wrap}>
           <ul
+            ref={listRef}
             className={styles.profile}
             aria-label="Pages per source"
             style={{ '--scale': `${PROFILE_SCALE_PX}px` } as CSSProperties}
@@ -90,9 +108,11 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
                 onBlur={() => setFocused((current) => (current === line.id ? null : current))}
                 onKeyDown={(event) => onKey(event, index)}
               >
-                <span className={styles.value}>{line.pages === null ? 'not read' : fmtCount(line.pages)}</span>
                 <span className={styles.plot}>
                   {line.pages !== null && <span className={styles.line} />}
+                </span>
+                <span className={styles.value} data-crowded={counts.has(line.id) ? undefined : true}>
+                  {countText(line.pages)}
                 </span>
                 <span className={styles.name} title={line.full}>
                   {line.name}

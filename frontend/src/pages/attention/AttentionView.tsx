@@ -6,6 +6,7 @@ import {
   Block,
   Button,
   DataTable,
+  Dialog,
   EmptyState,
   FilterChips,
   Mono,
@@ -70,6 +71,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
   const now = useNow()
   const actions = useAckActions()
   const standingId = useId()
+  const [confirmingAll, setConfirmingAll] = useState(false)
   const [standingOpen, setStandingOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   // The list filters live in the URL (?filter=overdue&scope=<project>) so a view can be shared or reloaded.
@@ -361,6 +363,13 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
   // The shell counts new items but this list has none: it has not caught up yet. Say so, do not claim calm.
   const listBehind = !worst && shellCount !== null && shellCount > 0
 
+  // Everything in the New block that can be acknowledged, as listed (filters narrow what is listed).
+  const ackableKeys = shown.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
+  const acknowledgeAll = async () => {
+    setConfirmingAll(false)
+    await actions.acknowledgeAll(ackableKeys)
+  }
+
   const filtered = filter !== 'all' || activeProject !== 'all'
   const counted = (group: AttentionRow[], total: number) => (filtered ? `${group.length} of ${total}` : String(total))
   const clearButton = <Button onClick={clearFilters}>Clear filters</Button>
@@ -436,10 +445,26 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         </div>
       </div>
 
+      {actions.bulkError && (
+        <div role="alert" className={styles.bulkError}>
+          <StateMark state="critical" />
+          <span>
+            Acknowledged {actions.bulkError.done} of {actions.bulkError.total} and stopped: {actions.bulkError.message}
+          </span>
+        </div>
+      )}
+
       {all.fresh.length > 0 && (
         <Block
           title="New"
           meta={counted(shown.fresh, all.fresh.length)}
+          actions={
+            ackableKeys.length > 1 ? (
+              <Button size="sm" loading={actions.bulkBusy} onClick={() => setConfirmingAll(true)}>
+                Acknowledge all ({ackableKeys.length})
+              </Button>
+            ) : undefined
+          }
           description="Each needs a decision: acknowledge it once you have seen it, or shelve it to silence it for a while."
           padding="none"
         >
@@ -547,6 +572,24 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
           empty={<EmptyState title="No manager loops" description="The ledger lists no projects." />}
         />
       </Block>
+
+      <Dialog
+        open={confirmingAll}
+        onClose={() => setConfirmingAll(false)}
+        role="alertdialog"
+        title={`Acknowledge ${ackableKeys.length} items?`}
+        description={`This marks ${ackableKeys.length} new items as seen. They move to Standing and stop counting as new. If one of them changes or gets worse, it alerts you again.`}
+        actions={
+          <>
+            <Button data-autofocus onClick={() => setConfirmingAll(false)}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => void acknowledgeAll()}>
+              Acknowledge {ackableKeys.length}
+            </Button>
+          </>
+        }
+      />
 
       <ProjectDrawer project={selected} onClose={closeProject} now={now} />
     </div>

@@ -51,7 +51,9 @@ import type {
   CronStatusFilter,
 } from './types'
 import { isNewFailure, isStandingFailure, jobState } from './jobState'
-import { SHELVE_CHOICES, ackNote, acknowledgeJob, applyAck, shelveUntil, undoAcknowledgement } from './acks'
+import { SHELVE_OPTIONS, acknowledgeRequest, shelveRequest, shelveUntil, undoRequest } from '../../lib/acks'
+import type { ShelveChoice } from '../../lib/acks'
+import { ackNote, applyAck } from './acks'
 import { NextRun } from './NextRun'
 import { scheduleDisplay } from './cronSchedule'
 import { isJobOn, summarizeJobs } from './jobsSummary'
@@ -368,13 +370,14 @@ export default function JobsView() {
   }
 
   /** Acknowledge ("seen, it will stay like this") or shelve a failed job. The counts and the rail badge follow. */
-  const handleAck = async (job: CronJob, kind: 'ack' | 'shelve', until: string | null = null) => {
+  const handleAck = async (job: CronJob, kind: 'ack' | 'shelve', choice: ShelveChoice = 'forever') => {
     const key = job.ackKey
     if (!key) return
     setPendingAction(`ack-${job.id}`)
     try {
-      const response = await acknowledgeJob(key, kind, until)
-      const ack = response?.ack ?? { kind, at: new Date().toISOString(), until }
+      const sentAt = Date.now()
+      const response = await (kind === 'ack' ? acknowledgeRequest(key) : shelveRequest(key, choice, sentAt))
+      const ack = response?.ack ?? { kind, at: new Date(sentAt).toISOString(), until: kind === 'shelve' ? shelveUntil(choice, sentAt) : null }
       await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyAck(current, key, ack))
       afterWrite(queryClient)
       toast.show('success', kind === 'ack' ? `"${job.name}" acknowledged` : `"${job.name}" shelved`)
@@ -392,7 +395,7 @@ export default function JobsView() {
     if (!key) return
     setPendingAction(`ack-${job.id}`)
     try {
-      await undoAcknowledgement(key)
+      await undoRequest(key)
       await applyCommitted<CronApiResponse>(queryClient, '/api/cron', (current) => applyAck(current, key, null))
       afterWrite(queryClient)
       toast.show('success', `"${job.name}" is counted as a new failure again`)
@@ -932,12 +935,12 @@ export default function JobsView() {
             <Button data-autofocus onClick={() => setShelveTarget(null)} disabled={pendingAction === `ack-${shelveTarget?.id}`}>
               Cancel
             </Button>
-            {SHELVE_CHOICES.map((choice) => (
+            {SHELVE_OPTIONS.map((choice) => (
               <Button
-                key={choice.id}
+                key={choice.value}
                 variant="primary"
                 disabled={pendingAction === `ack-${shelveTarget?.id}`}
-                onClick={() => shelveTarget && handleAck(shelveTarget, 'shelve', shelveUntil(choice.days, now))}
+                onClick={() => shelveTarget && handleAck(shelveTarget, 'shelve', choice.value)}
               >
                 {choice.label}
               </Button>

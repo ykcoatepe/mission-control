@@ -194,10 +194,12 @@ test('G4 an unreadable scheduled timeline yields the central 503 error contract'
     });
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
-test('G4 legacy fallback cannot hide an unavailable embed-job reason behind a 100 score', () => {
+test('G4 legacy fallback: an unavailable embed-job reading is information and does not make the system unavailable', () => {
   const legacyOverview = { ok: true, trust: { status: 'healthy', score: 100, label: 'Trusted', lastVerifiedAt: '2026-11-11T12:00:00.000Z' }, caveats: [],
     live: { sources: { freshness: { staleCount: 0 } }, health: { metrics: { embedJobProbeUnavailable: true } } } };
-  assert.equal(buildOperationsOverview({ gbrain: legacyOverview }, { generatedAt: '2026-11-11T12:00:00.000Z' }).systems.gbrain.state, 'unavailable');
+  const gbrain = buildOperationsOverview({ gbrain: legacyOverview }, { generatedAt: '2026-11-11T12:00:00.000Z' }).systems.gbrain;
+  // A limitation of the reading is information: the state follows the verdict's core and action reasons.
+  assert.equal(gbrain.state, 'healthy');
 });
 
 test('G3 createApp declares a single-concurrency action lane', () => {

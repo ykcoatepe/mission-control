@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildDiagram, shortSourceName } from './diagram'
 import { synoptic, sources } from './fixtures'
-import { PROFILE_SCALE_PX, buildProfile, lineHeight } from './profile'
+import { PROFILE_SCALE_PX, buildProfile, lineHeight, middleTruncate, sourceLabels, visibleCounts } from './profile'
 import type { GBrainSynoptic } from './types'
 
 describe('line heights are on one true linear scale', () => {
@@ -87,5 +87,67 @@ describe('the profile follows the diagram', () => {
     const syn = { ...base, sources: [{ id: 'projects', label: 'projects', state: 'healthy' as const, observedAt: null, items: [item('hermes-agent'), item('hermes-memories')] }] }
     const names = buildProfile(buildDiagram(syn, sources([{ id: 'hermes-agent', pages: 2 }, { id: 'hermes-memories', pages: 1 }]))).lines.map((line) => line.name)
     expect(names).toEqual(['hermes-agent', 'hermes-memories'])
+  })
+})
+
+describe('the profile is tall enough to read', () => {
+  it('has a plot at least 140px tall for the tallest line', () => {
+    expect(PROFILE_SCALE_PX).toBeGreaterThanOrEqual(140)
+  })
+})
+
+describe('labels are the full source id, never two alike', () => {
+  it('keeps a short id whole and cuts a long one in the middle, keeping its start and its end', () => {
+    expect(middleTruncate('default')).toBe('default')
+    const cut = middleTruncate('japanesebuddy-notes-archive-2026')
+    expect(cut.length).toBeLessThanOrEqual(22)
+    expect(cut.startsWith('japanesebuddy')).toBe(true)
+    expect(cut.endsWith('2026')).toBe(true)
+    expect(cut).toContain('…')
+  })
+
+  it('writes in full any labels that would come out the same after cutting', () => {
+    const ids = ['japanesebuddy-alpha-study-notes', 'japanesebuddy-bravo-study-notes', 'japanesebuddy-charlie-study-notes', 'default']
+    expect(new Set(ids.map((id) => middleTruncate(id))).size).toBe(1 + 1)
+    const labels = sourceLabels(ids)
+    expect(new Set(labels).size).toBe(ids.length)
+    expect(labels.slice(0, 3)).toEqual(ids.slice(0, 3))
+    expect(labels[3]).toBe('default')
+  })
+
+  it('the profile labels are unique even when the ids share a long start', () => {
+    const base = synoptic()
+    const ids = ['japanesebuddy-study-notes', 'japanesebuddy-study-cards', 'japanesebuddy-study-audio']
+    const item = (id: string) => ({ id, label: id, state: 'healthy' as const, observedAt: null, lastSyncAt: null, behind: null, excludedByPolicy: false, reason: null })
+    const syn = { ...base, sources: [{ id: 'projects', label: 'projects', state: 'healthy' as const, observedAt: null, items: ids.map(item) }] }
+    const profile = buildProfile(buildDiagram(syn, sources(ids.map((id, i) => ({ id, pages: 10 + i })))))
+    const names = profile.lines.map((line) => line.name)
+    expect(new Set(names).size).toBe(3)
+    expect(profile.lines.map((line) => line.full).sort()).toEqual([...ids].sort())
+  })
+})
+
+describe('counts that would collide are left out of the picture', () => {
+  const text = (pages: number | null) => (pages === null ? 'not read' : pages.toLocaleString('en-US'))
+  const line = (id: string, pages: number | null, height: number | null) => ({ id, pages, height })
+
+  it('shows every count when the columns are wide, or the width is not known', () => {
+    const lines = [line('a', 18005, 140), line('b', 16190, 126), line('c', 8223, 64)]
+    expect([...visibleCounts(lines, 60, text)]).toEqual(['a', 'b', 'c'])
+    expect(visibleCounts(lines, null, text).size).toBe(3)
+  })
+
+  it('hides the smaller of two neighbouring counts that overlap, and keeps the larger', () => {
+    const lines = [line('a', 1234, 10), line('b', 956, 8), line('c', 712, 6)]
+    const shown = visibleCounts(lines, 30, text)
+    expect(shown.has('a')).toBe(true)
+    expect(shown.has('b')).toBe(false)
+    // c is two columns from a, far enough apart to stand clear of it.
+    expect(shown.has('c')).toBe(true)
+  })
+
+  it('does not hide counts that are at different heights', () => {
+    const lines = [line('a', 18005, 140), line('b', 3237, 25)]
+    expect(visibleCounts(lines, 30, text).size).toBe(2)
   })
 })
