@@ -27,11 +27,21 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
   const queueRead = waiting !== null && active !== null && stalled !== null
   const total = queueRead ? waiting + active + stalled : 0
 
+  // A history that was not read (no answer, or the server says it could not read it) is "not read", never an empty trend.
+  const trendsRead = trends !== null && trends.meta?.ok !== false
+  const series = trendsRead ? trends.series : null
+  const skipped = trendsRead && trends.partial && typeof trends.skippedLines === 'number' ? trends.skippedLines : 0
+  const trendsMeta = !trendsRead
+    ? '24-hour trends not read'
+    : skipped > 0
+      ? `24-hour trends, ${fmtCount(skipped)} history ${skipped === 1 ? 'line' : 'lines'} not read`
+      : '24-hour trends'
+
   const missingReason = verdict.conditions.find((condition) => condition.id === 'missing-embeddings' && condition.kind === 'action')
   const embeddedState: UiState | undefined = missingReason && (missingReason.state === 'warning' || missingReason.state === 'critical') ? missingReason.state : undefined
 
   return (
-    <Block title="Readings" meta="24-hour trends" className={styles.block}>
+    <Block title="Readings" meta={trendsMeta} className={styles.block}>
       <div className={styles.bars}>
         <AnalogBar
           label="Quality, out of 100"
@@ -43,7 +53,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
           format={(n) => (Number.isInteger(n) ? String(n) : n.toFixed(1))}
           /* The bar's state is the score against its own band; the page's caution belongs to the reading that caused it. */
           unread={quality === null}
-          trend={trendOf(trends?.series.quality)}
+          trend={trendOf(series?.quality)}
           className={styles.fill}
         />
         <div className={styles.bar}>
@@ -56,7 +66,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
             format={fmtPercentValue}
             state={embeddedState}
             unread={percent === null}
-            trend={trendOf(trends?.series.embeddedPercent)}
+            trend={trendOf(series?.embeddedPercent)}
             className={styles.fill}
           />
           {percent !== null && (
@@ -75,7 +85,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
             format={(n) => fmtCount(n)}
             state={readings.queue.state}
             unread={!queueRead}
-            trend={trendOf(trends?.series.queue)}
+            trend={trendOf(series?.queue)}
             className={styles.fill}
           />
           {queueRead && (

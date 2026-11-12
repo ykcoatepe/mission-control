@@ -33,9 +33,18 @@
 //   worst      = the worst state over the NEW items; 'healthy' when count is 0.
 //
 // Every countable item has a stable key (system:<id>,
-// finding:<project>:<CODE>:<hash of subject>, confirmation:<project>:<id>,
+// finding:<project>:<CODE>:<hash of the complete original subject>,
+// confirmation:<project>:<id or h+hash of the complete original id>,
 // cron:<job id>) and a fingerprint of what "worse" means: the severity rank
-// from server/core/state.js and a count (1 unless the item carries one).
+// from server/core/state.js and a count (1 unless the item carries one). A
+// finding's key is derived from the subject as mloop wrote it, before it is
+// scrubbed or shortened for display (the source passes `subjectHash`), so two
+// findings that differ only after the shown part never share a key; the key
+// is a hash only and never carries the text. A system's fingerprint also
+// carries the identity set of its reasons (`reasons`: hashed stable reason
+// ids, never display text) and their number as its count: a new or different
+// reason voids an acknowledgement, a reason going away does not. The system
+// still adds at most one to the count.
 // Whether an acknowledgement holds is decided by the ack store
 // (server/services/attentionAcks.js), passed in as `acks`.
 //
@@ -125,6 +134,7 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
     const failed = metas.some(([, meta]) => meta.error);
     const refreshing = new Set(metas.filter(([, meta]) => meta.stale === true && !meta.error).map(([name]) => name));
     const items = attention.filter((item) => item?.system === id);
+    const reasons = systemReasonIds(items, metas);
     // Never held: criticals, and a failed read (at least 'unavailable').
     const criticals = [
       ...items.filter((item) => item.severity === 'critical').map(() => 'critical'),
@@ -133,7 +143,7 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
     if (metas.length && !failed && !refreshing.size) settled.set(id, { state: system.state, atMs: nowMs });
     const last = settled.get(id);
     if (!refreshing.size || !last || nowMs - last.atMs > HOLD_MAX_MS) {
-      return { id, state: worstState([system.state, ...criticals], { empty: system.state }), held: false, failed };
+      return { id, state: worstState([system.state, ...criticals], { empty: system.state }), held: false, failed, reasons };
     }
     const reRead = (refs) => {
       const named = (Array.isArray(refs) && refs.length ? refs : [null]).flatMap((ref) => evidenceSources(ref, id));
@@ -143,8 +153,21 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
       ...items.filter((item) => !reRead(item.evidenceRefs)).map((item) => item.severity),
       ...evidence.filter((item) => item?.system === id && !reRead([item.id])).map((item) => item.status),
     ];
-    return { id, state: worstState([last.state, ...fresh, ...criticals], { empty: last.state }), held: true, failed };
+    return { id, state: worstState([last.state, ...fresh, ...criticals], { empty: last.state }), held: true, failed, reasons };
   });
+}
+
+// The stable identities of what a system is reported for: each attention item
+// by its stable reason id (`reasonId`, else its `id`), and each source whose
+// read failed. Never display text.
+function systemReasonIds(items, metas) {
+  const ids = new Set();
+  for (const item of items) {
+    const id = typeof item?.reasonId === 'string' && item.reasonId ? item.reasonId : typeof item?.id === 'string' && item.id ? item.id : null;
+    ids.add(id ?? `code:${typeof item?.reasonCode === 'string' ? item.reasonCode : 'unknown'}`);
+  }
+  for (const [name, meta] of metas) if (meta?.error) ids.add(`source:${name}`);
+  return [...ids].sort();
 }
 
 function isCount(value) {
@@ -168,9 +191,24 @@ const KEY_SHAPES = Object.freeze({
 // Which reading a key's item comes from (an item is known absent only when
 // its reading was read).
 const KEY_DOMAINS = Object.freeze({ system: 'systems', finding: 'loops', confirmation: 'loops', cron: 'cron' });
+const HASH12 = /^[0-9a-f]{12}$/;
+// At most this many reason identities are kept in a fingerprint (the count
+// still rises past it, so a new reason beyond it voids an acknowledgement).
+const MAX_REASON_IDS = 64;
 
 function hash12(text) {
   return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex').slice(0, 12);
+}
+
+/** The opaque identity of a subject or id as mloop wrote it (before scrubbing or shortening). */
+function subjectHash(text) {
+  return hash12(typeof text === 'string' ? text : '');
+}
+
+/** Hashed reason identities for a fingerprint (sorted, bounded). */
+function reasonFingerprint(ids) {
+  if (!Array.isArray(ids)) return null;
+  return [...new Set(ids.map((id) => hash12(id)))].sort().slice(0, MAX_REASON_IDS);
 }
 
 /** The key's kind (system|finding|confirmation|cron) or null when the shape is not known. */
@@ -200,18 +238,28 @@ function systemKey(id) {
   return typeof id === 'string' && SYSTEM_ID_PATTERN.test(id) ? `system:${id}` : null;
 }
 
-function findingKey(project, code, subject) {
+// `hash`: subjectHash() of the complete original subject when the source
+// supplied it; otherwise the given subject is hashed.
+function findingKey(project, code, subject, hash = null) {
   if (typeof project !== 'string' || !new RegExp(`^${PROJECT_PART}$`).test(project)) return null;
   const safeCode = typeof code === 'string' && CODE_PATTERN.test(code) ? code : 'UNKNOWN';
-  return `finding:${project}:${safeCode}:${hash12(subject)}`;
+  return `finding:${project}:${safeCode}:${typeof hash === 'string' && HASH12.test(hash) ? hash : hash12(subject)}`;
 }
 
-// A confirmation id is kept as is when it is a short plain id (T1, TEYIT-42),
-// otherwise it is hashed (h + 12 hex), so the key stays bounded and URL-safe.
-function confirmationKey(project, id) {
+// A confirmation's identity: a short plain id (T1, TEYIT-42) as is, otherwise
+// h + 12 hex of the complete original id (`hash`, from the source) so the key
+// stays bounded and URL-safe and two long ids never collide on a shown prefix.
+// Placeholders ('#...') stay as they are (they never get a key).
+function confirmationIdentity(id, hash = null) {
+  if (typeof id !== 'string' || !id) return id;
+  if (SAFE_ID.test(id) || id.startsWith('#')) return id;
+  return `h${typeof hash === 'string' && HASH12.test(hash) ? hash : hash12(id)}`;
+}
+
+function confirmationKey(project, id, hash = null) {
   if (typeof project !== 'string' || !new RegExp(`^${PROJECT_PART}$`).test(project)) return null;
   if (typeof id !== 'string' || !id || id.startsWith('#')) return null;
-  return `confirmation:${project}:${SAFE_ID.test(id) ? id : `h${hash12(id)}`}`;
+  return `confirmation:${project}:${confirmationIdentity(id, hash)}`;
 }
 
 function cronKey(jobId) {
@@ -221,9 +269,11 @@ function cronKey(jobId) {
 /** The key a listed manager-loop finding carries (confirmation findings share their confirmation's key). */
 function findingItemKey(project, finding) {
   if (CONFIRMATION_ID_CODES.has(finding?.code)) {
-    return confirmationKey(project, typeof finding.subject === 'string' && finding.subject ? finding.subject : finding.code);
+    return typeof finding.subject === 'string' && finding.subject
+      ? confirmationKey(project, finding.subject, finding.subjectHash)
+      : confirmationKey(project, finding.code);
   }
-  return findingKey(project, finding?.code, finding?.subject);
+  return findingKey(project, finding?.code, finding?.subject, finding?.subjectHash);
 }
 
 // --- items -------------------------------------------------------------------
@@ -232,8 +282,13 @@ function itemCount(value) {
   return Number.isInteger(value) && value > 0 ? value : 1;
 }
 
-function makeItem(key, part, state, { count = 1, units = 1 } = {}) {
-  return { key, part, state, rank: stateRank(state), count: itemCount(count), units };
+function makeItem(key, part, state, { count = 1, units = 1, reasons = null } = {}) {
+  return { key, part, state, rank: stateRank(state), count: itemCount(count), units, ...(reasons ? { reasons } : {}) };
+}
+
+function unionReasons(a, b) {
+  if (!a && !b) return {};
+  return { reasons: [...new Set([...(a || []), ...(b || [])])].sort() };
 }
 
 function mergeInto(map, item) {
@@ -249,6 +304,7 @@ function mergeInto(map, item) {
   const state = worstState([known.state, item.state], { empty: known.state });
   map.set(item.key, {
     ...known, state, rank: stateRank(state), count: Math.max(known.count, item.count, known.units + item.units), units: known.units + item.units,
+    ...unionReasons(known.reasons, item.reasons),
   });
 }
 
@@ -260,7 +316,9 @@ function systemItems(systems) {
     const failed = system?.failed === true;
     if (!systemNeedsOperator(system?.state) && !failed) continue;
     const state = failed ? worstState([system?.state, 'unavailable']) : system.state;
-    items.push(makeItem(systemKey(system?.id), 'systems', state));
+    // The fingerprint names its reasons; its count is how many there are.
+    const reasons = reasonFingerprint(Array.isArray(system?.reasons) ? system.reasons : []);
+    items.push(makeItem(systemKey(system?.id), 'systems', state, { count: Array.isArray(system?.reasons) ? system.reasons.length : 1, reasons }));
   }
   return items;
 }
@@ -290,12 +348,12 @@ function projectNeeds(findings, confirmations, projectId = null) {
     states.push(state);
     if (!CONFIRMATION_ID_CODES.has(finding.code)) {
       findingCount += 1;
-      mergeInto(findingItems, makeItem(keyed ? findingKey(projectId, finding.code, finding.subject) : null, 'findings', state, { count: finding.count }));
+      mergeInto(findingItems, makeItem(keyed ? findingKey(projectId, finding.code, finding.subject, finding.subjectHash) : null, 'findings', state, { count: finding.count }));
     } else if (isAggregate(finding)) {
       const n = Number.isInteger(finding.count) && finding.count > 0 ? finding.count : 1;
       if (!aggregate || n > aggregate.count) aggregate = { finding, count: n, state };
     } else {
-      const id = String(finding.subject);
+      const id = confirmationIdentity(String(finding.subject), finding.subjectHash);
       ids.set(id, worstState([ids.get(id), state], { empty: state }));
     }
   }
@@ -305,7 +363,7 @@ function projectNeeds(findings, confirmations, projectId = null) {
   }
   (confirmations || []).forEach((row, index) => {
     if (!row?.overdue) return;
-    const id = typeof row.id === 'string' && row.id ? row.id : `#row-${index}`;
+    const id = typeof row.id === 'string' && row.id ? confirmationIdentity(row.id, row.idHash) : `#row-${index}`;
     ids.set(id, worstState([ids.get(id), 'warning'], { empty: 'warning' }));
     states.push('warning');
   });
@@ -353,6 +411,7 @@ function attentionItems({ systems = null, loops = null, cronJobs = null, allCron
     const state = worstState([known.state, item.state], { empty: known.state });
     countable.set(item.key, {
       ...known, state, rank: stateRank(state), units: known.units + item.units, count: Math.max(known.count, item.count),
+      ...unionReasons(known.reasons, item.reasons),
     });
   };
   const sys = systemItems(systems);
@@ -373,7 +432,7 @@ function attentionItems({ systems = null, loops = null, cronJobs = null, allCron
         if (key) listed.add(key);
       }
       for (const row of Array.isArray(project.pendingConfirmations) ? project.pendingConfirmations : []) {
-        const key = confirmationKey(project.id, row?.id);
+        const key = confirmationKey(project.id, row?.id, row?.idHash);
         if (key) listed.add(key);
       }
       projectNeeds(project.findings, project.pendingConfirmations, project.id).items.forEach(add);
@@ -453,5 +512,5 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
 module.exports = {
   CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, SYSTEM_SOURCES, KEY_MAX_LENGTH, NO_ACKS,
   attentionItems, confirmationKey, countedSystems, cronKey, findingItemKey, findingKey, isAckKey, keyDomain, keyKind,
-  keyProject, needsOperator, projectNeeds, systemKey, systemNeedsOperator,
+  keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator,
 };

@@ -98,3 +98,15 @@ test('verdict unavailable because the reading itself failed: the signal is unava
   assert.equal(synoptic.verdict.state, 'unavailable');
   assert.equal(signals.systems.gbrain.state, 'unavailable');
 });
+
+test('chunks waiting inside the tolerance while the embed-job probe failed: unavailable, never healthy', async () => {
+  const { signals, synoptic } = await signalsFor({ metrics: {
+    missingEmbeddings: 10, missingEmbeddingsOverdue: 0, missingEmbeddingsCatchingUp: 10, missingEmbeddingsOldestAgeSeconds: 60, embedJobProbeUnavailable: true,
+  } });
+  const reason = synoptic.verdict.reasons.find((r) => r.elementId === 'embed-job-probe');
+  assert.equal(reason.kind, 'action');
+  assert.equal(reason.state, 'unavailable');
+  assert.equal(reason.text, "Embedding status couldn't be read while 10 chunks are waiting.");
+  assert.equal(synoptic.verdict.state, 'unavailable');
+  assert.equal(signals.systems.gbrain.state, 'unavailable');
+});

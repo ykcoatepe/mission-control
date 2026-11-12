@@ -1,7 +1,22 @@
 'use strict';
 const { worstState, isState, stateRank } = require('../../core/state');
-/** The reading limitation when the embed-job probe fails; shared with the overview's own wording. */
+/** The reading limitation when the embed-job probe fails and nothing waits; shared with the overview's own wording. */
 const EMBED_JOB_PROBE_TEXT = "Embedding job status couldn't be read, so missing embeddings are judged by age only.";
+/**
+ * What a failed embed-job probe means, from the health metrics (null when the probe was read).
+ * It is information ONLY when GBrain reports no missing embeddings at all. When chunks are waiting
+ * (even inside the age tolerance) or their number is not known, nobody can tell whether they are
+ * being embedded, so it is something to act on and the reading is unavailable, never healthy.
+ */
+function embedJobProbeReason(metrics) {
+  if (metrics?.embedJobProbeUnavailable !== true) return null;
+  const missing = metrics.missingEmbeddings;
+  if (missing === 0) return { text: EMBED_JOB_PROBE_TEXT, info: true };
+  if (typeof missing === 'number' && Number.isInteger(missing) && missing > 0) {
+    return { text: `Embedding status couldn't be read while ${missing} ${missing === 1 ? 'chunk is' : 'chunks are'} waiting.`, info: false };
+  }
+  return { text: "Embedding status couldn't be read, and the number of chunks waiting is not known.", info: false };
+}
 /**
  * Every reason is either something to act on or something to know. This is the one place that
  * decides: an inactive reason never asks anything of anyone, and a reason flagged `info` is a
@@ -67,7 +82,8 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   if (m.missingEmbeddingsUnavailable !== true && missingOverdue > 0) {
     add('missing-embeddings', 'warning', `${missingOverdue} ${missingOverdue === 1 ? 'chunk is' : 'chunks are'} missing embeddings past the tolerance.`);
   }
-  if (m.embedJobProbeUnavailable === true) add('embed-job-probe', 'unavailable', EMBED_JOB_PROBE_TEXT, { info: true });
+  const probeReason = embedJobProbeReason(m);
+  if (probeReason) add('embed-job-probe', 'unavailable', probeReason.text, { info: probeReason.info });
   if (m.missingEmbeddingsUnavailable === true) add('missing-embeddings', 'unavailable', 'Missing-embedding count unavailable.');
   if (m.stalePagesUnavailable === true) add('stale-pages', 'unavailable', 'Stale-page count unavailable.');
   // The core line is only worth a line when it says something no other reason does: a reason that
@@ -103,4 +119,4 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   const counted = [core.state, ...reasons.filter((r) => r.kind !== 'info').map((r) => r.state)].filter((state) => state !== 'inactive');
   return { state: worstState(['healthy', ...counted]), reasons };
 }
-module.exports = { buildGBrainVerdict, verdictCaveats, isGBrainVerdict, EMBED_JOB_PROBE_TEXT };
+module.exports = { buildGBrainVerdict, verdictCaveats, isGBrainVerdict, embedJobProbeReason, EMBED_JOB_PROBE_TEXT };

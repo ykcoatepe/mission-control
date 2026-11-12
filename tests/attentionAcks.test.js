@@ -47,8 +47,8 @@ function cronJob(id, { enabled = true, status = 'ok' } = {}) {
   };
 }
 
-function fixture({ storeContent } = {}) {
-  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-acks-'));
+function fixture({ storeContent, rootDir: reuseDir, state: carried } = {}) {
+  const rootDir = reuseDir || fs.mkdtempSync(path.join(os.tmpdir(), 'mc-acks-'));
   fs.writeFileSync(path.join(rootDir, 'mc-config.json'), JSON.stringify({ name: 'Acks Test', gateway: { port: 1, token: '' }, modules: {} }));
   fs.writeFileSync(path.join(rootDir, 'package.json'), '{"version":"test"}');
   const storeFile = path.join(rootDir, 'data', 'attention', 'acks.json');
@@ -58,8 +58,9 @@ function fixture({ storeContent } = {}) {
   }
   const clock = { ms: T0 };
   const now = () => clock.ms;
-  const state = {
+  const state = carried || {
     systems: { gbrain: system('gbrain', 'healthy'), hermes: system('hermes', 'healthy'), openclaw: system('openclaw', 'healthy') },
+    attention: [],
     checkRows: [],
     teyit: [],
     cron: [],
@@ -67,7 +68,7 @@ function fixture({ storeContent } = {}) {
   const overview = {
     async getOverview() {
       return {
-        systems: structuredClone(state.systems), attention: [], evidence: [],
+        systems: structuredClone(state.systems), attention: structuredClone(state.attention), evidence: [],
         meta: { ok: true, stale: false, observedAt: new Date(T0).toISOString(), ageMs: 0, error: null, latencyMs: null, source: 'operations.overview' },
       };
     },
@@ -103,13 +104,16 @@ function fixture({ storeContent } = {}) {
       };
     },
   };
+  // The fake scheduler keeps what is registered, so a test can run one job
+  // (a non-request path) the way the real scheduler would.
+  const jobs = new Map();
   const app = createApp({
     config: loadConfig({ rootDir, homeDir: rootDir, env: { PORT: '0' } }),
     exec,
     clock: { now },
     fetch: async () => { throw new Error('No network'); },
     logger: silent,
-    scheduler: { register() {}, start() {}, stop() {}, status: () => ({ jobs: [] }) },
+    scheduler: { register(target) { jobs.set(target.id, target); }, start() {}, stop() {}, status: () => ({ jobs: [] }) },
     services: {
       operationsOverviewService: overview,
       usageService: { summary: () => ({ data: null, meta: {} }), dispose() {} },
@@ -168,12 +172,23 @@ function fixture({ storeContent } = {}) {
     ack(key, kind = 'ack', until) {
       return request('POST', '/api/attention/acks', { key, kind, ...(until !== undefined ? { until } : {}) });
     },
-    async cleanup() {
+    jobIds: () => [...jobs.keys()],
+    async runJob(id) {
+      const job = jobs.get(id);
+      assert.ok(job, `scheduler job ${id} is registered`);
+      await (typeof job.run === 'function' ? job.run() : job.refresh());
+    },
+    // Stop the app the way the process does on a clean shutdown (dispose).
+    async stop() {
       app.locals.runtime.dispose();
       if (server) {
         server.closeAllConnections();
         await new Promise((resolve) => server.close(resolve));
+        server = null;
       }
+    },
+    async cleanup() {
+      await this.stop();
       fs.rmSync(rootDir, { recursive: true, force: true });
     },
   };
@@ -188,6 +203,13 @@ const run = (options, fn) => withLiveLoop(async () => {
     await f.cleanup();
   }
 });
+
+// A second app on the same data directory and the same world (a restart).
+async function restarted(f) {
+  const next = fixture({ rootDir: f.rootDir, state: f.state });
+  await next.start();
+  return next;
+}
 
 const finding = (project, code, subject, severity = 'warning', extra = {}) => ({
   project, code, subject, severity, detail: `${code} ${subject}`, ts: '2026-11-11T00:00:00Z', ...extra,
@@ -497,4 +519,145 @@ test('cron: every job carries ackKey and ack; failed splits into failed and stan
   assert.equal(healthy.status, 409, 'a job that did not fail is not ackable');
   const disabled = await f.ack('cron:openclaw:j4');
   assert.equal(disabled.status, 409, 'a disabled job is not counted, so not ackable');
+}));
+
+// --- review fixes: restart, reason identity, full-subject keys, other processes ---
+
+const { execFileSync } = require('node:child_process');
+const ACKS_MODULE = path.join(__dirname, '..', 'server', 'services', 'attentionAcks.js');
+const STATE_MODULE = path.join(__dirname, '..', 'server', 'core', 'state.js');
+
+// Another process using the same store file. `script` runs with `store`, `rank`
+// and `T0` in scope; the process exits without closing the store unless the
+// script does it (an exit without close is a crash as far as the store knows).
+function inOtherProcess(file, script) {
+  const source = `
+    const { createAttentionAckStore } = require(${JSON.stringify(ACKS_MODULE)});
+    const { stateRank: rank } = require(${JSON.stringify(STATE_MODULE)});
+    const T0 = ${T0};
+    const store = createAttentionAckStore({ file: process.argv[1], now: () => T0, logger: { log() {}, warn() {}, error() {}, info() {} } });
+    (async () => { ${script} })().then(() => process.exit(0), (error) => { console.error(error); process.exit(1); });
+  `;
+  execFileSync(process.execPath, ['-e', source, file], { stdio: ['ignore', 'ignore', 'inherit'], timeout: 20_000 });
+}
+
+test('a voided acknowledgement is persisted by the scheduled sweep and never revives after a restart', () => run({}, async (f) => {
+  f.state.systems.hermes = system('hermes', 'warning');
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  f.state.systems.hermes = system('hermes', 'critical');
+  assert.equal((await f.both()).signals.attention.count, 1, 'worse than acknowledged');
+  assert.ok(f.jobIds().includes('attention.acks'), 'the ack sweep is a scheduler job');
+  await f.runJob('attention.acks');
+  assert.deepEqual(storeKeys(f), [], 'the sweep (not a request) wrote the void');
+  f.state.systems.hermes = system('hermes', 'warning');
+  await f.stop();
+  const g = await restarted(f);
+  try {
+    const { signals } = await g.both();
+    assert.equal(signals.attention.count, 1, 'back at the acknowledged level after a restart: still void');
+    assert.equal(signals.attention.standing, 0);
+  } finally { await g.stop(); }
+}));
+
+test('a void seen only by GET survives a clean restart: shutdown writes it', () => run({}, async (f) => {
+  f.state.systems.hermes = system('hermes', 'warning');
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  f.state.systems.hermes = system('hermes', 'critical');
+  assert.equal((await f.both()).signals.attention.count, 1);
+  f.state.systems.hermes = system('hermes', 'warning');
+  await f.stop();
+  const g = await restarted(f);
+  try {
+    assert.equal((await g.both()).signals.attention.count, 1, 'the voided ack does not hold again');
+  } finally { await g.stop(); }
+}));
+
+test('an acknowledgement still holds after a clean restart when nothing got worse', () => run({}, async (f) => {
+  f.state.systems.hermes = system('hermes', 'warning');
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  await f.runJob('attention.acks');
+  await f.stop();
+  const g = await restarted(f);
+  try {
+    const { signals } = await g.both();
+    assert.equal(signals.attention.count, 0);
+    assert.equal(signals.attention.standing, 1);
+  } finally { await g.stop(); }
+}));
+
+test('restore is conservative: after a process stopped without closing the store, its acknowledgements do not hold', () => run({}, async (f) => {
+  await f.stop();
+  // The other process acknowledges, sees the item get worse (in memory only) and dies.
+  inOtherProcess(f.storeFile, `
+    await store.set({ key: 'system:hermes', kind: 'ack', rank: rank('warning'), count: 1 });
+    store.resolve({ key: 'system:hermes', rank: rank('critical'), count: 1 });
+  `);
+  assert.deepEqual(storeKeys(f), ['system:hermes']);
+  f.state.systems.hermes = system('hermes', 'warning');
+  const g = await restarted(f);
+  try {
+    const { signals } = await g.both();
+    assert.equal(signals.attention.count, 1, 'an ack from a session that ended without its final write cannot revive');
+    assert.equal(signals.attention.standing, 0);
+  } finally { await g.stop(); }
+}));
+
+test('a system acknowledgement covers the reasons it was given for: a new or different reason voids it, a reason going away does not', () => run({}, async (f) => {
+  const reason = (id) => ({ id, system: 'hermes', severity: 'warning', reasonCode: id.replace(/\W/g, '_'), title: id, detail: id, detailHref: '/services', evidenceRefs: [] });
+  f.state.systems.hermes = system('hermes', 'warning');
+  f.state.attention = [reason('hermes:gateway-stale'), reason('hermes:kanban-blocked')];
+  assert.equal((await f.ack('system:hermes')).status, 200);
+  assert.equal((await f.both()).signals.attention.count, 0);
+
+  f.state.attention = [reason('hermes:gateway-stale')];
+  assert.equal((await f.both()).signals.attention.count, 0, 'a reason going away keeps the acknowledgement');
+
+  f.state.attention = [reason('hermes:gateway-stale'), reason('hermes:cron-failed')];
+  let { signals } = await f.both();
+  assert.equal(signals.attention.count, 1, 'a second, different warning is new');
+  assert.equal(signals.attention.standing, 0);
+
+  // Replaced: one acknowledged reason, then a different one in its place.
+  f.state.systems.openclaw = system('openclaw', 'warning');
+  f.state.attention = [{ ...reason('openclaw:heartbeat-stale'), system: 'openclaw' }];
+  assert.equal((await f.ack('system:openclaw')).status, 200);
+  f.state.attention = [{ ...reason('openclaw:session-conflict'), system: 'openclaw' }];
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.breakdown.systems, 2, 'hermes and the replaced openclaw reason both count');
+}));
+
+test('two findings that differ only after the shown part of the subject have different keys', () => run({}, async (f) => {
+  const shared = 'S'.repeat(200);
+  f.state.checkRows = [finding('alpha', 'BINDING_DEAD', `${shared}-first`, 'warning', { detail: 'binding dead' })];
+  await f.loops.refresh();
+  const first = attentionRow(await f.loopsData(), 'BINDING_DEAD');
+  assert.equal((await f.ack(first.key)).status, 200);
+  assert.equal((await f.both()).signals.attention.count, 0);
+
+  f.state.checkRows = [finding('alpha', 'BINDING_DEAD', `${shared}-second`, 'warning', { detail: 'binding dead' })];
+  await f.loops.refresh();
+  const { signals, loops } = await f.both();
+  const second = attentionRow(loops, 'BINDING_DEAD');
+  assert.notEqual(second.key, first.key, 'the key comes from the whole subject');
+  assert.match(second.key, /^finding:alpha:BINDING_DEAD:[0-9a-f]{12}$/, 'the key is opaque');
+  assert.doesNotMatch(JSON.stringify(loops), /second/, 'the hidden part of the subject is not exposed');
+  assert.equal(signals.attention.count, 1, 'the replacement finding does not inherit the acknowledgement');
+}));
+
+test('another process writing the same store loses nothing: every write re-reads and merges', () => run({}, async (f) => {
+  f.state.systems = { gbrain: system('gbrain', 'warning'), hermes: system('hermes', 'warning'), openclaw: system('openclaw', 'warning') };
+  assert.equal((await f.ack('system:gbrain')).status, 200);
+  inOtherProcess(f.storeFile, `
+    await store.set({ key: 'system:hermes', kind: 'ack', rank: rank('warning'), count: 1 });
+    store.close?.();
+  `);
+  assert.deepEqual(storeKeys(f), ['system:gbrain', 'system:hermes']);
+  assert.equal((await f.ack('system:openclaw')).status, 200);
+  assert.deepEqual(storeKeys(f), ['system:gbrain', 'system:hermes', 'system:openclaw'], 'the other process\'s entry is kept');
+  assert.deepEqual(fs.readdirSync(path.dirname(f.storeFile)).filter((name) => /\.(tmp|lock)/.test(name)), [], 'no temp or lock file left');
+}));
+
+test('one store per file per process: a second instance on the same file is refused', () => run({}, async (f) => {
+  const { createAttentionAckStore } = require('../server/services/attentionAcks');
+  assert.throws(() => createAttentionAckStore({ file: f.storeFile, logger: silent }), /already open/);
 }));

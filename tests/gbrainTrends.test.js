@@ -93,3 +93,67 @@ test('GET /api/gbrain/trends: an absent ledger is an empty history, an unreadabl
     });
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
+
+test('GET /api/gbrain/trends reads only the tail it needs: a long ledger of old readings is not parsed whole', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-gbrain-trends-'));
+  const ledger = path.join(dir, 'evidence-timeline.jsonl');
+  // 60,000 readings older than the window (several MB), then three recent ones.
+  const old = JSON.stringify(entry(48, { health: '10/100' })) + '\n';
+  fs.writeFileSync(ledger, old.repeat(60_000) + [entry(3, { health: '97/100' }), entry(2, { health: '98/100' }), entry(1, { health: '99/100' })].map((e) => JSON.stringify(e)).join('\n') + '\n');
+  const parse = JSON.parse;
+  let parsed = 0;
+  JSON.parse = function counted(...args) { parsed += 1; return parse.apply(this, args); };
+  try {
+    await serve(buildGBrainRouter({ now: () => NOW, gbrainOverviewService: { timelineService: { enabled: true, ledgerPath: ledger } } }), async (base) => {
+      const before = parsed;
+      const response = await fetch(`${base}/api/gbrain/trends`);
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      assert.deepEqual(body.series.quality.map((p) => p.v), [97, 98, 99]);
+      assert.equal(body.meta.ok, true);
+      assert.ok(parsed - before < 1000, `parsed ${parsed - before} ledger lines`);
+    });
+  } finally { JSON.parse = parse; fs.rmSync(dir, { recursive: true }); }
+});
+
+test('GET /api/gbrain/trends: a window larger than the byte cap is a typed failure in the envelope, not a crash', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-gbrain-trends-'));
+  const ledger = path.join(dir, 'evidence-timeline.jsonl');
+  // Every reading inside the window and far more of them than the cap allows.
+  const padded = (hoursAgo) => JSON.stringify(entry(hoursAgo, {}, { pad: 'x'.repeat(4000) }));
+  const lines = [];
+  for (let i = 0; i < 3000; i += 1) lines.push(padded(23 - (i * 23) / 3000));
+  fs.writeFileSync(ledger, lines.join('\n') + '\n');
+  try {
+    await serve(buildGBrainRouter({ now: () => NOW, gbrainOverviewService: { timelineService: { enabled: true, ledgerPath: ledger } } }), async (base) => {
+      const response = await fetch(`${base}/api/gbrain/trends`);
+      assert.equal(response.status, 200);
+      const body = await response.json();
+      assert.equal(body.meta.ok, false);
+      assert.equal(body.meta.error.code, 'gbrain_trends_too_large');
+      assert.deepEqual(body.series, { quality: [], embeddedPercent: [], queue: [] }, 'no partial trend is drawn as if it were the whole day');
+    });
+  } finally { fs.rmSync(dir, { recursive: true }); }
+});
+
+test('GET /api/gbrain/trends: corrupt history is never a successful empty answer', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-gbrain-trends-'));
+  const ledger = path.join(dir, 'evidence-timeline.jsonl');
+  try {
+    fs.writeFileSync(ledger, '{ not json\n\u0000\u0001garbage\n[1,2\n');
+    await serve(buildGBrainRouter({ now: () => NOW, gbrainOverviewService: { timelineService: { enabled: true, ledgerPath: ledger } } }), async (base) => {
+      const body = await (await fetch(`${base}/api/gbrain/trends`)).json();
+      assert.equal(body.meta.ok, false, 'nothing could be read: not ok');
+      assert.equal(body.meta.error.code, 'gbrain_trends_corrupt');
+      assert.equal(body.skippedLines, 3);
+    });
+    // Some lines readable, some not: the readable series with the count of skipped lines.
+    fs.writeFileSync(ledger, [JSON.stringify(entry(3, { health: '97/100' })), '{ broken', JSON.stringify(entry(2, { health: '99/100' }))].join('\n') + '\n');
+    await serve(buildGBrainRouter({ now: () => NOW, gbrainOverviewService: { timelineService: { enabled: true, ledgerPath: ledger } } }), async (base) => {
+      const body = await (await fetch(`${base}/api/gbrain/trends`)).json();
+      assert.deepEqual(body.series.quality.map((p) => p.v), [97, 99]);
+      assert.equal(body.partial, true);
+      assert.equal(body.skippedLines, 1);
+    });
+  } finally { fs.rmSync(dir, { recursive: true }); }
+});

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
 const { STATE_RANK, worstState, stateRank } = require('../core/state');
 const { scrubText } = require('../core/scrub');
@@ -683,8 +684,10 @@ function adaptGBrain(overview, generatedAt) {
       caveats, metrics: { trustScore: overview.trust?.score ?? null,
         staleSources: overview.live?.sources?.freshness?.staleCount ?? null, caveats: caveats.length },
       evidence: [proof], detailHref: detailHref('gbrain') },
+    // reasonId: the verdict reason's stable element id (an acknowledgement of
+    // GBrain covers exactly these; a new or different one voids it).
     attention: overview.verdict.reasons.filter((r) => ['warning', 'critical', 'unavailable'].includes(r.state)).map((r, index) => ({
-      id: `gbrain:caveat:${index}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
+      id: `gbrain:caveat:${index}`, reasonId: `gbrain:${r.elementId}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
       title: 'GBrain requires attention', detail: r.text, detailHref: detailHref('gbrain'), evidenceRefs: [proof.id],
     })) };
   }
@@ -724,8 +727,11 @@ function adaptGBrain(overview, generatedAt) {
     '/api/gbrain/overview',
     detailHref('gbrain'),
   ) : null;
+  // Legacy caveats carry no element id: their identity is an opaque hash of the
+  // caveat (a changed caveat is a different reason, which only ever voids).
   const attention = caveats.map((detail, index) => ({
     id: `gbrain:caveat:${index}`,
+    reasonId: `gbrain:caveat:${crypto.createHash('sha256').update(detail, 'utf8').digest('hex').slice(0, 12)}`,
     system: 'gbrain',
     severity: state === 'critical' ? 'critical' : 'warning',
     reasonCode: 'gbrain_active_caveat',

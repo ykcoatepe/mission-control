@@ -194,12 +194,14 @@ test('G4 an unreadable scheduled timeline yields the central 503 error contract'
     });
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
-test('G4 legacy fallback: an unavailable embed-job reading is information and does not make the system unavailable', () => {
-  const legacyOverview = { ok: true, trust: { status: 'healthy', score: 100, label: 'Trusted', lastVerifiedAt: '2026-11-11T12:00:00.000Z' }, caveats: [],
-    live: { sources: { freshness: { staleCount: 0 } }, health: { metrics: { embedJobProbeUnavailable: true } } } };
-  const gbrain = buildOperationsOverview({ gbrain: legacyOverview }, { generatedAt: '2026-11-11T12:00:00.000Z' }).systems.gbrain;
+test('G4 legacy fallback: an unavailable embed-job reading is information only while nothing waits to be embedded', () => {
+  const legacy = (metrics) => ({ ok: true, trust: { status: 'healthy', score: 100, label: 'Trusted', lastVerifiedAt: '2026-11-11T12:00:00.000Z' }, caveats: [],
+    live: { sources: { freshness: { staleCount: 0 } }, health: { metrics: { embedJobProbeUnavailable: true, ...metrics } } } });
+  const stateOf = (metrics) => buildOperationsOverview({ gbrain: legacy(metrics) }, { generatedAt: '2026-11-11T12:00:00.000Z' }).systems.gbrain.state;
   // A limitation of the reading is information: the state follows the verdict's core and action reasons.
-  assert.equal(gbrain.state, 'healthy');
+  assert.equal(stateOf({ missingEmbeddings: 0 }), 'healthy');
+  // With chunks waiting (inside the tolerance) the unread job status is never healthy.
+  assert.equal(stateOf({ missingEmbeddings: 10, missingEmbeddingsOverdue: 0, missingEmbeddingsCatchingUp: 10 }), 'unavailable');
 });
 
 test('G3 createApp declares a single-concurrency action lane', () => {

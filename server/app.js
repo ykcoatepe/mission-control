@@ -34,6 +34,8 @@ const path = require('path');
 const { loadConfig, createConfigStore } = require('./core/config');
 const { createExec } = require('./core/exec');
 const { createScheduler } = require('./core/scheduler');
+// How often the attention ack sweep writes voids a GET could only keep in memory.
+const ATTENTION_ACK_SWEEP_MS = 5_000;
 const {
   requestContext,
   errorHandler,
@@ -310,6 +312,9 @@ function createApp(deps = {}) {
     const { createAttentionAckStore } = require('./services/attentionAcks');
     const { buildAttentionAcksRouter, createAttentionReader } = require('./routes/attentionAcks');
     // Badge rule: acknowledged / shelved attention items (data/attention/acks.json).
+    // The one place the store is made: one instance per process (a second on
+    // the same file is refused); dispose() closes it with its final write.
+    const ownsAcks = !services.attentionAcks;
     const acks = services.attentionAcks || createAttentionAckStore({
       file: path.join(config.paths.dataDir, 'attention', 'acks.json'),
       now,
@@ -369,18 +374,22 @@ function createApp(deps = {}) {
       acks,
       now,
     }));
-    app.use(buildAttentionAcksRouter({
-      acks,
-      readAttention: createAttentionReader({
-        operationsOverviewService: overviewService,
-        loopsSource,
-        automationsSnapshot: () => automationSource.snapshot(),
-        operationsCronSnapshot: () => sourcesByName.cron?.snapshot(),
-        now,
-      }),
+    const readAttention = createAttentionReader({
+      operationsOverviewService: overviewService,
+      loopsSource,
+      automationsSnapshot: () => automationSource.snapshot(),
+      operationsCronSnapshot: () => sourcesByName.cron?.snapshot(),
       now,
-    }));
-    return { overviewService, acks, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource } };
+    });
+    app.use(buildAttentionAcksRouter({ acks, readAttention, now }));
+    // Not a request: the scheduler judges every countable item against its
+    // acknowledgement and writes what a GET could only keep in memory (voids).
+    if (typeof acks.sweep === 'function') {
+      scheduler.register({ id: 'attention.acks', run: async () => acks.sweep(await readAttention()) }, { intervalMs: ATTENTION_ACK_SWEEP_MS, jitterMs: 1000 });
+    }
+    return {
+      overviewService, acks, ownsAcks, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource },
+    };
   })();
   // The existing mount line below keeps its text; it now gets the
   // memory-only overview service.
@@ -515,6 +524,7 @@ function createApp(deps = {}) {
       if (disposed) return;
       disposed = true;
       scheduler.stop();
+      if (attentionArea.ownsAcks) attentionArea.acks.close?.();
       loop.stop();
       exec.killAll();
     },

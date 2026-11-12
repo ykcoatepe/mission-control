@@ -5,7 +5,8 @@
 //
 // The badge rule's writes (server/services/attentionAcks.js). A key must have a
 // known shape and name an item the readings show NOW as countable (ackable);
-// its fingerprint (severity rank, count) is taken from that reading.
+// its fingerprint (severity rank, count and, for a system, its reasons) is
+// taken from that reading.
 // Restricted items have no key: a guessed one is unknown (404), and the
 // response says nothing about it. Both routes go through the write guard and
 // the audit log like every mutating /api request. Errors: { error: { code,
@@ -90,7 +91,7 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
       if (current.listed.has(key)) throw httpError(409, 'not_ackable', 'That item does not need the operator now, so it cannot be acknowledged');
       throw httpError(404, 'ack_key_not_found', 'No attention item has that key');
     }
-    const ack = await acks.set({ key, kind, until, rank: item.rank, count: item.count }, current);
+    const ack = await acks.set({ key, kind, until, rank: item.rank, count: item.count, reasons: item.reasons }, current);
     return res.json({ ok: true, key, ack });
   }));
 

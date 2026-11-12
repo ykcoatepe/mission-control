@@ -125,7 +125,7 @@ Production activation and useful-live confirmation remain with the coordinator.
 
 `verdict.js:buildGBrainVerdict` alone produces `{state,reasons:[{elementId,state,text,kind}]}`.
 `kind` is `action` or `info` and is derived in one place (`add`): an inactive reason and the
-embed-job probe limitation are `info`, everything else is `action`. An `info` reason never counts
+embed-job probe limitation when nothing waits to be embedded are `info`, everything else is `action`. An `info` reason never counts
 toward `state` (it says what the reading could not do, not that something is wrong); the state follows
 the core and the `action` reasons. The caveats and the Operations attention list still list it.
 The core line (`gbrain-core`) is emitted only when no other reason already names why the core is
@@ -144,10 +144,15 @@ The legacy presentation helper's compatibility path remains for older callers
 without a verdict; every mounted GBrain endpoint supplies the shared verdict.
 
 A declared embed-job probe failure is an **unavailable reason**, not an omitted
-note: `embed-job-probe` / `Embedding job status couldn't be read, so missing
-embeddings are judged by age only.` (kind `info`) This exact reason and state appear in both
-contracts and in the caveat list, but as information it does not change the verdict state: a
+note (`embed-job-probe`, `verdict.js:embedJobProbeReason`). It is information ONLY when GBrain
+reports no missing embeddings at all: `Embedding job status couldn't be read, so missing
+embeddings are judged by age only.` (kind `info`); then it does not change the verdict state and a
 brain that is otherwise normal stays normal in the synoptic, Operations and the top-bar signal.
+When chunks are missing embeddings (even inside the age tolerance) or their number is not known,
+nobody can tell whether they are being embedded, so it is an `action` reason that makes the
+verdict unavailable, never healthy: `Embedding status couldn't be read while N chunks are
+waiting.` The same reason, state and text appear in both contracts, the caveat list and the
+top-bar signal.
 A failed scheduled probe is an `action` unavailable reason and does make the state unavailable. Unobservable reader connection telemetry remains
 the existing readersNote and does not degrade health; the page says it once, in the
 `readers` info reason.

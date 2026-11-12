@@ -79,6 +79,7 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | `/api/gbrain/integration-health` | GET | integration proof + `meta` | `500` |
 | `/api/gbrain/synoptic` | GET | `{ data: synoptic, meta }` | `503` |
 | `/api/gbrain/timeline?limit=N` | GET | `{ entries, …, meta }` | `503 gbrain_timeline_unavailable` |
+| `/api/gbrain/trends` | GET | `{ enabled, since, until, entryCount, series: { quality, embeddedPercent, queue }, partial, skippedLines, meta }`; only the 24-hour tail is read (4 MiB / 5,000-line cap). `meta.ok: false` with `error.code` `gbrain_trends_too_large` (over the caps) or `gbrain_trends_corrupt` (no line readable) carries no series; `partial: true` with `skippedLines` keeps what was read | `503 gbrain_timeline_unavailable` |
 | `/api/gbrain/search?q=` | GET | `{ data, meta }` | `400`, `429` (`Retry-After`), `503` |
 | `/api/gbrain/pages/:slug` | GET | `{ data, meta }` | `400`, `404`, `429`, `503` |
 | `/api/gbrain/graph?around=` | GET | `{ data, meta }` | `400 graph_around_required`, `429`, `503` |
@@ -116,13 +117,17 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 ### Badge rule (acknowledge / shelve)
 
 A badge counts only NEW items: not acknowledged, not shelved, not restricted.
-Countable items have stable keys: `system:<id>`, `finding:<project>:<CODE>:<12-hex hash of the subject>`,
-`confirmation:<project>:<id>` (an id that is not a short plain id is `h<12-hex hash>`; a confirmation
-finding about an id shares its key) and `cron:<job id>`. Restricted rows have `key: null` and are
+Countable items have stable keys: `system:<id>`, `finding:<project>:<CODE>:<12-hex hash of the complete
+subject as mloop wrote it, before scrubbing or shortening>`, `confirmation:<project>:<id>` (an id that is
+not a short plain id is `h<12-hex hash>` of the complete id; a confirmation finding about an id shares
+its key) and `cron:<job id>`. Keys are hashes only and never carry hidden text. Restricted rows have `key: null` and are
 never ackable; their counts are `attention.restricted` and never part of `count` or `worst`.
 
 - `ack` ("seen, it will stay like this") holds while the item is no worse than when it was
   acknowledged: a rise in severity (the shared state ordering) or in its count voids it for good.
+  A system's acknowledgement also covers exactly the reasons it was given for (stable reason ids,
+  never display text): a new or different reason voids it, a reason going away does not. The system
+  still adds at most one to the count. A voided acknowledgement never holds again, across restarts.
 - `shelve` silences until `until` (or until removed with `null`); a shelved item that becomes
   critical counts again.
 - Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes any stored
@@ -130,7 +135,11 @@ never ackable; their counts are `attention.restricted` and never part of `count`
   write. A failed cron job stays acknowledged while it keeps failing (cron items carry no count).
 - Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries). A corrupt file
   is copied to `acks.json.corrupt-<time>` before the first write replaces it. GETs never write; what
-  a GET learns (a voided ack, when an item was last seen) is kept in memory and saved with the next write.
+  a GET learns (a voided ack, when an item was last seen) is kept in memory and saved by the next
+  write: the scheduler job `attention.acks` (every 5 s), a POST/DELETE, or the final write at
+  shutdown. One store per file per process; every write re-reads and merges under `acks.json.lock`.
+  Each running process is listed in the file; if one stopped without its final write, the
+  acknowledgements stored at that moment are no longer trusted (they count again).
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.

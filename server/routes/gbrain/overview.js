@@ -6,7 +6,7 @@ const {
 } = require('./constants');
 const { formatCount, formatPercent, liveHealthStatus, liveSourceStatus } = require('./liveProbes');
 const { buildGBrainIntegrationHealth } = require('./integrationHealth');
-const { verdictCaveats, EMBED_JOB_PROBE_TEXT } = require('../../sources/gbrain/verdict');
+const { verdictCaveats, embedJobProbeReason } = require('../../sources/gbrain/verdict');
 const { listGBrainActions } = require('./actionsExecutor');
 
 function statusLabelText(status) {
@@ -96,9 +96,8 @@ function buildGBrainOverview(live = {}, extra = {}) {
   const missingOverdueText = hasMissingEmbeddings
     ? `Live health reports ${formatCount(missing)} missing embedding${missing === 1 ? '' : 's'}${missingOldestText}${missingJobReasonText}.`
     : null;
-  const embedJobProbeUnavailableText = liveHealth?.metrics?.embedJobProbeUnavailable === true
-    ? EMBED_JOB_PROBE_TEXT
-    : null;
+  // The same words as the verdict's reason (informational only when nothing waits to be embedded).
+  const embedJobProbeUnavailableText = embedJobProbeReason(liveHealth?.metrics)?.text ?? null;
   const missingUnavailableText = 'Live health did not report a valid missing-embedding count.';
   const queue = liveHealth?.metrics?.queue || {};
   const hasLiveQueueCounters = [queue.waiting, queue.active, queue.stalled].every(Number.isFinite);

@@ -40,7 +40,8 @@ const fsp = require('fs').promises;
 const { createSource, SourceReadError } = require('../../core/source');
 const { scrubText } = require('../../core/scrub');
 const {
-  CONFIRMATION_CODES, NO_ACKS, OVERDUE_CODES, attentionItems, confirmationKey, findingItemKey, needsOperator, projectNeeds, systemKey,
+  CONFIRMATION_CODES, NO_ACKS, OVERDUE_CODES, attentionItems, confirmationKey, findingItemKey, needsOperator, projectNeeds, subjectHash,
+  systemKey,
 } = require('./attention');
 const {
   RESTRICTED_MARKERS, collectStrings, containsRestrictedMarker, findMarkerChain, isRestrictedId, restrictedMarkers,
@@ -182,12 +183,15 @@ function groupRawRows(rows, markers) {
 }
 
 // Presentation of an unrestricted project's rows: whitelisted and scrubbed.
+// subjectHash is the opaque identity of the subject as mloop wrote it (taken
+// before scrubbing and shortening); the attention key is built from it.
 function cleanFindings(rows) {
   return rows.map((row) => {
     const detail = cleanText(row.detail, MAX_DETAIL);
     return {
       code: typeof row.code === 'string' ? row.code.slice(0, 64) : 'UNKNOWN',
       subject: cleanText(row.subject, 160),
+      subjectHash: subjectHash(row.subject),
       severity: severityOf(row.severity),
       detail,
       summary: summaryOf(detail),
@@ -228,6 +232,8 @@ function pendingFromTeyit(rows, nowMs) {
       const deadline = isoOrNull(row.deadline);
       return {
         id: typeof row.id === 'string' ? row.id.slice(0, 120) : null,
+        // Opaque identity of the complete id (the shown id is shortened).
+        idHash: typeof row.id === 'string' ? subjectHash(row.id) : null,
         unit: cleanText(row.unit),
         verification: cleanText(row.how),
         deadline,
@@ -355,6 +361,7 @@ function rankAttention(projects) {
         severity: finding.severity,
         code: finding.code,
         subject: finding.subject,
+        subjectHash: finding.subjectHash,
         detail: finding.detail,
         summary: finding.summary,
         at: finding.at,
@@ -522,7 +529,7 @@ function ackDecorator(countable, acks) {
 }
 
 function decoratePending(projectId, rows, decorate) {
-  return Array.isArray(rows) ? rows.map((row) => ({ ...row, ...decorate(confirmationKey(projectId, row?.id)) })) : rows;
+  return Array.isArray(rows) ? rows.map((row) => ({ ...row, ...decorate(confirmationKey(projectId, row?.id, row?.idHash)) })) : rows;
 }
 
 function decorateAttention(attention, decorate) {

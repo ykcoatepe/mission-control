@@ -69,9 +69,9 @@ test('Operations reads the current GBrain verdict without a second cache refresh
   assert.equal((await ops.getOverview()).systems.gbrain.state, 'unavailable');
 });
 
-test('embed-job unavailability is an unavailable reason in every verdict and caveat list, but information: the state stays normal', async () => {
+test('embed-job unavailability with nothing waiting is an unavailable reason in every verdict and caveat list, but information: the state stays normal', async () => {
   const service = createGBrainOverviewService({ now: () => Date.parse(at), probes: {
-    health: async () => ({ ok: true, status: 'healthy', score: 100, metrics: { embedJobProbeUnavailable: true } }),
+    health: async () => ({ ok: true, status: 'healthy', score: 100, metrics: { missingEmbeddings: 0, embedJobProbeUnavailable: true } }),
     sources: async () => normalizeSourcesPayload([{ id: 'project', last_sync_at: at }], at),
     stats: async () => ({ pages: 12, chunks: 34, embedded: 34 }), jobs: async () => ({ waiting: 0, active: 0, stalled: 0 }),
     version: async () => ({ version: '1.2.3', ok: true }),

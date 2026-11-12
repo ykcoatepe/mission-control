@@ -300,6 +300,23 @@ describe('analog bars: no trend without data', () => {
     expect(host.textContent).toContain('24h trend')
   })
 
+  it('says the trends were not read when there is no answer or the server could not read the history', async () => {
+    const unread = { ...META, ok: false, stale: true, error: { code: 'gbrain_trends_corrupt', message: 'The readings history could not be read' } }
+    for (const t of [null, { series: { quality: [], embeddedPercent: [], queue: [] }, skippedLines: 3, meta: unread }, { series: { quality: points([98, 99]) }, meta: unread }]) {
+      const host = await mount(bars(fixture(), t))
+      expect(host.textContent).toContain('24-hour trends not read')
+      expect(host.querySelector('svg[aria-label="24-hour trend"]')).toBeNull()
+    }
+    const read = await mount(bars(fixture(), trends({ quality: [], embeddedPercent: [], queue: [] })))
+    expect(read.textContent).not.toContain('not read')
+  })
+
+  it('draws a partly read history with the number of lines that could not be read', async () => {
+    const host = await mount(bars(fixture(), { series: { quality: points([98, 99]) }, partial: true, skippedLines: 2, meta: META }))
+    expect(host.querySelectorAll('svg[aria-label="24-hour trend"]')).toHaveLength(1)
+    expect(host.textContent).toContain('2 history lines not read')
+  })
+
   it('states the normal band only where the server defines one: quality 90 to 100', async () => {
     const host = await mount(bars(fixture(), null))
     const meters = [...host.querySelectorAll('[role="meter"]')]
