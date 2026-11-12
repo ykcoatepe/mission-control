@@ -41,7 +41,7 @@ export function ReadingsBars({ syn, verdict, readings, trends }: BarsProps) {
           band={QUALITY_NORMAL}
           limits={[0, ...QUALITY_NORMAL]}
           format={(n) => (Number.isInteger(n) ? String(n) : n.toFixed(1))}
-          state={readings.quality.state}
+          /* The bar's state is the score against its own band; the page's caution belongs to the reading that caused it. */
           unread={quality === null}
           trend={trendOf(trends?.series.quality)}
           className={styles.fill}
