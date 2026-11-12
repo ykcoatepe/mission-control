@@ -59,7 +59,10 @@
 //             producer without semantic ids, the legacy GBrain caveats, gets
 //             textReasonId(): a hash of the caveat with its digits masked
 //   finding   `finding`, count = mloop's aggregated row count (else 1)
-//   confirmation  `confirmation`, count = the aggregate's count (else 1)
+//   confirmation  `confirmation:<CODE>` per code reported on it and
+//             `confirmation:overdue` for an overdue pending row, count 1;
+//             an aggregate row is its own item per kind with
+//             `confirmation:<CODE>` = that kind's count
 //   cron job  `cron:failed`, count 1
 // Whether an acknowledgement holds is decided by the ack store
 // (server/services/attentionAcks.js), passed in as `acks`.
@@ -225,25 +228,36 @@ function subjectHash(text) {
   return hash12(typeof text === 'string' ? text : '');
 }
 
-// What only tells time in a free text: ISO and clock timestamps, a number
-// followed by a time unit, and "N ago". Nothing else is masked.
-const TIME_PATTERNS = Object.freeze([
-  /\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?/g,
-  /\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?(?:am|pm)\b)?/g,
-  /\b\d+(?:\.\d+)?\s?(?:ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)\b/g,
-  /\b\d+(?:\.\d+)?\s+ago\b/g,
+// What only tells time in a free text. Timestamps (ISO, "3 Nov", clock) are
+// always time. A number with a time unit is a duration only in a duration
+// CONTEXT: right after one of DURATION_BEFORE (with filler words at most), or
+// right before one of ago/old/late/overdue/behind. Anywhere else ("job 1d
+// failed") the token is part of the identity and is kept.
+const TIME_UNIT = '(?:ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w)';
+const DURATION = `\\d+(?:\\.\\d+)?\\s?${TIME_UNIT}\\b(?:,?\\s?(?:and\\s)?\\d+(?:\\.\\d+)?\\s?${TIME_UNIT}\\b)*`;
+const DURATION_BEFORE = 'older than|newer than|for|in|after|since|waiting|waited|last|past|every|over|under|within|age|aged|idle|stale|silent|overdue|behind|lag|lagging';
+const DURATION_FILLER = '(?:\\s?[:=])?(?:\\s(?:for|about|around|almost|nearly|over|under|more than|less than|at least|up to|only|just|roughly|approximately|the|a|by|of|is|was|now))*';
+const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\.?';
+const TIME_REWRITES = Object.freeze([
+  [/\d{4}-\d{2}-\d{2}(?:[t ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:z|[+-]\d{2}:?\d{2})?)?/g, '<time>'],
+  [new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s${MONTH}(?:\\s\\d{4}\\b)?|\\b${MONTH}\\s\\d{1,2}(?:st|nd|rd|th)?\\b(?:,?\\s\\d{4}\\b)?`, 'g'), '<time>'],
+  [/\b\d{1,2}:\d{2}(?::\d{2})?(?:\s?(?:am|pm)\b)?/g, '<time>'],
+  [new RegExp(`\\b(${DURATION_BEFORE})\\b(${DURATION_FILLER})\\s?${DURATION}`, 'g'), '$1$2 <time>'],
+  [new RegExp(`\\b${DURATION}(\\s(?:ago|old|late|overdue|behind)\\b)`, 'g'), '<time>$1'],
+  [/\b\d+(?:\.\d+)?\s+ago\b/g, '<time> ago'],
 ]);
 
 /**
  * The reason id of a reason that has only free text and no semantic id:
  * `<prefix>:<12 hex>` of the text lower-cased, whitespace collapsed, with
- * durations and clock values masked (TIME_PATTERNS) and every other number
- * kept. "waiting 5 minutes" and "waiting 6 minutes" are one reason; "job 1
- * failed" and "job 2 failed", or "3 chunks" and "9 chunks", are different ones.
+ * timestamps and durations-in-context masked (TIME_REWRITES) and every other
+ * number kept. "waiting 5 minutes" and "waiting 6 minutes" are one reason;
+ * "job 1d failed" and "job 2d failed", "job 1 failed" and "job 2 failed", or
+ * "3 chunks" and "9 chunks", are different ones.
  */
 function textReasonId(prefix, text) {
   let normalised = String(text ?? '').toLowerCase().replace(/\s+/g, ' ').trim();
-  for (const pattern of TIME_PATTERNS) normalised = normalised.replace(pattern, '<time>');
+  for (const [pattern, replacement] of TIME_REWRITES) normalised = normalised.replace(pattern, replacement);
   return `${prefix}:${hash12(normalised)}`;
 }
 
@@ -366,9 +380,11 @@ function itemCount(value) {
 }
 
 // reasons: { reasonId: count } (plain ids; hashed in the fingerprint).
-function makeItem(key, part, state, { reasons = {}, units = 1 } = {}) {
+// aggregate: how many confirmations an aggregate row stands for (it names no
+// ids, so its badge contribution is settled against the named ones later).
+function makeItem(key, part, state, { reasons = {}, units = 1, aggregate } = {}) {
   const rank = stateRank(state);
-  return { key, part, state, rank, units, reasons, fingerprint: fingerprintOf(rank, reasons) };
+  return { key, part, state, rank, units, reasons, fingerprint: fingerprintOf(rank, reasons), ...(aggregate ? { aggregate } : {}) };
 }
 
 // Two readings of one key: the worse state, every reason, the larger count.
@@ -378,7 +394,11 @@ function mergeItems(known, item, reasons) {
   for (const [id, n] of Object.entries(item.reasons)) merged[id] = Math.max(merged[id] || 0, n);
   Object.assign(merged, reasons);
   const rank = stateRank(state);
-  return { ...known, state, rank, units: known.units + item.units, reasons: merged, fingerprint: fingerprintOf(rank, merged) };
+  const aggregate = Math.max(known.aggregate || 0, item.aggregate || 0);
+  return {
+    ...known, state, rank, units: known.units + item.units, reasons: merged, fingerprint: fingerprintOf(rank, merged),
+    ...(aggregate ? { aggregate } : {}),
+  };
 }
 
 function mergeInto(map, item) {
@@ -427,44 +447,66 @@ function projectNeeds(findings, confirmations, projectId = null) {
   const states = [];
   let findingCount = 0;
   const findingItems = new Map();
-  const ids = new Map(); // confirmation id -> state
-  let aggregate = null;
+  // Nothing is dropped before the fingerprint: every code that names a
+  // confirmation is one of its reason ids (`confirmation:<CODE>`, and
+  // `confirmation:overdue` for an overdue pending row), and every aggregate
+  // row is a countable item of its own with its code's id and count.
+  const ids = new Map(); // confirmation id -> { state, reasons }
+  const aggregates = new Map(); // key (or a symbol when unkeyed) -> item
+  const named = (id, state, reason) => {
+    const known = ids.get(id);
+    ids.set(id, { state: worstState([known?.state, state], { empty: state }), reasons: { ...known?.reasons, [reason]: 1 } });
+  };
   for (const finding of findings) {
     const state = LOOP_STATE[finding?.severity];
     if (!state) continue;
     states.push(state);
+    const code = typeof finding.code === 'string' && CODE_PATTERN.test(finding.code) ? finding.code : 'UNKNOWN';
     if (!CONFIRMATION_ID_CODES.has(finding.code)) {
       findingCount += 1;
       mergeInto(findingItems, makeItem(keyed ? findingKey(projectId, finding.code, finding.subject, finding.subjectHash) : null, 'findings', state, { reasons: { finding: itemCount(finding.count) } }));
     } else if (isAggregate(finding)) {
-      const n = Number.isInteger(finding.count) && finding.count > 0 ? finding.count : 1;
-      if (!aggregate || n > aggregate.count) aggregate = { finding, count: n, state };
+      const n = itemCount(finding.count);
+      const subject = typeof finding.subject === 'string' && finding.subject ? finding.subject : finding.code;
+      const key = (keyed ? confirmationKey(projectId, subject, finding.subjectHash) : null) ?? Symbol('unkeyed');
+      const item = makeItem(typeof key === 'string' ? key : null, 'overdueConfirmations', state, { reasons: { [`confirmation:${code}`]: n }, units: 0, aggregate: n });
+      const known = aggregates.get(key);
+      // Two aggregate rows of one code under one key add up; other codes keep their own id.
+      aggregates.set(key, known
+        ? mergeItems(known, item, { [`confirmation:${code}`]: (known.reasons[`confirmation:${code}`] || 0) + n })
+        : item);
     } else {
-      const id = confirmationIdentity(String(finding.subject), finding.subjectHash);
-      ids.set(id, worstState([ids.get(id), state], { empty: state }));
+      named(confirmationIdentity(String(finding.subject), finding.subjectHash), state, `confirmation:${code}`);
     }
   }
+  const largestAggregate = Math.max(0, ...[...aggregates.values()].map((item) => item.aggregate));
   const findingList = [...findingItems.values()];
   if (confirmations === null || (confirmations !== undefined && !Array.isArray(confirmations))) {
     return { findings: findingCount, confirmations: null, states, items: findingList };
   }
   (confirmations || []).forEach((row, index) => {
     if (!row?.overdue) return;
-    const id = typeof row.id === 'string' && row.id ? confirmationIdentity(row.id, row.idHash) : `#row-${index}`;
-    ids.set(id, worstState([ids.get(id), 'warning'], { empty: 'warning' }));
+    named(typeof row.id === 'string' && row.id ? confirmationIdentity(row.id, row.idHash) : `#row-${index}`, 'warning', 'confirmation:overdue');
     states.push('warning');
   });
   const items = [...findingList];
-  for (const [id, state] of ids) items.push(makeItem(keyed ? confirmationKey(projectId, id) : null, 'overdueConfirmations', state, { reasons: { confirmation: 1 } }));
-  // An aggregate names no ids, so it overlaps whatever ids are known: it adds
-  // only the confirmations beyond them.
-  if (aggregate) {
-    const subject = typeof aggregate.finding.subject === 'string' && aggregate.finding.subject ? aggregate.finding.subject : aggregate.finding.code;
-    items.push(makeItem(keyed ? confirmationKey(projectId, subject) : null, 'overdueConfirmations', aggregate.state, {
-      reasons: { confirmation: aggregate.count }, units: Math.max(0, aggregate.count - ids.size),
-    }));
-  }
-  return { findings: findingCount, confirmations: Math.max(ids.size, aggregate?.count || 0), states, items };
+  for (const [id, { state, reasons }] of ids) items.push(makeItem(keyed ? confirmationKey(projectId, id) : null, 'overdueConfirmations', state, { reasons }));
+  items.push(...aggregates.values());
+  // An aggregate names no ids, so it may overlap the named confirmations and
+  // the other aggregates: the count of a project is the larger of the two
+  // (settleConfirmations() does the same among the items that count now).
+  return { findings: findingCount, confirmations: Math.max(ids.size, largestAggregate), states, items };
+}
+
+// The badge contribution of one project's confirmation items, de-duplicated
+// AFTER the acknowledgements are applied: among the items given (those that
+// count, or those that are standing) it is the larger of the named
+// confirmations and the largest aggregate. So an aggregate that is not
+// acknowledged always counts, however many others are acknowledged.
+function settleConfirmations(items) {
+  const namedUnits = items.filter((item) => !item.aggregate).reduce((sum, item) => sum + item.units, 0);
+  const largest = Math.max(0, ...items.filter((item) => item.aggregate).map((item) => item.aggregate));
+  return Math.max(namedUnits, largest);
 }
 
 /** A failed scheduled job as a countable item (never display text, no ticking number). */
@@ -562,6 +604,7 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
     const known = { findings: true, overdueConfirmations: true };
     let restricted = 0;
     const pending = [];
+    const confirmationsByProject = [];
     for (const project of loops.projects) {
       if (project?.restricted) {
         const { operatorFindings: findings, operatorConfirmations: confirmations } = project;
@@ -575,13 +618,24 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
       const needs = projectNeeds(project?.findings, project?.pendingConfirmations, typeof project?.id === 'string' ? project.id : null);
       if (needs.findings === null) known.findings = false;
       if (needs.confirmations === null) known.overdueConfirmations = false;
-      pending.push(...needs.items);
+      pending.push(...needs.items.filter((item) => item.part !== 'overdueConfirmations'));
+      if (needs.confirmations !== null) confirmationsByProject.push(needs.items.filter((item) => item.part === 'overdueConfirmations'));
     }
     breakdown.findings = known.findings ? 0 : null;
     breakdown.overdueConfirmations = known.overdueConfirmations ? 0 : null;
     breakdown.restricted = restricted;
     // A part that was not read counts nothing (it is named in `missing`).
     pending.filter((item) => breakdown[item.part] !== null).forEach(take);
+    if (breakdown.overdueConfirmations !== null) {
+      for (const items of confirmationsByProject) {
+        const held = items.filter((item) => holds(acks, item));
+        const counting = items.filter((item) => !held.includes(item));
+        const units = settleConfirmations(counting);
+        standing += settleConfirmations(held);
+        breakdown.overdueConfirmations += units;
+        if (units > 0) fresh.push(...counting.map((item) => item.state));
+      }
+    }
   }
   const missing = PARTS.filter((part) => breakdown[part] === null);
   if (missing.length === PARTS.length) return null;

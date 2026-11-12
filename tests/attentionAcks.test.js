@@ -830,3 +830,74 @@ test('a stored acknowledgement whose fingerprint is overflow or malformed holds 
     assert.equal(signals.attention.count, 2);
   } finally { await f.cleanup(); }
 }));
+
+// Confirmation aggregates: every kind is its own reason id and its own countable item. Nothing is
+// dropped by a max() before the fingerprint, and what is not acknowledged always reaches the badge.
+test('a new confirmation aggregate counts even when a larger one is acknowledged; each kind has its own key, id and count', () => run({}, async (f) => {
+  const aggregate = (code, count, severity = 'warning') => finding('alpha', code, code, severity, { count });
+  f.state.checkRows = [aggregate('TEYIT_STALE', 60)];
+  await f.loops.refresh();
+  let { signals, loops } = await f.both();
+  assert.equal(signals.attention.breakdown.overdueConfirmations, 60);
+  assert.equal(attentionRow(loops, 'TEYIT_STALE').key, 'confirmation:alpha:TEYIT_STALE');
+  assert.equal((await f.ack('confirmation:alpha:TEYIT_STALE')).status, 200);
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.count, 0);
+  assert.equal(signals.attention.standing, 60);
+
+  // A second, smaller aggregate of another kind appears.
+  f.state.checkRows = [aggregate('TEYIT_STALE', 60), aggregate('TEYIT_KEEP_KILL', 51, 'error')];
+  await f.loops.refresh();
+  ({ signals, loops } = await f.both());
+  assert.equal(signals.attention.count, 51, 'the new kind is not hidden behind the larger acknowledged one');
+  assert.equal(signals.attention.worst, 'critical');
+  assert.equal(signals.attention.standing, 60);
+  const keepKill = attentionRow(loops, 'TEYIT_KEEP_KILL');
+  assert.equal(keepKill.key, 'confirmation:alpha:TEYIT_KEEP_KILL');
+  assert.equal(keepKill.ackable, true, 'it is a countable item of its own');
+  assert.equal(keepKill.ack, null);
+  assert.equal(attentionRow(loops, 'TEYIT_STALE').ack.kind, 'ack');
+
+  assert.equal((await f.ack(keepKill.key)).status, 200);
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.count, 0);
+  assert.equal(signals.attention.standing, 60, 'standing de-duplicates overlapping aggregates');
+
+  // A higher count in either kind is worse for that kind only.
+  f.state.checkRows = [aggregate('TEYIT_STALE', 60), aggregate('TEYIT_KEEP_KILL', 52, 'error')];
+  await f.loops.refresh();
+  ({ signals, loops } = await f.both());
+  assert.equal(signals.attention.count, 52);
+  assert.equal(attentionRow(loops, 'TEYIT_STALE').ack.kind, 'ack');
+  f.state.checkRows = [aggregate('TEYIT_STALE', 61), aggregate('TEYIT_KEEP_KILL', 51, 'error')];
+  await f.loops.refresh();
+  ({ signals, loops } = await f.both());
+  assert.equal(signals.attention.count, 61);
+  assert.equal(attentionRow(loops, 'TEYIT_KEEP_KILL').ack.kind, 'ack');
+
+  // Unacknowledged, overlapping kinds are de-duplicated in the badge, not added up.
+  assert.equal((await f.request('DELETE', '/api/attention/acks/confirmation%3Aalpha%3ATEYIT_KEEP_KILL')).status, 200);
+  assert.equal((await f.both()).signals.attention.count, 61);
+}));
+
+test('a named confirmation keeps every kind it is reported under: a new kind on an acknowledged confirmation counts as new', () => run({}, async (f) => {
+  const due = finding('alpha', 'TEYIT_DUE', 'T1', 'info'); // information only: not a counted kind
+  f.state.checkRows = [due];
+  f.state.teyit = [{ project: 'alpha', id: 'T1', unit: 'u', how: 'h', deadline: '2026-11-10T00:00:00Z', state: 'open', closed: false }];
+  await f.loops.refresh();
+  assert.equal((await f.ack('confirmation:alpha:T1')).status, 200);
+  assert.equal((await f.both()).signals.attention.count, 0);
+
+  // The same severity, a different problem with the same confirmation.
+  f.state.checkRows = [due, finding('alpha', 'TEYIT_RESCHEDULED_REPEATEDLY', 'T1', 'warning')];
+  await f.loops.refresh();
+  let { signals } = await f.both();
+  assert.equal(signals.attention.count, 1, 'a kind that was not acknowledged');
+  assert.equal(signals.attention.standing, 0);
+  assert.equal((await f.ack('confirmation:alpha:T1')).status, 200);
+  f.state.checkRows = [due];
+  await f.loops.refresh();
+  ({ signals } = await f.both());
+  assert.equal(signals.attention.count, 0, 'a kind going away is never worse');
+  assert.equal(signals.attention.standing, 1);
+}));

@@ -140,12 +140,13 @@ going away is never worse.
 | system (GBrain verdict) | `gbrain:embed-job-probe` | chunks waiting |
 | system (GBrain verdict) | `gbrain:queue` | stalled jobs |
 | system (GBrain verdict) | `gbrain:gbrain-core`, `gbrain:stale-pages`, `gbrain:sources`, `gbrain:readers`, `gbrain:gbrain.<probe>`, `gbrain:<source id>`, `gbrain:<reader id>` | 1 |
-| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, durations and clock values masked (a number with a time unit, "N ago", ISO and clock timestamps), every other number kept>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
+| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, timestamps masked (ISO, day-month dates, clock values) and a number with a time unit masked only in a duration context (after for/in/since/waiting/last/within/stale/… or before ago/old/late/overdue/behind), every other number kept>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
 | system (GBrain, legacy overview) | `gbrain:stale-sources` | stale sources |
 | system (GBrain) | `gbrain:capabilities-unavailable`, `gbrain:unavailable` | 1 |
 | system (any) | `source:<source name>` (its read failed) | 1 |
 | finding | `finding` | mloop's aggregated row count |
-| confirmation | `confirmation` | the aggregate's count |
+| confirmation (named id) | `confirmation:<CODE>` for every code reported on it, `confirmation:overdue` for an overdue pending row | 1 |
+| confirmation aggregate (one item per kind, key `confirmation:<project>:<CODE>`) | `confirmation:<CODE>` | that kind's count |
 | cron job | `cron:failed` | 1 |
 
 - `ack` ("seen, it will stay like this") holds while the item is not worse than its fingerprint at
@@ -156,6 +157,9 @@ going away is never worse.
 - A fingerprint holds at most 128 reasons and is never folded or cut: an item with more is listed as
   new, is not ackable (`409 not_ackable`) and is held by no acknowledgement; the same goes for a
   stored acknowledgement whose fingerprint is not well formed.
+- Confirmation aggregates overlap (they name no ids), so the badge de-duplicates them after the
+  acknowledgements are applied: per project it is the larger of the named confirmations and the
+  largest aggregate among the items that count. An unacknowledged aggregate therefore always counts.
 - `shelve` silences until `until` (or until removed with `null`), except that a shelved item counts
   while its rank is critical.
 - GETs are pure: they read the stored records and the current readings and write nothing.

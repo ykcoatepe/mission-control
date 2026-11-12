@@ -140,28 +140,43 @@ test('more reasons than the cap: the fingerprint is overflow, never comparable, 
   }
 });
 
-// Finding 5: only what tells time is masked; every other number stays in the identity.
-test('a reason with only free text: durations and clock values are masked, every other number is part of the identity', () => {
+// Only what tells time is masked, and a number with a unit only in a duration context.
+test('a reason with only free text: timestamps and durations in context are masked, every other number is part of the identity', () => {
   const id = (text) => textReasonId('gbrain:legacy-caveat', text);
   const same = (a, b) => assert.equal(id(a), id(b), `${a} / ${b}`);
   const different = (a, b) => assert.notEqual(id(a), id(b), `${a} / ${b}`);
   assert.match(id('Embedding unavailable for 5 minutes.'), /^gbrain:legacy-caveat:[0-9a-f]{12}$/);
   same('waiting 5 minutes', 'waiting 6 minutes');
+  same('silent since 3 Nov, 12:25', 'silent since 4 Nov, 07:13');
   same('Embedding unavailable for 5 minutes.', 'embedding   UNAVAILABLE for 1234 minutes.\n');
   for (const unit of ['s', 'sec', 'secs', 'second', 'seconds', 'm', 'min', 'mins', 'minute', 'minutes', 'h', 'hr', 'hrs', 'hour', 'hours', 'd', 'day', 'days', 'w', 'week', 'weeks', 'ms']) {
     same(`stale for 3${unit} now`, `stale for 41${unit} now`);
     same(`stale for 3 ${unit} now`, `stale for 41 ${unit} now`);
+    same(`last seen 3${unit} ago`, `last seen 41 ${unit} ago`);
+    different(`job 3${unit} failed`, `job 41${unit} failed`);
   }
+  for (const before of ['for', 'in', 'after', 'since', 'waiting', 'waited', 'last', 'past', 'every', 'over', 'under', 'within', 'older than', 'newer than', 'age', 'aged', 'idle', 'stale', 'silent', 'overdue', 'behind', 'lag', 'lagging']) {
+    same(`sync ${before} 5m`, `sync ${before} 59m`);
+  }
+  for (const after of ['ago', 'old', 'late', 'overdue', 'behind']) same(`page 2h ${after}`, `page 7h ${after}`);
+  same('lag: 3s', 'lag: 12s');
+  same('behind by about 2 hours', 'behind by about 9 hours');
+  same('waiting 1h 5m 30s', 'waiting 2h 59m 1s');
   same('last sync 3 ago', 'last sync 17 ago');
   same('silent since 2026-11-03T09:25:15+00:00', 'silent since 2026-11-12T01:02:03Z');
-  same('silent since 2026-11-03', 'silent since 2026-11-12');
   same('job failed at 09:41', 'job failed at 23:05:59');
-  same('down 1h 5m 30s', 'down 2h 59m 1s');
+  same('down since Nov 3, 2026', 'down since November 12, 2026');
+  different('job 1d failed', 'job 2d failed');
   different('job 1 failed', 'job 2 failed');
-  different('3 chunks missing', '9 chunks missing');
+  different('3 chunks', '9 chunks');
+  different('task 5m is blocked', 'task 6m is blocked');
+  different('run 3h and source 4d disagree', 'run 4h and source 4d disagree');
+  different('failed in job 1d', 'failed in job 2d'); // an entity word between the context word and the token
+  different('session 7s lost', 'session 8s lost');
+  different('#3d broke', '#4d broke');
   different('12 of 3400 chunks waiting', '7 of 9 chunks waiting');
   different('error 500 from source 3', 'error 502 from source 3');
   different('Embedding unavailable.', 'Source sync failed.');
   different('unavailable for 5 minutes', 'unavailable for 5 monkeys');
-  different('5 sources stale', '6 sources stale'); // "s" must be a whole word to be a unit
+  different('5 sources stale', '6 sources stale');
 });
