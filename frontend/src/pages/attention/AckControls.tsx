@@ -13,6 +13,8 @@ interface AckControlsProps {
   actions: AckActions
   /** `new`: Acknowledge and Shelve…; `standing`: Undo. */
   mode: 'new' | 'standing'
+  /** The acknowledgements were not read: the controls are shown but cannot be used. */
+  disabled?: boolean
 }
 
 /** The server's message for a failed request, next to the control that sent it. */
@@ -29,8 +31,9 @@ export function AckError({ message }: { message: string | undefined }) {
 // A control inside a clickable row must not also open the row.
 const stop = (event: MouseEvent) => event.stopPropagation()
 
-export default function AckControls({ ackKey, name, actions, mode }: AckControlsProps) {
-  const [shelving, setShelving] = useState(false)
+export default function AckControls({ ackKey, name, actions, mode, disabled = false }: AckControlsProps) {
+  const [shelvingOpen, setShelving] = useState(false)
+  const shelving = shelvingOpen && !disabled
   const busy = actions.busy.has(ackKey)
   const error = actions.errors[ackKey]
 
@@ -38,7 +41,13 @@ export default function AckControls({ ackKey, name, actions, mode }: AckControls
     <div className={styles.controls} onClick={stop}>
       {mode === 'standing' ? (
         <div className={styles.buttons}>
-          <Button size="sm" loading={busy} aria-label={`Undo: ${name}`} onClick={() => void actions.undo(ackKey)}>
+          <Button
+            size="sm"
+            loading={busy}
+            disabled={disabled}
+            aria-label={`Undo: ${name}`}
+            onClick={() => void actions.undo(ackKey)}
+          >
             Undo
           </Button>
         </div>
@@ -71,6 +80,7 @@ export default function AckControls({ ackKey, name, actions, mode }: AckControls
           <Button
             size="sm"
             loading={busy}
+            disabled={disabled}
             aria-label={`Acknowledge: ${name}`}
             onClick={() => void actions.acknowledge(ackKey)}
           >
@@ -79,7 +89,7 @@ export default function AckControls({ ackKey, name, actions, mode }: AckControls
           <Button
             size="sm"
             variant="ghost"
-            disabled={busy}
+            disabled={busy || disabled}
             aria-label={`Shelve: ${name}`}
             onClick={() => setShelving(true)}
           >

@@ -47,19 +47,22 @@ Shared plumbing for every area. Binding design:
 ## Attention acknowledgements (badge rule)
 
 `server/services/attentionAcks.js` is the one store for acknowledged and
-shelved attention items (`data/attention/acks.json`, 0600, atomic, bounded,
-locked read-merge-write, a corrupt file kept as `.corrupt-<time>`). Keys and
-fingerprints come from `server/sources/mloop/attention.js`
-(`attentionItems()`); `needsOperator({ ..., acks })`, `loopsView(..., { acks })`
-and `projectCronAcks(cron, acks)` (`sources/openclaw/automations.js`) apply it
-on read without touching the disk. Writes are `POST /api/attention/acks` and
+shelved attention items (`data/attention/acks.json`, 0600, atomic, bounded, an
+invalid file kept as `.corrupt-<time>`). Keys and fingerprints
+(`{ rank, reasonIds, counts }`, `worseThan()`) come from
+`server/sources/mloop/attention.js` (`attentionItems()`);
+`needsOperator({ ..., acks })`, `loopsView(..., { acks })` and
+`projectCronAcks(cron, acks)` (`sources/openclaw/automations.js`) apply it on
+read: pure, no write, no memory. Writes are `POST /api/attention/acks` and
 `DELETE /api/attention/acks/:key` (`server/routes/attentionAcks.js`), guarded
-and audited like every mutation, plus two non-request paths: the scheduler job
-`attention.acks` (every 5 s, `acks.sweep()`) writes voids a GET could only keep
-in memory, and `dispose()` closes the store with a final write. One instance
-per file per process; every write re-reads and merges under `acks.json.lock`.
-A process that stopped without closing leaves stored acknowledgements
-untrusted (voided) at the next write or start. Contract: `docs/reference-operator-surfaces.md`.
+and audited like every mutation, plus one non-request path: the scheduler job
+`attention.acks` (`acks.reconcile()`, after every refresh of a contributing
+source via `source.onRefresh()` and every 5 s), the only place a void is
+decided; it writes the tombstone before it returns. One process owns the file
+(`acks.json.owner`: pid + process start time, never displaced while alive, no
+time-based takeover); `runtime.start()` opens the store, and while it cannot be
+owned reads treat nothing as acknowledged and envelopes carry
+`acks: { available: false }`. Contract: `docs/reference-operator-surfaces.md`.
 
 ## Worked example: OpenClaw status
 

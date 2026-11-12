@@ -24,6 +24,36 @@ function capturedMs(entry) {
   return Number.isFinite(t) ? t : null;
 }
 
+/** Readings older than this, or dated more than this far ahead of the clock, are not readings of this ledger. */
+const EARLIEST_MS = Date.parse('2020-01-01T00:00:00Z');
+const FUTURE_SKEW_MS = 5 * 60_000;
+
+function plainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Whether a parsed ledger line is a reading: `capturedAt` is a string that parses to a time between
+ * EARLIEST_MS and a little after `now`, `metrics` and `trust` (when present) are objects, every number
+ * they carry is finite (JSON reads 1e999 as Infinity), and the three series fields are text or absent.
+ * Anything else is a line that could not be read (counted, never silently dropped or kept).
+ */
+function validEntry(entry, now) {
+  if (!plainObject(entry) || typeof entry.capturedAt !== 'string') return false;
+  const t = Date.parse(entry.capturedAt);
+  if (!Number.isFinite(t) || t < EARLIEST_MS || t > now + FUTURE_SKEW_MS) return false;
+  for (const part of [entry.metrics, entry.trust]) {
+    if (part === undefined || part === null) continue;
+    if (!plainObject(part)) return false;
+    for (const value of Object.values(part)) if (typeof value === 'number' && !Number.isFinite(value)) return false;
+  }
+  for (const name of ['health', 'embeddings', 'queue']) {
+    const value = entry.metrics?.[name];
+    if (value !== undefined && value !== null && typeof value !== 'string') return false;
+  }
+  return true;
+}
+
 function text(value) {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -95,9 +125,9 @@ class TrendsReadError extends Error {
  * backwards stops once OLDER_IN_A_ROW complete readings in a row are older than `since`. Input is bounded twice: at most
  * `maxBytes` bytes are read and at most `maxLines` lines parsed; a window that needs more is a typed
  * failure (`gbrain_trends_too_large`), never a whole-file read that blocks the event loop. A line that
- * is not a JSON object is counted in `skippedLines`, never silently dropped.
+ * is not a valid reading (validEntry) is counted in `skippedLines`, never silently dropped or kept.
  */
-function readLedgerTail(ledgerPath, { since, maxBytes = MAX_TAIL_BYTES, maxLines = MAX_TAIL_LINES, fsImpl = fs } = {}) {
+function readLedgerTail(ledgerPath, { since, now = Date.now(), maxBytes = MAX_TAIL_BYTES, maxLines = MAX_TAIL_LINES, fsImpl = fs } = {}) {
   let fd;
   try {
     fd = fsImpl.openSync(ledgerPath, 'r');
@@ -132,11 +162,11 @@ function readLedgerTail(ledgerPath, { since, maxBytes = MAX_TAIL_BYTES, maxLines
           try {
             parsed = JSON.parse(line);
           } catch {}
-          if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          if (!validEntry(parsed, now)) {
             skippedLines += 1;
           } else {
             const t = capturedMs(parsed);
-            if (t !== null && t < since) {
+            if (t < since) {
               older += 1;
               if (older >= OLDER_IN_A_ROW) return true;
             } else {
@@ -202,7 +232,7 @@ function createTrendsReader({ windowMs = WINDOW_MS, maxBytes = MAX_TAIL_BYTES, m
     const key = stat ? `${ledgerPath}:${stat.ino}:${stat.mtimeMs}:${stat.size}` : `${ledgerPath}:absent`;
     // A cached tail covers any later window of the same file (the window only moves forward).
     if (cache && cache.key === key && cache.since <= since) return cache.value;
-    const tail = readLedgerTail(ledgerPath, { since, maxBytes, maxLines, fsImpl });
+    const tail = readLedgerTail(ledgerPath, { since, now, maxBytes, maxLines, fsImpl });
     const value = {
       entries: tail.entries,
       skippedLines: tail.skippedLines,

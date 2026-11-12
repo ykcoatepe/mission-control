@@ -1,4 +1,5 @@
 const express = require('express');
+const { acksStatus } = require('../services/attentionAcks');
 const { httpError } = require('../core/http');
 const { withWriteThrough } = require('../sources/openclaw/writeThrough');
 const { commitCronMutation } = require('../sources/openclaw/cronMutations');
@@ -87,7 +88,7 @@ function buildCronRouter({ cronService, openclawExec, automationSource, afterCro
     if (!snap.data) throw httpError(503, 'automations_unavailable', 'Automation data has not been observed');
     // Badge rule: every job carries ackKey (cron:<job id>) and ack; the
     // summary splits failed into failed and standingFailed.
-    return res.json({ ...projectCronAcks(snap.data.cron, acks), meta: snap.meta });
+    return res.json({ ...projectCronAcks(snap.data.cron, acks), acks: acksStatus(acks), meta: snap.meta });
   });
 
   router.post('/api/cron/:id/toggle', async (req, res, next) => {

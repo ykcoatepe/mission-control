@@ -5,6 +5,7 @@
 //   const source = createSource({ id, read, ttlMs, timeoutMs, staleAfterMs });
 //   await source.refresh();     // single-flight read; never throws
 //   source.snapshot();          // { data, meta: { ok, stale, observedAt, ageMs, error, latencyMs, source } }
+//   source.onRefresh(fn);       // fn() after every refresh settles (dependent bookkeeping)
 //   source.get();               // snapshot now, background refresh if older than ttlMs
 //                               // (starts an upstream read: never call it from a GET
 //                               // handler; routes use snapshot(), the scheduler refreshes)
@@ -57,6 +58,7 @@ function createSource({
   let lastLatencyMs = null;
   let reads = 0;
   let failures = 0;
+  const listeners = new Set(); // called after every refresh settles (see onRefresh)
   let inFlight = null; // promise of the running refresh (resolves to a snapshot)
   let readRunning = false; // true until the underlying read settles
 
@@ -105,6 +107,11 @@ function createSource({
         if (timer) clearTimeoutImpl(timer);
         inFlight = null;
         resolve(snapshot());
+        for (const listener of listeners) {
+          try {
+            listener();
+          } catch {}
+        }
       };
 
       timer = setTimeoutImpl(() => {
@@ -166,7 +173,14 @@ function createSource({
     };
   }
 
-  return { id, refresh, snapshot, get, status };
+  /** Call `listener` after every refresh settles (good, failed or timed out). Returns an unsubscribe. */
+  function onRefresh(listener) {
+    if (typeof listener !== 'function') throw new TypeError(`source(${id}).onRefresh: listener must be a function`);
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+  }
+
+  return { id, refresh, snapshot, get, status, onRefresh };
 }
 
 module.exports = { createSource, SourceReadError };

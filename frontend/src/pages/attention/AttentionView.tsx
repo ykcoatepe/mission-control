@@ -70,6 +70,8 @@ type KeyedRow = Exclude<AttentionRow, { type: 'restricted' }>
 export default function AttentionView({ data, meta, attention, refreshError, onRetry }: AttentionViewProps) {
   const now = useNow()
   const actions = useAckActions()
+  // The server could not read its acknowledgements: every item is listed as new, and nothing can be acknowledged.
+  const acksUnread = data.acks?.available === false
   const standingId = useId()
   const [confirmingAll, setConfirmingAll] = useState(false)
   const [standingOpen, setStandingOpen] = useState(false)
@@ -246,7 +248,9 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       header: 'Action',
       width: '300px',
       cell: (row) =>
-        row.ackKey ? <AckControls ackKey={row.ackKey} name={rowSentence(row)} actions={actions} mode="new" /> : null,
+        row.ackKey ? (
+          <AckControls ackKey={row.ackKey} name={rowSentence(row)} actions={actions} mode="new" disabled={acksUnread} />
+        ) : null,
     },
   ]
   const standingColumns: DataTableColumn<KeyedRow>[] = [
@@ -269,7 +273,13 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       width: '140px',
       cell: (row) =>
         row.ackKey ? (
-          <AckControls ackKey={row.ackKey} name={rowSentence(row)} actions={actions} mode="standing" />
+          <AckControls
+            ackKey={row.ackKey}
+            name={rowSentence(row)}
+            actions={actions}
+            mode="standing"
+            disabled={acksUnread}
+          />
         ) : null,
     },
   ]
@@ -353,7 +363,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
     )
   })()
   const alarmAction =
-    worst && worst.ackKey
+    worst && worst.ackKey && !acksUnread
       ? {
           label: 'Acknowledge',
           busy: actions.busy.has(worst.ackKey),
@@ -422,6 +432,14 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         </div>
       )}
 
+      {acksUnread && (
+        <p className={styles.unread}>
+          <StateMark state="unavailable" />
+          Acknowledgements not read. Every item is listed as new, and nothing can be acknowledged or shelved until
+          they are.
+        </p>
+      )}
+
       <div className={styles.toolbar}>
         <FilterChips
           ariaLabel="Filter the attention list"
@@ -459,7 +477,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
           title="New"
           meta={counted(shown.fresh, all.fresh.length)}
           actions={
-            ackableKeys.length > 1 ? (
+            ackableKeys.length > 1 && !acksUnread ? (
               <Button size="sm" loading={actions.bulkBusy} onClick={() => setConfirmingAll(true)}>
                 Acknowledge all ({ackableKeys.length})
               </Button>

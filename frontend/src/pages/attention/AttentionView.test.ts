@@ -545,3 +545,60 @@ describe('AttentionView: Acknowledge all', () => {
     await act(async () => root.unmount())
   })
 })
+
+describe('AttentionView: acknowledgements not read', () => {
+  const UNREAD: LoopsData = {
+    ...DATA,
+    acks: { available: false, reason: 'ack_store_owned' },
+    attention: [
+      ...DATA.attention.map((item) => ('ack' in item ? { ...item, ack: null } : item)),
+      {
+        project: 'delta',
+        kind: 'finding',
+        severity: 'warning',
+        code: 'ESCALATED_ROUNDS',
+        subject: 'd1',
+        detail: null,
+        summary: 'Rounds escalated',
+        at: '2026-11-06T09:25:15Z',
+        key: 'finding:delta:ESCALATED_ROUNDS:bbbbbbbbbbbb',
+        ackable: true,
+        ack: null,
+      },
+    ],
+  }
+
+  it('says so in one quiet "not read" note, lists every item as new and disables every acknowledge control', async () => {
+    const calls = stubFetch()
+    const { host } = await mount(UNREAD)
+    const note = [...host.querySelectorAll('p')].find((p) => p.textContent?.includes('Acknowledgements not read.'))
+    expect(note).toBeTruthy()
+    // Quiet: a "not read" sentence, not an alarm.
+    expect(note?.closest('[role="alert"]')).toBeNull()
+    const fresh = block(host, 'New')
+    expect(fresh?.querySelectorAll('tbody tr').length).toBe(3)
+    expect(block(host, 'Standing')).toBeNull()
+    const controls = [...(fresh?.querySelectorAll('tbody button') ?? [])] as HTMLButtonElement[]
+    expect(controls.length).toBe(6)
+    expect(controls.every((button) => button.disabled)).toBe(true)
+    expect(buttonIn(fresh, 'Acknowledge all (3)')).toBeUndefined()
+    // The alarm line names the worst item but offers no action that cannot work.
+    expect([...host.querySelectorAll('button')].filter((b) => b.textContent?.trim() === 'Acknowledge' && !b.disabled)).toEqual([])
+    for (const button of controls) {
+      await act(async () => {
+        button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      })
+    }
+    await flush()
+    expect(calls.filter((call) => call.method !== 'GET')).toEqual([])
+  })
+
+  it('shows no note and working controls when the acknowledgements were read (or the payload is older)', async () => {
+    for (const acks of [{ available: true, reason: null }, undefined]) {
+      const { host, root } = await mount({ ...DATA, acks })
+      expect(host.textContent).not.toContain('Acknowledgements not read')
+      expect(buttonIn(rowOf(host, 'sahil'), 'Acknowledge')?.disabled).toBe(false)
+      await act(async () => root.unmount())
+    }
+  })
+})

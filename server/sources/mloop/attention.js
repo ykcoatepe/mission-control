@@ -35,16 +35,30 @@
 // Every countable item has a stable key (system:<id>,
 // finding:<project>:<CODE>:<hash of the complete original subject>,
 // confirmation:<project>:<id or h+hash of the complete original id>,
-// cron:<job id>) and a fingerprint of what "worse" means: the severity rank
-// from server/core/state.js and a count (1 unless the item carries one). A
-// finding's key is derived from the subject as mloop wrote it, before it is
-// scrubbed or shortened for display (the source passes `subjectHash`), so two
-// findings that differ only after the shown part never share a key; the key
-// is a hash only and never carries the text. A system's fingerprint also
-// carries the identity set of its reasons (`reasons`: hashed stable reason
-// ids, never display text) and their number as its count: a new or different
-// reason voids an acknowledgement, a reason going away does not. The system
-// still adds at most one to the count.
+// cron:<job id>). A finding's key is derived from the subject as mloop wrote
+// it, before it is scrubbed or shortened for display (the source passes
+// `subjectHash`), so two findings that differ only after the shown part never
+// share a key; the key is a hash only and never carries the text.
+//
+// Every countable item has ONE fingerprint of what "worse" means:
+//   { rank, reasonIds: [sorted], counts: { reasonId: n } }
+// rank is the severity rank (server/core/state.js). A reason id is a stable
+// machine identifier (a code per reason kind plus its subject id), hashed for
+// storage; it is NEVER derived from display text, a duration or a number that
+// ticks. A reason that carries a magnitude (blocked tasks, missing chunks,
+// aggregated rows) puts it in counts; every other reason counts 1.
+// worseThan(acknowledged, current) is the one rule: the rank rose, a reason id
+// appeared that was not acknowledged, or a count rose above its acknowledged
+// value. A count falling or a reason going away is never worse.
+//
+// Reason ids by kind (the producers; see docs in the ack store):
+//   system    one per Operations attention item: its `reasonId`, else its
+//             fixed `id` (operationsOverview.js), with the item's `count`
+//             (default 1; several items of one id add up), plus
+//             `source:<name>` for every source whose read failed
+//   finding   `finding`, count = mloop's aggregated row count (else 1)
+//   confirmation  `confirmation`, count = the aggregate's count (else 1)
+//   cron job  `cron:failed`, count 1
 // Whether an acknowledgement holds is decided by the ack store
 // (server/services/attentionAcks.js), passed in as `acks`.
 //
@@ -134,7 +148,7 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
     const failed = metas.some(([, meta]) => meta.error);
     const refreshing = new Set(metas.filter(([, meta]) => meta.stale === true && !meta.error).map(([name]) => name));
     const items = attention.filter((item) => item?.system === id);
-    const reasons = systemReasonIds(items, metas);
+    const reasons = systemReasonCounts(items, metas);
     // Never held: criticals, and a failed read (at least 'unavailable').
     const criticals = [
       ...items.filter((item) => item.severity === 'critical').map(() => 'critical'),
@@ -157,17 +171,19 @@ function countedSystems(overview, { memoKey = null, now = Date.now } = {}) {
   });
 }
 
-// The stable identities of what a system is reported for: each attention item
-// by its stable reason id (`reasonId`, else its `id`), and each source whose
-// read failed. Never display text.
-function systemReasonIds(items, metas) {
-  const ids = new Set();
+// What a system is reported for, as { reasonId: count }: each attention item
+// by its stable reason id (`reasonId`, else its fixed `id`) with its magnitude
+// (`count`, default 1; items sharing an id add up), and each source whose read
+// failed. Never display text.
+function systemReasonCounts(items, metas) {
+  const counts = {};
   for (const item of items) {
-    const id = typeof item?.reasonId === 'string' && item.reasonId ? item.reasonId : typeof item?.id === 'string' && item.id ? item.id : null;
-    ids.add(id ?? `code:${typeof item?.reasonCode === 'string' ? item.reasonCode : 'unknown'}`);
+    const named = typeof item?.reasonId === 'string' && item.reasonId ? item.reasonId : typeof item?.id === 'string' && item.id ? item.id : null;
+    const id = named ?? `code:${typeof item?.reasonCode === 'string' ? item.reasonCode : 'unknown'}`;
+    counts[id] = (counts[id] || 0) + itemCount(item?.count);
   }
-  for (const [name, meta] of metas) if (meta?.error) ids.add(`source:${name}`);
-  return [...ids].sort();
+  for (const [name, meta] of metas) if (meta?.error) counts[`source:${name}`] = 1;
+  return counts;
 }
 
 function isCount(value) {
@@ -192,9 +208,12 @@ const KEY_SHAPES = Object.freeze({
 // its reading was read).
 const KEY_DOMAINS = Object.freeze({ system: 'systems', finding: 'loops', confirmation: 'loops', cron: 'cron' });
 const HASH12 = /^[0-9a-f]{12}$/;
-// At most this many reason identities are kept in a fingerprint (the count
-// still rises past it, so a new reason beyond it voids an acknowledgement).
-const MAX_REASON_IDS = 64;
+// At most this many reason identities are kept in a fingerprint; the rest
+// are counted under MORE_REASONS, so a new reason beyond the limit still
+// raises a count and voids an acknowledgement.
+const MAX_REASON_IDS = 128;
+const MORE_REASONS = '~more';
+const MAX_COUNT = Number.MAX_SAFE_INTEGER;
 
 function hash12(text) {
   return crypto.createHash('sha256').update(String(text ?? ''), 'utf8').digest('hex').slice(0, 12);
@@ -205,10 +224,43 @@ function subjectHash(text) {
   return hash12(typeof text === 'string' ? text : '');
 }
 
-/** Hashed reason identities for a fingerprint (sorted, bounded). */
-function reasonFingerprint(ids) {
-  if (!Array.isArray(ids)) return null;
-  return [...new Set(ids.map((id) => hash12(id)))].sort().slice(0, MAX_REASON_IDS);
+/**
+ * The fingerprint of an item: { rank, reasonIds, counts } from its severity
+ * rank and its { reasonId: count } map. Reason ids are stored hashed.
+ */
+function fingerprintOf(rank, reasonCounts) {
+  const hashed = new Map();
+  for (const [id, n] of Object.entries(reasonCounts || {})) {
+    const key = hash12(id);
+    hashed.set(key, Math.min(MAX_COUNT, (hashed.get(key) || 0) + itemCount(n)));
+  }
+  const ids = [...hashed.keys()].sort();
+  const kept = ids.length > MAX_REASON_IDS ? ids.slice(0, MAX_REASON_IDS - 1) : ids;
+  const counts = Object.fromEntries(kept.map((id) => [id, hashed.get(id)]));
+  if (kept.length < ids.length) counts[MORE_REASONS] = ids.length - kept.length;
+  return { rank: Number.isInteger(rank) && rank >= 0 ? rank : 0, reasonIds: Object.keys(counts).sort(), counts };
+}
+
+function isFingerprint(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const { rank, reasonIds, counts } = value;
+  if (!Number.isInteger(rank) || rank < 0 || !Array.isArray(reasonIds) || reasonIds.length > MAX_REASON_IDS) return false;
+  if (!counts || typeof counts !== 'object' || Array.isArray(counts)) return false;
+  const keys = Object.keys(counts).sort();
+  if (keys.length !== reasonIds.length || keys.some((key, index) => key !== reasonIds[index])) return false;
+  return keys.every((key) => (HASH12.test(key) || key === MORE_REASONS) && Number.isInteger(counts[key]) && counts[key] >= 1);
+}
+
+/**
+ * The one rule for "worse": why `current` is worse than the acknowledged
+ * fingerprint ('rank' | 'reason' | 'count'), or null when it is not. A count
+ * falling or a reason going away is never worse.
+ */
+function worseThan(acknowledged, current) {
+  if (current.rank > acknowledged.rank) return 'rank';
+  for (const id of current.reasonIds) if (!Object.hasOwn(acknowledged.counts, id)) return 'reason';
+  for (const id of current.reasonIds) if (current.counts[id] > acknowledged.counts[id]) return 'count';
+  return null;
 }
 
 /** The key's kind (system|finding|confirmation|cron) or null when the shape is not known. */
@@ -282,13 +334,20 @@ function itemCount(value) {
   return Number.isInteger(value) && value > 0 ? value : 1;
 }
 
-function makeItem(key, part, state, { count = 1, units = 1, reasons = null } = {}) {
-  return { key, part, state, rank: stateRank(state), count: itemCount(count), units, ...(reasons ? { reasons } : {}) };
+// reasons: { reasonId: count } (plain ids; hashed in the fingerprint).
+function makeItem(key, part, state, { reasons = {}, units = 1 } = {}) {
+  const rank = stateRank(state);
+  return { key, part, state, rank, units, reasons, fingerprint: fingerprintOf(rank, reasons) };
 }
 
-function unionReasons(a, b) {
-  if (!a && !b) return {};
-  return { reasons: [...new Set([...(a || []), ...(b || [])])].sort() };
+// Two readings of one key: the worse state, every reason, the larger count.
+function mergeItems(known, item, reasons) {
+  const state = worstState([known.state, item.state], { empty: known.state });
+  const merged = { ...known.reasons };
+  for (const [id, n] of Object.entries(item.reasons)) merged[id] = Math.max(merged[id] || 0, n);
+  Object.assign(merged, reasons);
+  const rank = stateRank(state);
+  return { ...known, state, rank, units: known.units + item.units, reasons: merged, fingerprint: fingerprintOf(rank, merged) };
 }
 
 function mergeInto(map, item) {
@@ -301,11 +360,9 @@ function mergeInto(map, item) {
     map.set(item.key, item);
     return;
   }
-  const state = worstState([known.state, item.state], { empty: known.state });
-  map.set(item.key, {
-    ...known, state, rank: stateRank(state), count: Math.max(known.count, item.count, known.units + item.units), units: known.units + item.units,
-    ...unionReasons(known.reasons, item.reasons),
-  });
+  // Several rows of one finding: at least as many as there are rows.
+  const rows = known.units + item.units;
+  map.set(item.key, mergeItems(known, item, { finding: Math.max(known.reasons.finding || 0, item.reasons.finding || 0, rows) }));
 }
 
 // The overview systems that need the operator, as countable items.
@@ -316,9 +373,8 @@ function systemItems(systems) {
     const failed = system?.failed === true;
     if (!systemNeedsOperator(system?.state) && !failed) continue;
     const state = failed ? worstState([system?.state, 'unavailable']) : system.state;
-    // The fingerprint names its reasons; its count is how many there are.
-    const reasons = reasonFingerprint(Array.isArray(system?.reasons) ? system.reasons : []);
-    items.push(makeItem(systemKey(system?.id), 'systems', state, { count: Array.isArray(system?.reasons) ? system.reasons.length : 1, reasons }));
+    const reasons = system?.reasons && typeof system.reasons === 'object' && !Array.isArray(system.reasons) ? system.reasons : {};
+    items.push(makeItem(systemKey(system?.id), 'systems', state, { reasons }));
   }
   return items;
 }
@@ -348,7 +404,7 @@ function projectNeeds(findings, confirmations, projectId = null) {
     states.push(state);
     if (!CONFIRMATION_ID_CODES.has(finding.code)) {
       findingCount += 1;
-      mergeInto(findingItems, makeItem(keyed ? findingKey(projectId, finding.code, finding.subject, finding.subjectHash) : null, 'findings', state, { count: finding.count }));
+      mergeInto(findingItems, makeItem(keyed ? findingKey(projectId, finding.code, finding.subject, finding.subjectHash) : null, 'findings', state, { reasons: { finding: itemCount(finding.count) } }));
     } else if (isAggregate(finding)) {
       const n = Number.isInteger(finding.count) && finding.count > 0 ? finding.count : 1;
       if (!aggregate || n > aggregate.count) aggregate = { finding, count: n, state };
@@ -368,16 +424,21 @@ function projectNeeds(findings, confirmations, projectId = null) {
     states.push('warning');
   });
   const items = [...findingList];
-  for (const [id, state] of ids) items.push(makeItem(keyed ? confirmationKey(projectId, id) : null, 'overdueConfirmations', state));
+  for (const [id, state] of ids) items.push(makeItem(keyed ? confirmationKey(projectId, id) : null, 'overdueConfirmations', state, { reasons: { confirmation: 1 } }));
   // An aggregate names no ids, so it overlaps whatever ids are known: it adds
   // only the confirmations beyond them.
   if (aggregate) {
     const subject = typeof aggregate.finding.subject === 'string' && aggregate.finding.subject ? aggregate.finding.subject : aggregate.finding.code;
     items.push(makeItem(keyed ? confirmationKey(projectId, subject) : null, 'overdueConfirmations', aggregate.state, {
-      count: aggregate.count, units: Math.max(0, aggregate.count - ids.size),
+      reasons: { confirmation: aggregate.count }, units: Math.max(0, aggregate.count - ids.size),
     }));
   }
   return { findings: findingCount, confirmations: Math.max(ids.size, aggregate?.count || 0), states, items };
+}
+
+/** A failed scheduled job as a countable item (never display text, no ticking number). */
+function cronItem(job) {
+  return makeItem(cronKey(job?.id), 'cron', 'warning', { reasons: { 'cron:failed': 1 } });
 }
 
 const NO_ACKS = Object.freeze({ resolve: () => ({ ack: null, holds: false }), peek: () => null });
@@ -408,11 +469,7 @@ function attentionItems({ systems = null, loops = null, cronJobs = null, allCron
       countable.set(item.key, item);
       return;
     }
-    const state = worstState([known.state, item.state], { empty: known.state });
-    countable.set(item.key, {
-      ...known, state, rank: stateRank(state), units: known.units + item.units, count: Math.max(known.count, item.count),
-      ...unionReasons(known.reasons, item.reasons),
-    });
+    countable.set(item.key, mergeItems(known, item));
   };
   const sys = systemItems(systems);
   if (sys) {
@@ -444,7 +501,7 @@ function attentionItems({ systems = null, loops = null, cronJobs = null, allCron
       const key = cronKey(job?.id);
       if (key) listed.add(key);
     }
-    for (const job of cronJobs) add(makeItem(cronKey(job?.id), 'cron', 'warning'));
+    for (const job of cronJobs) add(cronItem(job));
   }
   return { countable, listed, domains };
 }
@@ -511,6 +568,6 @@ function needsOperator({ systems = null, systemsAttention = null, loops = null, 
 
 module.exports = {
   CONFIRMATION_CODES, CONFIRMATION_ID_CODES, OVERDUE_CODES, LOOP_STATE, SYSTEM_SOURCES, KEY_MAX_LENGTH, NO_ACKS,
-  attentionItems, confirmationKey, countedSystems, cronKey, findingItemKey, findingKey, isAckKey, keyDomain, keyKind,
-  keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator,
+  attentionItems, confirmationKey, countedSystems, cronItem, cronKey, findingItemKey, findingKey, fingerprintOf, isAckKey,
+  isFingerprint, keyDomain, keyKind, keyProject, needsOperator, projectNeeds, subjectHash, systemKey, systemNeedsOperator, worseThan,
 };

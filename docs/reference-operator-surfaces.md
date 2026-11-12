@@ -123,23 +123,53 @@ not a short plain id is `h<12-hex hash>` of the complete id; a confirmation find
 its key) and `cron:<job id>`. Keys are hashes only and never carry hidden text. Restricted rows have `key: null` and are
 never ackable; their counts are `attention.restricted` and never part of `count` or `worst`.
 
-- `ack` ("seen, it will stay like this") holds while the item is no worse than when it was
-  acknowledged: a rise in severity (the shared state ordering) or in its count voids it for good.
-  A system's acknowledgement also covers exactly the reasons it was given for (stable reason ids,
-  never display text): a new or different reason voids it, a reason going away does not. The system
-  still adds at most one to the count. A voided acknowledgement never holds again, across restarts.
+Every countable item has one fingerprint, `{ rank, reasonIds, counts }`: the severity rank (the shared
+state ordering), the sorted stable ids of its reasons (machine identifiers, stored hashed; never display
+text, a duration or a number that ticks) and each reason's magnitude (`counts[reasonId]`, 1 when the
+reason has none). An item is worse than its acknowledgement when the rank rose, a reason id appeared
+that was not acknowledged, or a count rose above its acknowledged value. A count falling or a reason
+going away is never worse.
+
+| Item | Reason ids | Count |
+| --- | --- | --- |
+| system (Hermes) | `hermes:blocked` | blocked tasks |
+| system (Hermes) | `hermes:gateway-down`, `hermes:gateway-stale`, `hermes:gateway-unverified`, `hermes:kanban-unavailable`, `hermes:cron-unavailable`, `hermes:unavailable` | 1 |
+| system (OpenClaw) | `openclaw:status-unavailable`, `openclaw:sessions-unavailable`, `openclaw:cron-unavailable`, `openclaw:session-conflict`, `openclaw:heartbeat-stale`, `openclaw:unavailable` | 1 |
+| system (GBrain verdict) | `gbrain:link-extraction` | pages past the tolerance |
+| system (GBrain verdict) | `gbrain:missing-embeddings` | chunks past the tolerance |
+| system (GBrain verdict) | `gbrain:embed-job-probe` | chunks waiting |
+| system (GBrain verdict) | `gbrain:queue` | stalled jobs |
+| system (GBrain verdict) | `gbrain:gbrain-core`, `gbrain:stale-pages`, `gbrain:sources`, `gbrain:readers`, `gbrain:gbrain.<probe>`, `gbrain:<source id>`, `gbrain:<reader id>` | 1 |
+| system (GBrain, legacy overview) | `gbrain:legacy-caveat` | number of caveats |
+| system (GBrain, legacy overview) | `gbrain:stale-sources` | stale sources |
+| system (GBrain) | `gbrain:capabilities-unavailable`, `gbrain:unavailable` | 1 |
+| system (any) | `source:<source name>` (its read failed) | 1 |
+| finding | `finding` | mloop's aggregated row count |
+| confirmation | `confirmation` | the aggregate's count |
+| cron job | `cron:failed` | 1 |
+
+- `ack` ("seen, it will stay like this") holds while the item is not worse than its fingerprint at
+  the acknowledgement. The system still adds at most one to the count.
 - `shelve` silences until `until` (or until removed with `null`); a shelved item that becomes
   critical counts again.
+- A void is a tombstone on the stored record (`voidedAt`, `voidReason`). It is decided in one place,
+  the scheduler job `attention.acks` (after every refresh of a reading the items come from, and every
+  5 s), and written to the file before that job returns. A tombstoned acknowledgement never holds
+  again, across restarts and crashes; it goes when the item is acknowledged again or collected.
+- GETs are pure: they read the stored records and the current readings, write nothing and remember
+  nothing. An item that is worse than its acknowledgement does not hold in that answer.
 - Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes any stored
-  acknowledgement. An acknowledgement whose item has been absent for 7 days is dropped at the next
-  write. A failed cron job stays acknowledged while it keeps failing (cron items carry no count).
-- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries). A corrupt file
-  is copied to `acks.json.corrupt-<time>` before the first write replaces it. GETs never write; what
-  a GET learns (a voided ack, when an item was last seen) is kept in memory and saved by the next
-  write: the scheduler job `attention.acks` (every 5 s), a POST/DELETE, or the final write at
-  shutdown. One store per file per process; every write re-reads and merges under `acks.json.lock`.
-  Each running process is listed in the file; if one stopped without its final write, the
-  acknowledgements stored at that moment are no longer trusted (they count again).
+  acknowledgement. The reconcile drops an acknowledgement whose item has been absent for 7 days and
+  a shelve that ran out.
+- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries, version 2). A
+  file that is not valid (or is an older version) starts empty and is copied to
+  `acks.json.corrupt-<time>` before the first write replaces it.
+- One process owns the store: `acks.json.owner` (created with `O_EXCL`) holds its pid and its start
+  time (`ps -o lstart=`, through the core runner). The owner is stale only when that pid is gone or
+  has another start time; a live owner is never displaced and nothing is taken over by age. The app
+  opens the store when it starts. While it cannot be owned, `/api/signals`, `/api/loops` and
+  `/api/cron` carry `acks: { available: false, reason }`, nothing is treated as acknowledged, and
+  POST/DELETE answer `503 ack_store_unavailable`; the scheduled job tries again.
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.

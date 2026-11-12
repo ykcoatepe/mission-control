@@ -28,7 +28,8 @@ export type Edge = MeasuredEdge | ReaderIntegrationEdge;
  * as the embed-job probe. Derived once, in verdict.js. An `info` reason never counts toward `Verdict.state`.
  */
 export type ReasonKind = 'action' | 'info';
-export interface VerdictReason { elementId: string; state: State; text: string; kind: ReasonKind }
+/** `elementId` is the reason's stable identity (never its text); `count` its magnitude when it has one. */
+export interface VerdictReason { elementId: string; state: State; text: string; kind: ReasonKind; count?: number }
 export interface Verdict { state: State; reasons: VerdictReason[] }
 export interface GBrainSynoptic {
   schemaVersion: '1'; state: State; verdict: Verdict;

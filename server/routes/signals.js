@@ -25,6 +25,8 @@
 //   loops:       { openFindings, overdueConfirmations } | null
 //   services:    { down } | null                  launchd down/failed + unreachable endpoints
 //   usage:       { todayUsd, budgetUsedPct } | null
+//   acks:        { available, reason }            false when the acknowledgement store
+//                could not be read: nothing is treated as acknowledged then
 // }
 
 const express = require('express');
@@ -34,6 +36,7 @@ const { scrubText } = require('../core/scrub');
 const { loopsView } = require('../sources/mloop');
 const { countedSystems, needsOperator } = require('../sources/mloop/attention');
 const { isFailedJob, projectCronAcks } = require('../sources/openclaw/automations');
+const { acksStatus } = require('../services/attentionAcks');
 
 const SYSTEM_LABELS = Object.freeze({ gbrain: 'GBrain', hermes: 'Hermes', openclaw: 'OpenClaw' });
 const MAX_REASON = 200;
@@ -202,6 +205,7 @@ function buildSignalsRouter({
           : null,
         services: servicesSignal(launchd, reachability),
         usage: usageSignal(usage),
+        acks: acksStatus(acks),
       },
       meta: composeMeta(parts, 'signals'),
     });

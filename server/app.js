@@ -34,7 +34,8 @@ const path = require('path');
 const { loadConfig, createConfigStore } = require('./core/config');
 const { createExec } = require('./core/exec');
 const { createScheduler } = require('./core/scheduler');
-// How often the attention ack sweep writes voids a GET could only keep in memory.
+// The attention reconcile also runs on this interval, for what changes without
+// a refresh (a reading going stale by age, a held state running out).
 const ATTENTION_ACK_SWEEP_MS = 5_000;
 const {
   requestContext,
@@ -309,16 +310,20 @@ function createApp(deps = {}) {
     const { buildLoopsRouter } = require('./routes/loops');
     const { buildServicesRouter } = require('./routes/services');
     const { buildSignalsRouter, usageFromSibling } = require('./routes/signals');
-    const { createAttentionAckStore } = require('./services/attentionAcks');
+    const { openAttentionAckStore, runnerProcessInfo } = require('./services/attentionAcks');
     const { buildAttentionAcksRouter, createAttentionReader } = require('./routes/attentionAcks');
     // Badge rule: acknowledged / shelved attention items (data/attention/acks.json).
-    // The one place the store is made: one instance per process (a second on
-    // the same file is refused); dispose() closes it with its final write.
+    // The one place the store is made. One process owns the file; when it
+    // cannot be owned the app still serves every read with nothing treated as
+    // acknowledged and `acks.available: false` in the envelopes. Building the
+    // app opens nothing: start() opens the store (and each reconcile tries
+    // again while it is not open); dispose() releases ownership.
     const ownsAcks = !services.attentionAcks;
-    const acks = services.attentionAcks || createAttentionAckStore({
+    const acks = services.attentionAcks || openAttentionAckStore({
       file: path.join(config.paths.dataDir, 'attention', 'acks.json'),
       now,
       logger,
+      processInfo: deps.processInfo || runnerProcessInfo(exec),
     });
     const operationsSources = createOperationsSources({
       readers: createOperationsReaders({
@@ -382,10 +387,44 @@ function createApp(deps = {}) {
       now,
     });
     app.use(buildAttentionAcksRouter({ acks, readAttention, now }));
-    // Not a request: the scheduler judges every countable item against its
-    // acknowledgement and writes what a GET could only keep in memory (voids).
-    if (typeof acks.sweep === 'function') {
-      scheduler.register({ id: 'attention.acks', run: async () => acks.sweep(await readAttention()) }, { intervalMs: ATTENTION_ACK_SWEEP_MS, jitterMs: 1000 });
+    // The one place a void is decided (never a request): the readings as
+    // just refreshed are compared with every stored acknowledgement, and the
+    // tombstones are written before reconcile() returns. It runs after every
+    // refresh of a reading the items come from, and on a short interval.
+    // Only the scheduled job tries to open a store that is not open (that
+    // reads process start times); a refresh never starts a process for it.
+    let reconciling = null;
+    let reconcileAgain = false;
+    let openFirst = false;
+    const reconcileAttention = ({ open = false } = {}) => {
+      if (typeof acks.reconcile !== 'function') return Promise.resolve(null);
+      openFirst = openFirst || open;
+      if (reconciling) {
+        reconcileAgain = true;
+        return reconciling;
+      }
+      reconciling = (async () => {
+        try {
+          let result;
+          do {
+            reconcileAgain = false;
+            if (openFirst && typeof acks.open === 'function') {
+              openFirst = false;
+              await acks.open();
+            }
+            result = acks.reconcile(await readAttention());
+          } while (reconcileAgain);
+          return result;
+        } finally {
+          reconciling = null;
+        }
+      })();
+      return reconciling;
+    };
+    if (typeof acks.reconcile === 'function') {
+      scheduler.register({ id: 'attention.acks', run: () => reconcileAttention({ open: true }) }, { intervalMs: ATTENTION_ACK_SWEEP_MS, jitterMs: 1000 });
+      const afterRefresh = () => { reconcileAttention().catch((error) => logger?.warn?.(`[attention-acks] reconcile failed: ${String(error?.message || error).split('\n')[0]}`)); };
+      for (const source of [...Object.values(sourcesByName), loopsSource, automationSource]) source?.onRefresh?.(afterRefresh);
     }
     return {
       overviewService, acks, ownsAcks, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource },
@@ -516,8 +555,11 @@ function createApp(deps = {}) {
     setBoundPort(port) {
       boundPort = Number(port);
     },
+    // Returns a promise that settles when the attention ack store was opened
+    // (or found unavailable); nothing has to wait for it.
     start() {
       scheduler.start();
+      return typeof attentionArea.acks.open === 'function' ? attentionArea.acks.open() : Promise.resolve();
     },
     // Stop timers, kill children. Idempotent.
     dispose() {

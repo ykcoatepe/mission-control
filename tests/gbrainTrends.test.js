@@ -157,3 +157,52 @@ test('GET /api/gbrain/trends: corrupt history is never a successful empty answer
     });
   } finally { fs.rmSync(dir, { recursive: true }); }
 });
+
+// Finding D: a line that parses as JSON is not yet a reading. Every entry's required fields are
+// checked; what fails is counted, and nothing valid + something skipped is the corrupt error.
+test('GET /api/gbrain/trends: JSON lines that are not valid readings are skipped and counted, never an empty success', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-gbrain-trends-'));
+  const ledger = path.join(dir, 'evidence-timeline.jsonl');
+  const get = async () => {
+    let body;
+    await serve(buildGBrainRouter({ now: () => NOW, gbrainOverviewService: { timelineService: { enabled: true, ledgerPath: ledger } } }), async (base) => {
+      body = await (await fetch(`${base}/api/gbrain/trends`)).json();
+    });
+    return body;
+  };
+  const invalid = [
+    { ...entry(1), capturedAt: 'not a time' },
+    { ...entry(1), capturedAt: null },
+    { ...entry(1), capturedAt: 1762948800000 },
+    { ...entry(1), capturedAt: '1970-01-01T00:00:00.000Z' },
+    { ...entry(1), capturedAt: '2099-01-01T00:00:00.000Z' },
+    { ...entry(1), metrics: 'broken' },
+    { ...entry(1), metrics: { health: 99, embeddings: '100%', queue: '0 / 0 / 0' } },
+    { ...entry(1), trust: [] },
+  ];
+  try {
+    for (const bad of invalid) {
+      fs.writeFileSync(ledger, `${JSON.stringify(bad)}\n`);
+      const body = await get();
+      assert.equal(body.meta.ok, false, JSON.stringify(bad).slice(0, 80));
+      assert.equal(body.meta.error.code, 'gbrain_trends_corrupt');
+      assert.equal(body.skippedLines, 1);
+      assert.deepEqual(body.series.quality, []);
+    }
+    // A number JSON reads as Infinity is not a finite reading.
+    fs.writeFileSync(ledger, `${JSON.stringify(entry(1)).replace('"score":99', '"score":1e999')}\n`);
+    assert.equal((await get()).meta.error.code, 'gbrain_trends_corrupt');
+    // Valid readings next to invalid ones: the valid series, partial, with the count.
+    fs.writeFileSync(ledger, [entry(3, { health: '97/100' }), invalid[0], entry(2, { health: '99/100' }), invalid[4]].map((line) => JSON.stringify(line)).join('\n') + '\n');
+    const mixed = await get();
+    assert.equal(mixed.meta.ok, true);
+    assert.deepEqual(mixed.series.quality.map((p) => p.v), [97, 99]);
+    assert.equal(mixed.partial, true);
+    assert.equal(mixed.skippedLines, 2);
+    // A reading that was simply not taken is valid and adds no point; it is not corrupt.
+    fs.writeFileSync(ledger, `${JSON.stringify(entry(1, { health: 'Unavailable', embeddings: '', queue: '' }))}\n`);
+    const empty = await get();
+    assert.equal(empty.meta.ok, true);
+    assert.equal(empty.skippedLines, 0);
+  } finally { fs.rmSync(dir, { recursive: true }); }
+});

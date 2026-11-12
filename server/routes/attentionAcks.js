@@ -5,8 +5,9 @@
 //
 // The badge rule's writes (server/services/attentionAcks.js). A key must have a
 // known shape and name an item the readings show NOW as countable (ackable);
-// its fingerprint (severity rank, count and, for a system, its reasons) is
-// taken from that reading.
+// its fingerprint ({ rank, reasonIds, counts }) is taken from that reading.
+// While the store is unavailable (another process owns the file) both answer
+// 503 ack_store_unavailable.
 // Restricted items have no key: a guessed one is unknown (404), and the
 // response says nothing about it. Both routes go through the write guard and
 // the audit log like every mutating /api request. Errors: { error: { code,
@@ -78,6 +79,9 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
   }
 
   router.post('/api/attention/acks', asyncHandler(async (req, res) => {
+    if (typeof acks.available === 'function' && !acks.available()) {
+      throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
+    }
     const body = req.body;
     if (!body || typeof body !== 'object' || Array.isArray(body)) throw httpError(400, 'invalid_body', 'A JSON object body is required');
     const key = checkedKey(body.key);
@@ -91,20 +95,16 @@ function buildAttentionAcksRouter({ acks, readAttention, env = process.env, now 
       if (current.listed.has(key)) throw httpError(409, 'not_ackable', 'That item does not need the operator now, so it cannot be acknowledged');
       throw httpError(404, 'ack_key_not_found', 'No attention item has that key');
     }
-    const ack = await acks.set({ key, kind, until, rank: item.rank, count: item.count, reasons: item.reasons }, current);
+    const ack = acks.set({ key, kind, until, fingerprint: item.fingerprint });
     return res.json({ ok: true, key, ack });
   }));
 
   router.delete('/api/attention/acks/:key', asyncHandler(async (req, res) => {
     const key = checkedKey(String(req.params.key || ''));
-    if (!acks.has(key)) throw httpError(404, 'ack_not_found', 'Nothing is acknowledged under that key');
-    let current = null;
-    try {
-      current = await readAttention();
-    } catch {
-      // Without a reading nothing is known absent; the removal still applies.
+    if (typeof acks.available === 'function' && !acks.available()) {
+      throw httpError(503, 'ack_store_unavailable', 'Acknowledgements cannot be saved right now');
     }
-    await acks.remove(key, current);
+    acks.remove(key);
     return res.json({ ok: true, key, ack: null });
   }));
 

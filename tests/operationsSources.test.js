@@ -204,7 +204,8 @@ test('signals: nothing observed yields nulls and unavailable systems, never zero
     now: () => T0,
   });
   assert.equal(status, 200);
-  assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage']);
+  assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage', 'acks']);
+  assert.deepEqual(body.data.acks, { available: true, reason: null }, 'no ack store wired: nothing to be unavailable');
   assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null, reason: 'GBrain overview could not be read.', detailHref: '/' });
   assert.equal(body.data.automations, null);
   assert.equal(body.data.loops, null);

@@ -35,7 +35,8 @@ function isGBrainVerdict(value) {
   return value && isState(value.state) && Array.isArray(value.reasons)
     && value.reasons.every((r) => r && typeof r.elementId === 'string' && isState(r.state)
       && typeof r.text === 'string' && r.text.length > 0
-      && (r.kind === undefined || REASON_KINDS.includes(r.kind)));
+      && (r.kind === undefined || REASON_KINDS.includes(r.kind))
+      && (r.count === undefined || (Number.isInteger(r.count) && r.count > 0)));
 }
 const listNames = (names) => (names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
 /**
@@ -53,8 +54,12 @@ function coreCauseText(core, live) {
 /** The sole aggregate verdict. Every HTTP consumer transports this result unchanged. */
 function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, readersState, live, probes = {}, legacyOverview }) {
   const reasons = [];
-  function add(elementId, state, text, { info = false } = {}) {
-    reasons.push({ elementId, state, text, kind: state === 'inactive' || info ? 'info' : 'action' });
+  // elementId is the reason's stable identity (a fixed code or a source/reader id, never its text).
+  // count: the reason's magnitude when it has one (pages behind, chunks missing, stalled jobs); the
+  // attention fingerprint compares it, so a reason whose number rises is seen as worse.
+  function add(elementId, state, text, { info = false, count } = {}) {
+    reasons.push({ elementId, state, text, kind: state === 'inactive' || info ? 'info' : 'action',
+      ...(Number.isInteger(count) && count > 0 ? { count } : {}) });
   }
   // Legacy callers supply the old presentation contract. Adapt it to the same
   // reason model here; no consumer may independently reconstruct its state.
@@ -63,7 +68,7 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
     sources = []; sourcesState = 'healthy'; queue = { state: 'inactive' };
     readers = []; readersState = 'inactive'; live = legacyOverview.live || {};
     for (const text of legacyOverview.caveats) add('legacy-caveat', core.state === 'critical' ? 'critical' : 'warning', text);
-    if (live.sources?.freshness?.staleCount > 0) add('sources', 'warning', 'Source freshness threshold exceeded.');
+    if (live.sources?.freshness?.staleCount > 0) add('sources', 'warning', 'Source freshness threshold exceeded.', { count: live.sources.freshness.staleCount });
   }
   for (const [name, snapshot] of Object.entries(probes)) {
     if (snapshot.meta.error) add(`gbrain.${name}`, 'unavailable', `${name} probe unavailable.`);
@@ -76,14 +81,14 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   const overdue = (value) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
   const staleOverdue = overdue(m.stalePagesOverdue ?? (m.stalePagesCatchingUp === undefined ? m.stalePages : 0));
   if (m.stalePagesUnavailable !== true && staleOverdue > 0) {
-    add('link-extraction', 'warning', `Link extraction is behind: ${staleOverdue} ${staleOverdue === 1 ? 'page' : 'pages'} past the tolerance.`);
+    add('link-extraction', 'warning', `Link extraction is behind: ${staleOverdue} ${staleOverdue === 1 ? 'page' : 'pages'} past the tolerance.`, { count: staleOverdue });
   }
   const missingOverdue = overdue(m.missingEmbeddingsOverdue ?? (m.missingEmbeddingsCatchingUp === undefined ? m.missingEmbeddings : 0));
   if (m.missingEmbeddingsUnavailable !== true && missingOverdue > 0) {
-    add('missing-embeddings', 'warning', `${missingOverdue} ${missingOverdue === 1 ? 'chunk is' : 'chunks are'} missing embeddings past the tolerance.`);
+    add('missing-embeddings', 'warning', `${missingOverdue} ${missingOverdue === 1 ? 'chunk is' : 'chunks are'} missing embeddings past the tolerance.`, { count: missingOverdue });
   }
   const probeReason = embedJobProbeReason(m);
-  if (probeReason) add('embed-job-probe', 'unavailable', probeReason.text, { info: probeReason.info });
+  if (probeReason) add('embed-job-probe', 'unavailable', probeReason.text, { info: probeReason.info, count: m.missingEmbeddings });
   if (m.missingEmbeddingsUnavailable === true) add('missing-embeddings', 'unavailable', 'Missing-embedding count unavailable.');
   if (m.stalePagesUnavailable === true) add('stale-pages', 'unavailable', 'Stale-page count unavailable.');
   // The core line is only worth a line when it says something no other reason does: a reason that
@@ -100,7 +105,7 @@ function buildGBrainVerdict({ core, sources, sourcesState, queue, readers, reade
   }
   if (sourcesState === 'unavailable' && !reasons.some((r) => r.elementId === 'gbrain.sources')) add('sources', sourcesState, 'Source inventory unavailable.');
   if (!['healthy', 'inactive'].includes(queue.state)) add('queue', queue.state,
-    queue.state === 'unavailable' ? 'Queue reading unavailable.' : 'Queue requires attention.');
+    queue.state === 'unavailable' ? 'Queue reading unavailable.' : 'Queue requires attention.', { count: queue.stalled?.value });
   // Readers that are set up are one line: their connections cannot be read from here, and that is
   // a fact about this machine, not about each reader. A reader that is not set up, or has a real
   // state, keeps its own line.

@@ -321,3 +321,58 @@ test('failed integration readings remain unavailable, including cached configure
     assert.equal(Object.hasOwn(s.readers[0], 'connection'), false);
   }
 });
+
+// Root cause of "embed-job probe always unavailable": the scheduled health reader normalized the
+// health payload without ever reading the embed jobs, so the job signal was unavailable whenever a
+// chunk waited. The reader the app runs must make the list_jobs reads itself.
+test('the scheduled health reader reads the embed jobs when chunks wait, so the job signal is available', async () => {
+  const finished = new Date(Date.now() - 5 * 60_000).toISOString();
+  const job = (name, extra = {}) => ({ id: 1, name, queue: 'default', status: 'completed', created_at: finished, finished_at: finished, result: { failures: 0 }, ...extra });
+  const health = (missing) => ({ page_count: 12, brain_score: 99, stale_pages: 0, missing_embeddings: missing, missing_embeddings_oldest_age_seconds: 30 });
+  function sourcesWith({ missing, listJobs }) {
+    const calls = [];
+    const client = { run: async (args, options = {}) => {
+      calls.push({ args, options });
+      if (args.includes('get_health')) return health(missing);
+      if (args[0] === 'call' && args[1] === 'list_jobs') return listJobs(JSON.parse(args[2]));
+      throw Error('Unexpected command');
+    } };
+    return { calls, sources: createGBrainSources({ client, buildIntegrationRuntime: () => ({ systems: {}, readers: [] }), hermesProxyBaseUrl: 'invalid:' }).sources };
+  }
+  const clean = (params) => JSON.stringify(params.status === 'completed' ? [job(params.name)] : []);
+
+  let world = sourcesWith({ missing: 3, listJobs: clean });
+  await world.sources.health.refresh();
+  let metrics = world.sources.health.snapshot().data.metrics;
+  assert.equal(metrics.missingEmbeddings, 3);
+  assert.equal(metrics.embedJobProbeUnavailable, false, 'the embed jobs were read and are clean');
+  assert.deepEqual(metrics.missingEmbeddingsJobReasons, []);
+  const listed = world.calls.filter((call) => call.args[1] === 'list_jobs');
+  assert.deepEqual(listed.map((call) => { const p = JSON.parse(call.args[2]); return `${p.name}:${p.status}:${p.queue}`; }), [
+    'embed:completed:default', 'embed:failed:default', 'embed:dead:default',
+    'embed-catch-up:completed:default', 'embed-catch-up:failed:default', 'embed-catch-up:dead:default',
+    'embed:waiting:default', 'embed-catch-up:waiting:default',
+  ]);
+  assert.ok(listed.every((call) => call.options.json === false && call.options.timeoutMs <= 10_000), 'bounded reads, parsed by the probe chain');
+
+  // A failed latest job is an overdue cause, read from the same chain.
+  world = sourcesWith({ missing: 3, listJobs: (params) => JSON.stringify(
+    params.status === 'failed' && params.name === 'embed' ? [job('embed', { status: 'failed', result: null })] : []) });
+  await world.sources.health.refresh();
+  metrics = world.sources.health.snapshot().data.metrics;
+  assert.equal(metrics.embedJobProbeUnavailable, false);
+  assert.equal(metrics.missingEmbeddingsOverdue, 3);
+  assert.match(metrics.missingEmbeddingsJobReasons[0], /^embed job failed/);
+
+  // The read failing is still "unavailable", never clean, and stops the chain.
+  world = sourcesWith({ missing: 3, listJobs: () => { throw Object.assign(new Error('x'), { code: 'gbrain_timeout' }); } });
+  await world.sources.health.refresh();
+  assert.equal(world.sources.health.snapshot().data.metrics.embedJobProbeUnavailable, true);
+  assert.equal(world.calls.filter((call) => call.args[1] === 'list_jobs').length, 1);
+
+  // Nothing waits: no job read at all.
+  world = sourcesWith({ missing: 0, listJobs: () => { throw Error('must not be called'); } });
+  await world.sources.health.refresh();
+  assert.equal(world.sources.health.snapshot().data.metrics.embedJobProbeUnavailable, false);
+  assert.equal(world.calls.length, 1);
+});

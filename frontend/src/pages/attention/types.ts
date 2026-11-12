@@ -156,7 +156,18 @@ export interface LoopSystem {
   ack: AckRecord | null
 }
 
+/**
+ * Whether the server could read its acknowledgements (`data.acks` of GET /api/loops). `available: false`
+ * means they were not read: every item is listed as unacknowledged and nothing can be acknowledged.
+ */
+export interface AcksStatus {
+  available: boolean
+  reason: string | null
+}
+
 export interface LoopsData {
+  /** Absent in an older payload: read as available. */
+  acks?: AcksStatus | null
   observedAt: string | null
   totals: LoopsTotals
   projects: LoopProject[]

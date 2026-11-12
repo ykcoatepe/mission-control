@@ -4,7 +4,8 @@ const { createGBrainClient, readError } = require('./client');
 const { buildLocalGBrainIntegrationRuntime } = require('../../routes/gbrain/integrationRuntime');
 const { readReaders } = require('./readers');
 const { normalizeHealthPayload, normalizeSourcesPayload, normalizeStatsPayload, normalizeToolsPayload,
-  normalizeFeaturesPayload, normalizeProvidersPayload, parseVersionOutput, liveHealthStatus, buildLiveHermesProxyStatus } = require('../../routes/gbrain/liveProbes');
+  normalizeFeaturesPayload, normalizeProvidersPayload, parseVersionOutput, liveHealthStatus, buildLiveHermesProxyStatus,
+  probeEmbedJobs, readMissingEmbeddingsRecord } = require('../../routes/gbrain/liveProbes');
 
 // Measured sequentially on 2026-11-11: health 1914ms, status 1161ms, jobs 892ms,
 // stats 1060ms, features 3702ms, tools 348ms, providers 414ms. A 3-minute cycle
@@ -12,12 +13,33 @@ const { normalizeHealthPayload, normalizeSourcesPayload, normalizeStatsPayload, 
 const REFRESH_INTERVAL_MS = 180_000;
 const STALE_AFTER_MS = 360_000;
 const COMPONENT_KEYS = ['embed_coverage_score', 'link_density_score', 'timeline_coverage_score', 'no_orphans_score', 'no_dead_links_score'];
+// Embed-job reading (only when chunks are missing embeddings): up to 8 serialized `list_jobs` reads
+// on the gbrain lane (about 0.4 s each, measured 2026-11-12), one total budget, one cap per read.
+const EMBED_JOBS_BUDGET_MS = 20_000;
+const EMBED_JOBS_CALL_TIMEOUT_MS = 10_000;
 const number = (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null;
 function requireShape(ok) { if (!ok) throw readError('gbrain_invalid_payload'); }
 function createGBrainSources(options = {}) {
   const { now = Date.now } = options;
   const client = options.client || createGBrainClient(options);
   const checkedAt = () => new Date(now()).toISOString();
+  // The embed-job chain of liveProbes.js, run through this client (same lane, caps and environment as
+  // every other scheduled read). A failed, timed-out or unparseable read stops the chain and the
+  // signal is unavailable; it is never read as clean.
+  const listJobsProbe = async (_exec, args, { softTimeoutMs } = {}) => {
+    try {
+      const timeoutMs = Math.max(1, Math.min(EMBED_JOBS_CALL_TIMEOUT_MS, Number.isFinite(softTimeoutMs) ? softTimeoutMs : EMBED_JOBS_CALL_TIMEOUT_MS));
+      return { ok: true, stdout: await client.run(args, { json: false, timeoutMs }) };
+    } catch (error) {
+      return { ok: false, stdout: '', pending: error?.code === 'gbrain_timeout', error: error?.code || 'gbrain_read_failed' };
+    }
+  };
+  const readEmbedJobs = async (healthPayload) => {
+    const { count } = readMissingEmbeddingsRecord(healthPayload);
+    // Job state can only change the verdict when something waits to be embedded.
+    if (!(Number.isInteger(count) && count > 0)) return undefined;
+    return probeEmbedJobs(listJobsProbe, null, null, { budgetMs: options.embedJobsBudgetMs ?? EMBED_JOBS_BUDGET_MS });
+  };
   const reads = {
     health: async () => {
       const p = await client.run(['call', '--source', '__all__', 'get_health']);
@@ -27,7 +49,10 @@ function createGBrainSources(options = {}) {
       const healthKeys = ['status', 'health_status', 'brain_score', 'health_score', 'page_count', 'chunk_count',
         'embedded_count', 'missing_embeddings', 'missing_embeddings_oldest_age_seconds', 'stale_pages',
         'stale_pages_oldest_lag_seconds', 'embed_coverage'];
-      const data = normalizeHealthPayload(Object.fromEntries(healthKeys.filter((k) => k in p).map((k) => [k, p[k]])), null, checkedAt());
+      const root = Object.fromEntries(healthKeys.filter((k) => k in p).map((k) => [k, p[k]]));
+      // Without the embed-job reading normalizeHealthPayload reports the job signal as unavailable
+      // whenever a chunk is waiting; it has to be read here, on the path the app really runs.
+      const data = normalizeHealthPayload(root, null, checkedAt(), await readEmbedJobs(root));
       data.score = number(p.brain_score) !== null && p.brain_score <= 100 ? p.brain_score : null;
       data.status = liveHealthStatus(data);
       data.components = Object.fromEntries(COMPONENT_KEYS.map((k) => [k, number(p[k])]));

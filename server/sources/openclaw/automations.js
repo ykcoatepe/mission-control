@@ -1,8 +1,7 @@
 'use strict';
 const { createSource, SourceReadError } = require('../../core/source');
 const { isNextRunOverdue, isNextRunDue } = require('./overdue');
-const { cronKey } = require('../mloop/attention');
-const { stateRank } = require('../../core/state');
+const { cronItem } = require('../mloop/attention');
 
 const AUTOMATIONS_REFRESH_INTERVAL_MS = 30_000;
 
@@ -15,7 +14,7 @@ function isFailedJob(job) {
 // acks (optional): the attention ack store. A failed job whose
 // acknowledgement holds is standing, not failed (badge rule).
 function cronAckItem(job) {
-  return { key: cronKey(job?.id), rank: stateRank('warning'), count: 1 };
+  return cronItem(job);
 }
 
 function summarizeJobs(jobs, nowMs, { acks = null } = {}) {
