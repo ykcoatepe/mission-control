@@ -123,6 +123,26 @@ export function shortLabels(ids: ReadonlyArray<string>, max = SHORT_CHARS): stri
     for (const label of list) seen.set(label, (seen.get(label) ?? 0) + 1)
     return (label: string) => (seen.get(label) ?? 0) > 1
   }
+  // Ids that share their start with a shorter id ("japanesebuddy", "japanesebuddy-dev-yordam-dl"): the
+  // shorter one keeps its label, the others are told apart by their own tail, "…dev-yordam-dl".
+  const groups = new Map<string, number[]>()
+  labels.forEach((label, i) => groups.set(label, [...(groups.get(label) ?? []), i]))
+  for (const members of groups.values()) {
+    if (members.length < 2) continue
+    const lists = members.map((i) => words[i].all.map((word) => word.toLowerCase()))
+    let shared = 0
+    while (lists.every((list) => list.length > shared && list[shared] === lists[0][shared])) shared += 1
+    if (shared === 0 || !members.some((i) => words[i].all.length === shared)) continue
+    for (const i of members) {
+      if (words[i].all.length === shared) {
+        // The shared start is this source's own name: whole, not cut to fit.
+        labels[i] = middleTruncate(words[i].all.join('-'), max + 6)
+        continue
+      }
+      const tail = `…${words[i].all.slice(shared).join('-')}`
+      labels[i] = tail.length > max + 6 ? `${tail.slice(0, max + 5)}…` : tail
+    }
+  }
   // A clash takes more words, one at a time, from the id's own words.
   for (let extra = 1; extra <= 4; extra += 1) {
     const clash = taken(labels)
@@ -147,21 +167,66 @@ export function axisTicks(max: number | null, count = 4): number[] {
   return ticks
 }
 
+/** Longest a label is drawn, in characters (the stylesheet cuts it there). */
+export const LABEL_MAX_CH = 18
+
+/** Estimated width of one character of a label (12px text), used until the label has been measured. */
+const LABEL_CHAR_PX = 6
+const LABEL_GAP_PX = 4
+
 /**
- * Which row (0 or 1) each label goes on so two neighbours never touch: labels that would collide with
- * the one before are put on the second row. `columnWidth` null (unknown) puts everything on row 0.
+ * Which labels are drawn under the lines. There is one row of labels, never two: a label that would touch
+ * one already drawn is left out (the name is in the readout row on hover and focus, and in the accessible
+ * name). The label of the bigger source wins. `measured` gives real widths where they are known; a label
+ * not measured is estimated from its length. `columnWidth` null (unknown, or the profile lies down in rows)
+ * leaves nothing out.
  */
-export function staggerRows(labels: ReadonlyArray<string>, columnWidth: number | null, charPx = 7): number[] {
-  if (columnWidth === null) return labels.map(() => 0)
-  const edge = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY]
-  return labels.map((label, index) => {
-    const half = (label.length * charPx) / 2
-    const centre = (index + 0.5) * columnWidth
-    const left = centre - half - 4
-    const row = left >= edge[0] ? 0 : left >= edge[1] ? 1 : 0
-    edge[row] = centre + half
-    return row
-  })
+export function visibleLabels(
+  lines: ReadonlyArray<Pick<ProfileLine, 'id' | 'name' | 'pages'>>,
+  columnWidth: number | null,
+  measured: Readonly<Record<string, number>> = {},
+): Set<string> {
+  if (columnWidth === null) return new Set(lines.map((line) => line.id))
+  const boxes = lines.map((line, index) => ({
+    id: line.id,
+    x: (index + 0.5) * columnWidth,
+    w: measured[line.id] || Math.min(line.name.length, LABEL_MAX_CH) * LABEL_CHAR_PX,
+    pages: line.pages ?? -1,
+  }))
+  const kept: typeof boxes = []
+  for (const box of [...boxes].sort((a, b) => b.pages - a.pages)) {
+    if (!kept.some((other) => Math.abs(other.x - box.x) < (other.w + box.w) / 2 + LABEL_GAP_PX)) kept.push(box)
+  }
+  return new Set(kept.map((box) => box.id))
+}
+
+export interface Box {
+  left: number
+  right: number
+  top: number
+  bottom: number
+}
+
+/** True when two boxes share any area, with `pad` pixels of air counted as part of the first. */
+export function boxesTouch(a: Box, b: Box, pad = 0): boolean {
+  return a.left - pad < b.right && b.left < a.right + pad && a.top - pad < b.bottom && b.top < a.bottom + pad
+}
+
+/** The ids of the labels that sit under `cover` (a measured box): they are put away while it is shown. */
+export function coveredLabels(cover: Box, labels: ReadonlyArray<{ id: string; box: Box }>, pad = 2): Set<string> {
+  return new Set(labels.filter((label) => boxesTouch(cover, label.box, pad)).map((label) => label.id))
+}
+
+/** Room a scale label needs above and below its own centre, in pixels. */
+export const SCALE_LABEL_CLEARANCE_PX = 13
+
+/**
+ * The scale values whose label would sit on the marker for the looked-at line (its exact value, drawn on the
+ * scale at the line's height): those are put away while it shows.
+ */
+export function crowdedTicks(ticks: ReadonlyArray<number>, max: number | null, height: number | null, scale = PROFILE_SCALE_PX): Set<number> {
+  if (max === null || max <= 0 || height === null) return new Set()
+  return new Set(ticks.filter((value) => Math.abs((value / max) * scale - height) < SCALE_LABEL_CLEARANCE_PX))
 }
 
 /** The line profile of the diagram, in diagram order. Labels are short names (see shortLabels); the full id is for hover and focus. */

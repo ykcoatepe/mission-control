@@ -173,9 +173,10 @@ samp,
   }
 }
 
-/* Recharts tooltip */
+/* Recharts tooltip: a readout never travels. The wrapper is moved by a transform; no transition on it. */
 .recharts-tooltip-wrapper {
   outline: none !important;
+  transition: none !important;
 }
 
 .recharts-default-tooltip {

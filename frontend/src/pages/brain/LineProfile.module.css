@@ -6,7 +6,7 @@
 
 /* The scale on the left, the columns on the right. */
 .chart {
-  --labels: 48px;
+  --labels: 32px;
   --axis: 52px;
   display: grid;
   grid-template-columns: var(--axis) minmax(0, 1fr);
@@ -15,7 +15,7 @@
 
 .axis {
   position: relative;
-  /* Same height as the body: the plot, then the label rows. */
+  /* Same height as the body: the plot, then the one row of labels. */
   height: calc(var(--scale) + 24px + var(--labels));
   color: var(--text-2);
   font-size: var(--fs-micro);
@@ -40,6 +40,23 @@
   height: 1px;
   background: var(--line-strong);
   content: '';
+}
+
+/* A scale value that would sit on the looked-at line's marker is put away while the marker shows. */
+.tick[data-away] {
+  opacity: 0;
+}
+
+/* The looked-at line's exact value, on the scale at the height of its top: nothing crosses the plot. */
+.marker {
+  z-index: 1;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.marker::after {
+  width: 7px;
+  background: var(--text-1);
 }
 
 .body {
@@ -117,6 +134,13 @@
   background: var(--surface-1);
 }
 
+/* The looked-at line's count is on top of everything in the plot and never dimmed. */
+.shown .value {
+  z-index: 3;
+  opacity: 1;
+  background: var(--surface-1);
+}
+
 /* The plot is the same height for every item, so every line stands on one baseline. */
 .plot {
   position: relative;
@@ -159,12 +183,13 @@
   opacity: 0.55;
 }
 
-/* A short name under its line, in the group's line colour. Two rows when neighbours would touch. */
+/* A short name under its line, in the group's line colour: one row. A name that would touch a bigger source's
+   name is left out (data-dropped), and so is one under the enlarged name of the looked-at source (data-covered). */
 .name {
   position: absolute;
-  top: calc(var(--scale) + 24px + 5px + var(--row, 0) * 20px);
+  top: calc(var(--scale) + 24px + 5px);
   left: 50%;
-  max-width: 14ch;
+  max-width: 18ch;
   overflow: hidden;
   color: var(--tone);
   font-size: var(--fs-micro);
@@ -176,6 +201,11 @@
 
 .shown .name {
   opacity: 0;
+}
+
+.name[data-dropped],
+.name[data-covered] {
+  visibility: hidden;
 }
 
 /* The full id of the looked-at source: larger, never cut, kept inside the strip. */
@@ -205,78 +235,87 @@
   right: 0;
 }
 
-/* The hairline from the top of the looked-at line to the scale on the left. */
-.rule {
-  position: absolute;
-  bottom: calc(var(--labels) + var(--h));
-  left: 0;
-  z-index: 1;
-  width: var(--x);
-  height: 0;
-  border-top: 1px solid var(--text-2);
-  pointer-events: none;
+/* The readout's one home: the caption row under the block title. The sentence and the readings share one grid
+   cell, so the row is as tall as the taller of the two and nothing moves when one replaces the other. */
+.caption {
+  display: grid;
+  min-width: 0;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
-/* The readout sits beside its column, never on its own line. */
-.card {
-  position: absolute;
-  top: 0;
-  z-index: 5;
-  width: 15.5rem;
-  max-width: 60%;
-  padding: var(--sp-2) var(--sp-3);
-  border: 1px solid var(--line-strong);
-  border-radius: var(--r-md);
-  background: var(--surface-2);
-  color: var(--text-1);
-  font-size: var(--fs-small);
-  pointer-events: none;
+.idle,
+.reading {
+  grid-area: 1 / 1;
+  min-width: 0;
 }
 
-.card[data-side='right'] {
-  left: calc(var(--x) + 14px);
+.idle[data-away] {
+  visibility: hidden;
 }
 
-.card[data-side='left'] {
-  right: calc(100% - var(--x) + 14px);
+.reading {
+  --tone: var(--text-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  color: var(--text-2);
 }
 
-.cardTitle {
-  margin: 0 0 var(--sp-1);
-  font-size: var(--fs-body);
+.reading[data-tone='reference'] { --tone: var(--line-reference); }
+.reading[data-tone='projects'] { --tone: var(--line-projects); }
+.reading[data-tone='agent'] { --tone: var(--line-agent); }
+.reading[data-tone='curated'] { --tone: var(--line-curated); }
+
+.readingName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tone);
   font-weight: 600;
+  text-overflow: ellipsis;
   overflow-wrap: anywhere;
 }
 
-.cardGroup {
-  color: var(--text-2);
-  font-size: var(--fs-small);
-  font-weight: 400;
+.readingPart {
+  flex: none;
 }
 
-.cardList {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px var(--sp-3);
-  margin: 0;
+.readingPart::before {
+  margin: 0 var(--sp-2);
+  color: var(--text-3);
+  content: '\00b7';
 }
 
-.cardList dt {
-  color: var(--text-2);
+/* Wide: the row is one line, never two. Narrower, it may wrap, and the row keeps room for that. */
+@media (min-width: 1200px) {
+  .idle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reading {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .readingName {
+    flex: 0 1 auto;
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
 }
 
-.cardList dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums lining-nums;
-  text-align: right;
+@media (max-width: 1199px) {
+  .caption {
+    min-height: 2lh;
+  }
 }
 
-.readout {
-  min-height: 1.45em;
-  margin: var(--sp-2) 0 0;
-  color: var(--text-2);
-  font-size: var(--fs-small);
-  font-variant-numeric: tabular-nums lining-nums;
+@media (max-width: 599px) {
+  .caption {
+    min-height: 3lh;
+  }
 }
 
 .none {
@@ -291,15 +330,13 @@
   }
 }
 
-/* Narrow: the lines lie down, one row per source, still to scale. No scale, hairline or card: the text under the strip says it. */
+/* Narrow: the lines lie down, one row per source, still to scale. No scale: the caption row under the title carries the readings. */
 @container profile (max-width: 899px) {
   .chart {
     display: block;
   }
 
   .axis,
-  .rule,
-  .card,
   .full {
     display: none;
   }

@@ -1,12 +1,21 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CSSProperties, KeyboardEvent } from 'react'
 import { Block, cx } from '../../components/ui'
-import { formatAsOf } from '../../components/ui/asOf'
 import { stateLabel } from '../../lib/state'
 import { useNow } from '../../lib/useNow'
 import { agoText, type Diagram } from './diagram'
 import { fmtCount } from './lib'
-import { PROFILE_SCALE_PX, axisTicks, shareOf, buildProfile, staggerRows, visibleCounts, type ProfileLine } from './profile'
+import {
+  PROFILE_SCALE_PX,
+  axisTicks,
+  buildProfile,
+  coveredLabels,
+  crowdedTicks,
+  shareOf,
+  visibleCounts,
+  visibleLabels,
+  type ProfileLine,
+} from './profile'
 import styles from './LineProfile.module.css'
 
 function describe(line: ProfileLine, now: number): string {
@@ -27,12 +36,39 @@ const WIDE_PX = 900
 
 const countText = (pages: number | null) => (pages === null ? 'not read' : fmtCount(pages))
 
+const NONE: ReadonlySet<string> = new Set()
+
+/** One source's readings on a single line, in the caption row: name in its group colour, then the numbers. */
+function Reading({ line, now }: { line: ProfileLine; now: number }) {
+  const sync = line.syncOff
+    ? [syncState(line)]
+    : [`last sync ${agoText(line.lastSyncAt, now) ?? 'not read'}`, syncState(line)]
+  const parts = [
+    line.groupLabel,
+    line.pages === null ? 'pages not read' : `${fmtCount(line.pages)} pages`,
+    line.chunks === null ? 'chunks not read' : `${fmtCount(line.chunks)} chunks`,
+    line.share === null ? 'share not read' : `${shareOf(line)} of all pages`,
+    ...sync,
+  ]
+  return (
+    <span className={styles.reading} data-readout data-tone={line.tone}>
+      <span className={styles.readingName}>{line.full}</span>
+      {parts.map((part) => (
+        <span key={part} className={styles.readingPart}>
+          {part}
+        </span>
+      ))}
+    </span>
+  )
+}
+
 /**
  * The line profile: one vertical line per source on a single calibrated baseline, in diagram order, with a
  * labelled scale on the left. A line's height is its page count on a true linear scale; a source too
  * small to see still gets a one-pixel line and its label. Sync off is dashed. Hovering a column (all of it,
  * from the top of the plot to the label), focusing it, or tapping it shows that source large: its line
- * thickens, the others dim, a hairline runs from the line's top to the scale, and a readout gives its numbers.
+ * thickens, the others dim, its exact value is marked on the scale (nothing crosses the plot), and its
+ * readings replace the sentence under the block title. The readout has one fixed home and covers no data.
  */
 export function LineProfile({ diagram }: { diagram: Diagram }) {
   const now = useNow()
@@ -45,6 +81,9 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
   const listRef = useRef<HTMLUListElement | null>(null)
   const pointer = useRef<string>('mouse')
   const [width, setWidth] = useState<number | null>(null)
+  // Measured, not guessed: the width of each label, and which labels sit under the looked-at source's enlarged one.
+  const [nameWidths, setNameWidths] = useState<Record<string, number>>({})
+  const [covered, setCovered] = useState<ReadonlySet<string>>(NONE)
   useEffect(() => {
     const list = listRef.current
     if (!list || typeof ResizeObserver === 'undefined') return
@@ -65,8 +104,58 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
   const column = wide ? width / total : null
   // Standing up (wide), a count that would sit on another is left out of the picture; lying down, every count has its own column.
   const counts = visibleCounts(profile.lines, column, countText)
-  const rows = staggerRows(profile.lines.map((line) => line.name), column)
+  // One row of labels: a label that would touch a bigger source's label is left out (its name is in the readout and the accessible name).
+  const labelled = visibleLabels(profile.lines, column, nameWidths)
   const ticks = axisTicks(profile.max)
+  const shownHeight = shown?.pages === null ? null : (shown?.height ?? null)
+  const crowdedTick = crowdedTicks(ticks, profile.max, shownHeight)
+  const nameKey = profile.lines.map((line) => `${line.id}=${line.name}`).join('|')
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    if (!list || !wide) {
+      setNameWidths((current) => (Object.keys(current).length ? {} : current))
+      return
+    }
+    const measure = () => {
+      const next: Record<string, number> = {}
+      for (const el of list.querySelectorAll<HTMLElement>('[data-name-label]')) {
+        const id = el.closest('li')?.getAttribute('data-source-id')
+        const w = el.getBoundingClientRect().width
+        if (id && w > 0) next[id] = Math.ceil(w)
+      }
+      setNameWidths((current) => {
+        const same = Object.keys(next).length === Object.keys(current).length && Object.entries(next).every(([id, w]) => current[id] === w)
+        return same ? current : next
+      })
+    }
+    measure()
+    // Labels change width when the web font arrives.
+    let live = true
+    void document.fonts?.ready.then(() => live && measure())
+    return () => {
+      live = false
+    }
+  }, [wide, nameKey])
+
+  useLayoutEffect(() => {
+    const list = listRef.current
+    const full = list?.querySelector<HTMLElement>('[data-full-label]')
+    if (!list || !full || !wide) {
+      setCovered((current) => (current.size ? NONE : current))
+      return
+    }
+    const cover = full.getBoundingClientRect()
+    const labels = [...list.querySelectorAll<HTMLElement>('[data-name-label]')].flatMap((el) => {
+      const li = el.closest('li')
+      const id = li?.getAttribute('data-source-id')
+      if (!id || id === shownId) return []
+      const box = el.getBoundingClientRect()
+      return [{ id, box: { left: box.left, right: box.right, top: box.top, bottom: box.bottom } }]
+    })
+    const next = coveredLabels({ left: cover.left, right: cover.right, top: cover.top, bottom: cover.bottom }, labels)
+    setCovered((current) => (current.size === next.size && [...next].every((id) => current.has(id)) ? current : next))
+  }, [shownId, wide, nameKey, nameWidths])
 
   const clear = () => {
     setHovered(null)
@@ -93,6 +182,7 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
   }
 
   const position = shownIndex < 0 ? 0 : (shownIndex + 0.5) / total
+  // The enlarged label stays inside the strip: flush left or right near an edge.
   const align = shownIndex < 0 ? 'centre' : position < 0.18 ? 'start' : position > 0.82 ? 'end' : 'centre'
 
   return (
@@ -100,9 +190,16 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
       title="Line profile: pages per source"
       meta={profile.max === null ? 'not read' : `${profile.lines.length} sources`}
       description={
-        profile.max === null
-          ? undefined
-          : `One scale: the tallest line is ${fmtCount(profile.max)} pages. A line too small to see is still drawn, one pixel high.`
+        profile.lines.length === 0 ? undefined : (
+          <span className={styles.caption} data-caption>
+            <span className={styles.idle} data-caption-idle data-away={shown ? true : undefined}>
+              {profile.max === null
+                ? 'The pages of the sources were not read, so no line is drawn.'
+                : `One scale: the tallest line is ${fmtCount(profile.max)} pages. A line too small to see is still drawn, one pixel high.`}
+            </span>
+            {shown && <Reading line={shown} now={now} />}
+          </span>
+        )
       }
     >
       {profile.lines.length === 0 ? (
@@ -112,10 +209,21 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
           <div className={styles.chart} style={{ '--scale': `${PROFILE_SCALE_PX}px` } as CSSProperties}>
             <div className={styles.axis} aria-hidden="true" data-axis>
               {ticks.map((value) => (
-                <span key={value} className={styles.tick} data-tick={value} style={{ '--v': `${((value / (profile.max ?? 1)) * PROFILE_SCALE_PX).toFixed(1)}px` } as CSSProperties}>
+                <span
+                  key={value}
+                  className={styles.tick}
+                  data-tick={value}
+                  data-away={crowdedTick.has(value) ? true : undefined}
+                  style={{ '--v': `${((value / (profile.max ?? 1)) * PROFILE_SCALE_PX).toFixed(1)}px` } as CSSProperties}
+                >
                   {fmtCount(value)}
                 </span>
               ))}
+              {shown && shown.pages !== null && shownHeight !== null && (
+                <span className={cx(styles.tick, styles.marker)} data-axis-marker style={{ '--v': `${shownHeight}px` } as CSSProperties}>
+                  {fmtCount(shown.pages)}
+                </span>
+              )}
             </div>
             <div className={styles.body}>
               <ul
@@ -146,7 +254,6 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
                         {
                           '--h': `${line.height ?? 0}px`,
                           '--p': `${line.percent ?? 0}`,
-                          '--row': rows[index],
                         } as CSSProperties
                       }
                       onPointerDown={(event) => {
@@ -180,7 +287,13 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
                       <span className={styles.value} data-crowded={counts.has(line.id) ? undefined : true}>
                         {countText(line.pages)}
                       </span>
-                      <span className={styles.name} title={line.full}>
+                      <span
+                        className={styles.name}
+                        title={line.full}
+                        data-name-label
+                        data-dropped={labelled.has(line.id) ? undefined : true}
+                        data-covered={covered.has(line.id) ? true : undefined}
+                      >
                         {line.name}
                       </span>
                       {isShown && (
@@ -192,48 +305,11 @@ export function LineProfile({ diagram }: { diagram: Diagram }) {
                   )
                 })}
               </ul>
-              {shown && (
-                <>
-                  {shown.height !== null && (
-                    <span
-                      className={styles.rule}
-                      data-rule
-                      aria-hidden="true"
-                      style={{ '--h': `${shown.height}px`, '--x': `${position * 100}%` } as CSSProperties}
-                    />
-                  )}
-                  <div
-                    className={styles.card}
-                    data-readout
-                    data-side={position < 0.5 ? 'right' : 'left'}
-                    aria-hidden="true"
-                    style={{ '--x': `${position * 100}%` } as CSSProperties}
-                  >
-                    <p className={styles.cardTitle}>
-                      {shown.full} <span className={styles.cardGroup}>{shown.groupLabel}</span>
-                    </p>
-                    <dl className={styles.cardList}>
-                      <dt>Pages</dt>
-                      <dd>{countText(shown.pages)}</dd>
-                      <dt>Chunks</dt>
-                      <dd>{countText(shown.chunks)}</dd>
-                      <dt>Share of all pages</dt>
-                      <dd>{shareOf(shown)}</dd>
-                      <dt>Last sync</dt>
-                      <dd>
-                        {formatAsOf(shown.lastSyncAt, now)?.replace(/^as of /, '') ?? 'not read'}
-                        {agoText(shown.lastSyncAt, now) ? ` (${agoText(shown.lastSyncAt, now)})` : ''}
-                      </dd>
-                      <dt>Sync</dt>
-                      <dd>{syncState(shown)}</dd>
-                    </dl>
-                  </div>
-                </>
-              )}
             </div>
           </div>
-          <p className={styles.readout} aria-live="polite">
-            {shown ? describe(shown, now) : 'Hover or focus a line for its readings.'}
+          {/* The same readings, for screen readers: the caption row is the visible home. */}
+          <p className="visually-hidden" aria-live="polite" data-live>
+            {shown ? describe(shown, now) : ''}
           </p>
         </div>
       )}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { EmptyState, Mono, Panel } from '../../components/ui'
+import { CHART_TOOLTIP_PROPS } from '../../lib/chartTooltip'
 import {
   chartSummary,
   formatCurrency,
@@ -319,7 +320,7 @@ export default function DailySpendSection({
                 tickLine={false}
                 width={64}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--surface-2)' }} />
+              <Tooltip {...CHART_TOOLTIP_PROPS} content={<ChartTooltip />} cursor={{ fill: 'var(--surface-2)' }} />
               {chartSeries.map(series => (
                 <Bar
                   key={series.key}

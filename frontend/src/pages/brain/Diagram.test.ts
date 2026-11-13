@@ -2,7 +2,7 @@
 
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { LineProfile } from './LineProfile'
 import { ReadingsBars } from './ReadingsBars'
 import { StatusLine } from './StatusLine'
@@ -21,6 +21,10 @@ afterEach(() => {
   while (mounted.length) mounted.pop()?.()
   document.body.innerHTML = ''
 })
+
+function cleanup(host: HTMLElement) {
+  host.remove()
+}
 
 async function mount(node: ReturnType<typeof createElement>) {
   const host = document.createElement('div')
@@ -245,18 +249,19 @@ describe('line profile', () => {
     expect(byId('curated').getAttribute('data-tone')).toBe('curated')
   })
 
-  it('shows name, pages, chunks and last sync on hover and on focus', async () => {
+  it('shows name, pages, chunks and last sync on hover and on focus, for screen readers too', async () => {
     const host = await mount(createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) }))
-    const readout = host.querySelector('p[aria-live="polite"]') as HTMLElement
-    expect(readout.textContent).toContain('Hover or focus')
+    const live = host.querySelector('[data-live]') as HTMLElement
+    expect(live.getAttribute('aria-live')).toBe('polite')
+    expect(live.textContent).toBe('')
     const target = lines(host).find((li) => li.getAttribute('data-source-id') === 'gstack-code') as HTMLElement
     await act(async () => {
       target.dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
     })
-    expect(readout.textContent).toContain('gstack-code: 3,237 pages, 6,474 chunks, last sync')
+    expect(live.textContent).toContain('gstack-code: 3,237 pages, 6,474 chunks, last sync')
     const off = lines(host).find((li) => li.getAttribute('data-source-id') === 'tk-omc-ain') as HTMLElement
     await act(async () => off.focus())
-    expect(readout.textContent).toContain('tk-omc-ain: 459 pages, 918 chunks, sync off')
+    expect(live.textContent).toContain('tk-omc-ain: 459 pages, 918 chunks, sync off')
   })
 
   it('has one tab stop and moves with the arrow keys', async () => {
@@ -291,48 +296,88 @@ describe('line profile: looking at one source', () => {
     expect(ticks).toContain('10,000')
   })
 
-  it('focusing a column shows its readout with the exact values, a hairline to the scale, a full label, and dims the others', async () => {
+  it('focusing a column puts its readings in the caption row, marks its value on the scale, and dims the others', async () => {
     const host = await mount(profileNode())
     expect(host.querySelector('[data-readout]')).toBeNull()
+    expect(host.querySelector('[data-caption-idle]')?.textContent).toContain('One scale: the tallest line is 18,005 pages')
     const target = byId(host, 'gstack-code')
     await act(async () => target.focus())
-    const card = host.querySelector('[data-readout]') as HTMLElement
-    expect(card.textContent).toContain('gstack-code')
-    expect(card.textContent).toContain('3,237')
-    expect(card.textContent).toContain('6,474')
+    const reading = host.querySelector('[data-readout]') as HTMLElement
+    // Name, group, pages, chunks, share, last sync, sync state: one row, in this order.
+    const parts = [...reading.children].map((child) => child.textContent)
+    expect(parts[0]).toBe('gstack-code')
+    expect(parts[1]).toBe('Projects')
+    expect(parts[2]).toBe('3,237 pages')
+    expect(parts[3]).toBe('6,474 chunks')
     // 3,237 of 41,953 pages (the fixture's total): one decimal place below 10%.
-    expect(card.textContent).toContain('7.7%')
-    expect(card.textContent).toContain('fresh')
-    expect(card.textContent).toMatch(/Last sync/)
-    expect(host.querySelector('[data-rule]')).not.toBeNull()
+    expect(parts[4]).toBe('7.7% of all pages')
+    expect(parts[5]).toMatch(/^last sync /)
+    expect(parts[6]).toBe('fresh')
+    expect(reading.getAttribute('data-tone')).toBe('projects')
+    // Its home is the caption row under the title, not the plot; the sentence it replaces stays in the row, out of sight.
+    expect(reading.closest('[data-caption]')).not.toBeNull()
+    expect(reading.closest('[class*="chart"]')).toBeNull()
+    expect(host.querySelector('[data-caption-idle]')?.hasAttribute('data-away')).toBe(true)
     expect(host.querySelector('[data-full-label]')?.textContent).toBe('gstack-code')
     expect(target.getAttribute('data-shown')).toBe('true')
     expect(host.querySelector('ul[aria-label="Pages per source"]')?.getAttribute('data-focus')).toBe('true')
     expect(lines(host).filter((li) => li.hasAttribute('data-shown'))).toHaveLength(1)
   })
 
-  it('hovering anywhere on the column shows the same readout; leaving clears it', async () => {
+  it('draws no guide line across the plot and no floating card: the value is marked on the scale only', async () => {
+    const host = await mount(profileNode())
+    await act(async () => byId(host, 'gstack-code').focus())
+    expect(host.querySelector('[data-rule]')).toBeNull()
+    expect(host.querySelector('[class*="rule"]')).toBeNull()
+    expect(host.querySelector('[class*="card"]')).toBeNull()
+    const marker = host.querySelector('[data-axis-marker]') as HTMLElement
+    expect(marker).not.toBeNull()
+    expect(marker.closest('[data-axis]')).not.toBeNull()
+    expect(marker.textContent).toBe('3,237')
+    // Level with the top of the line (36px at 200px for 18,005 pages).
+    expect(marker.style.getPropertyValue('--v')).toBe(`${byId(host, 'gstack-code').style.getPropertyValue('--h')}`)
+    // Nothing is drawn inside the plot but the lines, their counts and their labels.
+    expect(host.querySelector('ul[aria-label="Pages per source"]')?.querySelectorAll('[data-axis-marker]')).toHaveLength(0)
+    await act(async () => (document.activeElement as HTMLElement).blur())
+    expect(host.querySelector('[data-axis-marker]')).toBeNull()
+  })
+
+  it('puts away a scale value that would sit under the marker, and only that one', async () => {
+    const host = await mount(profileNode())
+    const away = () => [...host.querySelectorAll('[data-axis] [data-tick][data-away]')].map((tick) => tick.getAttribute('data-tick'))
+    expect(away()).toEqual([])
+    // 459 pages stand 5px high: level with the 0 of the scale.
+    await act(async () => byId(host, 'tk-omc-ain').focus())
+    expect(away()).toEqual(['0'])
+    await act(async () => byId(host, 'gstack-code').focus())
+    expect(away()).toEqual([])
+  })
+
+  it('hovering anywhere on the column shows the same readings; leaving restores the sentence', async () => {
     const host = await mount(profileNode())
     await act(async () => {
       byId(host, 'hermes-agent').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))
     })
-    expect(host.querySelector('[data-readout]')?.textContent).toContain('16,190')
+    expect(host.querySelector('[data-readout]')?.textContent).toContain('16,190 pages')
     await act(async () => {
       host.querySelector('ul[aria-label="Pages per source"]')?.dispatchEvent(new MouseEvent('mouseout', { bubbles: true, relatedTarget: document.body }))
     })
     expect(host.querySelector('[data-readout]')).toBeNull()
+    expect(host.querySelector('[data-caption-idle]')?.hasAttribute('data-away')).toBe(false)
   })
 
-  it('gives a one-pixel source the same readout, and says sync off for a source with sync off', async () => {
+  it('gives a one-pixel source the same readings, and says sync off for a source with sync off', async () => {
     const host = await mount(profileNode())
     await act(async () => byId(host, 'curated').focus())
     expect(host.querySelector('[data-readout]')?.textContent).toContain('curated')
     expect(byId(host, 'curated').style.getPropertyValue('--h')).toBe('1px')
     await act(async () => byId(host, 'tk-omc-ain').focus())
-    expect(host.querySelector('[data-readout]')?.textContent).toContain('sync off')
+    const reading = host.querySelector('[data-readout]') as HTMLElement
+    expect(reading.textContent).toContain('sync off')
+    expect(reading.textContent).not.toContain('last sync')
   })
 
-  it('Escape and blur clear it', async () => {
+  it('Escape and blur restore the sentence', async () => {
     const host = await mount(profileNode())
     const target = byId(host, 'gbrain')
     await act(async () => target.focus())
@@ -341,6 +386,7 @@ describe('line profile: looking at one source', () => {
       target.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     })
     expect(host.querySelector('[data-readout]')).toBeNull()
+    expect(host.querySelector('[data-caption-idle]')?.hasAttribute('data-away')).toBe(false)
     expect(document.activeElement).toBe(target)
     await act(async () => {
       target.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
@@ -348,6 +394,8 @@ describe('line profile: looking at one source', () => {
     expect(host.querySelector('[data-readout]')).not.toBeNull()
     await act(async () => (document.activeElement as HTMLElement).blur())
     expect(host.querySelector('[data-readout]')).toBeNull()
+    expect(host.querySelector('[data-caption-idle]')?.hasAttribute('data-away')).toBe(false)
+    expect(host.querySelector('[data-caption-idle]')?.textContent).toContain('One scale')
   })
 
   it('a tap toggles the same state', async () => {
@@ -366,6 +414,105 @@ describe('line profile: looking at one source', () => {
       target.click()
     })
     expect(host.querySelector('[data-readout]')).toBeNull()
+  })
+})
+
+describe('line profile: labels on a measured, wide profile', () => {
+  const lines = (host: HTMLElement) => [...host.querySelectorAll('ul[aria-label="Pages per source"] li')] as HTMLElement[]
+  const byId = (host: HTMLElement, id: string) => lines(host).find((li) => li.getAttribute('data-source-id') === id) as HTMLElement
+  const nameOf = (host: HTMLElement, id: string) => byId(host, id).querySelector('[data-name-label]') as HTMLElement
+  const profileNode = () => createElement(LineProfile, { diagram: buildDiagram(fixture(), readingOf()) })
+
+  // jsdom has no layout: give the profile a width (900px: nine columns of 100px) and every label a box.
+  let labelWidth = 60
+  const realRect = Element.prototype.getBoundingClientRect
+  const clientWidth = Object.getOwnPropertyDescriptor(Element.prototype, 'clientWidth')
+  const RealObserver = globalThis.ResizeObserver
+
+  beforeEach(() => {
+    labelWidth = 60
+    globalThis.ResizeObserver = class {
+      constructor(private callback: () => void) {}
+      observe() {
+        this.callback()
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver
+    Object.defineProperty(Element.prototype, 'clientWidth', {
+      configurable: true,
+      get(this: Element) {
+        return this.tagName === 'UL' ? 900 : 0
+      },
+    })
+    Element.prototype.getBoundingClientRect = function (this: Element) {
+      const index = this.closest('li') ? [...(this.closest('ul')?.children ?? [])].indexOf(this.closest('li') as Element) : -1
+      const centre = (index + 0.5) * 100
+      const make = (width: number, top: number, bottom: number) =>
+        ({ left: centre - width / 2, right: centre + width / 2, top, bottom, width, height: bottom - top, x: centre - width / 2, y: top, toJSON: () => ({}) }) as DOMRect
+      if (this.hasAttribute('data-name-label')) return make(labelWidth, 229, 245)
+      if (this.hasAttribute('data-full-label')) return make(160, 227, 247)
+      return realRect.call(this)
+    }
+  })
+
+  afterEach(() => {
+    Element.prototype.getBoundingClientRect = realRect
+    if (clientWidth) Object.defineProperty(Element.prototype, 'clientWidth', clientWidth)
+    globalThis.ResizeObserver = RealObserver
+  })
+
+  it('hides the labels that touch the enlarged label of the looked-at source, from measured boxes, and restores them on leave', async () => {
+    const host = await mount(profileNode())
+    const covered = () => lines(host).filter((li) => li.querySelector('[data-covered]')).map((li) => li.getAttribute('data-source-id'))
+    expect(covered()).toEqual([])
+    // finance-analyzer is the fifth column: its enlarged label (160px) reaches into the columns on both sides, not beyond.
+    await act(async () => byId(host, 'finance-analyzer').focus())
+    expect(host.querySelector('[data-full-label]')?.textContent).toBe('finance-analyzer')
+    expect(covered()).toEqual(['gstack-code', 'tk-omc-ain'])
+    await act(async () => byId(host, 'curated').focus())
+    expect(covered()).toEqual(['hermes-agent'])
+    await act(async () => (document.activeElement as HTMLElement).blur())
+    expect(covered()).toEqual([])
+  })
+
+  it('draws one row of labels: a column too narrow for its label loses the label, and no label is offset onto a second row', async () => {
+    const host = await mount(profileNode())
+    const dropped = () => lines(host).filter((li) => li.querySelector('[data-dropped]')).map((li) => li.getAttribute('data-source-id'))
+    // 60px labels in 100px columns: all of them fit.
+    expect(dropped()).toEqual([])
+    cleanup(host)
+    // 120px labels in 100px columns: the bigger source keeps its label, a neighbour that would touch it loses its own.
+    labelWidth = 120
+    const narrow = await mount(profileNode())
+    const lost = lines(narrow).filter((li) => li.querySelector('[data-dropped]')).map((li) => li.getAttribute('data-source-id'))
+    expect(lost.sort()).toEqual(['a320-manuals', 'aviation-standards', 'curated', 'finance-analyzer', 'gbrain'])
+    for (const li of lines(narrow)) {
+      expect(li.style.getPropertyValue('--row')).toBe('')
+      expect(li.querySelectorAll('[data-name-label]')).toHaveLength(1)
+    }
+    // The dropped name is still the accessible name of its column.
+    expect(byId(narrow, 'aviation-standards').getAttribute('aria-label')).toContain('aviation-standards')
+    expect(nameOf(narrow, 'default-x').hasAttribute('data-dropped')).toBe(false)
+  })
+})
+
+describe('line profile: short labels', () => {
+  const lines = (host: HTMLElement) => [...host.querySelectorAll('ul[aria-label="Pages per source"] li')] as HTMLElement[]
+
+  it('the three japanesebuddy sources get unique labels that keep their distinguishing tail, in one row', async () => {
+    const ids = ['japanesebuddy', 'japanesebuddy-dev-yordam-dl', 'japanesebuddy-main-dl']
+    const syn = synoptic({
+      sources: [{ id: 'projects', label: 'projects', state: 'healthy' as const, observedAt: AT, items: ids.map((id) => item(id)) }],
+    })
+    const diagram = buildDiagram(syn, sources(ids.map((id, i) => ({ id, pages: 30 - i, chunks: 60, lastSyncAt: AT }))))
+    const host = await mount(createElement(LineProfile, { diagram }))
+    const labels = lines(host).map((li) => (li.querySelector('[data-name-label]') as HTMLElement).textContent)
+    expect(labels).toEqual(['japanesebuddy', '…dev-yordam-dl', '…main-dl'])
+    expect(new Set(labels).size).toBe(3)
+    // The full id is what the label stands for.
+    expect(lines(host).map((li) => (li.querySelector('[data-name-label]') as HTMLElement).getAttribute('title'))).toEqual(ids)
+    expect(lines(host).every((li) => li.style.getPropertyValue('--row') === '')).toBe(true)
   })
 })
 

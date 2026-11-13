@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { buildDiagram, shortSourceName } from './diagram'
 import { synoptic, sources } from './fixtures'
-import { PROFILE_SCALE_PX, axisTicks, buildProfile, lineHeight, middleTruncate, shortLabels, sourceLabels, staggerRows, visibleCounts } from './profile'
+import { PROFILE_SCALE_PX, axisTicks, buildProfile, lineHeight, middleTruncate, shortLabels, sourceLabels, visibleCounts, visibleLabels, coveredLabels, crowdedTicks, boxesTouch } from './profile'
 import type { GBrainSynoptic } from './types'
 
 describe('line heights are on one true linear scale', () => {
@@ -179,12 +179,62 @@ describe('short labels', () => {
     expect(new Set(shortLabels(['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa2'])).size).toBe(2)
   })
 
-  it('staggers labels onto two rows only when neighbours would touch', () => {
-    expect(staggerRows(['a', 'b', 'c'], 100)).toEqual([0, 0, 0])
-    const rows = staggerRows(['abcdefgh', 'abcdefgh', 'abcdefgh', 'abcdefgh'], 40)
-    expect(rows).toContain(1)
-    expect(rows[0]).toBe(0)
-    expect(staggerRows(['x', 'y'], null)).toEqual([0, 0])
+  it('tells ids that share a start apart by their own tail, not by a cut that leaves them all alike', () => {
+    const labels = shortLabels(ids19)
+    const at = (id: string) => labels[ids19.indexOf(id)]
+    expect(at('japanesebuddy')).toBe('japanesebuddy')
+    expect(at('japanesebuddy-dev-yordam-dl')).toBe('…dev-yordam-dl')
+    expect(at('japanesebuddy-main-dl')).toBe('…main-dl')
+    // Without a shorter id to carry the shared start, the leading words are kept.
+    expect(shortLabels(['hermes-agent', 'hermes-memories'])).toEqual(['hermes-agent', 'hermes-memories'])
+    // A tail too long to fit is cut, still unique.
+    const long = shortLabels(['alpha', 'alpha-' + 'x'.repeat(40) + '-one', 'alpha-' + 'x'.repeat(40) + '-two'])
+    expect(new Set(long).size).toBe(3)
+    expect(long.every((label) => label.length <= 19)).toBe(true)
+  })
+
+  it('draws labels in one row: a label that would touch a bigger source\'s label is left out, never put on a second row', () => {
+    const line = (id: string, name: string, pages: number) => ({ id, name, pages })
+    const lines = [line('a', 'aviation', 100), line('b', 'a320', 50), line('c', 'japanesebuddy', 3), line('d', '…dev-yordam-dl', 2), line('e', '…main-dl', 1)]
+    // Wide columns: nothing is left out. Unknown width: nothing is left out.
+    expect(visibleLabels(lines, 200).size).toBe(5)
+    expect(visibleLabels(lines, null).size).toBe(5)
+    // Narrow columns: the bigger source keeps its label; neighbours that would touch it lose theirs.
+    const kept = visibleLabels(lines, 40)
+    expect(kept.has('a')).toBe(true)
+    expect(kept.size).toBeLessThan(5)
+    // No two kept labels touch (centres 40px apart, estimated widths).
+    const centres = lines.map((l, i) => ({ id: l.id, x: (i + 0.5) * 40, w: l.name.length * 6 })).filter((box) => kept.has(box.id))
+    for (let i = 0; i < centres.length; i += 1) for (let j = i + 1; j < centres.length; j += 1) expect(Math.abs(centres[i].x - centres[j].x)).toBeGreaterThanOrEqual((centres[i].w + centres[j].w) / 2)
+    // Measured widths win over the estimate.
+    expect(visibleLabels(lines.slice(0, 2), 40, { a: 10, b: 10 }).size).toBe(2)
+    expect(visibleLabels(lines.slice(0, 2), 40, { a: 80, b: 10 }).size).toBe(1)
+  })
+
+  it('puts away exactly the labels that touch the enlarged one, from measured boxes', () => {
+    const box = (left: number, right: number, top = 229, bottom = 245) => ({ left, right, top, bottom })
+    const cover = box(100, 200, 227, 247)
+    const away = coveredLabels(cover, [
+      { id: 'near-left', box: box(60, 105) },
+      { id: 'near-right', box: box(195, 240) },
+      { id: 'inside', box: box(120, 160) },
+      { id: 'clear-left', box: box(20, 90) },
+      { id: 'clear-right', box: box(210, 260) },
+      { id: 'other-row', box: box(120, 160, 300, 316) },
+    ])
+    expect([...away].sort()).toEqual(['inside', 'near-left', 'near-right'])
+    expect(boxesTouch(box(0, 10), box(10, 20))).toBe(false)
+    expect(coveredLabels(cover, [])).toEqual(new Set())
+  })
+
+  it('puts away only the scale values that sit on the marker of the looked-at line', () => {
+    const ticks = axisTicks(18032)
+    expect(crowdedTicks(ticks, 18032, 200)).toEqual(new Set())
+    // 5,000 sits at 55px, 10,000 at 111px, 15,000 at 166px.
+    expect(crowdedTicks(ticks, 18032, 60)).toEqual(new Set([5000]))
+    expect(crowdedTicks(ticks, 18032, 1)).toEqual(new Set([0]))
+    expect(crowdedTicks(ticks, 18032, null)).toEqual(new Set())
+    expect(crowdedTicks([], null, 10)).toEqual(new Set())
   })
 
   it('draws round axis ticks from zero up to the tallest line', () => {
