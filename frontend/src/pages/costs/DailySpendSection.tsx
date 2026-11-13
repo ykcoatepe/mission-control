@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { Bar, BarChart, CartesianGrid, Cell, Tooltip, XAxis, YAxis } from 'recharts'
 import { EmptyState, Mono, Panel } from '../../components/ui'
+import { CHART_TOOLTIP_PROPS } from '../../lib/chartTooltip'
 import {
   chartSummary,
   formatCurrency,
@@ -247,13 +248,13 @@ export default function DailySpendSection({
   const description = chartDayCount > 0
     ? ledgerActive
       ? apiEquivalentUnavailable
-        ? dayWord
-        : `${dayWord} · API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
+        ? null
+        : `API equivalent${apiEquivalentReliability === 'partial' ? ', partial estimate' : ''}`
       : codexbarActive
-        ? `${dayWord} · CodexBar estimate`
+        ? 'CodexBar estimate'
         : hasSessionEstimateChart
-          ? `${dayWord} · tokens only, no cost data`
-          : dayWord
+          ? 'Tokens only, no cost data'
+          : null
     : 'Waiting for daily history.'
 
   let body
@@ -308,18 +309,18 @@ export default function DailySpendSection({
               <XAxis
                 dataKey="fullDate"
                 tickFormatter={val => { const d = new Date(val); return `${d.getMonth() + 1}/${d.getDate()}` }}
-                tick={{ fill: 'var(--text-3)', fontSize: 11 }}
+                tick={{ fill: 'var(--text-3)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
                 tickFormatter={value => formatPreciseCurrency(Number(value || 0))}
-                tick={{ fill: 'var(--text-3)', fontSize: 11 }}
+                tick={{ fill: 'var(--text-3)', fontSize: 12 }}
                 axisLine={false}
                 tickLine={false}
                 width={64}
               />
-              <Tooltip content={<ChartTooltip />} cursor={{ fill: 'var(--surface-2)' }} />
+              <Tooltip {...CHART_TOOLTIP_PROPS} content={<ChartTooltip />} cursor={{ fill: 'var(--surface-2)' }} />
               {chartSeries.map(series => (
                 <Bar
                   key={series.key}
@@ -431,7 +432,7 @@ export default function DailySpendSection({
   }
 
   return (
-    <Panel title="Daily usage" description={description}>
+    <Panel title="Daily usage" meta={chartDayCount > 0 ? dayWord : undefined} description={description}>
       <div className={styles.body}>{body}</div>
     </Panel>
   )

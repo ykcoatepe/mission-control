@@ -3,22 +3,21 @@ import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { RefreshCw } from 'lucide-react'
 import {
+  AlarmLine,
+  AnalogBar,
+  Block,
   Button,
   DataTable,
   Drawer,
   EmptyState,
   ErrorState,
   Freshness,
-  Meter,
   Mono,
   Notice,
   Page,
-  Panel,
   Select,
   Skeleton,
-  Stat,
   StatePill,
-  StatRow,
   TimeAgo,
 } from '../components/ui'
 import type { DataTableColumn } from '../components/ui'
@@ -33,6 +32,7 @@ import {
   formatMiB,
   formatSize,
   formatTokens,
+  historySeries,
   aggregateLocalTokenUsage,
   canonicalLocalModelName,
   countUnknownLocality,
@@ -275,29 +275,14 @@ function formatErrorRate(rate?: number | null) {
   return (Number(rate) * 100).toFixed(1) + '%'
 }
 
-/** Health-score trend: absolute 0-100 scale, so a flat line near the top reads as flat. */
-function HealthSpark({ values }: { values: number[] }) {
-  if (values.length < 2) return null
-  const width = 100
-  const height = 24
-  const points = values
-    .map((v, index) => {
-      const x = (index / (values.length - 1)) * width
-      const y = height - (Math.max(0, Math.min(100, v)) / 100) * height
-      return `${x.toFixed(2)},${y.toFixed(2)}`
-    })
-    .join(' ')
-  return (
-    <svg
-      className={styles.spark}
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      role="img"
-      aria-label={`Health score over the last ${values.length} readings`}
-    >
-      <polyline points={points} className={styles.sparkLine} />
-    </svg>
-  )
+const whole = (n: number) => String(Math.round(n))
+
+/** "09:12", or "14 Aug, 09:12" when it was not today. */
+function formatSince(ms: number): string {
+  const when = new Date(ms)
+  const time = when.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  if (when.toDateString() === new Date().toDateString()) return time
+  return `${when.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`
 }
 
 function DetailRow({ label, children }: { label: string; children: ReactNode }) {
@@ -367,7 +352,6 @@ export default function OllamaMonitor() {
     const counts = modelMetrics.map((metric) => finiteNumber(metric.requestCount)).filter((n): n is number => n !== null)
     return counts.length ? Math.max(...counts) : null
   }, [modelMetrics])
-  const runningModelNames = useMemo(() => models.filter((model) => model.status === 'running').map((model) => model.name).filter(Boolean), [models])
   const latestLoadedAt = useMemo(() => {
     let latest = ''
     for (const model of models) {
@@ -375,12 +359,10 @@ export default function OllamaMonitor() {
     }
     return latest || null
   }, [models])
-  const healthTrend = useMemo(() => {
-    return (historyData?.history || [])
-      .map((item) => item.healthScore)
-      .filter((score) => Number.isFinite(score))
-      .slice(-20)
-  }, [historyData?.history])
+  // Trends come only from the history the API returned; a reading without a number leaves a gap, never a guess.
+  const healthSeries = useMemo(() => historySeries(historyData?.history, (item) => item.healthScore), [historyData?.history])
+  const memorySeries = useMemo(() => historySeries(historyData?.history, (item) => item.memoryUsedPercent), [historyData?.history])
+  const gpuSeries = useMemo(() => historySeries(historyData?.history, (item) => item.gpuUtilPercent), [historyData?.history])
 
   const getModelTokenUsage = (name: string) => modelTokenUsageMap.get(canonicalLocalModelName(name))
 
@@ -452,12 +434,26 @@ export default function OllamaMonitor() {
   else if (canAccept === null) verdictText = 'Ollama is running, but it did not report whether it accepts requests'
   else if (verdictState !== 'healthy') verdictText = 'Ollama is running with a low health score'
 
-  const verdict = (
+  // One alarm line, only when something is abnormal. "Not read" is not an alarm: it stays a quiet sentence.
+  const alarmState = verdictState === 'critical' || verdictState === 'warning' ? verdictState : null
+  const alarmDetail = [
+    ...alerts.map((alert) => `${alert.message}${alert.suppressed ? ' (cooldown)' : ''}`),
+    data.server.error ? `Ollama reported: ${data.server.error}` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const quietSentence = (
     <span className={styles.verdict}>
       <StatePill state={verdictState} label={verdictText} />
-      <Freshness observedAt={data.generatedAt} staleAfterMs={60_000} />
     </span>
   )
+
+  // The history spans at most 24 hours; when it is shorter, say where it starts.
+  const trendSpan = healthSeries.length >= 2 ? healthSeries[healthSeries.length - 1].t - healthSeries[0].t : null
+  const trendNote =
+    trendSpan !== null && trendSpan < 23 * 3_600_000
+      ? `Trends cover the time since ${formatSince(healthSeries[0].t)}, the earliest reading kept.`
+      : undefined
 
   const periodLabel = PERIOD_OPTIONS.find((option) => option.value === usagePeriod)?.label || ''
   const selectedModel = selectedName ? models.find((model) => model.name === selectedName) || null : null
@@ -486,7 +482,7 @@ export default function OllamaMonitor() {
         model.status === 'running' ? (
           <StatePill state="healthy" label="Loaded" />
         ) : (
-          <span className={styles.quiet}>Not loaded</span>
+          <StatePill state="inactive" label="Not loaded" />
         ),
     },
     {
@@ -561,22 +557,26 @@ export default function OllamaMonitor() {
     presentText(firstGpuDevice?.metricSourceNote),
   ].filter(Boolean) as string[]
 
+  const loadedMeta =
+    finiteNumber(data.runtime.runningModels) === null
+      ? undefined
+      : finiteNumber(data.runtime.totalModels) !== null
+        ? `${data.runtime.runningModels} of ${data.runtime.totalModels} loaded`
+        : `${data.runtime.runningModels} loaded`
+  const noneLoaded = finiteNumber(data.runtime.runningModels) === 0 || models.every((model) => model.status !== 'running')
+
   return (
-    <Page title="Local models" description={verdict} actions={refreshButton}>
-      {alerts.length > 0 ? (
-        <Notice tone={alertState} title={`${alerts.length} active alert${alerts.length === 1 ? '' : 's'}`}>
-          <ul className={styles.alertList}>
-            {alerts.map((alert) => (
-              <li key={`${alert.code}-${alert.triggeredAt}`}>
-                {alert.message}
-                {alert.suppressed ? ' (cooldown)' : ''}
-              </li>
-            ))}
-          </ul>
-        </Notice>
+    <Page title="Local models" description={alarmState ? undefined : quietSentence} actions={refreshButton}>
+      {alarmState ? (
+        <AlarmLine
+          state={alarmState}
+          title={verdictText}
+          detail={alarmDetail || undefined}
+          action={status !== 'online' ? { label: 'Read again', onClick: () => void handleRefresh(), busy: refreshing } : undefined}
+        />
       ) : null}
 
-      {data.server.error ? (
+      {!alarmState && data.server.error ? (
         <Notice tone="warning" title="Ollama reported a problem">
           {data.server.error}
         </Notice>
@@ -588,56 +588,64 @@ export default function OllamaMonitor() {
         </Notice>
       ) : null}
 
-      <StatRow aria-label="Ollama readings">
-        <Stat
-          label="Health"
-          value={healthScore !== null ? Math.round(healthScore) : null}
-          unit="/ 100"
-          state={verdictState !== 'healthy' ? scoreState(healthScore) : undefined}
-          hint={
-            <>
-              <span className={styles.hintLine}>
-                {data.server.baseUrl}
-                {data.server.version ? ` · v${data.server.version}` : ''}
-              </span>
-              <HealthSpark values={healthTrend} />
-            </>
-          }
-        />
-        <Stat
-          label="Memory"
-          value={memPercent !== null ? Math.round(memPercent) : null}
-          unit="%"
-          state={percentState(memPercent)}
-          hint={
-            finiteNumber(data.system?.memory?.usedBytes) !== null && finiteNumber(data.system?.memory?.totalBytes) !== null
-              ? `${formatSize(data.system.memory.usedBytes)} of ${formatSize(data.system.memory.totalBytes)}`
-              : undefined
-          }
-        />
-        <Stat
-          label="GPU load"
-          value={gpuLoad !== null ? Math.round(gpuLoad) : null}
-          unit="%"
-          hint={firstGpuDevice?.name || 'No GPU metrics'}
-        />
-        <Stat
-          label="Models loaded"
-          value={finiteNumber(data.runtime.runningModels)}
-          unit={finiteNumber(data.runtime.totalModels) !== null ? `of ${data.runtime.totalModels}` : undefined}
-          hint={
-            runningModelNames.length
-              ? runningModelNames.join(', ')
-              : latestLoadedAt
-                ? (
-                  <>
-                    None loaded · last load <TimeAgo value={latestLoadedAt} />
-                  </>
-                )
-                : 'None loaded'
-          }
-        />
-      </StatRow>
+      <Block
+        title="Readings"
+        meta={<Freshness observedAt={data.generatedAt} staleAfterMs={60_000} />}
+        description={
+          [data.server.baseUrl, data.server.version ? `v${data.server.version}` : null, trendNote].filter(Boolean).join(' · ') || undefined
+        }
+      >
+        <div className={styles.bars}>
+          <div className={styles.reading}>
+            <AnalogBar
+              label="Health score"
+              value={healthScore}
+              unread={healthScore === null}
+              min={0}
+              max={100}
+              band={[85, 100]}
+              limits={[0, 60, 85, 100]}
+              format={whole}
+              state={scoreState(healthScore) === 'critical' ? 'critical' : undefined}
+              trend={healthSeries}
+            />
+          </div>
+          <div className={styles.reading}>
+            <AnalogBar
+              label="Memory"
+              value={memPercent}
+              unread={memPercent === null}
+              min={0}
+              max={100}
+              band={[0, 80]}
+              unit="%"
+              format={whole}
+              state={percentState(memPercent)}
+              trend={memorySeries}
+            />
+            {finiteNumber(data.system?.memory?.usedBytes) !== null && finiteNumber(data.system?.memory?.totalBytes) !== null ? (
+              <p className={styles.caption}>
+                {formatSize(data.system.memory.usedBytes)} of {formatSize(data.system.memory.totalBytes)}
+              </p>
+            ) : null}
+          </div>
+          {firstGpuDevice ? (
+            <div className={styles.reading}>
+              <AnalogBar
+                label="GPU load"
+                value={gpuLoad}
+                unread={gpuLoad === null}
+                min={0}
+                max={100}
+                unit="%"
+                format={whole}
+                trend={gpuSeries}
+              />
+              {firstGpuDevice.name ? <p className={styles.caption}>{firstGpuDevice.name}</p> : null}
+            </div>
+          ) : null}
+        </div>
+      </Block>
 
       {(!gpu?.available || gpuDevices.length === 0) && (gpu?.error || gpu?.limitation) ? (
         <Notice tone="unavailable" title="GPU metrics could not be read">
@@ -660,8 +668,9 @@ export default function OllamaMonitor() {
 
       {tokenNote}
 
-      <Panel
+      <Block
         title="Models"
+        meta={loadedMeta}
         description={panelDescription}
         padding="none"
         actions={
@@ -684,15 +693,20 @@ export default function OllamaMonitor() {
           maxHeight="none"
           empty={<EmptyState title="No models found" description="Ollama did not list any local models." />}
         />
+        {noneLoaded && latestLoadedAt ? (
+          <p className={styles.tableNote}>
+            None loaded · last load <TimeAgo value={latestLoadedAt} />
+          </p>
+        ) : null}
         {requestFiguresUnmeasured ? (
           <p className={styles.tableNote}>
             Requests per minute and error rate are not shown: Ollama does not count requests per model.
           </p>
         ) : null}
-      </Panel>
+      </Block>
 
       {gpuDevices.length > 0 ? (
-        <Panel title="GPU" description={hasLiveGpuMetrics ? undefined : 'Live GPU counters are not exposed on this system.'}>
+        <Block title="GPU" description={hasLiveGpuMetrics ? undefined : 'Live GPU counters are not exposed on this system.'}>
           <div className={styles.gpuList}>
             {gpuDevices.map((device) => {
               const tilerUtil = finiteNumber(device.tilerUtilPercent)
@@ -703,28 +717,48 @@ export default function OllamaMonitor() {
               const powerDraw = finiteNumber(device.powerDraw)
               const powerLimit = finiteNumber(device.powerLimit)
               const subtitle = [device.vendor, device.cores ? `${device.cores} cores` : null].map(presentText).filter(Boolean).join(' · ')
+              const memoryLabel = device.memUsedEstimate ? 'Memory (estimated)' : 'Memory used'
+              const memoryBar = memUsed !== null && memAllocated !== null && memAllocated > 0
+              const powerBar = powerDraw !== null && powerLimit !== null && powerLimit > 0
               return (
                 <div key={device.index} className={styles.gpuDevice}>
                   <p className={styles.gpuName}>
                     {device.name}
                     <span className={styles.gpuMeta}>{` GPU ${device.index}${subtitle ? ` · ${subtitle}` : ''}`}</span>
                   </p>
+                  <div className={styles.bars}>
+                    {memoryBar ? (
+                      <div className={styles.reading}>
+                        <AnalogBar label={memoryLabel} value={memUsed} min={0} max={memAllocated} format={formatMiB} />
+                        <p className={styles.caption}>
+                          {formatMiB(memUsed)} of {formatMiB(memAllocated)} allocated
+                          {memHardware !== null ? ` · ${formatMiB(memHardware)} installed` : ''}
+                        </p>
+                      </div>
+                    ) : null}
+                    {tilerUtil !== null ? (
+                      <div className={styles.reading}>
+                        <AnalogBar label="Tiler load" value={tilerUtil} min={0} max={100} unit="%" format={whole} />
+                      </div>
+                    ) : null}
+                    {powerBar ? (
+                      <div className={styles.reading}>
+                        <AnalogBar label="Power" value={powerDraw} min={0} max={powerLimit} unit="W" format={whole} />
+                      </div>
+                    ) : null}
+                  </div>
                   <dl className={styles.gpuGrid}>
-                    {memUsed !== null ? (
-                      <DetailRow label={device.memUsedEstimate ? 'Memory (estimated)' : 'Memory used'}>
+                    {memUsed !== null && !memoryBar ? (
+                      <DetailRow label={memoryLabel}>
                         <Mono>
                           {formatMiB(memUsed)}
                           {memAllocated !== null ? ` of ${formatMiB(memAllocated)} allocated` : ''}
                           {memHardware !== null ? ` · ${formatMiB(memHardware)} installed` : ''}
                         </Mono>
-                        {memAllocated !== null ? (
-                          <Meter value={memUsed} max={memAllocated} label="GPU memory used of allocated" />
-                        ) : null}
                       </DetailRow>
                     ) : null}
-                    {tilerUtil !== null ? <DetailRow label="Tiler load"><Mono>{Math.round(tilerUtil)}%</Mono></DetailRow> : null}
                     {tempC !== null ? <DetailRow label="Temperature"><Mono>{Math.round(tempC)} °C</Mono></DetailRow> : null}
-                    {powerDraw !== null || powerLimit !== null ? (
+                    {!powerBar && (powerDraw !== null || powerLimit !== null) ? (
                       <DetailRow label="Power">
                         <Mono>
                           {[powerDraw !== null ? `${Math.round(powerDraw)} W` : null, powerLimit !== null ? `${Math.round(powerLimit)} W limit` : null]
@@ -739,7 +773,7 @@ export default function OllamaMonitor() {
             })}
           </div>
           {gpuMetricsNote.length > 0 ? <p className={styles.note}>{gpuMetricsNote.join(' ')}</p> : null}
-        </Panel>
+        </Block>
       ) : null}
 
       <Drawer

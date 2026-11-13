@@ -226,6 +226,31 @@ export interface TimelineReading {
   meta: Meta
 }
 
+/**
+ * GET /api/gbrain/trends: real readings recorded in the last 24 hours. A series with fewer than two readings is empty.
+ * `meta.ok` false means the history was not read (`gbrain_trends_too_large`, `gbrain_trends_corrupt`): no trend, "not read".
+ * `partial` means some history lines could not be read (`skippedLines` of them); the series hold what was read.
+ */
+export interface TrendSeriesPoint {
+  t: number
+  v: number
+}
+
+export interface TrendsReading {
+  enabled?: boolean
+  since?: string
+  until?: string
+  entryCount?: number
+  partial?: boolean
+  skippedLines?: number | null
+  series: {
+    quality?: TrendSeriesPoint[]
+    embeddedPercent?: TrendSeriesPoint[]
+    queue?: TrendSeriesPoint[]
+  }
+  meta: Meta
+}
+
 // ---- GET /api/operations/overview (capabilities) ----
 
 export type SafetyClass = 'R0' | 'W1' | 'W2'

@@ -35,8 +35,8 @@
 }
 
 .monthNavLabel:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .monthPicker {
@@ -79,7 +79,8 @@
 }
 
 .pickerStep:focus-visible {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .pickerStep:disabled {
@@ -104,7 +105,8 @@
 }
 
 .pickerTitle:focus-visible {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .pickerYear {
@@ -135,7 +137,8 @@
 }
 
 .monthCell:focus-visible {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .monthCell:disabled {
@@ -145,7 +148,8 @@
 .monthCellSelected {
   color: var(--accent);
   background: var(--accent-bg);
-  box-shadow: inset 0 0 0 1px var(--accent-line);
+  outline: 1px solid var(--accent-line);
+  outline-offset: -1px;
 }
 
 .weekHeader,
@@ -175,9 +179,9 @@
   border-radius: var(--r-sm);
 }
 
-/* Usage heat: the accent tint scales with the day's share of the month's peak. */
+/* Usage heat: a neutral tint (teal is reserved for what is selected) scaled to the day's share of the month's peak. */
 .day[data-heat='true'] {
-  background: color-mix(in srgb, var(--accent) calc(var(--heat) * 100%), transparent);
+  background: color-mix(in srgb, var(--track) calc(var(--heat) * 70%), transparent);
   color: var(--text-1);
 }
 
@@ -189,7 +193,8 @@
 }
 
 .day:focus-visible {
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .day:disabled {
@@ -197,13 +202,15 @@
 }
 
 .dayToday {
-  box-shadow: inset 0 0 0 1px var(--line-strong);
+  outline: 1px solid var(--line-strong);
+  outline-offset: -1px;
 }
 
 .daySelected,
 .daySelected[data-heat='true'] {
   color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 
 .hint {

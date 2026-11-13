@@ -8,6 +8,8 @@ import {
   isAbnormal,
   scheduleNote,
   parseServiceFilter,
+  quietLines,
+  serviceAlarm,
   serviceHint,
   serviceStatus,
   servicesVerdict,
@@ -342,5 +344,44 @@ describe('parseServiceFilter', () => {
     expect(parseServiceFilter('unidentified')).toBe('unidentified')
     expect(parseServiceFilter('bogus')).toBe('all')
     expect(parseServiceFilter(null)).toBe('all')
+  })
+})
+
+describe('serviceAlarm and quietLines', () => {
+  const base = { services: [], counts: null, gateways: { openclaw: null, hermes: null }, ollama: null }
+  const up = { state: 'up', reachable: true, error: null, observedAt: null }
+  const calm = { ...base, gateways: { openclaw: up, hermes: up }, ollama: up }
+
+  it('is absent when nothing is abnormal, and a read failure alone is not an alarm', () => {
+    const ok = { ...calm, summary: { total: 2, running: 2, idle: 0, down: 0, unidentified: 0 } }
+    expect(serviceAlarm(servicesVerdict(ok), ok)).toBeNull()
+    const unread = { ...base, summary: { total: 2, running: 2, idle: 0, down: 0, unidentified: 0 } }
+    const verdict = servicesVerdict(unread)
+    expect(serviceAlarm(verdict, unread)).toBeNull()
+    expect(quietLines(verdict).length).toBeGreaterThan(0)
+  })
+
+  it('titles the alarm with the services that are down and offers to list them, once', () => {
+    const data = { ...calm, summary: { total: 3, running: 2, idle: 0, down: 1, unidentified: 0 }, ollama: { ...up, state: 'down' } }
+    const verdict = servicesVerdict(data)
+    const alarm = serviceAlarm(verdict, data)!
+    expect(alarm.state).toBe('critical')
+    expect(alarm.title).toBe('1 service is down')
+    expect(alarm.detail).toBe('Ollama is not reachable')
+    expect(alarm.action).toEqual({ kind: 'filter', filter: 'down', label: 'Show it' })
+    expect(serviceAlarm(verdict, data, 'down')!.action).toBeNull()
+  })
+
+  it('points a gateway warning at the place that explains it', () => {
+    const data = { ...calm, summary: { total: 2, running: 2, idle: 0, down: 0, unidentified: 0 } }
+    const verdict = servicesVerdict(data, { openclaw: { state: 'warning', reason: 'It is slow.', detailHref: '/services' } })
+    const alarm = serviceAlarm(verdict, data)!
+    expect(alarm.state).toBe('warning')
+    expect(alarm.detail).toBe('It is slow.')
+    expect(alarm.action).toEqual({
+      kind: 'link',
+      link: { kind: 'anchor', to: '#gateway-readings', label: 'See the gateway readings' },
+      label: 'See the gateway readings',
+    })
   })
 })

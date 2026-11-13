@@ -346,9 +346,12 @@ test('3: the GBrain state helper and verdict give the fixture result for every p
 
 test('3: the signals attention aggregate gives the fixture result for every pair', () => {
   const { needsOperator } = require('../server/sources/mloop/attention');
+  // Badge rule: worst covers the counted (new) items only, so a pair whose
+  // worst is below warning counts nothing and reads 'healthy'.
+  const { stateRank } = require('../server/core/state');
   for (const [a, b, worst] of ORDER.pairs) {
     const signal = needsOperator({ systems: [{ id: 'one', state: a }, { id: 'two', state: b }] });
-    assert.equal(signal.worst, worst, `attention ${a} + ${b}`);
+    assert.equal(signal.worst, stateRank(worst) >= stateRank('warning') ? worst : 'healthy', `attention ${a} + ${b}`);
   }
 });
 

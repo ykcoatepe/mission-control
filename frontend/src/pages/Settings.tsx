@@ -10,8 +10,9 @@ import type { Routing, RoutingField } from './settings/lib'
 import { useTheme } from '../lib/theme'
 import type { Theme } from '../lib/theme'
 import {
+  AlarmLine,
   Button,
-  ErrorState,
+  Dialog,
   Field,
   Mono,
   Notice,
@@ -20,6 +21,7 @@ import {
   SegmentedControl,
   Select,
   Skeleton,
+  StateMark,
   useToast,
 } from '../components/ui'
 import type { SelectOption } from '../components/ui'
@@ -137,12 +139,70 @@ export default function Settings() {
 
   return (
     <Page title="Settings" description="Model routing, heartbeat, appearance and backup." width="narrow">
+      <ReadingsAlarm />
       <ModelsPanel saver={saver} />
       <HeartbeatPanel saver={saver} />
       <AppearancePanel />
       <ConnectionPanel />
       <BackupPanel saver={saver} />
     </Page>
+  )
+}
+
+/** A reading that could not be read, said quietly in its block (HMI rule 8): hollow circle, "not read", the reason. */
+function NotRead({ what, reason, onRetry }: { what: string; reason?: string | null; onRetry?: () => void }) {
+  return (
+    <div className={styles.notRead}>
+      <p className={styles.notReadText}>
+        <StateMark state="unavailable" />
+        <span>
+          {what} not read.{reason ? ` ${reason}` : ''}
+        </span>
+      </p>
+      {onRetry && (
+        <Button size="sm" onClick={onRetry}>
+          Read again
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/**
+ * The page's one alarm line (HMI rule 4): present only while a reading could not be read, with the one action
+ * that reads again. The blocks below say which reading is missing. It shares the blocks' cached reads, so it
+ * asks the server for nothing of its own.
+ */
+function ReadingsAlarm() {
+  const routing = useApi<ModelRoutingData>(ROUTING_URL)
+  const heartbeat = useApi<HeartbeatData>(HEARTBEAT_URL)
+  const connection = useApi<OpenClawConfig>('/api/settings')
+  const [busy, setBusy] = useState(false)
+
+  const readings = [
+    { name: 'Model routing', api: routing },
+    { name: 'Heartbeat interval', api: heartbeat },
+    { name: 'Connection details', api: connection },
+  ]
+  const failed = readings.filter(({ api }) => !api.loading && (api.error !== null || api.data === null))
+  if (failed.length === 0) return null
+
+  const readAgain = async () => {
+    setBusy(true)
+    try {
+      await Promise.all(failed.map(({ api }) => api.refetch()))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AlarmLine
+      state="warning"
+      title={failed.length === 1 ? `${failed[0].name} could not be read` : 'Some settings could not be read'}
+      detail={failed.length === 1 ? (failed[0].api.error ?? undefined) : failed.map(({ name }) => name).join(', ')}
+      action={{ label: 'Read again', onClick: () => void readAgain(), busy }}
+    />
   )
 }
 
@@ -230,13 +290,7 @@ function ModelsPanel({ saver }: { saver: Saver }) {
   if (loading) {
     body = <Skeleton lines={3} label="Reading model routing" />
   } else if (error || !routingApi.data) {
-    body = (
-      <ErrorState
-        title="Model routing could not be read"
-        message={error ?? undefined}
-        onRetry={retry}
-      />
-    )
+    body = <NotRead what="Model routing" reason={error} onRetry={retry} />
   } else {
     const server = routingApi.data
     // Each field comes as the server reported it. A sub-agent model that is unset inherits the main
@@ -455,7 +509,7 @@ function ConnectionPanel() {
   if (loading) {
     body = <Skeleton lines={4} label="Reading connection details" />
   } else if (error || !data) {
-    body = <ErrorState title="Connection details could not be read" message={error ?? undefined} onRetry={refetch} />
+    body = <NotRead what="Connection details" reason={error} onRetry={refetch} />
   } else {
     const sys = data.system
     const rows: { label: string; value: string | number | null | undefined }[] = [
@@ -475,8 +529,9 @@ function ConnectionPanel() {
             <dt className={styles.rowLabel}>{row.label}</dt>
             <dd className={styles.rowValue}>
               {row.value === null || row.value === undefined || row.value === '' ? (
-                <span className={styles.missing} aria-label="not read">
-                  —
+                <span className={styles.missing}>
+                  <StateMark state="unavailable" />
+                  not read
                 </span>
               ) : (
                 <Mono truncate>{String(row.value)}</Mono>
@@ -501,6 +556,8 @@ function BackupPanel({ saver }: { saver: Saver }) {
   const [imported, setImported] = useState(false)
   // The server names the offending path when it refuses a document; keep that visible.
   const [importError, setImportError] = useState<string | null>(null)
+  // Importing replaces the configuration: the file picker opens only after the person has confirmed.
+  const [confirming, setConfirming] = useState(false)
 
   const onExport = () => {
     window.location.href = '/api/settings/export'
@@ -539,7 +596,7 @@ function BackupPanel({ saver }: { saver: Saver }) {
             icon={<Upload size={14} />}
             loading={saver.busy === 'import'}
             disabled={saver.busy !== null}
-            onClick={() => inputRef.current?.click()}
+            onClick={() => setConfirming(true)}
           >
             Import configuration
           </Button>
@@ -565,6 +622,29 @@ function BackupPanel({ saver }: { saver: Saver }) {
           </Notice>
         )}
       </div>
+      <Dialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        role="alertdialog"
+        title="Replace the configuration?"
+        description="The file you choose replaces this dashboard's configuration, and the current one cannot be restored from here. Export it first if you may need it."
+        actions={
+          <>
+            <Button data-autofocus onClick={() => setConfirming(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                setConfirming(false)
+                inputRef.current?.click()
+              }}
+            >
+              Choose a file
+            </Button>
+          </>
+        }
+      />
     </Panel>
   )
 }

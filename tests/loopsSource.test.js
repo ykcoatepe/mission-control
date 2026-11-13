@@ -150,7 +150,8 @@ test('Argus counter-example: restricted projects expose counts only and are neve
   assert.equal(disguised.restricted, true);
   assert.equal('title' in disguised || 'participants' in disguised || 'statusMarkdown' in disguised, false);
   const argusAttention = view.attention.filter((a) => a.project === 'argus-live');
-  assert.deepEqual(argusAttention, [{ project: 'argus-live', kind: 'restricted', restricted: true, severity: 'error', count: 3 }]);
+  // Badge rule: a restricted row is never keyed and never ackable.
+  assert.deepEqual(argusAttention, [{ project: 'argus-live', kind: 'restricted', restricted: true, severity: 'error', count: 3, key: null, ackable: false, ack: null }]);
 
   // Neither endpoint ever carries the restricted titles, text or participants.
   await withRouter(source, async (base) => {

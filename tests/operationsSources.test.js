@@ -204,7 +204,8 @@ test('signals: nothing observed yields nulls and unavailable systems, never zero
     now: () => T0,
   });
   assert.equal(status, 200);
-  assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage']);
+  assert.deepEqual(Object.keys(body.data), ['generatedAt', 'systems', 'attention', 'automations', 'loops', 'services', 'usage', 'acks']);
+  assert.deepEqual(body.data.acks, { available: true, reason: null }, 'no ack store wired: nothing to be unavailable');
   assert.deepEqual(body.data.systems.gbrain, { state: 'unavailable', observedAt: null, reason: 'GBrain overview could not be read.', detailHref: '/' });
   assert.equal(body.data.automations, null);
   assert.equal(body.data.loops, null);
@@ -245,12 +246,13 @@ test('signals compose loops, services, automations and usage from memory', async
   assert.deepEqual(body.data.systems.hermes, { state: 'healthy', observedAt: generatedAt, reason: null, detailHref: '/services' });
   assert.deepEqual(body.data.loops, { openFindings: 3, overdueConfirmations: 2 });
   assert.deepEqual(body.data.services, { down: 3 });
-  assert.deepEqual(body.data.automations, { failed: 1, nextRunAt: '2026-07-10T12:30:00.000Z' });
+  assert.deepEqual(body.data.automations, { failed: 1, standingFailed: 0, nextRunAt: '2026-07-10T12:30:00.000Z' });
   assert.deepEqual(body.data.usage, { todayUsd: 3.5, budgetUsedPct: 41 });
-  // Systems are healthy: p's error finding + p's overdue confirmation +
-  // argus-x by counts only (1 operator finding + 1 overdue).
+  // Systems are healthy: p's error finding + p's overdue confirmation; argus-x
+  // by counts only (1 operator finding + 1 overdue) is information, never
+  // part of the count (badge rule).
   assert.deepEqual(body.data.attention, {
-    count: 4, worst: 'critical', breakdown: { systems: 0, systemReasons: 0, findings: 1, overdueConfirmations: 1, restricted: 2 }, partial: false, missing: [],
+    count: 2, worst: 'critical', standing: 0, restricted: 2, breakdown: { systems: 0, systemReasons: 0, findings: 1, overdueConfirmations: 1, restricted: 2 }, partial: false, missing: [],
   });
   assert.doesNotMatch(JSON.stringify(body), /argus-x/, 'signals carry no restricted project identity');
 });
@@ -264,7 +266,7 @@ test('signals prefer the automations source summary when one exists', async () =
     reachabilitySource: snapshotSource(null),
     automationsSnapshot: () => ({ data: { cron: { summary: { active: 4, paused: 0, failed: 2, nextRunAt: '2026-07-10T14:00:00.000Z' } } }, meta: { ok: true } }),
   });
-  assert.deepEqual(body.data.automations, { failed: 2, nextRunAt: '2026-07-10T14:00:00.000Z' });
+  assert.deepEqual(body.data.automations, { failed: 2, standingFailed: 0, nextRunAt: '2026-07-10T14:00:00.000Z' });
 });
 
 const SCHEDULER_LABELS = { openclaw: 'OpenClaw', hermes: 'Hermes' };

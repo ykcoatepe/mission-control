@@ -103,9 +103,9 @@ const PURE_GET_SWEEP = [
 
 // gbrain area: new read envelopes and all memory-only dashboard GETs.
 EXPECTED_ROUTES.splice(EXPECTED_ROUTES.indexOf('GET /api/gbrain/timeline') + 1, 0,
-  'GET /api/gbrain/synoptic', 'GET /api/gbrain/search', 'GET /api/gbrain/pages/:slug', 'GET /api/gbrain/graph');
+  'GET /api/gbrain/trends', 'GET /api/gbrain/synoptic', 'GET /api/gbrain/search', 'GET /api/gbrain/pages/:slug', 'GET /api/gbrain/graph');
 PURE_GET_SWEEP.push('/api/gbrain/overview', '/api/gbrain/health', '/api/gbrain/sources',
-  '/api/gbrain/version', '/api/gbrain/integration-health', '/api/gbrain/timeline',
+  '/api/gbrain/version', '/api/gbrain/integration-health', '/api/gbrain/timeline', '/api/gbrain/trends',
   '/api/gbrain/synoptic', '/api/gbrain/graph?around=projects%2Fmission-control');
 // end gbrain area
 
@@ -116,7 +116,9 @@ PURE_GET_SWEEP.push('/api/costs', '/api/costs/months', '/api/costs/codexbar', '/
 
 // attention area: loops/services/signals mount with the operations sources
 // (before /api/health); all four are memory-only GETs.
-EXPECTED_ROUTES.unshift('GET /api/loops', 'GET /api/loops/:project', 'GET /api/services', 'GET /api/signals');
+EXPECTED_ROUTES.unshift('GET /api/loops', 'GET /api/loops/:project', 'GET /api/services', 'GET /api/signals',
+  // badge rule: acknowledge / shelve attention items
+  'POST /api/attention/acks', 'DELETE /api/attention/acks/:key');
 PURE_GET_SWEEP.push('/api/loops', '/api/loops/some-project', '/api/services', '/api/signals');
 test('boot smoke (attention area): sources are scheduled, GETs compose from memory, refresh goes through the runner', async () => {
   const calls = [];
@@ -551,12 +553,15 @@ function throwingSource(id) {
 const CONTRACT_SWEEP = [
   ['GET /api/loops', '/api/loops'], ['GET /api/loops/:project', '/api/loops/some-project'],
   ['GET /api/services', '/api/services'], ['GET /api/signals', '/api/signals'],
+  ['POST /api/attention/acks', '/api/attention/acks', { body: { key: 'system:hermes', kind: 'ack' } }],
+  ['DELETE /api/attention/acks/:key', '/api/attention/acks/system%3Ahermes', { body: {} }],
   ['GET /api/health', '/api/health'], ['GET /healthz', '/healthz', { clock: true }],
   ['GET /api/gbrain/overview', '/api/gbrain/overview'], ['GET /api/gbrain/health', '/api/gbrain/health'],
   ['GET /api/gbrain/sources', '/api/gbrain/sources'], ['GET /api/gbrain/version', '/api/gbrain/version'],
   ['GET /api/gbrain/integration-health', '/api/gbrain/integration-health'],
   ['POST /api/gbrain/actions', '/api/gbrain/actions', { body: { action: 'doctor-fast' } }],
-  ['GET /api/gbrain/timeline', '/api/gbrain/timeline'], ['GET /api/gbrain/synoptic', '/api/gbrain/synoptic'],
+  ['GET /api/gbrain/timeline', '/api/gbrain/timeline'], ['GET /api/gbrain/trends', '/api/gbrain/trends'],
+  ['GET /api/gbrain/synoptic', '/api/gbrain/synoptic'],
   ['GET /api/gbrain/search', '/api/gbrain/search?q=x'], ['GET /api/gbrain/pages/:slug', '/api/gbrain/pages/projects'],
   ['GET /api/gbrain/graph', '/api/gbrain/graph?around=projects'],
   ['GET /api/hermes-kanban', '/api/hermes-kanban'], ['GET /api/operations/overview', '/api/operations/overview'],

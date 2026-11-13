@@ -1,9 +1,13 @@
 // Pure derivations for the Attention page. The caller supplies `now`.
 // Rule for every function here: a reading that is null stays null. It never
 // becomes 0, "healthy" or "now".
+import { SYSTEM_LABEL } from '../../lib/signals'
+import type { SystemId } from '../../lib/signals'
+import { stateLabel, toUiState } from '../../lib/state'
 import type { UiState } from '../../lib/state'
 import { formatAge, parseTime } from '../../lib/time'
 import type {
+  AckRecord,
   ApiMeta,
   AttentionFilter,
   AttentionRow,
@@ -35,7 +39,7 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-/** error is critical, warning is warning, info is quiet. An unknown word is unavailable, never healthy. */
+/** error is critical, warning is caution, info is quiet. An unknown word is unavailable, never healthy. */
 export function severityState(severity: Severity | null | undefined): UiState {
   if (severity === 'error') return 'critical'
   if (severity === 'warning') return 'warning'
@@ -44,8 +48,8 @@ export function severityState(severity: Severity | null | undefined): UiState {
 }
 
 export function severityLabel(severity: Severity | null | undefined): string {
-  if (severity === 'error') return 'Error'
-  if (severity === 'warning') return 'Warning'
+  if (severity === 'error') return 'Critical'
+  if (severity === 'warning') return 'Caution'
   if (severity === 'info') return 'Info'
   return 'Not rated'
 }
@@ -217,6 +221,7 @@ export function confirmationKindLabel(kind: string | null | undefined): string {
 // ---- attention rows ----
 
 function rowTier(row: AttentionRow): number {
+  if (row.type === 'system') return toUiState(row.state) === 'critical' ? 0 : 2
   if (row.type === 'confirmation') return row.overdue ? 1 : 3
   if (row.severity === 'error') return 0
   if (row.severity === 'warning') return 2
@@ -236,6 +241,22 @@ export function compareRows(a: AttentionRow, b: AttentionRow): number {
   const time = compareDeadline(rowTime(a), rowTime(b))
   if (time !== 0) return time
   return a.project.localeCompare(b.project) || a.key.localeCompare(b.key)
+}
+
+const ACK_KINDS = new Set(['ack', 'shelve'])
+
+/** The server's ack record, or null when it is absent or malformed (an unreadable ack is not an ack). */
+function validAck(value: unknown): AckRecord | null {
+  if (!value || typeof value !== 'object') return null
+  const ack = value as Partial<AckRecord>
+  if (typeof ack.kind !== 'string' || !ACK_KINDS.has(ack.kind) || typeof ack.at !== 'string') return null
+  return { kind: ack.kind, at: ack.at, until: typeof ack.until === 'string' ? ack.until : null }
+}
+
+/** The badge-rule fields of a listed item. No key means it cannot be acknowledged. */
+function ackOf(item: { key?: string | null; ackable?: boolean; ack?: unknown }) {
+  const ackKey = typeof item.key === 'string' && item.key ? item.key : null
+  return { ackKey, ackable: ackKey !== null && item.ackable === true, ack: validAck(item.ack) }
 }
 
 /**
@@ -264,6 +285,7 @@ export function buildAttentionRows(data: LoopsData, now: number): AttentionRow[]
         summary: typeof entry.summary === 'string' ? entry.summary : null,
         at: entry.at,
         count: finiteNumber(entry.count),
+        ...ackOf(entry),
       })
     } else if (entry.kind === 'restricted' && isSeverity(entry.severity)) {
       restrictedSeverity.set(entry.project, entry.severity)
@@ -298,8 +320,26 @@ export function buildAttentionRows(data: LoopsData, now: number): AttentionRow[]
         unit: item.unit,
         kind: item.kind,
         deadline: item.deadline,
+        ...ackOf(item),
       })
     }
+  }
+  for (const system of data.systems ?? []) {
+    // A system that does not count now and holds no acknowledgement is not an item.
+    const ack = validAck(system.ack)
+    if (!system.ackable && !ack) continue
+    rows.push({
+      key: `system:${system.id}`,
+      type: 'system',
+      project: `system:${system.id}`,
+      systemId: system.id,
+      state: system.state,
+      failed: system.failed === true,
+      held: system.held === true,
+      ackKey: typeof system.key === 'string' ? system.key : null,
+      ackable: system.ackable === true && typeof system.key === 'string',
+      ack,
+    })
   }
   return rows.sort(compareRows)
 }
@@ -483,4 +523,133 @@ export function errorText(error: ApiMeta['error'] | undefined): string | null {
   if (!error) return null
   if (typeof error === 'string') return error
   return error.message || error.code || null
+}
+
+// ---- badge rule: groups, state and words of a row ----
+
+/** A row of a real item (not the count-only restricted row). */
+export type KeyedRow = Exclude<AttentionRow, { type: 'restricted' }>
+
+export interface RowGroups {
+  /** New: counts now and nobody has acknowledged or shelved it. */
+  fresh: KeyedRow[]
+  /** Standing: acknowledged or shelved. Quiet, listed with when and until when. */
+  standing: KeyedRow[]
+  /** Open but not counted now (nothing to acknowledge): listed without controls. */
+  other: KeyedRow[]
+  /** Count-only rows of restricted projects: information, never acknowledged. */
+  restricted: AttentionRow[]
+}
+
+/** Splits a ranked list by acknowledgement. The order inside each group is the ranked order. */
+export function groupRows(rows: AttentionRow[]): RowGroups {
+  const groups: RowGroups = { fresh: [], standing: [], other: [], restricted: [] }
+  for (const row of rows) {
+    if (row.type === 'restricted') groups.restricted.push(row)
+    else if (row.ack) groups.standing.push(row)
+    else if (row.ackable) groups.fresh.push(row)
+    else groups.other.push(row)
+  }
+  return groups
+}
+
+/** The state of a row: critical for an error, caution for a warning or an overdue confirmation. */
+export function rowState(row: AttentionRow): UiState {
+  if (row.type === 'system') {
+    const state = toUiState(row.state)
+    return state === 'healthy' && row.failed ? 'unavailable' : state
+  }
+  if (row.type === 'confirmation') return row.overdue ? 'warning' : 'healthy'
+  return severityState(row.severity)
+}
+
+/** The word beside a row's mark. */
+export function rowWord(row: AttentionRow): string {
+  if (row.type === 'confirmation') return row.overdue ? 'Overdue' : 'Pending'
+  if (row.type === 'system') return stateLabel(rowState(row))
+  return severityLabel(row.severity)
+}
+
+/** The worst row of a list: a critical one first, then the first in ranked order. */
+export function worstRow<T extends AttentionRow>(rows: T[]): T | null {
+  return rows.find((row) => rowState(row) === 'critical') ?? rows[0] ?? null
+}
+
+function systemName(id: string): string {
+  return Object.prototype.hasOwnProperty.call(SYSTEM_LABEL, id) ? SYSTEM_LABEL[id as SystemId] : id
+}
+
+/** Who a row is about: the project, or the system's name. */
+export function rowScope(row: AttentionRow): string {
+  return row.type === 'system' ? systemName(row.systemId) : row.project
+}
+
+/** One plain line about the row, without the scope: "Session stopped answering", "Hermes: Critical". */
+export function rowTitle(row: AttentionRow): string {
+  if (row.type === 'finding') return findingLabel(row.code)
+  if (row.type === 'confirmation') {
+    const what = tableSummary(row.unit).summary || row.id || 'Unnamed confirmation'
+    return `${row.overdue ? 'Overdue confirmation' : 'Confirmation'}: ${what}`
+  }
+  if (row.type === 'system') {
+    return row.failed ? `${systemName(row.systemId)} could not be fully read` : `${systemName(row.systemId)}: ${stateLabel(rowState(row))}`
+  }
+  return 'Details are restricted'
+}
+
+/** A time for the page: "09:12" for today, "11 Nov, 09:12" otherwise; null when it cannot be read. */
+export function whenText(value: string | null | undefined, now: number): string | null {
+  const ms = parseTime(value)
+  if (ms === null) return null
+  const then = new Date(ms)
+  const time = then.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
+  const today = new Date(now)
+  const sameDay =
+    then.getFullYear() === today.getFullYear() && then.getMonth() === today.getMonth() && then.getDate() === today.getDate()
+  return sameDay ? time : `${then.toLocaleDateString([], { day: 'numeric', month: 'short' })}, ${time}`
+}
+
+/** "Acknowledged 11 Nov, 09:12", "Shelved until 18 Nov, 09:12", "Shelved until you undo". */
+export function ackStatus(ack: AckRecord, now: number): string {
+  if (ack.kind === 'ack') {
+    const at = whenText(ack.at, now)
+    return at ? `Acknowledged ${at}` : 'Acknowledged'
+  }
+  if (ack.until === null) return 'Shelved until you undo'
+  const until = whenText(ack.until, now)
+  return until ? `Shelved until ${until}` : 'Shelved'
+}
+
+export interface RestrictedSummary {
+  projects: number
+  /** Totals over the restricted projects; null as soon as one of them was not read (never a partial total). */
+  openFindings: number | null
+  pendingConfirmations: number | null
+  overdueConfirmations: number | null
+}
+
+function sumOrNull(values: Array<number | null>): number | null {
+  let total = 0
+  for (const value of values) {
+    if (value === null) return null
+    total += value
+  }
+  return total
+}
+
+/** The one information row for restricted projects: counts only. Null when there is none. */
+export function restrictedSummary(rows: AttentionRow[]): RestrictedSummary | null {
+  const restricted = rows.filter((row): row is Extract<AttentionRow, { type: 'restricted' }> => row.type === 'restricted')
+  if (restricted.length === 0) return null
+  return {
+    projects: restricted.length,
+    openFindings: sumOrNull(restricted.map((row) => row.openFindings)),
+    pendingConfirmations: sumOrNull(restricted.map((row) => row.pendingConfirmations)),
+    overdueConfirmations: sumOrNull(restricted.map((row) => row.overdueConfirmations)),
+  }
+}
+
+/** The row as one sentence for the alarm line and for screen readers: "sahil: Session stopped answering". */
+export function rowSentence(row: AttentionRow): string {
+  return row.type === 'system' ? rowTitle(row) : `${row.project}: ${rowTitle(row)}`
 }

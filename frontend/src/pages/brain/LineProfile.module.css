@@ -1,0 +1,418 @@
+.wrap {
+  container-type: inline-size;
+  container-name: profile;
+  min-width: 0;
+}
+
+/* The scale on the left, the columns on the right. */
+.chart {
+  --labels: 32px;
+  --axis: 52px;
+  display: grid;
+  grid-template-columns: var(--axis) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.axis {
+  position: relative;
+  /* Same height as the body: the plot, then the one row of labels. */
+  height: calc(var(--scale) + 24px + var(--labels));
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.tick {
+  position: absolute;
+  right: 6px;
+  bottom: calc(var(--labels) + var(--v));
+  transform: translateY(50%);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* A short mark where the tick meets the axis line. */
+.tick::after {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 1px);
+  width: 5px;
+  height: 1px;
+  background: var(--line-strong);
+  content: '';
+}
+
+/* A scale value that would sit on the looked-at line's marker is put away while the marker shows. */
+.tick[data-away] {
+  opacity: 0;
+}
+
+/* The looked-at line's exact value, on the scale at the height of its top: nothing crosses the plot. */
+.marker {
+  z-index: 1;
+  color: var(--text-1);
+  font-weight: 600;
+}
+
+.marker::after {
+  width: 7px;
+  background: var(--text-1);
+}
+
+.body {
+  position: relative;
+  min-width: 0;
+  border-left: 1px solid var(--line-strong);
+}
+
+.profile {
+  --tone: var(--track);
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.item {
+  --tone: var(--track);
+  position: relative;
+  display: grid;
+  grid-template-rows: calc(var(--scale) + 24px) var(--labels);
+  justify-items: center;
+  min-width: 0;
+  padding: 0 1px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  outline: none;
+  cursor: default;
+}
+
+.item[data-tone='reference'] { --tone: var(--line-reference); }
+.item[data-tone='projects'] { --tone: var(--line-projects); }
+.item[data-tone='agent'] { --tone: var(--line-agent); }
+.item[data-tone='curated'] { --tone: var(--line-curated); }
+
+.item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.plot,
+.value {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* The count sits just above the top of its line, in the same cell as the plot. */
+.value {
+  z-index: 1;
+  align-self: end;
+  margin-bottom: calc(var(--h) + 5px);
+  padding: 0 2px;
+  color: var(--text-1);
+  white-space: nowrap;
+  text-align: center;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+/* A count that would sit on another is out of the picture until its line is hovered or focused. */
+.value[data-crowded] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.item:hover .value[data-crowded],
+.shown .value[data-crowded] {
+  z-index: 2;
+  opacity: 1;
+  background: var(--surface-1);
+}
+
+/* The looked-at line's count is on top of everything in the plot and never dimmed. */
+.shown .value {
+  z-index: 3;
+  opacity: 1;
+  background: var(--surface-1);
+}
+
+/* The plot is the same height for every item, so every line stands on one baseline. */
+.plot {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  border-bottom: 1px solid var(--line-strong);
+}
+
+.line {
+  display: block;
+  width: 3px;
+  height: var(--h);
+  background: var(--tone);
+  transform-origin: 50% 100%;
+  transition:
+    transform var(--dur-fast) var(--ease),
+    opacity var(--dur-fast) var(--ease);
+}
+
+/* Sync off: the same line, dashed. */
+.item[data-sync-off] .line {
+  width: 0;
+  background: none;
+  border-left: 3px dashed var(--tone);
+}
+
+/* One column is looked at: its line thickens (3px to 8px, drawn as a scale so nothing reflows), the rest step back. */
+.shown .line {
+  opacity: 1;
+  transform: scaleX(2.67);
+}
+
+.profile[data-focus] .item:not(.shown) .line {
+  opacity: 0.35;
+}
+
+.profile[data-focus] .item:not(.shown) .value {
+  opacity: 0.55;
+}
+
+/* A short name under its line, in the group's line colour: one row. A name that would touch a bigger source's
+   name is left out (data-dropped), and so is one under the enlarged name of the looked-at source (data-covered). */
+.name {
+  position: absolute;
+  top: calc(var(--scale) + 24px + 5px);
+  left: 50%;
+  max-width: 18ch;
+  overflow: hidden;
+  color: var(--tone);
+  font-size: var(--fs-micro);
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.shown .name {
+  opacity: 0;
+}
+
+.name[data-dropped],
+.name[data-covered] {
+  visibility: hidden;
+}
+
+/* The full id of the looked-at source: larger, never cut, kept inside the strip. */
+.full {
+  position: absolute;
+  top: calc(var(--scale) + 24px + 3px);
+  z-index: 4;
+  padding: 0 var(--sp-1);
+  background: var(--surface-1);
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.full[data-align='centre'] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.full[data-align='start'] {
+  left: 0;
+}
+
+.full[data-align='end'] {
+  right: 0;
+}
+
+/* The readout's one home: the caption row under the block title. The sentence and the readings share one grid
+   cell, so the row is as tall as the taller of the two and nothing moves when one replaces the other. */
+.caption {
+  display: grid;
+  min-width: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.idle,
+.reading {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+.idle[data-away] {
+  visibility: hidden;
+}
+
+.reading {
+  --tone: var(--text-1);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  color: var(--text-2);
+}
+
+.reading[data-tone='reference'] { --tone: var(--line-reference); }
+.reading[data-tone='projects'] { --tone: var(--line-projects); }
+.reading[data-tone='agent'] { --tone: var(--line-agent); }
+.reading[data-tone='curated'] { --tone: var(--line-curated); }
+
+.readingName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tone);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
+}
+
+.readingPart {
+  flex: none;
+}
+
+.readingPart::before {
+  margin: 0 var(--sp-2);
+  color: var(--text-3);
+  content: '\00b7';
+}
+
+/* Wide: the row is one line, never two. Narrower, it may wrap, and the row keeps room for that. */
+@media (min-width: 1200px) {
+  .idle {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reading {
+    flex-wrap: nowrap;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  .readingName {
+    flex: 0 1 auto;
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 1199px) {
+  .caption {
+    min-height: 2lh;
+  }
+}
+
+@media (max-width: 599px) {
+  .caption {
+    min-height: 3lh;
+  }
+}
+
+.none {
+  margin: 0;
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .line,
+  .value {
+    transition: none;
+  }
+}
+
+/* Narrow: the lines lie down, one row per source, still to scale. No scale: the caption row under the title carries the readings. */
+@container profile (max-width: 899px) {
+  .chart {
+    display: block;
+  }
+
+  .axis,
+  .full {
+    display: none;
+  }
+
+  .body {
+    border-left: 0;
+  }
+
+  .profile {
+    grid-auto-flow: row;
+    grid-auto-columns: auto;
+    gap: 2px;
+  }
+
+  .item {
+    grid-template-rows: none;
+    grid-template-columns: minmax(5.5rem, 8rem) minmax(0, 1fr) 4.5rem;
+    align-items: center;
+    justify-items: stretch;
+    min-height: 24px;
+    padding: 0 var(--sp-1);
+  }
+
+  .name {
+    position: static;
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    max-width: none;
+    transform: none;
+  }
+
+  .shown .name {
+    opacity: 1;
+    font-weight: 600;
+  }
+
+  .plot {
+    grid-column: 2;
+    grid-row: 1;
+    align-items: center;
+    justify-content: flex-start;
+    height: 8px;
+    border-bottom: 0;
+    border-left: 1px solid var(--line-strong);
+  }
+
+  .value {
+    grid-column: 3;
+    grid-row: 1;
+    align-self: center;
+    margin-bottom: 0;
+    padding: 0;
+    text-align: right;
+  }
+
+  .value[data-crowded] {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .line {
+    width: max(1px, calc(var(--p) * 1%));
+    height: 2px;
+    transform-origin: 0 50%;
+  }
+
+  .shown .line {
+    transform: scaleY(2);
+  }
+
+  .item[data-sync-off] .line {
+    width: max(1px, calc(var(--p) * 1%));
+    height: 0;
+    background: none;
+    border-top: 2px dashed var(--tone);
+    border-left: 0;
+  }
+}

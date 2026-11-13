@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  ackStatus,
   buildAttentionRows,
   buildProjectRows,
   compareDeadline,
@@ -11,9 +12,11 @@ import {
   findingLabel,
   findingLabelOrNull,
   groupFindingsByCode,
+  groupRows,
   filterChipOptions,
   parseAttentionFilter,
   plainTimes,
+  restrictedSummary,
   severityState,
   shortenHomePaths,
   sortConfirmations,
@@ -578,5 +581,93 @@ describe('splitCommand', () => {
   it('writes an ISO time as a short date and leaves anything else alone', () => {
     expect(plainTimes('since 2026-11-03T09:25:15Z.')).toMatch(/^since 3 Nov, \d{2}:\d{2}\.$/)
     expect(plainTimes('no time here 2026-11')).toBe('no time here 2026-11')
+  })
+})
+
+describe('badge-rule grouping', () => {
+  const key = (n: string) => `finding:alpha:${n}:0123456789ab`
+  const finding = (code: string, extra: Record<string, unknown>) => ({
+    project: 'alpha',
+    kind: 'finding' as const,
+    severity: 'warning' as const,
+    code,
+    subject: code,
+    detail: null,
+    at: iso(-HOUR),
+    ...extra,
+  })
+
+  it('splits rows into new, standing, not counted and restricted, in ranked order', () => {
+    const data: LoopsData = {
+      observedAt: iso(0),
+      totals: { projects: 2, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 },
+      projects: [{ id: 'argus', restricted: true, openFindings: 3, pendingConfirmations: 0, overdueConfirmations: 0 }],
+      attention: [
+        finding('NEW_ONE', { key: key('NEW_ONE'), ackable: true, ack: null }),
+        finding('ACKED', { key: key('ACKED'), ackable: true, ack: { kind: 'ack', at: iso(-HOUR), until: null } }),
+        // No longer counts but the server still holds its shelve: it stays listed as standing.
+        finding('SHELVED', { key: key('SHELVED'), ackable: false, ack: { kind: 'shelve', at: iso(-HOUR), until: iso(HOUR) } }),
+        finding('QUIET', { key: key('QUIET'), ackable: false, ack: null }),
+        finding('NO_KEY', {}),
+      ],
+    }
+    const groups = groupRows(buildAttentionRows(data, NOW))
+    expect(groups.fresh.map((row) => row.type === 'finding' && row.code)).toEqual(['NEW_ONE'])
+    expect(groups.standing.map((row) => row.type === 'finding' && row.code).sort()).toEqual(['ACKED', 'SHELVED'])
+    expect(groups.other.map((row) => row.type === 'finding' && row.code).sort()).toEqual(['NO_KEY', 'QUIET'])
+    expect(groups.restricted).toHaveLength(1)
+  })
+
+  it('never makes an item without a key ackable, and drops an ack record that is malformed', () => {
+    const data: LoopsData = {
+      observedAt: iso(0),
+      totals: { projects: 0, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 },
+      projects: [],
+      attention: [
+        finding('A', { ackable: true, ack: null }),
+        finding('B', { key: key('B'), ackable: true, ack: { kind: 'maybe', at: 'x' } }),
+      ],
+    }
+    const rows = buildAttentionRows(data, NOW)
+    expect(rows.every((row) => row.type === 'finding' && (row.code === 'A' ? !row.ackable : row.ack === null))).toBe(true)
+  })
+
+  it('lists a system only when it counts or holds an acknowledgement', () => {
+    const data: LoopsData = {
+      observedAt: iso(0),
+      totals: { projects: 0, openFindings: 0, pendingConfirmations: 0, overdueConfirmations: 0 },
+      projects: [],
+      attention: [],
+      systems: [
+        { id: 'gbrain', state: 'healthy', held: false, failed: false, key: 'system:gbrain', ackable: false, ack: null },
+        { id: 'hermes', state: 'critical', held: false, failed: false, key: 'system:hermes', ackable: true, ack: null },
+        { id: 'openclaw', state: 'warning', held: false, failed: false, key: 'system:openclaw', ackable: false, ack: { kind: 'ack', at: iso(-HOUR), until: null } },
+      ],
+    }
+    const groups = groupRows(buildAttentionRows(data, NOW))
+    expect(groups.fresh.map((row) => row.type === 'system' && row.systemId)).toEqual(['hermes'])
+    expect(groups.standing.map((row) => row.type === 'system' && row.systemId)).toEqual(['openclaw'])
+    expect(groups.other).toEqual([])
+  })
+
+  it('words an acknowledgement by kind and end', () => {
+    expect(ackStatus({ kind: 'ack', at: iso(-HOUR), until: null }, NOW)).toMatch(/^Acknowledged /)
+    expect(ackStatus({ kind: 'shelve', at: iso(-HOUR), until: iso(24 * HOUR) }, NOW)).toMatch(/^Shelved until /)
+    expect(ackStatus({ kind: 'shelve', at: iso(-HOUR), until: null }, NOW)).toBe('Shelved until you undo')
+  })
+
+  it('adds restricted counts without making a total out of an unread one', () => {
+    const row = (openFindings: number | null) => ({
+      key: 'r',
+      type: 'restricted' as const,
+      project: 'r',
+      severity: null,
+      openFindings,
+      pendingConfirmations: 1,
+      overdueConfirmations: 0,
+    })
+    expect(restrictedSummary([row(2), row(3)])).toMatchObject({ projects: 2, openFindings: 5, pendingConfirmations: 2 })
+    expect(restrictedSummary([row(2), row(null)])?.openFindings).toBeNull()
+    expect(restrictedSummary([])).toBeNull()
   })
 })

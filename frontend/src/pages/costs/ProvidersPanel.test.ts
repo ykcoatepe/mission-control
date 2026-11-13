@@ -60,7 +60,8 @@ describe('ProvidersPanel', () => {
     const host = await render([provider({ billedUsd: 12.5, billingKnown: true })])
     const [row] = cells(host)
     expect(row[1]).toContain('Ready')
-    expect(row[1]).toContain('fresh')
+    // A fresh reading is not annotated (HMI rule 8): no age, no "fresh".
+    expect(row[1]).toBe('Ready')
     expect(row[2]).toBe('2.4M')
     expect(row[3]).toBe('$816.90')
     expect(row[4]).toBe('$12.50')
@@ -112,7 +113,7 @@ describe('ProvidersPanel', () => {
     expect(rows.map(row => row[4])).toEqual(['—', '$0.00', '$12.50', '—', '—'])
   })
 
-  it('marks stale and partial providers in amber words, not as ready', async () => {
+  it('marks stale and partial providers by word and shape, not as ready', async () => {
     const host = await render([
       provider({ id: 'claude_code', label: 'Claude Code', coverage: 'partial', coverageReason: 'standing_gaps', skippedLines: 99, oversizedLines: 99, note: 'Claude log scan incomplete' }),
       provider({ id: 'codex', state: 'stale' }),
@@ -124,7 +125,8 @@ describe('ProvidersPanel', () => {
     expect(partial[0]).toBe('Claude Code99 log lines were too large to read, so this figure may be low.')
     expect(partial[0]).not.toContain('incomplete')
     expect(stale[1]).toContain('Stale')
-    expect(stale[1]).toContain('stale')
+    // A stale reading says when it was taken.
+    expect(stale[1]).toMatch(/as of /)
   })
 
   it('explains how new platforms arrive, and says why the list is empty', async () => {

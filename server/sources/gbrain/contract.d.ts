@@ -25,10 +25,11 @@ export type Edge = MeasuredEdge | ReaderIntegrationEdge;
 /**
  * `action`: something a person can do or must look at (warning, critical, a missing reading).
  * `info`: something to know, never a fault: every inactive reason, and a reading limitation such
- * as the embed-job probe. Derived once, in verdict.js. `kind` never changes `Verdict.state`.
+ * as the embed-job probe. Derived once, in verdict.js. An `info` reason never counts toward `Verdict.state`.
  */
 export type ReasonKind = 'action' | 'info';
-export interface VerdictReason { elementId: string; state: State; text: string; kind: ReasonKind }
+/** `elementId` is the reason's stable identity (never its text); `count` its magnitude when it has one. */
+export interface VerdictReason { elementId: string; state: State; text: string; kind: ReasonKind; count?: number }
 export interface Verdict { state: State; reasons: VerdictReason[] }
 export interface GBrainSynoptic {
   schemaVersion: '1'; state: State; verdict: Verdict;

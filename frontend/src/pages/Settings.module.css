@@ -50,7 +50,7 @@
 }
 
 .rowLabel {
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
   font-weight: var(--fw-medium);
 }
@@ -60,11 +60,40 @@
   min-width: 0;
   color: var(--text-1);
   font-size: var(--fs-body);
+  font-variant-numeric: tabular-nums lining-nums;
   overflow-wrap: anywhere;
 }
 
 .missing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
   color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+/* A reading that could not be read: quiet, with a way to read again. No colour. */
+.notRead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.notReadText {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: 0;
+  min-width: 0;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.notReadText svg {
+  flex: 0 0 auto;
+  color: var(--state-unavailable);
 }
 
 .fileInput {

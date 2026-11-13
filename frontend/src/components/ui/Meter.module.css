@@ -2,18 +2,18 @@
   height: 6px;
   overflow: hidden;
   background: var(--surface-3);
-  border-radius: var(--r-full);
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm);
 }
 
 .bar {
   display: block;
   width: var(--meter-pct);
   height: 100%;
-  background: var(--state-healthy);
-  border-radius: var(--r-full);
+  background: var(--bar-fill);
 }
 
-.bar[data-state='warning'] { background: var(--state-warning); }
-.bar[data-state='critical'] { background: var(--state-critical); }
-.bar[data-state='unavailable'] { background: var(--state-unavailable); }
-.bar[data-state='inactive'] { background: var(--state-inactive); }
+.bar[data-state='warning'] { background: var(--state-warning); opacity: 1; }
+.bar[data-state='critical'] { background: var(--state-critical); opacity: 1; }
+.bar[data-state='unavailable'],
+.bar[data-state='inactive'] { background: var(--state-unavailable); }

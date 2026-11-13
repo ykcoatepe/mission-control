@@ -2,16 +2,7 @@ import { Menu, Moon, RefreshCw, Search, Sun } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useApi } from '../lib/hooks'
-import {
-  ATTENTION_NOT_READ,
-  SIGNALS_POLL_MS,
-  SIGNALS_URL,
-  annunciators,
-  attentionPill,
-  attentionUnread,
-  signalsAge,
-  signalsStale,
-} from '../lib/signals'
+import { SIGNALS_POLL_MS, SIGNALS_URL, annunciators, signalsAge, signalsStale } from '../lib/signals'
 import type { Annunciator, SignalsEnvelope } from '../lib/signals'
 import { worstState } from '../lib/state'
 import type { UiState } from '../lib/state'
@@ -21,7 +12,8 @@ import { useTheme } from '../lib/theme'
 import { appRoutes, isLiveRoutePath } from '../appRoutes'
 import { Kbd } from './ui/Kbd'
 import { IconButton } from './ui/IconButton'
-import { StateDot } from './ui/StateDot'
+import { StateMark } from './ui/StateMark'
+import { formatAsOf } from './ui/asOf'
 import { usePageTitle } from './ui/pageTitleContext'
 import styles from './TopBar.module.css'
 
@@ -48,6 +40,11 @@ function paletteHint(): string {
 /** "OpenClaw: warning. OpenClaw status evidence is unavailable." The server's reason is the tooltip. */
 function annunciatorText(light: Annunciator): string {
   return light.reason ? `${light.label}: ${light.word}. ${light.reason}` : `${light.label}: ${light.word}`
+}
+
+/** A system still being read shows the hollow "not read" mark. */
+function markState(state: UiState | 'reading'): UiState {
+  return state === 'reading' ? 'unavailable' : state
 }
 
 /** One light for all three systems: the worst lit state, or "reading" until the first load completes. */
@@ -101,7 +98,7 @@ function SystemsMenu({ lights }: { lights: Annunciator[] }) {
         title={`Systems: ${summary}`}
         onClick={() => setOpen((value) => !value)}
       >
-        <span className={styles.annDot} aria-hidden="true" />
+        <StateMark state={markState(overall)} />
       </button>
       {open && (
         <ul id={listId} className={styles.systemsList} aria-label="Systems">
@@ -115,7 +112,7 @@ function SystemsMenu({ lights }: { lights: Annunciator[] }) {
                 aria-label={annunciatorText(light)}
                 onClick={() => setOpen(false)}
               >
-                <span className={styles.annDot} aria-hidden="true" />
+                <StateMark state={markState(light.state)} />
                 <span>{light.label}</span>
                 <span className={styles.systemsWord}>{light.word}</span>
               </Link>
@@ -139,8 +136,6 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
   const signals = envelope?.data ?? null
   const stale = signalsStale(envelope, error !== null)
   const lights = annunciators(signals, { loading, now, stale, isLivePath: isLiveRoutePath })
-  const pill = attentionPill(signals)
-  const attentionNotRead = !pill && attentionUnread(signals, { loading })
   const observedAt = envelope?.meta?.observedAt ?? null
   const age = signalsAge(observedAt, now, loading)
   const hint = paletteHint()
@@ -175,40 +170,13 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
               aria-label={annunciatorText(light)}
               title={annunciatorText(light)}
             >
-              <span className={styles.annDot} aria-hidden="true" />
+              <StateMark state={markState(light.state)} />
               <span className={styles.annName}>{light.label}</span>
-              {light.lit && <span className={styles.annWord}>{light.word}</span>}
+              <span className={styles.annWord}>{light.word}</span>
             </Link>
           </li>
         ))}
       </ul>
-
-      {pill && (
-        <Link
-          to="/attention"
-          className={styles.attention}
-          data-state={pill.state}
-          aria-label={pill.secondary ? `${pill.text}, ${pill.secondary}` : pill.text}
-          title={pill.secondary ? `${pill.text} · ${pill.secondary}` : pill.text}
-        >
-          <StateDot state={pill.state} />
-          <span className={styles.attentionCount}>{pill.count}</span>
-          <span className={styles.attentionWords}>{pill.text.replace(/^\d+\s+/, '')}</span>
-          {pill.secondary && <span className={styles.attentionSecondary}>{pill.secondary}</span>}
-        </Link>
-      )}
-      {attentionNotRead && (
-        <Link
-          to="/attention"
-          className={styles.attention}
-          data-state="unavailable"
-          aria-label={ATTENTION_NOT_READ}
-          title={`${ATTENTION_NOT_READ}: the attention count could not be read, so it is not shown as zero.`}
-        >
-          <StateDot state="unavailable" />
-          <span className={styles.attentionWords}>{ATTENTION_NOT_READ}</span>
-        </Link>
-      )}
 
       <button
         type="button"
@@ -228,11 +196,10 @@ export default function TopBar({ onOpenMenu, onOpenPalette, menuExpanded = false
             className={styles.stale}
             title={error ? 'The latest read of the shell signals failed; showing the last good reading.' : 'The server is serving an older reading.'}
           >
-            <span className={styles.staleDot} aria-hidden="true" />
-            <span className={styles.staleText}>Signals stale</span>
+            <StateMark state="warning" />
+            <span className={styles.staleText}>Signals {formatAsOf(observedAt, now) ?? 'not read'}</span>
           </span>
         )}
-        <span className={styles.ageText}>{age.text}</span>
         <IconButton
           label="Refresh data"
           title={`Refresh data. ${age.title}`}

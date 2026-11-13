@@ -1,6 +1,7 @@
 const { isGBrainVerdict, verdictCaveats, buildGBrainVerdict } = require('../sources/gbrain/verdict');
 const { STATE_RANK, worstState, stateRank } = require('../core/state');
 const { scrubText } = require('../core/scrub');
+const { textReasonId } = require('../sources/mloop/attention');
 const HERMES_SOFT_DEADLINE_MS = 7_000;
 const FUTURE_SKEW_MS = 5 * 60 * 1000;
 // The one place screen links are chosen. Every value must be a screen that
@@ -574,6 +575,8 @@ function adaptHermes(board, cron, generatedAt, gateway) {
         system: 'hermes',
         severity: 'warning',
         reasonCode: 'hermes_tasks_blocked',
+        // The magnitude of this reason (an acknowledgement is void when it rises).
+        count: blocked,
         title: 'Hermes work is blocked',
         detail: `${blocked} tasks require operator review.`,
         detailHref: detailHref('hermes', 'work'),
@@ -683,8 +686,12 @@ function adaptGBrain(overview, generatedAt) {
       caveats, metrics: { trustScore: overview.trust?.score ?? null,
         staleSources: overview.live?.sources?.freshness?.staleCount ?? null, caveats: caveats.length },
       evidence: [proof], detailHref: detailHref('gbrain') },
+    // reasonId: the verdict reason's stable element id (an acknowledgement of
+    // GBrain covers exactly these; a new or different one voids it); count:
+    // the reason's magnitude when the verdict gives one.
     attention: overview.verdict.reasons.filter((r) => ['warning', 'critical', 'unavailable'].includes(r.state)).map((r, index) => ({
-      id: `gbrain:caveat:${index}`, system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
+      id: `gbrain:caveat:${index}`, reasonId: `gbrain:${r.elementId}`, ...(Number.isInteger(r.count) && r.count > 0 ? { count: r.count } : {}),
+      system: 'gbrain', severity: r.state, reasonCode: 'gbrain_active_caveat',
       title: 'GBrain requires attention', detail: r.text, detailHref: detailHref('gbrain'), evidenceRefs: [proof.id],
     })) };
   }
@@ -724,8 +731,13 @@ function adaptGBrain(overview, generatedAt) {
     '/api/gbrain/overview',
     detailHref('gbrain'),
   ) : null;
+  // Legacy caveats are free text with no element id: each distinct caveat is
+  // one reason, identified by its text with every number masked
+  // (textReasonId), so "waiting 5 minutes" -> "6 minutes" is the same reason
+  // and a different message is a new one.
   const attention = caveats.map((detail, index) => ({
     id: `gbrain:caveat:${index}`,
+    reasonId: textReasonId('gbrain:legacy-caveat', detail),
     system: 'gbrain',
     severity: state === 'critical' ? 'critical' : 'warning',
     reasonCode: 'gbrain_active_caveat',
@@ -740,6 +752,7 @@ function adaptGBrain(overview, generatedAt) {
       system: 'gbrain',
       severity: 'warning',
       reasonCode: 'gbrain_stale_sources',
+      count: staleSources,
       title: 'GBrain source evidence is stale',
       detail: `${staleSources} sources require a fresh verification signal.`,
       detailHref: detailHref('gbrain'),

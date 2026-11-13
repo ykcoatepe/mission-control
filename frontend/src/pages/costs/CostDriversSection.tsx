@@ -324,7 +324,7 @@ export default function CostDriversSection({
       <>
         {sessionsOnlyNotice && (
           <div className={styles.pad}>
-            <Notice tone="warning">{sessionsOnlyNotice}</Notice>
+            <Notice tone="info">{sessionsOnlyNotice}</Notice>
           </div>
         )}
         <p className={styles.sessionsLine}>

@@ -83,19 +83,42 @@ describe('ServicesView verdict', () => {
     await act(async () => root.unmount())
   })
 
-  it('shows the system reason and a link under a gateway warning', async () => {
+  it('raises one alarm line for a gateway warning, with the system reason and one action to the readings', async () => {
     const { host, root } = await mount({
       state: 'warning',
       observedAt: NOW,
       reason: 'OpenClaw status is unavailable.',
       detailHref: '/services',
     })
-    const warning = [...host.querySelectorAll('[aria-label="Verdict"] li')].find((li) => li.getAttribute('data-state') === 'warning')!
-    expect(warning.textContent).toContain('OpenClaw is reporting a warning')
-    expect(warning.textContent).toContain('OpenClaw status is unavailable.')
-    const link = warning.querySelector('a') as HTMLAnchorElement
-    expect(link.getAttribute('href')).toBe('#gateway-readings')
+    const alarms = host.querySelectorAll('[role="status"][data-state="warning"], [role="alert"]')
+    expect(alarms).toHaveLength(1)
+    const alarm = alarms[0]
+    expect(alarm.textContent).toContain('Caution')
+    expect(alarm.textContent).toContain('OpenClaw is reporting a warning')
+    expect(alarm.textContent).toContain('OpenClaw status is unavailable.')
+    const actions = alarm.querySelectorAll('button')
+    expect(actions).toHaveLength(1)
+    expect(actions[0].textContent).toContain('See the gateway readings')
     expect(host.querySelector('#gateway-readings')).not.toBeNull()
+    // The calm sentence stays, without colour or a second alarm.
+    expect(host.textContent).toContain('No service is down (2 read)')
+    await act(async () => root.unmount())
+  })
+
+  it('shows no alarm line when nothing is abnormal', async () => {
+    const { host, root } = await mount({ state: 'healthy', observedAt: NOW, reason: null, detailHref: '/services' })
+    expect(host.querySelector('[role="alert"]')).toBeNull()
+    expect(host.querySelector('[data-state="warning"]')).toBeNull()
+    expect(host.querySelector('[data-state="critical"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('lists services as rows with a mark and a word, and annotates a fresh reading with nothing', async () => {
+    const { host, root } = await mount(null)
+    const row = [...host.querySelectorAll('tbody tr')].find((tr) => tr.textContent?.includes('ai.a'))!
+    expect(row.textContent).toContain('Running')
+    expect(row.querySelector('svg[data-shape="circle"]')).not.toBeNull()
+    expect(host.textContent).not.toMatch(/as of|not read/)
     await act(async () => root.unmount())
   })
 

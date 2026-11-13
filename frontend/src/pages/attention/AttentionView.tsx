@@ -1,25 +1,29 @@
-import { Fragment, useEffect, useMemo } from 'react'
+import { Fragment, useEffect, useId, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { CheckCircle2, TriangleAlert } from 'lucide-react'
+import { AckAllButton, AckAllDialog } from '../../components/AckActions'
 import {
+  AlarmLine,
+  Block,
   Button,
   DataTable,
   EmptyState,
   FilterChips,
   Mono,
   Notice,
-  Panel,
   Select,
-  Stat,
-  StatRow,
+  StateMark,
   StatePill,
   TimeAgo,
 } from '../../components/ui'
 import type { DataTableColumn } from '../../components/ui'
-import { breakdownWords } from '../../lib/signals'
+import { useAckActions } from '../../lib/acks'
+import { attentionWords, breakdownWords } from '../../lib/signals'
 import type { AttentionReading } from '../../lib/signals'
 import { useNow } from '../../lib/useNow'
+import AckControls, { AckError } from './AckControls'
 import {
+  ackStatus,
   buildAttentionRows,
   buildProjectRows,
   confirmationKindLabel,
@@ -30,12 +34,17 @@ import {
   findingAge,
   findingLabel,
   findingLabelOrNull,
+  groupRows,
   isRestricted,
   parseAttentionFilter,
-  severityLabel,
-  severityState,
-  summarize,
+  restrictedSummary,
+  rowScope,
+  rowSentence,
+  rowState,
+  rowTitle,
+  rowWord,
   tableSummary,
+  worstRow,
 } from './lib'
 import type { ApiMeta, AttentionFilter, AttentionRow, LoopsData, OpenProject, ProjectRow } from './types'
 import ProjectDrawer from './ProjectDrawer'
@@ -45,9 +54,8 @@ interface AttentionViewProps {
   data: LoopsData
   meta: ApiMeta
   /**
-   * The one attention number (items that need the operator), from the shell signals
-   * (`GET /api/signals`): the same value as the top-bar pill and the sidebar badge.
-   * null while it has not been read.
+   * The one attention number (new items that need the operator), from the shell signals
+   * (`GET /api/signals`): the same value as the rail badge. null while it has not been read.
    */
   attention: AttentionReading | null
   /** Set when the latest refresh failed but an earlier reading is still shown. */
@@ -57,8 +65,17 @@ interface AttentionViewProps {
 
 const cell = (value: number | null) => (value === null ? '—' : value)
 
+type KeyedRow = Exclude<AttentionRow, { type: 'restricted' }>
+
 export default function AttentionView({ data, meta, attention, refreshError, onRetry }: AttentionViewProps) {
   const now = useNow()
+  const actions = useAckActions()
+  // The server could not read its acknowledgements: every item is listed as new, and nothing can be acknowledged.
+  const acksUnread = data.acks?.available === false
+  const standingId = useId()
+  // The keys an Acknowledge all would send, while its confirmation is open.
+  const [confirmingAll, setConfirmingAll] = useState<string[] | null>(null)
+  const [standingOpen, setStandingOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   // The list filters live in the URL (?filter=overdue&scope=<project>) so a view can be shared or reloaded.
   const filter = parseAttentionFilter(params.get('filter'))
@@ -76,26 +93,45 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
   const setFilter = (value: AttentionFilter) => setQuery('filter', value)
   const setProject = (value: string) => setQuery('scope', value)
 
-  const summary = useMemo(() => summarize(data), [data])
   const allRows = useMemo(() => buildAttentionRows(data, now), [data, now])
   const projectRows = useMemo(() => buildProjectRows(data.projects, now), [data.projects, now])
+  // Restricted projects are information: counts on one row, never filtered, never acknowledged.
+  const listRows = useMemo(() => allRows.filter((row) => row.type !== 'restricted'), [allRows])
+  const restrictedRows = useMemo(() => allRows.filter((row) => row.type === 'restricted'), [allRows])
 
   const projectOptions = useMemo(
     () => [
       { value: 'all', label: 'All projects' },
       ...[...data.projects]
         .sort((a, b) => a.id.localeCompare(b.id))
-        .map((p) => ({ value: p.id, label: isRestricted(p) ? `${p.id} (restricted)` : p.id })),
+        .map((p) => ({
+          value: p.id,
+          label: isRestricted(p) ? `${p.id} (restricted)` : p.id,
+        })),
     ],
     [data.projects],
   )
   // A project that vanished from the reading must not leave the list filtered to nothing.
   const activeProject = projectOptions.some((option) => option.value === project) ? project : 'all'
-  const rows = useMemo(() => filterRows(allRows, filter, activeProject), [allRows, filter, activeProject])
-  // Chip counts use the unit of the stats above (confirmations, findings), within the chosen project.
+  const rows = useMemo(() => filterRows(listRows, filter, activeProject), [listRows, filter, activeProject])
+  // Chip counts use the unit of the rows below (confirmations, findings), within the chosen project.
   const filterOptions = useMemo(
-    () => filterChipOptions(allRows, projectRows, activeProject, filter),
-    [allRows, projectRows, activeProject, filter],
+    () =>
+      filterChipOptions(
+        listRows,
+        projectRows.filter((row) => !row.restricted),
+        activeProject,
+        filter,
+      ),
+    [listRows, projectRows, activeProject, filter],
+  )
+
+  // Everything the page holds, and what the filters leave of it.
+  const all = useMemo(() => groupRows(listRows), [listRows])
+  const shown = useMemo(() => groupRows(rows), [rows])
+  const restricted = useMemo(
+    () => restrictedSummary(filterRows(restrictedRows, 'all', activeProject)),
+    [restrictedRows, activeProject],
   )
 
   // ---- drawer (?project=<id>) ----
@@ -141,67 +177,114 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       },
       { replace: true },
     )
+  const clearFilters = () =>
+    setParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        next.delete('filter')
+        next.delete('scope')
+        return next
+      },
+      { replace: true },
+    )
 
-  // ---- attention table ----
+  // ---- columns ----
 
-  const attentionColumns: DataTableColumn<AttentionRow>[] = [
-    {
-      key: 'severity',
-      header: 'Severity',
-      width: '128px',
-      cell: (row) => {
-        if (row.type === 'confirmation') {
-          return row.overdue ? (
-            <StatePill state="critical" label="Overdue" />
-          ) : (
-            <StatePill state="inactive" label="Pending" />
-          )
-        }
-        return <StatePill state={severityState(row.severity)} label={severityLabel(row.severity)} />
-      },
+  const stateColumn: DataTableColumn<KeyedRow> = {
+    key: 'state',
+    header: 'State',
+    width: '128px',
+    cell: (row) => <StatePill state={rowState(row)} label={rowWord(row)} />,
+  }
+  const projectColumn: DataTableColumn<KeyedRow> = {
+    key: 'project',
+    header: 'Where',
+    width: '200px',
+    cell: (row) => (
+      <div className={styles.projectCell}>
+        <span className={styles.projectName}>{rowScope(row)}</span>
+        {row.type === 'system' && <span className={styles.tag}>system</span>}
+      </div>
+    ),
+  }
+  const whatColumn: DataTableColumn<KeyedRow> = {
+    key: 'what',
+    header: 'What',
+    cell: (row) => <WhatCell row={row} />,
+  }
+  const whenColumn: DataTableColumn<KeyedRow> = {
+    key: 'when',
+    header: 'Age / deadline',
+    cell: (row) => {
+      if (row.type === 'finding') return <span className={styles.time}>{findingAge(row.at, now)}</span>
+      if (row.type === 'confirmation') {
+        const timing = deadlineTiming(row.deadline, row.overdue, now)
+        return (
+          <span className={timing.kind === 'overdue' ? styles.overdue : styles.time} title={row.deadline ?? undefined}>
+            {timing.text}
+          </span>
+        )
+      }
+      return <span className={styles.time}>—</span>
     },
-    {
-      key: 'project',
-      header: 'Project',
-      width: '208px',
-      cell: (row) => (
-        <div className={styles.projectCell}>
-          <span className={styles.projectName}>{row.project}</span>
-          {row.type === 'restricted' && <span className={styles.restricted}>restricted</span>}
-        </div>
-      ),
+  }
+  const typeColumn: DataTableColumn<KeyedRow> = {
+    key: 'code',
+    header: 'Type',
+    cell: (row) => {
+      if (row.type === 'finding') return <FindingType code={row.code} />
+      if (row.type === 'confirmation') return <span className={styles.muted}>{confirmationKindLabel(row.kind)}</span>
+      return <span className={styles.muted}>—</span>
     },
+  }
+
+  const newColumns: DataTableColumn<KeyedRow>[] = [
+    stateColumn,
+    projectColumn,
+    whatColumn,
+    whenColumn,
+    typeColumn,
     {
-      key: 'what',
-      header: 'What',
-      cell: (row) => <WhatCell row={row} />,
-    },
-    {
-      key: 'when',
-      header: 'Age / deadline',
-      cell: (row) => {
-        if (row.type === 'finding') return <span className={styles.time}>{findingAge(row.at, now)}</span>
-        if (row.type === 'confirmation') {
-          const timing = deadlineTiming(row.deadline, row.overdue, now)
-          return (
-            <span className={timing.kind === 'overdue' ? styles.overdue : styles.time} title={row.deadline ?? undefined}>
-              {timing.text}
-            </span>
-          )
-        }
-        return <span className={styles.time}>—</span>
-      },
-    },
-    {
-      key: 'code',
-      header: 'Type',
-      cell: (row) => {
-        if (row.type === 'finding') return <FindingType code={row.code} />
-        if (row.type === 'confirmation') return <span className={styles.muted}>{confirmationKindLabel(row.kind)}</span>
-        return <span className={styles.muted}>—</span>
-      },
+      key: 'actions',
+      header: 'Actions',
+      width: '240px',
+      cell: (row) =>
+        row.ackKey ? (
+          <AckControls ackKey={row.ackKey} name={rowSentence(row)} actions={actions} mode="new" disabled={acksUnread} />
+        ) : null,
     },
   ]
+  const standingColumns: DataTableColumn<KeyedRow>[] = [
+    stateColumn,
+    projectColumn,
+    whatColumn,
+    {
+      key: 'standing',
+      header: 'Standing',
+      cell: (row) =>
+        row.ack ? (
+          <span className={styles.time} title={row.ack.at}>
+            {ackStatus(row.ack, now)}
+          </span>
+        ) : null,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      width: '140px',
+      cell: (row) =>
+        row.ackKey ? (
+          <AckControls
+            ackKey={row.ackKey}
+            name={rowSentence(row)}
+            actions={actions}
+            mode="standing"
+            disabled={acksUnread}
+          />
+        ) : null,
+    },
+  ]
+  const otherColumns: DataTableColumn<KeyedRow>[] = [stateColumn, projectColumn, whatColumn, whenColumn, typeColumn]
 
   // ---- projects table ----
 
@@ -212,12 +295,24 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       cell: (row) => (
         <div className={styles.projectCell}>
           <span className={styles.projectName}>{row.id}</span>
-          {row.restricted && <span className={styles.restricted}>restricted</span>}
+          {row.restricted && <span className={styles.tag}>restricted</span>}
         </div>
       ),
     },
-    { key: 'findings', header: 'Open findings', align: 'end', mono: true, cell: (row) => row.openFindings },
-    { key: 'pending', header: 'Pending', align: 'end', mono: true, cell: (row) => cell(row.pendingConfirmations) },
+    {
+      key: 'findings',
+      header: 'Open findings',
+      align: 'end',
+      mono: true,
+      cell: (row) => row.openFindings,
+    },
+    {
+      key: 'pending',
+      header: 'Pending',
+      align: 'end',
+      mono: true,
+      cell: (row) => cell(row.pendingConfirmations),
+    },
     {
       key: 'overdue',
       header: 'Overdue',
@@ -225,9 +320,9 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       mono: true,
       cell: (row) =>
         row.overdueConfirmations !== null && row.overdueConfirmations > 0 ? (
-          // Never colour alone: an icon and a word for screen readers go with the number.
+          // Never colour alone: a shape and a word for screen readers go with the number.
           <span className={styles.overdue}>
-            <TriangleAlert size={12} aria-hidden="true" />
+            <StateMark state="warning" />
             {row.overdueConfirmations}
             <span className="visually-hidden"> overdue</span>
           </span>
@@ -250,9 +345,54 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
     },
   ]
 
+  // ---- the alarm line: the worst new item and its one action ----
+
+  const worst = worstRow(all.fresh)
+  const shellCount = attention?.count ?? null
+  const alarmDetail = (() => {
+    if (!worst) return undefined
+    const words = attentionWords(shellCount !== null && shellCount > 0 ? shellCount : all.fresh.length)
+    // Restricted counts are information on this page, never part of what needs the operator.
+    const breakdown = attention?.breakdown ? { ...attention.breakdown, restricted: undefined } : null
+    const parts = [words, breakdownWords(breakdown)].filter(Boolean)
+    const error = worst.ackKey ? actions.errors[worst.ackKey] : undefined
+    return (
+      <>
+        {parts.join(' · ')}
+        {error && <AckError message={error} />}
+      </>
+    )
+  })()
+  // Everything new that can be acknowledged (the alarm line is not narrowed by the list filters), and as listed in the New block.
+  const allAckableKeys = all.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
+  const ackableKeys = shown.fresh.flatMap((row) => (row.ackKey ? [row.ackKey] : []))
+  // Two or more new items: the alarm line's one action acknowledges them all (after asking); one item: just that one.
+  const alarmAction =
+    worst && !acksUnread && allAckableKeys.length > 1
+      ? {
+          label: `Acknowledge all (${allAckableKeys.length})`,
+          busy: actions.bulkBusy,
+          onClick: () => setConfirmingAll(allAckableKeys),
+        }
+      : worst && worst.ackKey && !acksUnread
+        ? {
+            label: 'Acknowledge',
+            busy: actions.busy.has(worst.ackKey),
+            onClick: () => void actions.acknowledge(worst.ackKey as string),
+          }
+        : undefined
+  // The shell counts new items but this list has none: it has not caught up yet. Say so, do not claim calm.
+  const listBehind = !worst && shellCount !== null && shellCount > 0
+
+  const acknowledgeAll = async () => {
+    const keys = confirmingAll ?? []
+    setConfirmingAll(null)
+    await actions.acknowledgeAll(keys)
+  }
+
   const filtered = filter !== 'all' || activeProject !== 'all'
-  const attentionCount = attention?.count ?? null
-  const attentionHint = attention ? breakdownWords(attention.breakdown) : null
+  const counted = (group: AttentionRow[], total: number) => (filtered ? `${group.length} of ${total}` : String(total))
+  const clearButton = <Button onClick={clearFilters}>Clear filters</Button>
 
   return (
     <div className={styles.view}>
@@ -271,40 +411,44 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
       {meta.stale && (
         <Notice tone="warning">
           Showing the last good reading of the manager loops
-          {errorText(meta.error) ? `; the latest read failed: ${errorText(meta.error)}` : '; the latest read did not finish'}.
+          {errorText(meta.error)
+            ? `; the latest read failed: ${errorText(meta.error)}`
+            : '; the latest read did not finish'}
+          .
         </Notice>
       )}
 
-      <StatRow aria-label="Attention summary">
-        <Stat
-          label="Need attention"
-          value={attentionCount}
-          state={attentionCount !== null && attentionCount > 0 ? attention?.state : undefined}
-          hint={attentionHint ?? (attention === null || attention.count === null ? 'not read' : undefined)}
+      {worst ? (
+        <AlarmLine
+          state={all.fresh.some((row) => rowState(row) === 'critical') ? 'critical' : 'warning'}
+          title={rowSentence(worst)}
+          detail={alarmDetail}
+          action={alarmAction}
         />
-        <Stat
-          label="Projects with open items"
-          value={summary.projectsWithOpenItems}
-          hint={
-            [
-              summary.projects !== null ? `of ${summary.projects}` : null,
-              summary.unreadProjects > 0 ? `${summary.unreadProjects} not read` : null,
-            ]
-              .filter(Boolean)
-              .join(' · ') || undefined
-          }
-        />
-        <Stat label="Open findings" value={summary.openFindings} />
-        <Stat
-          label="Pending confirmations"
-          value={summary.pendingConfirmations}
-          hint={
-            summary.unreadProjects > 0
-              ? `${summary.unreadProjects} ${summary.unreadProjects === 1 ? 'project' : 'projects'} not read`
-              : undefined
-          }
-        />
-      </StatRow>
+      ) : listBehind ? (
+        <Notice tone="info">
+          {attentionWords(shellCount as number)} in the rail, but this list does not show them yet. Refresh to update
+          it.
+        </Notice>
+      ) : (
+        <div className={styles.calmBlock}>
+          <p className={styles.calm}>Nothing new needs you.</p>
+          {shellCount === null && (
+            <p className={styles.unread}>
+              <StateMark state="unavailable" />
+              The attention count was not read.
+            </p>
+          )}
+        </div>
+      )}
+
+      {acksUnread && (
+        <p className={styles.unread}>
+          <StateMark state="unavailable" />
+          Acknowledgements not read. Every item is listed as new, and nothing can be acknowledged or shelved until
+          they are.
+        </p>
+      )}
 
       <div className={styles.toolbar}>
         <FilterChips
@@ -316,7 +460,7 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         <div className={styles.toolbarEnd}>
           {filtered && (
             <span className={styles.count} aria-live="polite">
-              Showing {rows.length} of {allRows.length}
+              Showing {rows.length} of {listRows.length}
             </span>
           )}
           <Select
@@ -329,53 +473,119 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
         </div>
       </div>
 
-      <Panel
-        title="Needs you"
-        description="Errors and overdue confirmations first, then whatever has waited longest."
-        padding="none"
-      >
-        <DataTable
-          caption="Items that need attention"
-          columns={attentionColumns}
-          rows={rows}
-          rowKey={(row) => row.key}
-          onRowClick={(row) => openProject(row.project)}
-          rowClickable={(row) => row.type !== 'restricted'}
-          maxHeight="560px"
-          empty={
-            <EmptyState
-              icon={<CheckCircle2 size={20} />}
-              title={allRows.length === 0 ? 'Nothing is waiting for you' : 'Nothing matches'}
-              description={
-                allRows.length === 0
-                  ? 'No open findings or pending confirmations in any manager loop.'
-                  : 'No items match the current filter and project.'
-              }
-              action={
-                allRows.length > 0 ? (
-                  <Button
-                    onClick={() => {
-                      setParams(
-                        (prev) => {
-                          const next = new URLSearchParams(prev)
-                          next.delete('filter')
-                          next.delete('scope')
-                          return next
-                        },
-                        { replace: true },
-                      )
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-                ) : undefined
-              }
-            />
-          }
-        />
-      </Panel>
+      {actions.bulkError && (
+        <div role="alert" className={styles.bulkError}>
+          <StateMark state="critical" />
+          <span>
+            Acknowledged {actions.bulkError.done} of {actions.bulkError.total} and stopped: {actions.bulkError.message}
+          </span>
+        </div>
+      )}
 
-      <Panel title="Projects" padding="none">
+      {all.fresh.length > 0 && (
+        <Block
+          title="New"
+          meta={counted(shown.fresh, all.fresh.length)}
+          actions={
+            ackableKeys.length > 1 && !acksUnread ? (
+              <AckAllButton count={ackableKeys.length} busy={actions.bulkBusy} onClick={() => setConfirmingAll(ackableKeys)} />
+            ) : undefined
+          }
+          description="Each needs a decision: acknowledge it once you have seen it, or shelve it to silence it for a while."
+          padding="none"
+        >
+          <DataTable
+            caption="New items that need you"
+            columns={newColumns}
+            rows={shown.fresh}
+            rowKey={(row) => row.key}
+            onRowClick={(row) => openProject(row.project)}
+            rowClickable={(row) => row.type !== 'system'}
+            maxHeight="none"
+            empty={<NothingMatches onClear={clearButton} />}
+          />
+        </Block>
+      )}
+
+      {all.standing.length > 0 && (
+        <Block
+          title="Standing"
+          id={standingId}
+          meta={counted(shown.standing, all.standing.length)}
+          description={standingOpen ? 'Seen or silenced. They count again if they get worse.' : undefined}
+          actions={
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-expanded={standingOpen}
+              aria-controls={standingId}
+              onClick={() => setStandingOpen((open) => !open)}
+            >
+              {standingOpen ? 'Hide' : 'Show'}
+            </Button>
+          }
+          padding="none"
+        >
+          {standingOpen ? (
+            <DataTable
+              caption="Standing items: acknowledged or shelved"
+              columns={standingColumns}
+              rows={shown.standing}
+              rowKey={(row) => row.key}
+              onRowClick={(row) => openProject(row.project)}
+              rowClickable={(row) => row.type !== 'system'}
+              maxHeight="none"
+              empty={<NothingMatches onClear={clearButton} />}
+            />
+          ) : undefined}
+        </Block>
+      )}
+
+      {all.other.length > 0 && (
+        <Block
+          title="Also open"
+          meta={counted(shown.other, all.other.length)}
+          description="Not counted: these do not need you yet, so there is nothing to acknowledge."
+          padding="none"
+        >
+          <DataTable
+            caption="Open items that are not counted"
+            columns={otherColumns}
+            rows={shown.other}
+            rowKey={(row) => row.key}
+            onRowClick={(row) => openProject(row.project)}
+            rowClickable={(row) => row.type !== 'system'}
+            maxHeight="none"
+            empty={<NothingMatches onClear={clearButton} />}
+          />
+        </Block>
+      )}
+
+      {restricted && (
+        <Block title="Restricted" meta={`${restricted.projects} ${restricted.projects === 1 ? 'project' : 'projects'}`}>
+          <p className={styles.restrictedRow}>
+            <span>Details are restricted and not shown here.</span>
+            <span className={styles.sub}>
+              {count(restricted.openFindings, 'open finding', 'open findings')}
+              {' · '}
+              {restricted.pendingConfirmations === null
+                ? 'pending not read'
+                : `${restricted.pendingConfirmations} pending`}
+              {' · '}
+              {restricted.overdueConfirmations !== null && restricted.overdueConfirmations > 0 ? (
+                <span className={styles.overdue}>
+                  <StateMark state="warning" />
+                  {restricted.overdueConfirmations} overdue
+                </span>
+              ) : (
+                <span>{restricted.overdueConfirmations === null ? 'overdue not read' : '0 overdue'}</span>
+              )}
+            </span>
+          </p>
+        </Block>
+      )}
+
+      <Block title="Projects" meta={projectRows.length} padding="none">
         <DataTable
           caption="Manager loop projects"
           columns={projectColumns}
@@ -387,10 +597,22 @@ export default function AttentionView({ data, meta, attention, refreshError, onR
           maxHeight="none"
           empty={<EmptyState title="No manager loops" description="The ledger lists no projects." />}
         />
-      </Panel>
+      </Block>
+
+      <AckAllDialog count={confirmingAll?.length ?? 0} onCancel={() => setConfirmingAll(null)} onConfirm={() => void acknowledgeAll()} />
 
       <ProjectDrawer project={selected} onClose={closeProject} now={now} />
     </div>
+  )
+}
+
+function count(value: number | null, one: string, many: string) {
+  return value === null ? `${many} not read` : `${value} ${value === 1 ? one : many}`
+}
+
+function NothingMatches({ onClear }: { onClear: ReactNode }) {
+  return (
+    <EmptyState title="Nothing matches" description="No items match the current filter and project." action={onClear} />
   )
 }
 
@@ -438,32 +660,15 @@ function WhatCell({ row }: { row: AttentionRow }) {
       </div>
     )
   }
-  const count = (value: number | null, one: string, many: string) =>
-    value === null ? `${many} not read` : `${value} ${value === 1 ? one : many}`
-  return (
-    <div className={styles.what}>
-      <span>Details are restricted</span>
-      <span className={styles.sub}>
-        <span className={styles.part}>{count(row.openFindings, 'open finding', 'open findings')}</span>
-        {' · '}
-        <span className={styles.part}>
-          {row.pendingConfirmations === null ? 'pending not read' : `${row.pendingConfirmations} pending`}
-        </span>
-        {' · '}
-        {row.overdueConfirmations !== null && row.overdueConfirmations > 0 ? (
-          // Never colour alone: an icon, the number and the word go together.
-          <span className={styles.overdue}>
-            <TriangleAlert size={12} aria-hidden="true" />
-            {row.overdueConfirmations} overdue
-          </span>
-        ) : (
-          <span className={styles.part}>
-            {row.overdueConfirmations === null ? 'overdue not read' : '0 overdue'}
-          </span>
-        )}
-      </span>
-    </div>
-  )
+  if (row.type === 'system') {
+    return (
+      <div className={styles.what}>
+        <span>{rowTitle(row)}</span>
+        {row.held && <span className={styles.sub}>Held at its last state while the reading refreshes</span>}
+      </div>
+    )
+  }
+  return <span>Details are restricted</span>
 }
 
 /** A finding's plain-words label, with the internal code as quiet Mono text under it. */

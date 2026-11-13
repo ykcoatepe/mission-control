@@ -1,0 +1,36 @@
+.controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-1) var(--sp-2);
+}
+
+.shelveLabel {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+/* The server's own message, with its shape and word: never colour alone. */
+.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  margin: 0;
+  max-width: min(320px, 100%);
+  color: var(--state-critical);
+  font-size: var(--fs-small);
+  overflow-wrap: anywhere;
+}
+
+.error svg {
+  flex: none;
+  margin-top: 3px;
+}

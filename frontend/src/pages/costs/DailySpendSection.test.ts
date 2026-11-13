@@ -7,7 +7,7 @@ import DailySpendSection from './DailySpendSection'
 import type { ChartDataRow, ChartSeriesItem } from './types'
 
 const localSeries: ChartSeriesItem[] = [
-  { model: 'ollama/llama3', identity: 'llama3', key: 'm0', color: 'var(--series-6)', totalCost: 0, totalTokens: 9000 },
+  { model: 'ollama/llama3', identity: 'llama3', key: 'm0', color: 'var(--chart-6)', totalCost: 0, totalTokens: 9000 },
 ]
 
 const localOnlyRows = [

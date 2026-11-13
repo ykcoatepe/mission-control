@@ -64,7 +64,7 @@ function oldestAgeText(seconds: number | null) {
 // Raw missing-embedding count; inside the embed tolerance it is labeled as
 // catching up, beyond it with the oldest age. Snapshots without
 // missingEmbeddingsOverdue treat every missing embedding as overdue.
-function missingEmbeddingsLabel(entry: TimelineDeltaEntry, withAge = true) {
+export function missingEmbeddingsLabel(entry: TimelineDeltaEntry, withAge = true) {
   const count = missingEmbeddingsCount(entry)
   if (count === null) return null
   const overdue = structuredCount(entry.metrics, 'missingEmbeddingsOverdue') ?? count
@@ -82,7 +82,7 @@ function stalePagesCount(entry: TimelineDeltaEntry) {
 // Overdue pages (older than the sweep tolerance) are "stale"; the rest of the
 // raw count is shown as catching up. Snapshots without stalePagesOverdue
 // treat every stale page as overdue.
-function compiledTruthLabel(entry: TimelineDeltaEntry) {
+export function compiledTruthLabel(entry: TimelineDeltaEntry) {
   const count = stalePagesCount(entry)
   if (count === null) return null
   const overdue = structuredCount(entry.metrics, 'stalePagesOverdue') ?? count

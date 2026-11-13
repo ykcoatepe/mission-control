@@ -18,8 +18,8 @@
 }
 
 .button:focus-visible {
-  outline: none;
-  box-shadow: var(--focus-ring);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .button[aria-pressed='true'] {
@@ -32,8 +32,8 @@
 }
 
 .secondary {
-  background: var(--surface-2);
-  border-color: var(--line-strong);
+  background: transparent;
+  border-color: var(--control-line);
 }
 
 .sm {
@@ -49,8 +49,9 @@
   height: 16px;
   padding: 0 var(--sp-1);
   border-radius: var(--r-full);
-  background: var(--state-warning);
-  color: var(--text-on-accent);
+  background: var(--surface-3);
+  border: 1px solid var(--state-warning);
+  color: var(--state-warning);
   font-size: var(--fs-micro);
   font-weight: var(--fw-semibold);
   line-height: 16px;

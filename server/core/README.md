@@ -44,6 +44,31 @@ Shared plumbing for every area. Binding design:
    pure-GET sweep in `tests/appBootSmoke.test.js` when it becomes pure, and
    update `EXPECTED_ROUTES` when the route table changes.
 
+## Attention acknowledgements (badge rule)
+
+`server/services/attentionAcks.js` is the one store for acknowledged and
+shelved attention items (`data/attention/acks.json`, 0600, atomic, bounded, an
+invalid file kept as `.corrupt-<time>`). Keys and fingerprints
+(`{ rank, reasonIds, counts }`, `worseThan()`) come from
+`server/sources/mloop/attention.js` (`attentionItems()`);
+`needsOperator({ ..., acks })`, `loopsView(..., { acks })` and
+`projectCronAcks(cron, acks)` (`sources/openclaw/automations.js`) apply it on
+read. Holding is a pure function, computed on every read: **while an item is
+worse than what was acknowledged it counts as new, and when it is back at the
+acknowledged level or better the acknowledgement applies again.** Nothing is
+scheduled and nothing about a void is stored. The only writers are
+`POST /api/attention/acks` and `DELETE /api/attention/acks/:key`
+(`server/routes/attentionAcks.js`), guarded and audited like every mutation;
+they also collect acknowledgements whose item has been absent for 7 days.
+Single-process assumption: one Mission Control process uses a data directory
+(as for the calendar and config files), so the store has no cross-process
+locking; one instance per file per process, synchronous atomic writes. When the
+file cannot be read or written, reads treat nothing as acknowledged, envelopes
+carry `acks: { available: false }` and writes answer 503, until a write
+actually succeeds. An item with more than 128 reasons is never held and not
+ackable (no folding).
+Contract: `docs/reference-operator-surfaces.md`.
+
 ## Worked example: OpenClaw status
 
 The status/heartbeat read is the first path converted. Files:

@@ -1,0 +1,427 @@
+.root {
+  container-type: inline-size;
+  container-name: track;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.wide {
+  display: block;
+  min-width: 0;
+}
+
+.narrow {
+  display: none;
+  min-width: 0;
+}
+
+/* Under about 760px of room the diagram is too small to read: the same readings become a list. */
+@container track (max-width: 759px) {
+  .wide {
+    display: none;
+  }
+
+  .narrow {
+    display: block;
+  }
+}
+
+.svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.svg text {
+  fill: var(--text-1);
+}
+
+/* ---- tracks: the line colour is the group's identity and nothing else ---- */
+
+.track {
+  --tone: var(--track);
+}
+
+.track[data-tone='reference'] { --tone: var(--line-reference); }
+.track[data-tone='projects'] { --tone: var(--line-projects); }
+.track[data-tone='agent'] { --tone: var(--line-agent); }
+.track[data-tone='curated'] { --tone: var(--line-curated); }
+
+.rail {
+  fill: none;
+  stroke: var(--tone);
+  stroke-width: 2;
+  stroke-linecap: butt;
+}
+
+/* A wide invisible stroke, so hovering near a rail shows its readings. */
+.hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
+
+/* The picture is scaled to its container (never below 760/820 here); 13 units stay 12px or more on screen. */
+.svg .railText {
+  fill: var(--text-2);
+  font-size: 13px;
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.svg .railStale {
+  fill: var(--state-warning);
+}
+
+.ties {
+  fill: none;
+  stroke: var(--tone);
+  stroke-width: 7;
+  stroke-dasharray: 1.6 7.4;
+  opacity: 0.85;
+}
+
+.bumper {
+  fill: var(--tone);
+}
+
+/* ---- blocks ---- */
+
+.block {
+  --tone: var(--track);
+  cursor: pointer;
+  outline: none;
+}
+
+.block[data-tone='reference'] { --tone: var(--line-reference); }
+.block[data-tone='projects'] { --tone: var(--line-projects); }
+.block[data-tone='agent'] { --tone: var(--line-agent); }
+.block[data-tone='curated'] { --tone: var(--line-curated); }
+
+.ring {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.block:focus-visible .ring {
+  stroke: var(--accent);
+}
+
+.frame,
+.coreFrame,
+.queueFrame,
+.readerFrame {
+  fill: var(--surface-1);
+  stroke-width: 1;
+  transition: stroke var(--dur-fast) var(--ease), fill var(--dur-fast) var(--ease);
+}
+
+.frame {
+  stroke: var(--tone);
+}
+
+.coreFrame {
+  fill: var(--surface-2);
+  stroke: var(--text-2);
+  stroke-width: 2;
+}
+
+.queueFrame,
+.readerFrame {
+  stroke: var(--line-strong);
+}
+
+.block:hover .queueFrame,
+.block:hover .readerFrame {
+  fill: var(--surface-2);
+}
+
+.block:hover .coreFrame {
+  fill: var(--surface-3);
+}
+
+/* Selection is the action colour. */
+.selected .frame,
+.selected .coreFrame,
+.selected .queueFrame,
+.selected .readerFrame {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.head,
+.headFill {
+  fill: var(--tone);
+}
+
+.svg .headText {
+  fill: var(--text-on-accent);
+  font-family: var(--font-caps);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.svg .headEnd {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--font-sans);
+  font-weight: 600;
+}
+
+.svg .rowText {
+  fill: var(--text-1);
+  font-size: 13px;
+}
+
+.svg .rowOff {
+  fill: var(--text-2);
+}
+
+.svg .num {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.svg .muted {
+  fill: var(--text-3);
+  font-size: 13px;
+}
+
+/* ---- core ---- */
+
+.svg .coreTitle {
+  font-family: var(--font-caps);
+  font-size: 21px;
+  font-weight: 600;
+}
+
+.svg .coreText {
+  fill: var(--text-1);
+  font-size: 13px;
+}
+
+.svg .coreSmall {
+  font-size: 13px;
+}
+
+.svg .coreState[data-state='warning'] { fill: var(--state-warning); }
+.svg .coreState[data-state='critical'] { fill: var(--state-critical); }
+.svg .coreState[data-state='unavailable'] { fill: var(--text-2); }
+
+.svg .readLabel {
+  fill: var(--text-2);
+  font-size: 13px;
+}
+
+.svg .readValue {
+  fill: var(--text-1);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.svg .readValue[data-state='warning'] { fill: var(--state-warning); }
+.svg .readValue[data-state='critical'] { fill: var(--state-critical); }
+.svg .readValue[data-state='unavailable'] { fill: var(--text-2); }
+
+.rule {
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+/* ---- queue ---- */
+
+.svg .queueText {
+  font-family: var(--font-caps);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.unit rect {
+  fill: var(--surface-3);
+  stroke: var(--text-2);
+  stroke-width: 1;
+}
+
+.svg .unit text {
+  fill: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.unitActive rect {
+  fill: var(--text-2);
+}
+
+.svg .unitActive text {
+  fill: var(--bg);
+}
+
+/* ---- readers ---- */
+
+.svg .readerName {
+  fill: var(--text-1);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.svg .readerSub {
+  fill: var(--text-2);
+  font-size: 13px;
+}
+
+.svg .caption {
+  fill: var(--text-2);
+  font-size: 13px;
+}
+
+/* ---- legend ---- */
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-4);
+  padding: var(--sp-2) 0 0;
+  margin: 0;
+  list-style: none;
+  border-top: 1px solid var(--line);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+
+.legendUnit rect {
+  fill: var(--surface-3);
+  stroke: var(--text-2);
+}
+
+.legendUnit text {
+  fill: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.legendUnitActive rect {
+  fill: var(--text-2);
+}
+
+.legendUnitActive text {
+  fill: var(--bg);
+}
+
+/* ---- narrow list ---- */
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.listRow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 28px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--fs-body);
+}
+
+.listRow:last-child {
+  border-bottom: 0;
+}
+
+.listName {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rowOff {
+  color: var(--text-2);
+}
+
+.listWord {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+}
+
+.listWord[data-state='warning'] { color: var(--state-warning); }
+.listWord[data-state='critical'] { color: var(--state-critical); }
+
+.listNum {
+  min-width: 4.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  font-size: var(--fs-body);
+}
+
+.fact {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+
+.fact dt {
+  min-width: 0;
+  color: var(--text-2);
+}
+
+.fact dd {
+  display: inline-flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  overflow-wrap: anywhere;
+  align-items: center;
+  gap: var(--sp-1);
+  margin: 0;
+  font-variant-numeric: tabular-nums lining-nums;
+  text-align: right;
+}
+
+.muted {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .frame,
+  .coreFrame,
+  .queueFrame,
+  .readerFrame {
+    transition: none;
+  }
+}
+
+.details {
+  margin-top: var(--sp-2);
+}

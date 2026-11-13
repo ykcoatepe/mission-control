@@ -1,10 +1,11 @@
-import { Freshness, Mono, Panel, StateDot, TimeAgo } from '../../components/ui'
+import { Block, DataTable, Freshness, StateMark, type DataTableColumn } from '../../components/ui'
 import { fmtClock, type ReadingRow } from './lib'
 import styles from './ReadingsTimeline.module.css'
 
 /**
- * History, not status: every row is the state recorded at that time, labelled with its time.
- * The current state is the verdict line above; a newest row that disagrees with it says so.
+ * History, not status: every row is the state recorded at that time, labelled with its real time.
+ * The current state is the alarm line (or the quiet line) at the top; a newest row that disagrees
+ * with it says so.
  */
 export function ReadingsTimeline({
   rows,
@@ -21,13 +22,48 @@ export function ReadingsTimeline({
   readable: boolean
 }) {
   const shown = rows.reduce((sum, row) => sum + row.count, 0)
-  const older = retained !== null ? Math.max(0, retained - shown) : 0
   const newestDay = rows[0]?.at ?? null
+  const columns: DataTableColumn<ReadingRow>[] = [
+    {
+      key: 'time',
+      header: 'Time',
+      mono: true,
+      width: '9rem',
+      cell: (row) => <time dateTime={row.at}>{fmtClock(row.at, newestDay)}</time>,
+    },
+    {
+      key: 'state',
+      header: 'State',
+      width: '9rem',
+      cell: (row) => (
+        <span className={styles.recorded}>
+          <StateMark state={row.state} />
+          <span>{row.stateWord}</span>
+        </span>
+      ),
+    },
+    {
+      key: 'event',
+      header: 'What changed',
+      cell: (row) => (
+        <span className={styles.event}>
+          {row.note && <span className={styles.note}>{row.note}. </span>}
+          {row.headline}
+          {row.count > 1 && (
+            <span className={styles.repeat}>
+              {' '}
+              · {row.count} readings since {fmtClock(row.since ?? row.at, newestDay)}, same values
+            </span>
+          )}
+        </span>
+      ),
+    },
+  ]
   return (
-    <Panel
+    <Block
       title="Recent readings"
-      description="History: the state recorded at each time. The current state is the line at the top."
       padding="none"
+      meta={readable && rows.length > 0 ? `Showing ${shown} of ${retained !== null ? Math.max(retained, shown) : shown}` : undefined}
       actions={<Freshness observedAt={observedAt} state={!readable ? 'unavailable' : stale ? 'stale' : undefined} />}
     >
       {!readable ? (
@@ -35,33 +71,8 @@ export function ReadingsTimeline({
       ) : rows.length === 0 ? (
         <p className={styles.none}>No readings have been recorded yet.</p>
       ) : (
-        <ol className={styles.list}>
-          {rows.map((row) => (
-            <li key={row.id} className={styles.row}>
-              <span className={styles.when}>
-                <Mono className={styles.clock}>{fmtClock(row.at, newestDay)}</Mono>
-                <TimeAgo value={row.at} className={styles.time} />
-              </span>
-              <span className={styles.recorded}>
-                <StateDot state={row.state} />
-                <span>{row.stateWord}</span>
-                <Mono muted>{row.quality}</Mono>
-              </span>
-              <span className={styles.headline}>
-                {row.note && <span className={styles.note}>{row.note}. </span>}
-                {row.headline}
-                {row.count > 1 && (
-                  <span className={styles.repeat}>
-                    {' '}
-                    · {row.count} readings since {fmtClock(row.since ?? row.at, newestDay)}, same values
-                  </span>
-                )}
-              </span>
-            </li>
-          ))}
-        </ol>
+        <DataTable caption="Recent readings" columns={columns} rows={rows} rowKey={(row) => row.id} maxHeight="none" />
       )}
-      {readable && older > 0 && <p className={styles.more}>{older} older readings are kept in the ledger.</p>}
-    </Panel>
+    </Block>
   )
 }

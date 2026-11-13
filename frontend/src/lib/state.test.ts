@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { stateLabel, toUiState, worstState, type UiState } from './state'
+import { isAbnormal, stateLabel, stateShape, toUiState, worstState, type UiState } from './state'
 
 describe('toUiState', () => {
   it.each([
@@ -63,11 +63,26 @@ describe('toUiState', () => {
 
 describe('stateLabel', () => {
   it('has a word for every state', () => {
-    expect(stateLabel('healthy')).toBe('Healthy')
-    expect(stateLabel('warning')).toBe('Warning')
+    expect(stateLabel('healthy')).toBe('Normal')
+    expect(stateLabel('warning')).toBe('Caution')
     expect(stateLabel('critical')).toBe('Critical')
-    expect(stateLabel('unavailable')).toBe('Unavailable')
-    expect(stateLabel('inactive')).toBe('Inactive')
+    expect(stateLabel('unavailable')).toBe('Not read')
+    expect(stateLabel('inactive')).toBe('Off')
+  })
+})
+
+describe('stateShape', () => {
+  it('gives every state its own shape (state is never colour alone)', () => {
+    expect(stateShape('healthy')).toBe('circle')
+    expect(stateShape('warning')).toBe('triangle')
+    expect(stateShape('critical')).toBe('square')
+    expect(stateShape('unavailable')).toBe('ring')
+    expect(stateShape('inactive')).toBe('dash')
+    expect(new Set(['healthy', 'warning', 'critical', 'unavailable', 'inactive'].map((s) => stateShape(s as UiState))).size).toBe(5)
+  })
+
+  it('only warning and critical are abnormal', () => {
+    expect((['healthy', 'warning', 'critical', 'unavailable', 'inactive'] as UiState[]).filter(isAbnormal)).toEqual(['warning', 'critical'])
   })
 })
 

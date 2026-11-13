@@ -32,12 +32,6 @@
   width: 200px;
 }
 
-.count {
-  color: var(--text-3);
-  font-size: var(--fs-small);
-  font-variant-numeric: tabular-nums;
-}
-
 .nameCell {
   display: flex;
   flex-direction: column;
@@ -250,5 +244,36 @@
 .refusal {
   flex-basis: 100%;
   color: var(--state-critical);
+  font-size: var(--fs-small);
+}
+
+/* A failure that was acknowledged or shelved: the same square and word, in neutral grey. It is not an alarm. */
+.standing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 20px;
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+}
+
+.standing .standingMark[data-state='critical'] {
+  color: var(--state-normal);
+}
+
+.ackRow {
+  display: inline-flex;
+  flex-basis: 100%;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+  margin-left: calc(var(--sp-2) * -1);
+}
+
+.ackNote {
+  padding-left: var(--sp-2);
+  color: var(--text-3);
   font-size: var(--fs-small);
 }

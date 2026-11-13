@@ -36,9 +36,11 @@ test('automation source keeps last good with typed stale failure; never invents 
   assert.equal(source.snapshot().data, null);
   await source.refresh();
   const first = source.snapshot();
-  assert.deepEqual(first.data.cron.summary, { active: 1, paused: 0, failed: 1, nextRunAt: '2026-11-12T00:00:00Z', definitions: {
+  // Badge rule: failed excludes acknowledged/shelved jobs (standingFailed).
+  assert.deepEqual(first.data.cron.summary, { active: 1, paused: 0, failed: 1, standingFailed: 0, nextRunAt: '2026-11-12T00:00:00Z', definitions: {
     active: 'Counts every enabled job, including enabled jobs whose last run failed.',
-    failed: 'Enabled jobs whose last run failed; a subset of active, not a separate population.',
+    failed: 'Enabled jobs whose last run failed and that are not acknowledged or shelved; a subset of active.',
+    standingFailed: 'Enabled jobs whose last run failed and that are acknowledged or shelved.',
   } });
   f.fail();
   await source.refresh();
@@ -130,6 +132,7 @@ test('cron/calendar GETs never read upstream or write, including cold and stale 
     const signals = await (await fetch(base + '/api/signals')).json();
     assert.deepEqual(signals.data.automations, {
       failed: source.snapshot().data.cron.summary.failed,
+      standingFailed: 0,
       nextRunAt: source.snapshot().data.cron.summary.nextRunAt,
     });
     assert.deepEqual(f.counts(), before);

@@ -161,74 +161,15 @@ export function formatSessionTimestamp(timestamp: number) {
 // Color palettes
 // ---------------------------------------------------------------------------
 
-const DYNAMIC_COLORS = [
-  '#4DA3FF', // blue
-  '#FF9F43', // orange
-  '#42D392', // green
-  '#FF5D5D', // red
-  '#B388FF', // purple
-  '#2DD4BF', // teal
-  '#FF78B5', // pink
-  '#FACC15', // yellow
-  '#818CF8', // indigo
-  '#A3E635', // lime
-  '#22D3EE', // cyan
-  '#FB7185', // coral
-]
-
 export function modelColorKey(model: string): string {
   return model.trim().toLowerCase()
 }
 
-function overflowModelColor(index: number): string {
-  const hue = Math.round((index * 137.508 + 24) % 360)
-  const lightness = index % 2 === 0 ? 66 : 74
-  return `hsl(${hue} 78% ${lightness}%)`
-}
-
-export function assignModelColors(
-  activeModels: string[],
-  previousAssignments: ReadonlyMap<string, string> = new Map(),
-): Map<string, string> {
-  const activeKeys = Array.from(new Set(activeModels.map(modelColorKey).filter(Boolean)))
-  const assignments = new Map<string, string>()
-  const reservedColors = new Set<string>()
-
-  activeKeys.forEach(key => {
-    const previousColor = previousAssignments.get(key)
-    if (previousColor && !reservedColors.has(previousColor)) {
-      assignments.set(key, previousColor)
-      reservedColors.add(previousColor)
-    }
-  })
-
-  activeKeys.forEach(key => {
-    if (assignments.has(key)) return
-    const availableColor = DYNAMIC_COLORS.find(color => !reservedColors.has(color))
-    let overflowIndex = 0
-    let generatedColor = overflowModelColor(overflowIndex)
-    while (reservedColors.has(generatedColor)) {
-      overflowIndex += 1
-      generatedColor = overflowModelColor(overflowIndex)
-    }
-    const color = availableColor || generatedColor
-    assignments.set(key, color)
-    reservedColors.add(color)
-  })
-
-  return assignments
-}
-
-export function assignedModelColor(assignments: ReadonlyMap<string, string>, model: string): string {
-  const key = modelColorKey(model)
-  return assignments.get(key) || hashColor(key)
-}
-
-/** Number of chart series colours the design system defines (`--series-1..6`). */
+/** Number of chart colours the design system defines (`--chart-1..6`: muted categories that never reuse the Brain line colours, the accent or a state colour). */
 export const SERIES_COLOR_COUNT = 6
 
 export function seriesColorToken(slot: number): string {
-  return `var(--series-${(slot % SERIES_COLOR_COUNT) + 1})`
+  return `var(--chart-${(slot % SERIES_COLOR_COUNT) + 1})`
 }
 
 /**
@@ -236,7 +177,7 @@ export function seriesColorToken(slot: number): string {
  * as it stays active (across period changes and while replacement data loads);
  * colours of models that dropped out return to the pool and go to newcomers.
  * `slots` limits the pool (e.g. 5 when the sixth token is reserved for the
- * "Other models" bucket). Keys are case-insensitive, like `assignModelColors`.
+ * "Other models" bucket). Keys are case-insensitive, like the other series helpers.
  */
 export function assignSeriesColors(
   activeModels: string[],
@@ -308,23 +249,6 @@ export function isModelMetricKey(key: string): boolean {
 /** True when a `dailyByModel` column names a model (not a total or a per-model metric). */
 export function isModelColumnKey(key: string): boolean {
   return !DAILY_TOTAL_KEYS.has(key) && !isModelMetricKey(key)
-}
-
-export function hashColor(str: string): string {
-  let hash = 0
-  for (let i = 0; i < str.length; i++) {
-    hash = (hash << 5) - hash + str.charCodeAt(i)
-    hash |= 0
-  }
-  return DYNAMIC_COLORS[Math.abs(hash) % DYNAMIC_COLORS.length]
-}
-
-export function getServiceColor(name: string) {
-  const lowerName = name.toLowerCase()
-  if (lowerName.includes('compute') || lowerName.includes('ec2') || lowerName.includes('lambda')) return '#007AFF'
-  if (lowerName.includes('claude') || lowerName.includes('ai') || lowerName.includes('bedrock')) return '#BF5AF2'
-  if (lowerName.includes('s3') || lowerName.includes('storage')) return '#32D74B'
-  return '#8E8E93'
 }
 
 // ---------------------------------------------------------------------------

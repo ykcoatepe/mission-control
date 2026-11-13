@@ -18,7 +18,7 @@ function storage(): Storage | null {
   }
 }
 
-/** Remembered model id -> `var(--series-N)` pairs; anything unreadable or unknown is dropped. */
+/** Remembered model id -> `var(--chart-N)` pairs; anything unreadable or unknown is dropped. */
 export function loadSeriesColorMemory(store: Storage | null = storage()): Map<string, string> {
   const memory = new Map<string, string>()
   if (!store) return memory

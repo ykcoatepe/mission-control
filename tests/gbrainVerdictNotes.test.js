@@ -29,21 +29,22 @@ function liveExample() {
   });
 }
 
-test('the nine-line live example collapses to one thing to act on and three to know', () => {
+test('the nine-line live example collapses to two things to act on and two to know', () => {
   const verdict = buildGBrainVerdict(liveExample());
   const action = verdict.reasons.filter((r) => r.kind === 'action');
   const info = verdict.reasons.filter((r) => r.kind === 'info');
-  assert.deepEqual(action.map((r) => [r.elementId, r.state, r.text]),
-    [['missing-embeddings', 'warning', '12 chunks are missing embeddings past the tolerance.']]);
-  assert.deepEqual(info.map((r) => r.elementId).sort(), ['embed-job-probe', 'readers', 'tk-omc-ain']);
+  // Twelve chunks are waiting, so the failed embed-job probe is something to act on, not information.
+  assert.deepEqual(action.map((r) => [r.elementId, r.state, r.text]), [
+    ['missing-embeddings', 'warning', '12 chunks are missing embeddings past the tolerance.'],
+    ['embed-job-probe', 'unavailable', "Embedding status couldn't be read while 12 chunks are waiting."],
+  ]);
+  assert.deepEqual(info.map((r) => r.elementId).sort(), ['readers', 'tk-omc-ain']);
   assert.equal(verdict.reasons.length, 4);
+  assert.equal(verdict.state, 'warning');
   assert.ok(!verdict.reasons.some((r) => r.elementId === 'gbrain-core'), 'the core line only restates the missing embeddings');
   assert.ok(!verdict.reasons.some((r) => /requires attention|quality 99|configured;|telemetry/i.test(r.text)), JSON.stringify(verdict.reasons));
   assert.equal(info.find((r) => r.elementId === 'readers').text,
     "Hermes, Codex, Claude Code and OpenClaw are set up. Live connections can't be read from this machine.");
-  assert.equal(info.find((r) => r.elementId === 'embed-job-probe').text,
-    "Embedding job status couldn't be read, so missing embeddings are judged by age only.");
-  assert.equal(info.find((r) => r.elementId === 'embed-job-probe').state, 'unavailable');
   assert.equal(info.find((r) => r.elementId === 'tk-omc-ain').state, 'inactive');
   assert.equal(isGBrainVerdict(verdict), true);
 });
@@ -117,13 +118,29 @@ test('a reader that is not set up, or has a real state, keeps its own line', () 
   assert.equal(verdict.state, 'warning');
 });
 
-test('kind is one rule: inactive and the embed-job limitation are info, every other reason is action', () => {
+test('kind is one rule: inactive and the embed-job limitation with nothing waiting are info, every other reason is action', () => {
   const verdict = buildGBrainVerdict(liveExample());
   for (const r of verdict.reasons) {
-    assert.equal(r.kind, r.state === 'inactive' || r.elementId === 'embed-job-probe' ? 'info' : 'action', r.elementId);
+    assert.equal(r.kind, r.state === 'inactive' ? 'info' : 'action', r.elementId);
   }
+  const nothingWaiting = buildGBrainVerdict(input({ live: { health: { status: 'healthy', metrics: { missingEmbeddings: 0, embedJobProbeUnavailable: true } } } }));
+  assert.deepEqual(nothingWaiting.reasons.map((r) => [r.elementId, r.kind]), [['embed-job-probe', 'info']]);
   const bad = { ...verdict, reasons: [{ ...verdict.reasons[0], kind: 'loud' }] };
   assert.equal(isGBrainVerdict(bad), false);
   // A verdict stored before `kind` existed is still a verdict.
   assert.equal(isGBrainVerdict({ state: 'warning', reasons: [{ elementId: 'queue', state: 'warning', text: 'Queue requires attention.' }] }), true);
+});
+
+test('the embed-job probe is information only when nothing is waiting to be embedded', () => {
+  const failedProbe = (metrics) => buildGBrainVerdict(input({ live: { health: { status: 'healthy', metrics: { embedJobProbeUnavailable: true, ...metrics } } } }));
+  const none = failedProbe({ missingEmbeddings: 0, missingEmbeddingsOverdue: 0 });
+  assert.equal(none.state, 'healthy');
+  assert.equal(none.reasons.find((r) => r.elementId === 'embed-job-probe').kind, 'info');
+
+  const waiting = failedProbe({ missingEmbeddings: 10, missingEmbeddingsOverdue: 0, missingEmbeddingsCatchingUp: 10 });
+  assert.equal(waiting.state, 'unavailable', 'ten chunks waiting and the job status unread is never healthy');
+  assert.deepEqual(waiting.reasons.filter((r) => r.elementId === 'embed-job-probe').map((r) => [r.state, r.kind, r.text]),
+    [['unavailable', 'action', "Embedding status couldn't be read while 10 chunks are waiting."]]);
+  const one = failedProbe({ missingEmbeddings: 1, missingEmbeddingsOverdue: 0, missingEmbeddingsCatchingUp: 1 });
+  assert.equal(one.reasons.find((r) => r.elementId === 'embed-job-probe').text, "Embedding status couldn't be read while 1 chunk is waiting.");
 });

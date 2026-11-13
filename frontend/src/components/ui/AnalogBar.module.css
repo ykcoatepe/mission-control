@@ -1,0 +1,166 @@
+.bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+
+.label {
+  min-width: 0;
+  color: var(--text-1);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-semibold);
+}
+
+.reading {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+  flex: 0 0 auto;
+}
+
+.value {
+  color: var(--text-1);
+  font-size: var(--fs-lead);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.word {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-weight: var(--fw-medium);
+}
+
+.bar[data-state='warning'] .word { color: var(--state-warning); }
+.bar[data-state='critical'] .word { color: var(--state-critical); }
+
+.normal {
+  color: var(--text-3);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.track {
+  position: relative;
+  height: 12px;
+  margin-top: var(--sp-1);
+  background: var(--surface-3);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-sm);
+}
+
+.band,
+.fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+/* The normal band is the whole height of the track; the fill is a thinner bar inside it, so the band is
+   still seen above and below the fill and its two limits read at a glance. */
+.band {
+  left: var(--from);
+  width: calc(var(--to) - var(--from));
+  background: var(--band);
+}
+
+.fill {
+  top: 3px;
+  bottom: 3px;
+  left: 0;
+  width: var(--at);
+  background: var(--bar-fill);
+  transition: width var(--dur-base) var(--ease);
+}
+
+/* Caution or critical: the fill is the state colour for its whole length, nothing teal under it, and it is the
+   full height of the track so it reads as one bar, not a stripe inside the band. The band stays neutral. */
+.bar[data-state='warning'] .fill,
+.bar[data-state='critical'] .fill {
+  top: 0;
+  bottom: 0;
+}
+
+.bar[data-state='warning'] .fill { background: var(--state-warning); }
+.bar[data-state='critical'] .fill { background: var(--state-critical); }
+
+.pointer {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: var(--at);
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text-1);
+  transition: left var(--dur-base) var(--ease);
+}
+
+/* A limit: a tick through the track and a little beyond, labelled below. */
+.tick {
+  position: absolute;
+  top: -3px;
+  bottom: -5px;
+  left: var(--at);
+  width: 1px;
+  background: var(--text-2);
+}
+
+.scale {
+  position: relative;
+  height: 18px;
+  margin-top: var(--sp-2);
+  color: var(--text-2);
+  font-size: var(--fs-micro);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.limit {
+  position: absolute;
+  top: 0;
+  left: var(--at);
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.limit[data-position='start'] { transform: none; }
+.limit[data-position='end'] { transform: translateX(-100%); }
+
+.trend {
+  display: grid;
+  /* The words are one column on the left; the plot and its two end values are one block on the right, so the
+     average never sits among the highest and lowest values. */
+  grid-template-columns: minmax(max-content, 7.5rem) minmax(72px, 1fr);
+  /* The chart takes any height the parent has to spare. */
+  flex: 1 1 auto;
+  align-items: stretch;
+  gap: var(--sp-3);
+  margin-top: var(--sp-1);
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+.trendWords {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.trendAvg {
+  color: var(--text-1);
+}

@@ -259,7 +259,7 @@ function createApp(deps = {}) {
   scheduler.register(ollamaSource, { intervalMs: 5000, jitterMs: 250 });
   // Local adapters leave other authors' mount lines untouched.
   function createCronService(options) { return require('./services/cronData').createCronService({ ...options, runner: exec, homeDir: config.homeDir }); }
-  function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource,
+  function buildCronRouter(options) { return require('./routes/cron').buildCronRouter({ ...options, automationSource, acks: attentionArea.acks,
     afterCronWrite: details => require('./sources/openclaw/cronMutations').publishCronDependents({ ...details,
       source: automationSource, calendarSource, operationsSource: attentionArea.sources.cron, cronService }),
   }); }
@@ -307,6 +307,19 @@ function createApp(deps = {}) {
     const { buildLoopsRouter } = require('./routes/loops');
     const { buildServicesRouter } = require('./routes/services');
     const { buildSignalsRouter, usageFromSibling } = require('./routes/signals');
+    const { createAttentionAckStore } = require('./services/attentionAcks');
+    const { buildAttentionAcksRouter, createAttentionReader } = require('./routes/attentionAcks');
+    // Badge rule: acknowledged / shelved attention items (data/attention/acks.json).
+    // The one place the store is made: one instance per file per process (a
+    // second is refused), and one Mission Control process per data directory.
+    // Whether an acknowledgement holds is computed on every read; nothing is
+    // scheduled for it. dispose() closes the store.
+    const ownsAcks = !services.attentionAcks;
+    const acks = services.attentionAcks || createAttentionAckStore({
+      file: path.join(config.paths.dataDir, 'attention', 'acks.json'),
+      now,
+      logger,
+    });
     const operationsSources = createOperationsSources({
       readers: createOperationsReaders({
         statusService, sessionsService, cronService, hermesKanbanService, hermesGatewayHealthService, gbrainOverviewService,
@@ -347,7 +360,7 @@ function createApp(deps = {}) {
     const sibling = (read) => {
       try { return read(); } catch { return null; }
     };
-    app.use(buildLoopsRouter({ loopsSource, operationsOverviewService: overviewService }));
+    app.use(buildLoopsRouter({ loopsSource, operationsOverviewService: overviewService, acks, now }));
     app.use(buildServicesRouter({ launchdSource, reachabilitySource }));
     app.use(buildSignalsRouter({
       operationsOverviewService: overviewService,
@@ -358,9 +371,20 @@ function createApp(deps = {}) {
       automationsSnapshot: () => sibling(() => automationSource.snapshot()),
       // usageService is declared by the usage area further down; read lazily.
       usageSummary: () => usageFromSibling(sibling(() => usageService)),
+      acks,
       now,
     }));
-    return { overviewService, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource } };
+    const readAttention = createAttentionReader({
+      operationsOverviewService: overviewService,
+      loopsSource,
+      automationsSnapshot: () => automationSource.snapshot(),
+      operationsCronSnapshot: () => sourcesByName.cron?.snapshot(),
+      now,
+    });
+    app.use(buildAttentionAcksRouter({ acks, readAttention, now }));
+    return {
+      overviewService, acks, ownsAcks, sources: { ...sourcesByName, loops: loopsSource, launchd: launchdSource, reachability: reachabilitySource },
+    };
   })();
   // The existing mount line below keeps its text; it now gets the
   // memory-only overview service.
@@ -495,6 +519,7 @@ function createApp(deps = {}) {
       if (disposed) return;
       disposed = true;
       scheduler.stop();
+      if (attentionArea.ownsAcks) attentionArea.acks.close?.();
       loop.stop();
       exec.killAll();
     },

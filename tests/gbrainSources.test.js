@@ -321,3 +321,151 @@ test('failed integration readings remain unavailable, including cached configure
     assert.equal(Object.hasOwn(s.readers[0], 'connection'), false);
   }
 });
+
+// Root cause of "embed-job probe always unavailable": the scheduled health reader normalized the
+// health payload without ever reading the embed jobs, so the job signal was unavailable whenever a
+// chunk waited. The reader the app runs must make the list_jobs reads itself.
+test('the scheduled health reader reads the embed jobs when chunks wait, so the job signal is available', async () => {
+  const finished = new Date(Date.now() - 5 * 60_000).toISOString();
+  const job = (name, extra = {}) => ({ id: 1, name, queue: 'default', status: 'completed', created_at: finished, finished_at: finished, result: { failures: 0 }, ...extra });
+  const health = (missing) => ({ page_count: 12, brain_score: 99, stale_pages: 0, missing_embeddings: missing, missing_embeddings_oldest_age_seconds: 30 });
+  function sourcesWith({ missing, listJobs }) {
+    const calls = [];
+    const client = { run: async (args, options = {}) => {
+      calls.push({ args, options });
+      if (args.includes('get_health')) return health(missing);
+      if (args[0] === 'call' && args[1] === 'list_jobs') return listJobs(JSON.parse(args[2]));
+      throw Error('Unexpected command');
+    } };
+    return { calls, sources: createGBrainSources({ client, buildIntegrationRuntime: () => ({ systems: {}, readers: [] }), hermesProxyBaseUrl: 'invalid:' }).sources };
+  }
+  const clean = (params) => JSON.stringify(params.status === 'completed' ? [job(params.name)] : []);
+
+  let world = sourcesWith({ missing: 3, listJobs: clean });
+  await world.sources.health.refresh();
+  let metrics = world.sources.health.snapshot().data.metrics;
+  assert.equal(metrics.missingEmbeddings, 3);
+  assert.equal(metrics.embedJobProbeUnavailable, false, 'the embed jobs were read and are clean');
+  assert.deepEqual(metrics.missingEmbeddingsJobReasons, []);
+  const listed = world.calls.filter((call) => call.args[1] === 'list_jobs');
+  assert.deepEqual(listed.map((call) => { const p = JSON.parse(call.args[2]); return `${p.name}:${p.status}:${p.queue}`; }), [
+    'embed:completed:default', 'embed:failed:default', 'embed:dead:default',
+    'embed-catch-up:completed:default', 'embed-catch-up:failed:default', 'embed-catch-up:dead:default',
+    'embed:waiting:default', 'embed-catch-up:waiting:default',
+  ]);
+  assert.ok(listed.every((call) => call.options.json === false && call.options.timeoutMs <= 10_000), 'bounded reads, parsed by the probe chain');
+
+  // A failed latest job is an overdue cause, read from the same chain.
+  world = sourcesWith({ missing: 3, listJobs: (params) => JSON.stringify(
+    params.status === 'failed' && params.name === 'embed' ? [job('embed', { status: 'failed', result: null })] : []) });
+  await world.sources.health.refresh();
+  metrics = world.sources.health.snapshot().data.metrics;
+  assert.equal(metrics.embedJobProbeUnavailable, false);
+  assert.equal(metrics.missingEmbeddingsOverdue, 3);
+  assert.match(metrics.missingEmbeddingsJobReasons[0], /^embed job failed/);
+
+  // The read failing is still "unavailable", never clean, and stops the chain.
+  world = sourcesWith({ missing: 3, listJobs: () => { throw Object.assign(new Error('x'), { code: 'gbrain_timeout' }); } });
+  await world.sources.health.refresh();
+  assert.equal(world.sources.health.snapshot().data.metrics.embedJobProbeUnavailable, true);
+  assert.equal(world.calls.filter((call) => call.args[1] === 'list_jobs').length, 1);
+
+  // Nothing waits: no job read at all.
+  world = sourcesWith({ missing: 0, listJobs: () => { throw Error('must not be called'); } });
+  await world.sources.health.refresh();
+  assert.equal(world.sources.health.snapshot().data.metrics.embedJobProbeUnavailable, false);
+  assert.equal(world.calls.length, 1);
+});
+
+// The embed-job chain has ONE deadline, kept on the caller's side: each read is awaited in a race
+// against the time left. Whatever the runner does (a read that joined a shared in-flight call, a child
+// that ignores termination, a full lane) the caller sees the chain end at the budget, as unavailable.
+function fakeTime(start = 1_000_000) {
+  const state = { now: start, timers: [] };
+  return {
+    state,
+    now: () => state.now,
+    setTimeoutImpl: (fn, ms) => { const timer = { fn, at: state.now + ms }; state.timers.push(timer); return timer; },
+    clearTimeoutImpl: (timer) => { const i = state.timers.indexOf(timer); if (i >= 0) state.timers.splice(i, 1); },
+    // Run the earliest timer, moving the clock to it. Returns false when there is none.
+    async step() {
+      await new Promise((resolve) => setImmediate(resolve));
+      const next = state.timers.sort((a, b) => a.at - b.at).shift();
+      if (!next) return false;
+      state.now = Math.max(state.now, next.at);
+      next.fn();
+      await new Promise((resolve) => setImmediate(resolve));
+      return true;
+    },
+  };
+}
+
+const { probeEmbedJobs } = require('../server/routes/gbrain/liveProbes');
+
+test('the embed-job chain never outlasts its budget for the caller, whatever the runner does', { timeout: 15_000 }, async () => {
+  const BUDGET = 20_000;
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const shared = new Promise(() => {}); // an in-flight call another caller started; it never settles
+    const scenarios = {
+      // A child that ignores termination: the read never settles.
+      'a read that never settles': () => () => new Promise(() => {}),
+      // Every read joins the same shared in-flight call (single flight by key).
+      'reads that join a shared in-flight call': () => () => shared,
+      // Reads that settle long after the deadline, some by rejecting.
+      'reads that reject late': (time) => (n) => new Promise((_, reject) => { time.setTimeoutImpl(() => reject(new Error(`late ${n}`)), 60_000); }),
+      // Slow but working reads: 2,999 ms each; the 7th is cut at the budget.
+      'slow reads': (time) => () => new Promise((resolve) => { time.setTimeoutImpl(() => resolve({ ok: true, stdout: '[]' }), 2_999); }),
+      // The runner lies about time left and answers 9,999 ms later, twice, then hangs.
+      'two slow reads, then a hang': (time) => (n) => (n > 2 ? new Promise(() => {}) : new Promise((resolve) => { time.setTimeoutImpl(() => resolve({ ok: true, stdout: '[]' }), 9_999); })),
+    };
+    for (const [name, make] of Object.entries(scenarios)) {
+      const time = fakeTime();
+      const read = make(time);
+      let reads = 0;
+      const started = time.now();
+      let settled = null;
+      const chain = probeEmbedJobs(async () => read(reads += 1), null, null, { budgetMs: BUDGET, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl })
+        .then((result) => { settled = { result, at: time.now() }; });
+      while (!settled && await time.step()) { /* advance the fake clock timer by timer */ }
+      await chain;
+      assert.ok(settled, `${name}: the chain settled`);
+      assert.ok(settled.at - started <= BUDGET, `${name}: the caller waited ${settled.at - started} ms of a ${BUDGET} ms budget`);
+      assert.equal(settled.at - started, BUDGET, `${name}: it stopped exactly at the deadline`);
+      assert.deepEqual({ available: settled.result.available, pending: settled.result.pending }, { available: false, pending: true }, name);
+      // Late settlements after the caller has gone are handled, not unhandled.
+      while (await time.step()) { /* fire what is left */ }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(unhandled, [], 'no late rejection is left unhandled');
+
+    // A fast chain is untouched: eight reads, available, and no deadline timer left behind.
+    const time = fakeTime();
+    let reads = 0;
+    const result = await probeEmbedJobs(async () => { reads += 1; return { ok: true, stdout: '[]' }; }, null, null,
+      { budgetMs: BUDGET, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl });
+    assert.equal(reads, 8); assert.equal(result.available, true); assert.deepEqual(time.state.timers, []);
+    // A runner that throws stops the chain as unavailable.
+    const thrown = await probeEmbedJobs(async () => { throw new Error('boom'); }, null, null, { budgetMs: BUDGET });
+    assert.equal(thrown.available, false);
+  } finally { process.off('unhandledRejection', onUnhandled); }
+});
+
+test('the scheduled health reader keeps the same deadline: a hung list_jobs read ends the reading at the budget, unavailable', { timeout: 15_000 }, async () => {
+  const time = fakeTime();
+  const client = { run: async (args) => {
+    if (args.includes('get_health')) return { page_count: 12, brain_score: 99, stale_pages: 0, missing_embeddings: 3, missing_embeddings_oldest_age_seconds: 30 };
+    return new Promise(() => {});
+  } };
+  const { sources } = createGBrainSources({ client, now: time.now, setTimeoutImpl: time.setTimeoutImpl, clearTimeoutImpl: time.clearTimeoutImpl,
+    buildIntegrationRuntime: () => ({ systems: {}, readers: [] }), hermesProxyBaseUrl: 'invalid:' });
+  const started = time.now();
+  let done = false;
+  const refresh = sources.health.refresh().then(() => { done = true; });
+  while (!done && await time.step()) { /* advance */ }
+  await refresh;
+  assert.equal(time.now() - started, 20_000);
+  assert.equal(sources.health.snapshot().data.metrics.embedJobProbeUnavailable, true);
+});

@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { applyCommitted, isStaleWrite } from '../lib/writes'
 import { ApiError, apiQueryOptions, describeApiError, fetchJson, postJson, retryOnce, useApi, writeFailureMessage } from '../lib/hooks'
-import { ErrorState, Page, Skeleton, useToast } from '../components/ui'
+import { AlarmLine, ErrorState, Page, Skeleton, useToast } from '../components/ui'
 import type { UiState } from '../lib/state'
 import costsStyles from './costs/Costs.module.css'
 import type {
@@ -54,6 +55,7 @@ import {
   shouldClearMonthAnchor,
   assignStableSeriesColors,
   isValidMonthKey,
+  formatCurrency,
   SERIES_COLOR_COUNT,
   seriesColorToken,
   isModelColumnKey,
@@ -979,7 +981,40 @@ export default function Costs() {
   }
   const sourceIssuesAreWarnings = sourceIssues.length > 0
   if (tokenData?.meta?.refreshing) sourceIssues.push('Still refreshing; figures may change.')
-  const sourceIssueTone: UiState | 'info' = sourceIssuesAreWarnings ? 'warning' : 'info'
+  // A source that could not be read is a missing reading (the hollow mark, not a fault). A failed scan
+  // is a real failure, and the alarm line says so once, so the note beside the figures stays quiet.
+  const sourceIssueTone: UiState | 'info' = sourceIssuesAreWarnings
+    ? (unavailableSources.length > 0 && platformRows.length === 0 ? 'unavailable' : 'warning')
+    : 'info'
+
+  // The page's one alarm line (HMI rule 4): only a spend over its budget or a scan that failed.
+  // A finished month that ran over is history, not something to act on now.
+  const overBudget = !viewingPastMonth && budgetRemaining !== null && budgetRemaining < 0
+  const scanFailed = !!codexbarCosts?.stale
+    || !!tokenData?.meta?.stale
+    || platformRows.some(row => row.read && (row.stateWord === 'Stale' || row.coverageReason === 'scan_failed'))
+  const scanFailedSentence = codexbarCosts?.stale
+    ? `The CodexBar estimate is from a scan ${Math.round((codexbarCosts.staleAgeMs || 0) / 60000)} min old.`
+    : 'Showing the last good reading.'
+  let alarm: ReactNode = null
+  if (overBudget && budget !== null && monthlyBudgetBase !== null) {
+    alarm = (
+      <AlarmLine
+        state="critical"
+        title={`Over budget by ${formatCurrency(monthlyBudgetBase - budget)}`}
+        detail={`${formatCurrency(monthlyBudgetBase)} tracked of a ${formatCurrency(budget)} monthly budget.${scanFailed ? ' The latest usage scan also did not complete.' : ''}`}
+      />
+    )
+  } else if (scanFailed) {
+    alarm = (
+      <AlarmLine
+        state="warning"
+        title="The latest usage scan did not complete"
+        detail={`${scanFailedSentence} Totals may be out of date.`}
+        action={{ label: 'Scan again', busy: costsQuery.isFetching, onClick: () => { void costsQuery.refetch() } }}
+      />
+    )
+  }
 
   const trackedNote = trackedSpend.coverageLabel
     ? `Partial · ${trackedSpend.coverageLabel}`
@@ -1041,61 +1076,57 @@ export default function Costs() {
           sourceIssueTone={sourceIssueTone}
           platformCoverage={platformCoverage}
         >
+          <BudgetPanel
+            budget={budget}
+            budgetInput={budgetInput}
+            setBudgetInput={value => {
+              setBudgetInput(value)
+              setBudgetServerError(null)
+            }}
+            noBudget={noBudget}
+            setNoBudget={value => {
+              setNoBudget(value)
+              setBudgetServerError(null)
+            }}
+            saveBudget={saveBudget}
+            savingBudget={savingBudget}
+            canSaveBudget={canSaveBudget}
+            budgetError={budgetError}
+            catchingUp={budgetCatchingUp}
+            budgetUsage={budgetUsage}
+            budgetUsagePct={budgetUsagePct}
+            budgetRemaining={budgetRemaining}
+            monthlyBudgetBase={monthlyBudgetBase}
+            spendLabel={viewingPastMonth && anchoredMonthLabel ? `${anchoredMonthLabel} tracked spend` : 'Tracked spend this month'}
+          />
+          {isAwsEnabled && hasAwsData && awsCosts && dailyAvg !== null && (
+            <AwsCreditsPanel
+              awsCosts={awsCosts}
+              creditsUsed={creditsUsed}
+              burnRate={burnRate}
+              dailyAvg={dailyAvg}
+            />
+          )}
           <ProvidersPanel periodName={periodName} rows={platformRows} pending={costsPeriodPending} />
         </UsageSummary>
 
-        <div className={costsStyles.split}>
-          <div ref={dailySpendRef} className={costsStyles.main}>
-            <DailySpendSection
-              chartData={chartData}
-              chartSeries={chartSeries}
-              hasChartBars={hasChartBars}
-              activeChartDate={activeChartDate}
-              setActiveChartDate={selectChartDate}
-              chartDayCount={chartDayCount}
-              codexbarActive={codexbarActive}
-              ledgerActive={ledgerActive}
-              hasAwsData={hasAwsData}
-              awsCosts={awsCosts ?? null}
-              hasSessionEstimateChart={hasSessionEstimateChart}
-              sessionEstimateData={sessionEstimateData as SessionEstimateDay[]}
-              totalTokens={totalTokens}
-              apiEquivalentReliability={apiEquivalentReliability}
-            />
-          </div>
-          <div className={costsStyles.side}>
-            <BudgetPanel
-              budget={budget}
-              budgetInput={budgetInput}
-              setBudgetInput={value => {
-                setBudgetInput(value)
-                setBudgetServerError(null)
-              }}
-              noBudget={noBudget}
-              setNoBudget={value => {
-                setNoBudget(value)
-                setBudgetServerError(null)
-              }}
-              saveBudget={saveBudget}
-              savingBudget={savingBudget}
-              canSaveBudget={canSaveBudget}
-              budgetError={budgetError}
-              catchingUp={budgetCatchingUp}
-              budgetUsage={budgetUsage}
-              budgetUsagePct={budgetUsagePct}
-              budgetRemaining={budgetRemaining}
-              monthlyBudgetBase={monthlyBudgetBase}
-              spendLabel={viewingPastMonth && anchoredMonthLabel ? `${anchoredMonthLabel} tracked spend` : 'Tracked spend this month'}
-            />
-            {isAwsEnabled && hasAwsData && awsCosts && dailyAvg !== null && (
-              <AwsCreditsPanel
-                awsCosts={awsCosts}
-                creditsUsed={creditsUsed}
-                burnRate={burnRate}
-                dailyAvg={dailyAvg}
-              />
-            )}
-          </div>
+        <div ref={dailySpendRef} className={costsStyles.main}>
+          <DailySpendSection
+            chartData={chartData}
+            chartSeries={chartSeries}
+            hasChartBars={hasChartBars}
+            activeChartDate={activeChartDate}
+            setActiveChartDate={selectChartDate}
+            chartDayCount={chartDayCount}
+            codexbarActive={codexbarActive}
+            ledgerActive={ledgerActive}
+            hasAwsData={hasAwsData}
+            awsCosts={awsCosts ?? null}
+            hasSessionEstimateChart={hasSessionEstimateChart}
+            sessionEstimateData={sessionEstimateData as SessionEstimateDay[]}
+            totalTokens={totalTokens}
+            apiEquivalentReliability={apiEquivalentReliability}
+          />
         </div>
 
         <CostDriversSection
@@ -1118,6 +1149,7 @@ export default function Costs() {
 
   return (
     <Page title="Usage" description="What you spent and whether you are on track." actions={controls}>
+      {!loading && !error && alarm}
       {content}
     </Page>
   )

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeTokenUsage, formatMiB, formatSize, formatTokens, splitLocalTokens, aggregateLocalTokenUsage, countUnknownLocality, canonicalLocalModelName } from './ollamaFormat'
+import { describeTokenUsage, formatMiB, formatSize, formatTokens, splitLocalTokens, aggregateLocalTokenUsage, countUnknownLocality, canonicalLocalModelName, historySeries } from './ollamaFormat'
 
 describe('sizes use one decimal base', () => {
   it('formats bytes in decimal units, matching the model sizes Ollama reports', () => {
@@ -91,5 +91,31 @@ describe('local token usage comes from isLocal, not from names', () => {
 
   it('matches a usage name to an Ollama model name', () => {
     expect(canonicalLocalModelName('Hermes / ollama/Llama3:8b:latest')).toBe('llama3:8b')
+  })
+})
+
+describe('historySeries', () => {
+  const at = (minutes: number) => new Date(Date.UTC(2026, 7, 15, 10, minutes)).toISOString()
+
+  it('keeps only readings that have a number, in time order, and invents nothing', () => {
+    const history = [
+      { generatedAt: at(2), v: 30 },
+      { generatedAt: at(0), v: 10 },
+      { generatedAt: at(1), v: null },
+      { generatedAt: 'not a time', v: 99 },
+    ]
+    expect(historySeries(history, (item) => item.v)).toEqual([
+      { t: Date.parse(at(0)), v: 10 },
+      { t: Date.parse(at(2)), v: 30 },
+    ])
+    expect(historySeries(undefined, () => 1)).toEqual([])
+  })
+
+  it('thins a long history evenly and keeps the first and last reading', () => {
+    const history = Array.from({ length: 1000 }, (_, i) => ({ generatedAt: new Date(1_800_000_000_000 + i * 60_000).toISOString(), v: i }))
+    const series = historySeries(history, (item) => item.v, 100)
+    expect(series).toHaveLength(100)
+    expect(series[0].v).toBe(0)
+    expect(series[99].v).toBe(999)
   })
 })

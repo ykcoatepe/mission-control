@@ -13,6 +13,13 @@ export interface CronJobActions {
   model?: boolean
 }
 
+/** An acknowledgement or shelving of a failed job (POST /api/attention/acks). `until` is null for "until I undo". */
+export interface CronAck {
+  kind: 'ack' | 'shelve'
+  at: string
+  until: string | null
+}
+
 export interface CronJob {
   id: string
   sourceId?: string
@@ -49,16 +56,23 @@ export interface CronJob {
   upstreamEnabled?: boolean | null
   pausedAt?: string | null
   pausedReason?: string | null
+  /** The key to acknowledge or shelve this job with (`cron:<job id>`). Absent in older payloads: no controls then. */
+  ackKey?: string
+  /** null: not acknowledged. A failed job with an ack is a standing condition, not a new failure. */
+  ack?: CronAck | null
 }
 
 /** GET /api/cron `summary`: `active` counts every enabled job, failed ones included. */
 export interface CronSummary {
   active?: number
   paused?: number
+  /** Failed jobs that are NOT acknowledged or shelved: the new failures. */
   failed?: number
+  /** Failed jobs that are acknowledged or shelved. */
+  standingFailed?: number
   nextRunAt?: string | null
   /** The server's plain-words definitions of its counts (`active` includes failed jobs). */
-  definitions?: { active?: string; failed?: string }
+  definitions?: { active?: string; failed?: string; standingFailed?: string }
 }
 
 /** One scheduler's proof in GET /api/cron `schedulers`. A scheduler that was not read has `sourceSucceeded: false` and no jobs in the list. */
@@ -134,4 +148,4 @@ export interface CronOverlapState {
   windows: number
 }
 
-export type CronStatusFilter = 'all' | 'active' | 'disabled' | 'failed' | 'overlap'
+export type CronStatusFilter = 'all' | 'active' | 'disabled' | 'failed' | 'standing' | 'overlap'

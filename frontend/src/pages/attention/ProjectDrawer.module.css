@@ -101,7 +101,7 @@
 
 .overdue {
   flex: none;
-  color: var(--state-critical);
+  color: var(--state-warning);
   font-size: var(--fs-small);
   font-weight: var(--fw-medium);
   font-variant-numeric: tabular-nums;

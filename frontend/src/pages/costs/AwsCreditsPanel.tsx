@@ -1,4 +1,4 @@
-import { Meter, Mono, Panel } from '../../components/ui'
+import { AnalogBar, Panel } from '../../components/ui'
 import type { UiState } from '../../lib/state'
 import { formatCurrency } from './lib'
 import type { AWSSCostData } from './types'
@@ -12,6 +12,7 @@ interface AwsCreditsPanelProps {
   dailyAvg: number
 }
 
+/** Normal up to half the credits, caution above that, critical above three quarters. */
 function creditState(share: number): UiState {
   if (share > 0.75) return 'critical'
   if (share > 0.5) return 'warning'
@@ -21,20 +22,24 @@ function creditState(share: number): UiState {
 /** AWS credit balance. Only rendered while live AWS billing is the selected source. */
 export default function AwsCreditsPanel({ awsCosts, creditsUsed, burnRate, dailyAvg }: AwsCreditsPanelProps) {
   const share = awsCosts.credits > 0 ? creditsUsed / awsCosts.credits : null
+  const credits = awsCosts.credits
   return (
-    <Panel title="AWS credits" description="How long the remaining balance lasts at the current rate.">
+    <Panel
+      title="AWS credits"
+      meta={credits > 0 ? `${formatCurrency(credits)} granted` : undefined}
+      description="How long the remaining balance lasts at the current rate."
+    >
       <div className={styles.body}>
         <div className={styles.progress}>
-          <div className={styles.progressLine}>
-            <span className={styles.progressLabel}>Used</span>
-            <Mono>
-              {formatCurrency(creditsUsed)} of {formatCurrency(awsCosts.credits)}
-            </Mono>
-          </div>
-          <Meter
-            label="AWS credits used"
-            value={share === null ? null : share * 100}
-            state={share === null ? 'unavailable' : creditState(share)}
+          <AnalogBar
+            label="Credits used"
+            value={share === null ? null : creditsUsed}
+            unread={share === null}
+            min={0}
+            max={credits > 0 ? credits : 1}
+            band={credits > 0 ? [0, credits * 0.5] : undefined}
+            format={formatCurrency}
+            state={share === null ? undefined : creditState(share)}
           />
           <div className={styles.progressLine}>
             <span className={styles.muted}>{formatCurrency(awsCosts.remaining)} left</span>

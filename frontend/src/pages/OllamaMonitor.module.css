@@ -7,30 +7,24 @@
   font-weight: var(--fw-medium);
 }
 
-.hintLine {
-  display: block;
+.bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  gap: var(--sp-4) var(--sp-6);
+}
+
+.reading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.caption {
+  color: var(--text-2);
+  font-size: var(--fs-small);
+  font-variant-numeric: tabular-nums lining-nums;
   overflow-wrap: anywhere;
-}
-
-.spark {
-  display: block;
-  width: 100%;
-  height: var(--sp-6);
-  margin-top: var(--sp-2);
-}
-
-.sparkLine {
-  fill: none;
-  stroke: var(--series-1);
-  stroke-width: 1.5px;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  vector-effect: non-scaling-stroke;
-}
-
-.alertList {
-  margin: 0;
-  padding-left: var(--sp-4);
 }
 
 .modelCell {
@@ -43,11 +37,6 @@
 .modelMeta {
   color: var(--text-3);
   font-size: var(--fs-small);
-}
-
-.quiet {
-  color: var(--text-3);
-  white-space: nowrap;
 }
 
 .tableNote {

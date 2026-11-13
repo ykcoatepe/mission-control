@@ -172,3 +172,59 @@ describe('Settings: import', () => {
     await act(async () => root.unmount())
   })
 })
+
+describe('Settings: alarm line', () => {
+  it('is one caution line naming the reading that could not be read, with one action to read again', async () => {
+    // The default fake has no heartbeat route: that reading fails, the others are fine.
+    stubServer(() => json({ status: 'saved' }))
+    const { host, root } = await mount()
+    const lines = host.querySelectorAll('[data-state="warning"][role="status"]')
+    expect(lines).toHaveLength(1)
+    expect(lines[0].textContent).toContain('Heartbeat interval could not be read')
+    expect(lines[0].querySelectorAll('button')).toHaveLength(1)
+    expect(lines[0].textContent).toContain('Read again')
+    await act(async () => root.unmount())
+  })
+
+  it('is absent when every reading is in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        const url = new URL(input, 'http://localhost').pathname
+        if (url === '/api/models') return json([{ id: 'a/b', name: 'A B' }])
+        if (url === '/api/settings/model-routing') return json({ main: 'a/b', subagent: null, heartbeat: null, mainSource: 'set', subagentSource: 'unset', heartbeatSource: 'unset' })
+        if (url === '/api/settings/heartbeat') return json({ interval: '1h' })
+        if (url === '/api/settings') return json({ gateway_port: 18789, system: {} })
+        return json({ error: { code: 'not_found', message: 'No API route' } }, 404)
+      }),
+    )
+    const { host, root } = await mount()
+    expect(host.querySelector('[data-state="warning"][role="status"]')).toBeNull()
+    expect(host.textContent).not.toContain('could not be read')
+    await act(async () => root.unmount())
+  })
+})
+
+describe('Settings: import is confirmed first', () => {
+  it('opens the file picker only after the confirmation, and a cancel sends nothing', async () => {
+    const sent = stubServer(() => json({ status: 'imported' }))
+    const { host, root } = await mount()
+    const input = host.querySelector('input[type="file"]') as HTMLInputElement
+    const picked = vi.spyOn(input, 'click')
+    await act(async () => button(host, 'Import configuration').click())
+    const dialog = document.querySelector('[role="alertdialog"]') as HTMLElement
+    expect(dialog.textContent).toContain('Replace the configuration?')
+    expect(picked).not.toHaveBeenCalled()
+    const cancel = [...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Cancel') as HTMLButtonElement
+    await act(async () => cancel.click())
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull()
+    expect(picked).not.toHaveBeenCalled()
+
+    await act(async () => button(host, 'Import configuration').click())
+    const choose = [...document.querySelectorAll('[role="alertdialog"] button')].find((b) => b.textContent === 'Choose a file') as HTMLButtonElement
+    await act(async () => choose.click())
+    expect(picked).toHaveBeenCalledTimes(1)
+    expect(sent).toHaveLength(0)
+    await act(async () => root.unmount())
+  })
+})

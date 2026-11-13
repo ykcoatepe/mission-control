@@ -69,9 +69,9 @@ test('Operations reads the current GBrain verdict without a second cache refresh
   assert.equal((await ops.getOverview()).systems.gbrain.state, 'unavailable');
 });
 
-test('embed-job unavailability is an unavailable reason in every verdict and caveat list', async () => {
+test('embed-job unavailability with nothing waiting is an unavailable reason in every verdict and caveat list, but information: the state stays normal', async () => {
   const service = createGBrainOverviewService({ now: () => Date.parse(at), probes: {
-    health: async () => ({ ok: true, status: 'healthy', score: 100, metrics: { embedJobProbeUnavailable: true } }),
+    health: async () => ({ ok: true, status: 'healthy', score: 100, metrics: { missingEmbeddings: 0, embedJobProbeUnavailable: true } }),
     sources: async () => normalizeSourcesPayload([{ id: 'project', last_sync_at: at }], at),
     stats: async () => ({ pages: 12, chunks: 34, embedded: 34 }), jobs: async () => ({ waiting: 0, active: 0, stalled: 0 }),
     version: async () => ({ version: '1.2.3', ok: true }),
@@ -80,7 +80,7 @@ test('embed-job unavailability is an unavailable reason in every verdict and cav
   const syn = service.synopticSnapshot().data; const overview = service.getOverview();
   const ops = buildOperationsOverview({ gbrain: overview }, { generatedAt: at }).systems.gbrain;
   const reason = syn.verdict.reasons.find((r) => r.elementId === 'embed-job-probe');
-  assert.equal(reason.state, 'unavailable'); assert.equal(syn.state, 'unavailable');
+  assert.equal(reason.state, 'unavailable'); assert.equal(reason.kind, 'info'); assert.equal(syn.state, 'healthy');
   assert.equal(overview.state, syn.state); assert.equal(ops.state, syn.state);
   assert.ok(overview.caveats.includes(reason.text)); assert.deepEqual(ops.caveats, overview.caveats);
 });

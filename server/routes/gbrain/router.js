@@ -7,6 +7,7 @@ const { limitInput, slugInput } = require('../../sources/gbrain/lookups');
 const { GBrainActionDefinitions } = require('./constants');
 const { listGBrainActions, runGBrainAction } = require('./actionsExecutor');
 const { requiresExplicitConfirmation } = require('./actionPolicy');
+const { projectTrends, createTrendsReader } = require('../../sources/gbrain/trends');
 
 // The action result keeps every field the frontend reads (status, pending,
 // refreshAfter, summary, checkedAt, ...); only `error` takes the one error
@@ -102,6 +103,45 @@ function buildGBrainRouter(options = {}) {
     res.json({ ...(snap.data || { enabled: overviewService.timelineService?.enabled !== false, entries: null,
       warnings: ['Timeline has not been read'], malformedLineCount: null, retainedEntryCount: null,
       schemaVersion: 1, truncated: false, limit: limitInput(req.query.limit, 50, 200) }), meta: snap.meta });
+  });
+
+  // 24-hour series for the analog bars, projected read-only from the readings ledger. A ledger that cannot
+  // be read is the same 503 as the timeline; a series with fewer than two real readings is empty. Only the
+  // tail the window needs is read, under a byte and a line cap. Inside the envelope:
+  //   over the caps                 meta.ok false, error gbrain_trends_too_large, no series
+  //   no line could be read          meta.ok false, error gbrain_trends_corrupt, no series, skippedLines
+  //   some lines could not be read   the series that were read, partial: true, skippedLines
+  // so corrupt or unread history is never a successful empty answer.
+  const readTrends = createTrendsReader();
+  const clock = typeof options.now === 'function' ? options.now : Date.now;
+  const trendsMeta = (now, observedAt, error = null) => {
+    const observed = observedAt ? Date.parse(observedAt) : null;
+    return { ok: error === null, stale: error !== null, observedAt,
+      ageMs: observed === null ? null : Math.max(0, now - observed), error, source: 'gbrain.trends' };
+  };
+  router.get('/api/gbrain/trends', (_req, res) => {
+    const timelineService = overviewService.timelineService;
+    const now = clock();
+    if (timelineService?.enabled === false) {
+      return res.json({ enabled: false, ...projectTrends([], { now }), skippedLines: 0, partial: false, meta: trendsMeta(now, null) });
+    }
+    if (!timelineService?.ledgerPath) throw httpError(503, 'gbrain_timeline_unavailable', 'Timeline ledger unavailable');
+    let ledger;
+    try {
+      ledger = readTrends(timelineService.ledgerPath, { now });
+    } catch (error) {
+      if (error?.code === 'gbrain_trends_too_large') {
+        return res.json({ enabled: true, ...projectTrends([], { now }), skippedLines: null, partial: false,
+          meta: trendsMeta(now, null, { code: 'gbrain_trends_too_large', message: 'The readings history is too large to read safely' }) });
+      }
+      throw httpError(503, 'gbrain_timeline_unavailable', 'Timeline ledger unavailable');
+    }
+    const { entries, skippedLines, observedAt } = ledger;
+    if (skippedLines > 0 && entries.length === 0) {
+      return res.json({ enabled: true, ...projectTrends([], { now }), skippedLines, partial: false,
+        meta: trendsMeta(now, observedAt, { code: 'gbrain_trends_corrupt', message: 'The readings history could not be read' }) });
+    }
+    return res.json({ enabled: true, ...projectTrends(entries, { now }), skippedLines, partial: skippedLines > 0, meta: trendsMeta(now, observedAt) });
   });
 
   router.get('/api/gbrain/synoptic', (_req, res) => sendEnvelope(res, overviewService.synopticSnapshot()));

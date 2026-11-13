@@ -74,4 +74,46 @@ describe('BudgetPanel', () => {
     expect(base.saveBudget).toHaveBeenCalledOnce()
     await act(async () => root.unmount())
   })
+
+  const meter = (host: HTMLElement) => host.querySelector('[role="meter"]') as HTMLElement | null
+  const barState = (host: HTMLElement) => meter(host)?.closest('[data-state]')?.getAttribute('data-state')
+
+  it('draws spend against the budget as an analog bar: normal to 70%, caution above it, critical over the budget', async () => {
+    const reading = (spent: number) => ({ budget: 100, noBudget: false, budgetInput: '100', monthlyBudgetBase: spent, budgetUsage: spent / 100, budgetUsagePct: Math.round(spent), budgetRemaining: 100 - spent })
+    const states: Array<[number, string]> = [[40, 'healthy'], [70, 'healthy'], [71, 'warning'], [100, 'warning'], [101, 'critical']]
+    for (const [spent, expected] of states) {
+      const { host, root } = await render(reading(spent))
+      expect(meter(host)?.getAttribute('aria-valuenow')).toBe(String(spent))
+      expect(barState(host)).toBe(expected)
+      expect(host.textContent).toContain('Normal: $0.00 – $100.00')
+      await act(async () => root.unmount())
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('says how much is left, or how much it is over', async () => {
+    const left = await render({ budget: 100, noBudget: false, budgetInput: '100', monthlyBudgetBase: 25, budgetUsage: 0.25, budgetUsagePct: 25, budgetRemaining: 75 })
+    expect(left.host.textContent).toContain('25% used')
+    expect(left.host.textContent).toContain('$75.00 left')
+    await act(async () => left.root.unmount())
+    document.body.innerHTML = ''
+    const over = await render({ budget: 100, noBudget: false, budgetInput: '100', monthlyBudgetBase: 130, budgetUsage: 1.3, budgetUsagePct: 130, budgetRemaining: -30 })
+    expect(over.host.textContent).toContain('$30.00 over')
+    await act(async () => over.root.unmount())
+  })
+
+  it('marks an unread spend with the hollow not-read mark and a reason, never as 0', async () => {
+    const { host, root } = await render({ budget: 100, noBudget: false, budgetInput: '100' })
+    expect(meter(host)?.hasAttribute('aria-valuenow')).toBe(false)
+    expect(barState(host)).toBe('unavailable')
+    expect(host.textContent).toContain('not read')
+    expect(host.textContent).toContain('Progress is hidden until billing coverage for the period is complete.')
+    await act(async () => root.unmount())
+  })
+
+  it('draws no bar without a saved budget', async () => {
+    const { host, root } = await render()
+    expect(meter(host)).toBeNull()
+    await act(async () => root.unmount())
+  })
 })

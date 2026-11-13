@@ -11,8 +11,8 @@
 }
 
 .scroll:focus-visible {
-  outline: none;
-  box-shadow: inset 0 0 0 2px var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 /* A table that scrolls sideways fades out at the edge that has more behind it. */
@@ -22,7 +22,7 @@
   top: 0;
   bottom: 0;
   z-index: calc(var(--z-sticky) + 1);
-  width: var(--sp-8);
+  width: 1px;
   opacity: 0;
   pointer-events: none;
   transition: opacity var(--dur-fast) var(--ease);
@@ -30,12 +30,12 @@
 
 .fadeStart {
   left: 0;
-  background: linear-gradient(to right, var(--surface-1), transparent);
+  border-left: 1px solid var(--line-strong);
 }
 
 .fadeEnd {
   right: 0;
-  background: linear-gradient(to left, var(--surface-1), transparent);
+  border-right: 1px solid var(--line-strong);
 }
 
 .wrap[data-edge-start] .fadeStart,
@@ -55,11 +55,11 @@
   top: 0;
   z-index: var(--z-sticky);
   padding: var(--sp-2) var(--sp-3);
-  background: var(--surface-1);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line-strong);
-  color: var(--text-3);
+  color: var(--text-2);
   font-size: var(--fs-small);
-  font-weight: var(--fw-medium);
+  font-weight: var(--fw-semibold);
   text-align: start;
   white-space: nowrap;
 }
@@ -69,6 +69,7 @@
   border-bottom: 1px solid var(--line);
   color: var(--text-2);
   vertical-align: middle;
+  font-variant-numeric: tabular-nums lining-nums;
   /* Wrap at spaces and hyphens; a word is never broken in the middle. A long unbroken id widens its column
      and the table scrolls sideways instead (the stacked layout below may break anywhere). */
   overflow-wrap: break-word;
@@ -97,20 +98,18 @@
 }
 
 .clickable:focus-visible {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .clickable:focus-visible td {
   background: var(--surface-2);
-  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
 }
 
-.clickable:focus-visible td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
-}
-
+/* A selected row is teal-tinted; its text stays text-1 / text-2 (text-3 is not read on the tint). */
 .selected td {
   background: var(--accent-bg);
+  color: var(--text-1);
 }
 
 /* Dimmed by colour, not opacity: text keeps the contrast of --text-3 (at least 4.5:1) in both themes,
@@ -180,6 +179,10 @@
 
   .table td {
     overflow-wrap: anywhere;
+  }
+
+  .table td > * {
+    min-width: 0;
   }
 
   .table td::before {

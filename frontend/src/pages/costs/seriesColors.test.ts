@@ -13,7 +13,7 @@ describe('assignSeriesColors', () => {
     const models = ['a', 'b', 'c', 'd', 'e', 'f']
     const assignments = assignSeriesColors(models)
     expect(new Set(assignments.values()).size).toBe(6)
-    for (const color of assignments.values()) expect(color).toMatch(/^var\(--series-[1-6]\)$/)
+    for (const color of assignments.values()) expect(color).toMatch(/^var\(--chart-[1-6]\)$/)
   })
 
   it('keeps a model on its colour when the other active models change (period switch)', () => {
@@ -46,7 +46,7 @@ describe('assignSeriesColors', () => {
   it('reuses tokens deterministically instead of inventing colours when models outnumber tokens', () => {
     const assignments = assignSeriesColors(Array.from({ length: 8 }, (_, i) => `m${i}`))
     expect(assignments.size).toBe(8)
-    for (const color of assignments.values()) expect(color).toMatch(/^var\(--series-[1-6]\)$/)
+    for (const color of assignments.values()) expect(color).toMatch(/^var\(--chart-[1-6]\)$/)
   })
 })
 
@@ -73,7 +73,7 @@ describe('assignStableSeriesColors', () => {
     const all = Array.from({ length: 6 }, (_, i) => `m${i}`)
     const first = assignStableSeriesColors(all)
     const next = assignStableSeriesColors(['newcomer'], first.memory)
-    expect(next.assignments.get('newcomer')).toMatch(/^var\(--series-[1-6]\)$/)
+    expect(next.assignments.get('newcomer')).toMatch(/^var\(--chart-[1-6]\)$/)
   })
 
   it('keeps colours distinct between the models of one view', () => {
@@ -97,5 +97,16 @@ describe('model column classification', () => {
     }
     expect(isModelColumnKey('Claude Code / claude-fable-5')).toBe(true)
     expect(isModelColumnKey('Qwen3.6')).toBe(true)
+  })
+})
+
+describe('the chart ramp is its own', () => {
+  it('draws every series from --chart-* and never from a source-group line colour, the accent, a state colour or the Brain series', () => {
+    const tokens = Array.from({ length: SERIES_COLOR_COUNT + 3 }, (_, slot) => seriesColorToken(slot))
+    for (const token of tokens) {
+      expect(token).toMatch(/^var\(--chart-[1-6]\)$/)
+      expect(token).not.toMatch(/--line-|--accent|--state-|--series-/)
+    }
+    expect(new Set(tokens.slice(0, SERIES_COLOR_COUNT)).size).toBe(SERIES_COLOR_COUNT)
   })
 })

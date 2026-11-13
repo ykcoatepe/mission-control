@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Notice, Stat, StatRow } from '../../components/ui'
+import { Stat, StatRow, StateMark } from '../../components/ui'
 import type { UiState } from '../../lib/state'
 import { BILLING_NOT_READ, calculateTrend, formatCompactTokenValue, formatCurrency, formatTokens, NO_PROVIDER_ISSUES, providerCoverageSentences } from './lib'
 import type { ProviderCoverage } from './lib'
@@ -57,9 +57,9 @@ function estimateNotice(reliability: string, coverage: ProviderCoverage): { tone
   if (!coverage.hasIssues) return base
   const partialEstimate = reliability === 'estimated' || reliability === 'partial'
   return {
-    // Partial records alone are a standing condition on this machine: one quiet note.
-    // Anything else (a platform not read, stale, an unresolved overlap) is a warning.
-    tone: coverage.standingOnly ? 'info' : 'warning',
+    // A platform that was not read (or a gap nothing explains) is a reading that is missing: the hollow
+    // mark. Partial records and stale readings are quiet notes; a failed scan has the alarm line.
+    tone: coverage.unread.length > 0 || coverage.unexplained ? 'unavailable' : 'info',
     title: partialEstimate ? 'Partial estimate, not an invoice' : base.title,
     body: `${providerCoverageSentences(coverage).join(' ')} ${base.body}`,
   }
@@ -90,11 +90,24 @@ function baseEstimateNotice(reliability: string): { tone: UiState | 'info'; titl
       return { tone: 'info', title: 'Estimate, not an invoice', body: note }
     default:
       return {
-        tone: 'warning',
+        tone: 'unavailable',
         title: 'Estimate unavailable',
         body: 'No public price is available for the models used in this period, so no API equivalent is shown.',
       }
   }
+}
+
+/** A quiet note under the figures. Only a reading that is missing carries a mark (the hollow circle). */
+function Note({ tone, title, children }: { tone: UiState | 'info'; title: string; children: ReactNode }) {
+  const unread = tone === 'unavailable'
+  return (
+    <div className={styles.note} data-tone={unread ? 'unread' : 'info'} role="status">
+      {unread && <StateMark state="unavailable" className={styles.noteMark} />}
+      <p className={styles.noteText}>
+        <span className={styles.noteTitle}>{title}.</span> {children}
+      </p>
+    </div>
+  )
 }
 
 export default function UsageSummary({
@@ -133,7 +146,6 @@ export default function UsageSummary({
 
   return (
     <>
-      <div className={styles.strip}>
       <StatRow aria-label={`Usage for ${periodName}`}>
         <Stat
           className={styles.headline}
@@ -170,20 +182,19 @@ export default function UsageSummary({
             : `${formatTokens(periodTokens)} in this period`}
         />
       </StatRow>
-      </div>
 
       {children}
 
       {notice && (
-        <Notice tone={notice.tone} title={notice.title}>
+        <Note tone={notice.tone} title={notice.title}>
           {notice.body}
-        </Notice>
+        </Note>
       )}
 
       {sourceIssues.length > 0 && (
-        <Notice tone={sourceIssueTone} title={sourceIssueTone === 'info' ? 'Refreshing' : 'Some usage may be missing'}>
+        <Note tone={sourceIssueTone} title={sourceIssueTone === 'info' ? 'Refreshing' : 'Some usage may be missing'}>
           {sourceIssues.join(' ')}
-        </Notice>
+        </Note>
       )}
     </>
   )

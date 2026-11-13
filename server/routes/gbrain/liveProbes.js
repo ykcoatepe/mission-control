@@ -664,16 +664,41 @@ function evaluateEmbedJobSignal(embedJobs, jobsPayload, nowMs = Date.now()) {
 // EMBED_JOB_PROBE_BUDGET_MS (each call's soft window is capped to the budget
 // left). The first failed / timed-out / unparseable call stops the chain; a
 // timed-out one is reported as `pending` so the caller stops probing too.
-async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, { budgetMs = EMBED_JOB_PROBE_BUDGET_MS, now = Date.now } = {}) {
+//
+// The budget is kept HERE, on the caller's side: every call is awaited in a
+// race against what is left of the chain's deadline. When the deadline wins
+// the chain stops as pending/unavailable at that moment, whatever the runner
+// does (a call that joined a shared in-flight call, a child that ignores
+// termination). The call's own process is left to its runner's timeout and
+// kill guarantees; its late result or rejection is swallowed, never unhandled.
+async function probeEmbedJobs(runProbe, execFilePromise, jobsPayload, {
+  budgetMs = EMBED_JOB_PROBE_BUDGET_MS, now = Date.now, setTimeoutImpl = setTimeout, clearTimeoutImpl = clearTimeout,
+} = {}) {
   const started = now();
+  const DEADLINE = Symbol('deadline');
   const call = async (params) => {
     const remaining = budgetMs - (now() - started);
-    if (remaining <= 0) return { stop: true, error: 'embed-job probe budget exhausted' };
-    const result = await runProbe(
+    if (remaining <= 0) return { stop: true, pending: true, error: 'embed-job probe budget exhausted' };
+    const probe = Promise.resolve().then(() => runProbe(
       execFilePromise,
       ['call', 'list_jobs', JSON.stringify(params)],
       { suppressStartupHooks: true, softTimeoutMs: Math.min(HEALTH_PROBE_SOFT_TIMEOUT_MS, remaining) },
-    );
+    ));
+    probe.catch(() => {}); // a rejection after the deadline has no one waiting for it
+    let timer = null;
+    const deadline = new Promise((resolve) => {
+      timer = setTimeoutImpl(() => resolve(DEADLINE), remaining);
+      timer?.unref?.();
+    });
+    let result;
+    try {
+      result = await Promise.race([probe, deadline]);
+    } catch (error) {
+      return { stop: true, error: sanitizeMessage(error?.message || 'list_jobs failed') };
+    } finally {
+      clearTimeoutImpl(timer);
+    }
+    if (result === DEADLINE) return { stop: true, pending: true, error: 'embed-job probe budget exhausted' };
     if (result.pending) return { stop: true, pending: true, error: result.error || 'list_jobs timed out' };
     if (!result.ok) return { stop: true, error: result.error || 'list_jobs failed' };
     const parsed = parseJsonFromOutput(result.stdout);

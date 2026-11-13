@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronLeft, ChevronRight, Copy, Pencil, Plus, RefreshCw } from 'lucide-react'
 import {
+  AlarmLine,
+  Block,
   Button,
   Dialog,
   Drawer,
@@ -374,10 +376,20 @@ export default function ScheduleView() {
   // One button, on the first notice about the rows a repair would move.
   const repairNoticeId = offer ? notices.find((notice) => notice.id === 'quarantined' || notice.id === 'duplicates')?.id : undefined
   const blocked = writesBlocked(data)
+  // The one alarm line of the page: the first notice that says something is wrong with the schedule rows.
+  const alarmNotice = notices.find((notice) => notice.tone === 'warning') ?? null
   const detailJobHref = detailEntry && isLinkedEntry(detailEntry) ? jobHref(detailEntry) : null
 
   return (
     <div className={styles.view}>
+      {alarmNotice && (
+        <AlarmLine
+          state="warning"
+          title={alarmNotice.title}
+          detail={alarmNotice.body}
+          action={alarmNotice.id === repairNoticeId ? { label: 'Repair calendar', onClick: () => setRepairOpen(true) } : undefined}
+        />
+      )}
       <StaleWriteNote show={catchingUp} />
       {savedNote?.place.kind === 'elsewhere' && (
         <Notice
@@ -467,22 +479,13 @@ export default function ScheduleView() {
         </div>
       </div>
 
-      {notices.map((notice) => (
-        <Notice
-          key={notice.id}
-          tone={notice.tone}
-          title={notice.title}
-          action={
-            notice.id === repairNoticeId ? (
-              <Button size="sm" onClick={() => setRepairOpen(true)}>
-                Repair calendar
-              </Button>
-            ) : undefined
-          }
-        >
-          {notice.body}
-        </Notice>
-      ))}
+      {notices
+        .filter((notice) => notice !== alarmNotice)
+        .map((notice) => (
+          <Notice key={notice.id} tone={notice.tone} title={notice.title}>
+            {notice.body}
+          </Notice>
+        ))}
 
       <Dialog
         open={repairOpen && offer !== null}
@@ -508,7 +511,7 @@ export default function ScheduleView() {
         )}
       </Dialog>
 
-      <div className={cx(styles.grid, mode === 'today' && styles.gridToday)}>
+      <div className={styles.agenda}>
         {visibleDays.map((day) => {
           const key = toDayKey(day)
           const list = dayBuckets[key] || []
@@ -541,15 +544,19 @@ export default function ScheduleView() {
                 title={entry.schedule ? `Schedule: ${entry.schedule}` : undefined}
                 onClick={() => setDetailId(entry.id)}
               >
-                <span className={styles.entryTitle}>{entry.title}</span>
-                <span className={styles.entryMeta}>
-                  <Mono muted>{placed.label}</Mono>
+                <span className={styles.entryTitle}>
+                  {entry.title}
                   {fresh && <span className={styles.savedTag}>Saved</span>}
+                </span>
+                <span className={styles.entryTime}>
+                  <Mono muted>{placed.label}</Mono>
+                </span>
+                <span className={styles.entryStatus}>
                   {state && state !== 'healthy' && (
-                    <span className={styles.entryStatus}>
+                    <>
                       <StateDot state={state} />
                       {entryStatusLabel(entry.status)}
-                    </span>
+                    </>
                   )}
                   {showLastRunFailed && <span className={styles.lastRun}>Last run failed</span>}
                 </span>
@@ -557,14 +564,20 @@ export default function ScheduleView() {
             )
           }
           return (
-            <section key={key} className={cx(styles.day, isToday && styles.dayToday)} aria-label={`${header.weekday} ${header.date}`}>
-              <header className={styles.dayHeader}>
-                <div>
-                  <div className={styles.weekday}>{mode === 'today' ? 'Today' : header.weekday}</div>
-                  <div className={styles.date}>{header.date}</div>
-                </div>
-                <span className={styles.dayCount}>{list.length}</span>
-              </header>
+            <Block
+              key={key}
+              className={cx(styles.day, isToday && styles.dayToday)}
+              aria-label={`${header.weekday} ${header.date}`}
+              titleAs="h3"
+              title={
+                <>
+                  {mode === 'today' ? 'Today' : header.weekday} <span className={styles.date}>{header.date}</span>
+                  {isToday && mode === 'week' && <span className={styles.todayTag}>Today</span>}
+                </>
+              }
+              meta={list.length}
+              padding="none"
+            >
               <div className={styles.dayBody}>
                 {list.length === 0 ? (
                   <p className={styles.dayEmpty}>{isPast ? 'No dated entries.' : 'Nothing scheduled.'}</p>
@@ -582,7 +595,7 @@ export default function ScheduleView() {
                   </Button>
                 )}
               </div>
-            </section>
+            </Block>
           )
         })}
       </div>
@@ -593,8 +606,14 @@ export default function ScheduleView() {
       </p>
 
       {plan.unplaced.length > 0 && (
-        <section className={styles.unplaced} aria-label="Schedule not understood">
-          <h3 className={styles.unplacedTitle}>Schedule not understood</h3>
+        <Block
+          title="Schedule not understood"
+          meta={plan.unplaced.length}
+          titleAs="h3"
+          aria-label="Schedule not understood"
+          padding="none"
+          className={styles.unplaced}
+        >
           <p className={styles.unplacedNote}>
             {plan.unplaced.length === 1 ? 'This entry has' : `These ${plan.unplaced.length} entries have`} a schedule that
             cannot be placed on a day, so {plan.unplaced.length === 1 ? 'it is' : 'they are'} not in the week above.
@@ -615,7 +634,7 @@ export default function ScheduleView() {
               )
             })}
           </ul>
-        </section>
+        </Block>
       )}
 
       <Drawer

@@ -66,8 +66,8 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | Route | Method | Success | Error codes |
 | --- | --- | --- | --- |
 | `/api/health`, `/healthz` | GET | `{ ok, status: ok\|degraded, service, generatedAt, … }` (`/api/health` adds scheduler, lanes, event loop) | `500` |
-| `/api/signals` | GET | `{ data: { systems, attention, automations, loops, services, usage }, meta }` | `503` (no part read) |
-| `/api/loops` | GET | `{ data: { projects, totals, attention }, meta }` | `503` |
+| `/api/signals` | GET | `{ data: { systems, attention, automations, loops, services, usage }, meta }`; `attention = { count, worst, standing, restricted, breakdown, partial, missing }` (count/worst = NEW items only, see the badge rule below); `automations = { failed, standingFailed, nextRunAt }` | `503` (no part read) |
+| `/api/loops` | GET | `{ data: { projects, totals, attention, systems? }, meta }`; every attention row, pending confirmation and system carries `key`, `ackable`, `ack` | `503` |
 | `/api/loops/:project` | GET | `{ data: project, meta }` | `400 invalid_project`, `404 loop_project_not_found`, `503` |
 | `/api/services` | GET | `{ data: { services, counts, gateways, ollama }, meta }` | `503` |
 | `/api/operations/overview` | GET | overview schema `1` (`systems`, `overall`, `attention`, `evidence`, `capabilities`) + `meta` | `503 operations_unavailable` |
@@ -79,12 +79,15 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | `/api/gbrain/integration-health` | GET | integration proof + `meta` | `500` |
 | `/api/gbrain/synoptic` | GET | `{ data: synoptic, meta }` | `503` |
 | `/api/gbrain/timeline?limit=N` | GET | `{ entries, …, meta }` | `503 gbrain_timeline_unavailable` |
+| `/api/gbrain/trends` | GET | `{ enabled, since, until, entryCount, series: { quality, embeddedPercent, queue }, partial, skippedLines, meta }`; only the 24-hour tail is read (4 MiB / 5,000-line cap). `meta.ok: false` with `error.code` `gbrain_trends_too_large` (over the caps) or `gbrain_trends_corrupt` (no line readable) carries no series; `partial: true` with `skippedLines` keeps what was read | `503 gbrain_timeline_unavailable` |
 | `/api/gbrain/search?q=` | GET | `{ data, meta }` | `400`, `429` (`Retry-After`), `503` |
 | `/api/gbrain/pages/:slug` | GET | `{ data, meta }` | `400`, `404`, `429`, `503` |
 | `/api/gbrain/graph?around=` | GET | `{ data, meta }` | `400 graph_around_required`, `429`, `503` |
 | `/api/gbrain/actions` | GET | `{ ok, mode, actions }` (static allowlist) | — |
 | `/api/gbrain/actions` | POST | `200` action result (`ok`, `action`, `status: completed`, `pending`, `refreshAfter`, `summary`, `payload`, `checkedAt`) | the action result with `error: { code, message }`: `400 confirmation_required`, `400 gbrain_action_rejected`, `409 gbrain_action_busy`, `502 gbrain_action_failed`, `504 gbrain_action_timed_out` (`pending` tells a cleanup still running); `503 gbrain_action_quarantined` |
-| `/api/cron` | GET | `{ jobs, summary, …, meta }` | `503 automations_unavailable` |
+| `/api/cron` | GET | `{ jobs, summary, …, meta }`; every job carries `ackKey` (`cron:<job id>`) and `ack`; `summary.failed` excludes acknowledged/shelved jobs, counted in `summary.standingFailed` | `503 automations_unavailable` |
+| `/api/attention/acks` | POST | body `{ key, kind: 'ack'\|'shelve', until?: ISO\|null }` → `{ ok, key, ack: { kind, at, until } }` | `400 invalid_body` / `invalid_key` / `invalid_kind` / `invalid_until`, `404 ack_key_not_found`, `409 not_ackable` / `ack_store_full`, `503 attention_not_read` / `ack_store_unavailable` |
+| `/api/attention/acks/:key` | DELETE | `{ ok, key, ack: null }` | `400 invalid_key`, `404 ack_not_found`, `503 ack_store_unavailable` |
 | `/api/cron/create` | POST | `{ ok, message, job }` | `400 invalid_job` / `invalid_schedule` / `invalid_enabled` / `invalid_session` / `invalid_payload` / `invalid_model`, `500` |
 | `/api/cron/:id/toggle` | POST | `{ ok, message, job? }` | `400 invalid_enabled` / `invalid_scheduler` / `cron_id_required` / `invalid_cron_id`, `404 hermes_cron_job_not_found`, `409 hermes_cron_unavailable`, `500` |
 | `/api/cron/:id/run`, `/api/cron/:id` | POST, DELETE | `{ ok, message }` | `400 invalid_cron_id`, `501 hermes_cron_read_only`, `500` |
@@ -110,6 +113,68 @@ Codes common to many routes: `400 invalid_json`, `413 payload_too_large`,
 | `/api/councils/summary`, `/api/councils/decisions`, `/api/councils/governance/scorecard`, `/api/councils/decisions/:id/timeline` | GET | archive reads (no snapshot is persisted) | `503 councils_archive_unavailable` |
 | `/api/councils/decisions/:id/action` | POST | `{ ok, decision }` | `410 council_actions_disabled` (default; with `mode`, `recommendation`), `400 decision_id_required` / `council_action_required` / `council_note_required`, `404 decision_not_found`, `503` |
 | `/cron-search`, any non-API path | GET | static page / SPA shell | JSON `404 not_found` when the file is missing |
+
+### Badge rule (acknowledge / shelve)
+
+A badge counts only NEW items: not acknowledged, not shelved, not restricted.
+Countable items have stable keys: `system:<id>`, `finding:<project>:<CODE>:<12-hex hash of the complete
+subject as mloop wrote it, before scrubbing or shortening>`, `confirmation:<project>:<id>` (an id that is
+not a short plain id is `h<12-hex hash>` of the complete id; a confirmation finding about an id shares
+its key) and `cron:<job id>`. Keys are hashes only and never carry hidden text. Restricted rows have `key: null` and are
+never ackable; their counts are `attention.restricted` and never part of `count` or `worst`.
+
+Every countable item has one fingerprint, `{ rank, reasonIds, counts }`: the severity rank (the shared
+state ordering), the sorted stable ids of its reasons (machine identifiers, stored hashed; never display
+text, a duration or a number that ticks) and each reason's magnitude (`counts[reasonId]`, 1 when the
+reason has none). An item is worse than its acknowledgement when the rank rose, a reason id appeared
+that was not acknowledged, or a count rose above its acknowledged value. A count falling or a reason
+going away is never worse.
+
+| Item | Reason ids | Count |
+| --- | --- | --- |
+| system (Hermes) | `hermes:blocked` | blocked tasks |
+| system (Hermes) | `hermes:gateway-down`, `hermes:gateway-stale`, `hermes:gateway-unverified`, `hermes:kanban-unavailable`, `hermes:cron-unavailable`, `hermes:unavailable` | 1 |
+| system (OpenClaw) | `openclaw:status-unavailable`, `openclaw:sessions-unavailable`, `openclaw:cron-unavailable`, `openclaw:session-conflict`, `openclaw:heartbeat-stale`, `openclaw:unavailable` | 1 |
+| system (GBrain verdict) | `gbrain:link-extraction` | pages past the tolerance |
+| system (GBrain verdict) | `gbrain:missing-embeddings` | chunks past the tolerance |
+| system (GBrain verdict) | `gbrain:embed-job-probe` | chunks waiting |
+| system (GBrain verdict) | `gbrain:queue` | stalled jobs |
+| system (GBrain verdict) | `gbrain:gbrain-core`, `gbrain:stale-pages`, `gbrain:sources`, `gbrain:readers`, `gbrain:gbrain.<probe>`, `gbrain:<source id>`, `gbrain:<reader id>` | 1 |
+| system (GBrain, legacy overview) | `gbrain:legacy-caveat:<12-hex sha256 of the caveat, lower-cased, whitespace collapsed, timestamps masked (ISO, day-month dates, clock values) and a number with a time unit masked only in a duration context (after for/in/since/waiting/last/within/stale/… or before ago/old/late/overdue/behind), every other number kept>` (the only producer without semantic ids: one id per distinct caveat) | 1 |
+| system (GBrain, legacy overview) | `gbrain:stale-sources` | stale sources |
+| system (GBrain) | `gbrain:capabilities-unavailable`, `gbrain:unavailable` | 1 |
+| system (any) | `source:<source name>` (its read failed) | 1 |
+| finding | `finding` | mloop's aggregated row count |
+| confirmation (named id) | `confirmation:<CODE>` for every code reported on it, `confirmation:overdue` for an overdue pending row | 1 |
+| confirmation aggregate (one item per kind, key `confirmation:<project>:<CODE>`) | `confirmation:<CODE>` | that kind's count |
+| cron job | `cron:failed` | 1 |
+
+- `ack` ("seen, it will stay like this") holds while the item is not worse than its fingerprint at
+  the acknowledgement. **While an item is worse than what was acknowledged it counts as new and is
+  listed as new; when it is back at the acknowledged level or better, the acknowledgement applies
+  again.** This is computed on every read; nothing about it is stored or scheduled. The system still
+  adds at most one to the count.
+- A fingerprint holds at most 128 reasons and is never folded or cut: an item with more is listed as
+  new, is not ackable (`409 not_ackable`) and is held by no acknowledgement; the same goes for a
+  stored acknowledgement whose fingerprint is not well formed.
+- Confirmation aggregates overlap (they name no ids), so the badge de-duplicates them after the
+  acknowledgements are applied: per project it is the larger of the named confirmations and the
+  largest aggregate among the items that count. An unacknowledged aggregate therefore always counts.
+- `shelve` silences until `until` (or until removed with `null`), except that a shelved item counts
+  while its rank is critical.
+- GETs are pure: they read the stored records and the current readings and write nothing.
+- Only an item that counts now (`ackable: true`) can be acknowledged; `DELETE` removes a stored
+  acknowledgement. POST and DELETE are the only writers; each also drops shelves that ran out and
+  acknowledgements whose item has been absent, as seen at those writes, for 7 days.
+- Store: `data/attention/acks.json` (0600, atomic temp + rename, at most 500 entries, version 3:
+  `{ key, kind, at, until, id, absentSince, fingerprint }`). A file that is not valid (or is an older
+  version) starts empty and is copied to `acks.json.corrupt-<time>` before the first write replaces it.
+- Single writer by construction, like the app's other data files: one Mission Control process per
+  data directory, one store instance per file per process, synchronous writes.
+- When the store file cannot be read or written, `/api/signals`, `/api/loops` and `/api/cron` carry
+  `acks: { available: false, reason }`, nothing is treated as acknowledged, and POST/DELETE answer
+  `503 ack_store_unavailable` until a write actually succeeds again (reading the file again, or a
+  request that changes nothing, never clears it).
 
 `tests/appBootSmoke.test.js` holds the route table (`EXPECTED_ROUTES`), the
 pure-GET sweep, and a contract sweep that forces a failure on every route.
