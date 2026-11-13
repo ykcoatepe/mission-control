@@ -68,9 +68,10 @@
   pointer-events: stroke;
 }
 
+/* The picture is scaled to its container (never below 760/820 here); 13 units stay 12px or more on screen. */
 .svg .railText {
   fill: var(--text-2);
-  font-size: 12px;
+  font-size: 13px;
   paint-order: stroke;
   stroke: var(--bg);
   stroke-width: 3px;

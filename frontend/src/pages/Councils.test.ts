@@ -59,15 +59,37 @@ afterEach(() => {
 })
 
 describe('Audit: Overall', () => {
-  it('says what the scorecard reported when it has no review, not "Unavailable"', async () => {
+  it('with no review recorded, the server\'s default green is not a reading: not read, hollow mark, never normal', async () => {
+    // The server answers overall "green" when no review event exists; that value was never read from a review.
     stubServer({ overall: 'green', metrics: {}, review: null })
     const { host, root } = await mount()
-    const text = overallTile(host)?.textContent ?? ''
-    expect(text).toContain('Scorecard: normal')
-    // A value that was read never carries the hollow not-read mark.
-    expect(overallTile(host)?.querySelector('[data-shape="ring"]')).toBeNull()
+    const tile = overallTile(host)
+    const text = tile?.textContent ?? ''
+    expect(text).toContain('Not read')
+    expect(text).not.toContain('normal')
+    expect(text).not.toContain('Normal')
     expect(text).toContain('no review recorded')
-    expect(text).not.toContain('Not read')
+    expect(tile?.querySelector('[data-shape="ring"]')).not.toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('with no review recorded, a caution the archive itself reported (blocked decisions) is still shown, with its own mark', async () => {
+    stubServer({ overall: 'yellow', metrics: {}, review: null })
+    const { host, root } = await mount()
+    const tile = overallTile(host)
+    expect(tile?.textContent).toContain('Scorecard: caution')
+    expect(tile?.textContent).toContain('no review recorded')
+    expect(tile?.querySelector('[data-shape="ring"]')).toBeNull()
+    await act(async () => root.unmount())
+  })
+
+  it('with a review recorded, a green verdict the server reports is shown as normal', async () => {
+    stubServer({ overall: 'green', metrics: {}, review: { workflowSurfaceLive24h: 5, governanceEventsLive24h: 2 } })
+    const { host, root } = await mount()
+    const tile = overallTile(host)
+    expect(tile?.textContent).toContain('Normal')
+    expect(tile?.textContent).not.toContain('Not read')
+    expect(tile?.querySelector('[data-shape="ring"]')).toBeNull()
     await act(async () => root.unmount())
   })
 

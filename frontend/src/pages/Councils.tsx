@@ -315,9 +315,11 @@ export default function Councils() {
   const openApprovals = numberOrNull(metrics.activeDecisions)
   const hasOpenApprovals = openApprovals !== null && openApprovals > 0
   const governanceOnly = Boolean(review?.governanceOnlyLive24h || review?.governanceOnlyLive4d || review?.selfReferentialSurfaceWarn)
-  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable":
-  // that is a value that was read, so it carries its own state's mark and word ("normal"), never the not-read mark.
-  const scorecardOnly = !review && scorecardOverall !== null
+  // With no review there is no judgement of real work. Say what the scorecard did report instead of "Unavailable".
+  // The server answers "green" when there is no review event at all (it is the default of a verdict that was never
+  // computed from a review), so with no review a green is not a reading: it is shown as not read. A caution or
+  // critical word without a review comes from the archive itself (blocked decisions): that was read.
+  const scorecardOnly = !review && scorecardOverall !== null && scorecardOverall !== 'green'
   const workflowUi: UiState = scorecardOnly ? toUiState(scorecardOverall) : toUiState(workflowState)
   const overallValue = scorecardOnly ? `Scorecard: ${stateLabel(workflowUi).toLowerCase()}` : stateLabel(workflowUi)
   const overallHint = scorecardOverall ? 'no review recorded' : 'no review reported'

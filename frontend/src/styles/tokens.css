@@ -5,7 +5,9 @@
  *   - Normal is quiet: a normal state has no colour.
  *   - Colour has three jobs: abnormal state (amber caution, soft red critical, always with a shape and a word),
  *     teal = what the operator can do or what is selected, and the four line colours that identify the four
- *     GBrain source groups (also chart series). Nothing decorative is coloured.
+ *     GBrain source groups (chart series on the Brain page only). Nothing decorative is coloured.
+ *   - One stated exception: the measured fill of an analog bar is teal-toned (--bar-fill), as in the approved
+ *     reference, so a reading and its normal band can be told apart at a glance. Charts elsewhere use --chart-1..6.
  *   - Elevation is a step in lightness: no shadows, gradients, glow or blur.
  *
  * Two themes: "Slate dusk" (dark, default) and "Soft daylight" (light).
@@ -75,13 +77,14 @@
   --series-5: #5fb8b0;
   --series-6: #9aa6b6;
 
-  /* Chart categories outside the Brain page: muted, and away from amber, red, the accent and the four line colours. */
-  --chart-1: #8d8654;
-  --chart-2: #7a7ea8;
-  --chart-3: #b39a85;
-  --chart-4: #a5747b;
-  --chart-5: #8a94a3;
-  --chart-6: #5f8a99;
+  /* Chart categories outside the Brain page: steel, sand, moss, clay, stone, slate. Muted, and in each theme clearly apart in hue from the
+   four line colours (violet and rose above all), the accent teal, amber and red. Series 1, the dominant one, is the steel. */
+  --chart-1: #7b95a0;
+  --chart-2: #cbbca7;
+  --chart-3: #8ca36c;
+  --chart-4: #b38068;
+  --chart-5: #b4aeaa;
+  --chart-6: #6a7887;
 
   /* Analog bars */
   --band: rgba(221, 227, 234, 0.2); /* the normal band: a lighter strip, distinct from the track and from the fill */
@@ -196,12 +199,12 @@
   --series-5: #1f6f6b;
   --series-6: #6b6660;
 
-  --chart-1: #777046;
-  --chart-2: #6c6f9c;
-  --chart-3: #9c6847;
-  --chart-4: #8a5d6a;
-  --chart-5: #7d828a;
-  --chart-6: #4a7580;
+  --chart-1: #5d7f8b;
+  --chart-2: #907c52;
+  --chart-3: #6d8744;
+  --chart-4: #97603e;
+  --chart-5: #85807d;
+  --chart-6: #566376;
 
   --band: rgba(42, 40, 38, 0.2);
   --bar-fill: #2a7873; /* 3.7:1 on the track */

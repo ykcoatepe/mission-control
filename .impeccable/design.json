@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-12T11:30:09Z",
+  "generatedAt": "2026-11-13T04:07:58Z",
   "title": "Design System: Mission Control",
   "extensions": {
     "colorMeta": {
@@ -380,18 +380,33 @@
         ]
       },
       "normal-band": {
-        "role": "primary",
+        "role": "neutral",
         "displayName": "Normal Band",
-        "canonical": "rgba(95, 184, 176, 0.28)",
+        "canonical": "rgba(221, 227, 234, 0.2)",
+        "tonalRamp": [
+          "#0e1217",
+          "#272c31",
+          "#43484e",
+          "#61676d",
+          "#81878d",
+          "#a3a8af",
+          "#c5cbd2",
+          "#e9eff6"
+        ]
+      },
+      "bar-fill": {
+        "role": "primary",
+        "displayName": "Bar Fill",
+        "canonical": "#4fa59e",
         "tonalRamp": [
           "#001614",
-          "#003330",
-          "#07534e",
-          "#0a766f",
-          "#3c9790",
-          "#67b8b1",
-          "#9dd8d2",
-          "#d2f8f3"
+          "#023330",
+          "#03534f",
+          "#13756f",
+          "#3f9690",
+          "#6ab8b1",
+          "#9fd7d2",
+          "#d3f7f3"
         ]
       },
       "line-reference": {
@@ -452,6 +467,96 @@
           "#d98dac",
           "#f2b7ce",
           "#ffe7f0"
+        ]
+      },
+      "chart-1": {
+        "role": "secondary",
+        "displayName": "Chart 1 Blue-Grey",
+        "canonical": "#7b95a0",
+        "tonalRamp": [
+          "#05141a",
+          "#182f38",
+          "#344c56",
+          "#526a75",
+          "#718b96",
+          "#94acb7",
+          "#bbced6",
+          "#e4f1f6"
+        ]
+      },
+      "chart-2": {
+        "role": "secondary",
+        "displayName": "Chart 2 Parchment",
+        "canonical": "#cbbca7",
+        "tonalRamp": [
+          "#181005",
+          "#352918",
+          "#524533",
+          "#716451",
+          "#928470",
+          "#b3a692",
+          "#d3c9ba",
+          "#f4ede3"
+        ]
+      },
+      "chart-3": {
+        "role": "secondary",
+        "displayName": "Chart 3 Moss",
+        "canonical": "#8ca36c",
+        "tonalRamp": [
+          "#0b1500",
+          "#213200",
+          "#3c4f1b",
+          "#5a6f3a",
+          "#798f59",
+          "#9bb17d",
+          "#c1d2ab",
+          "#e8f4d9"
+        ]
+      },
+      "chart-4": {
+        "role": "secondary",
+        "displayName": "Chart 4 Terracotta",
+        "canonical": "#b38068",
+        "tonalRamp": [
+          "#240800",
+          "#471e07",
+          "#673a24",
+          "#895942",
+          "#ab7961",
+          "#cc9b84",
+          "#e8c1af",
+          "#ffe9e0"
+        ]
+      },
+      "chart-5": {
+        "role": "secondary",
+        "displayName": "Chart 5 Pale Stone",
+        "canonical": "#b4aeaa",
+        "tonalRamp": [
+          "#15110e",
+          "#2f2a27",
+          "#4c4743",
+          "#6a6561",
+          "#8b8581",
+          "#aca6a2",
+          "#cfc9c5",
+          "#f3ede9"
+        ]
+      },
+      "chart-6": {
+        "role": "secondary",
+        "displayName": "Chart 6 Slate",
+        "canonical": "#6a7887",
+        "tonalRamp": [
+          "#0a121b",
+          "#212d39",
+          "#3c4957",
+          "#5a6876",
+          "#7a8897",
+          "#9ca9b8",
+          "#c1ccd7",
+          "#e8eff7"
         ]
       }
     },
@@ -514,6 +619,11 @@
         "name": "spin",
         "value": "800ms linear",
         "purpose": "Button and refresh spinners."
+      },
+      {
+        "name": "tooltip",
+        "value": "none",
+        "purpose": "Chart tooltips never animate position; a readout never travels."
       }
     ],
     "breakpoints": [
@@ -572,12 +682,18 @@
           "accent-hover": "#144e4b",
           "accent-bg": "rgba(31, 111, 107, 0.1)",
           "accent-line": "rgba(31, 111, 107, 0.4)",
-          "line-reference": "#2b76b0",
-          "line-projects": "#2f8558",
+          "line-reference": "#27699c",
+          "line-projects": "#2a7a50",
           "line-agent": "#6a55c8",
-          "line-curated": "#b0477a",
-          "band": "rgba(31, 111, 107, 0.18)",
-          "bar-fill": "#8c8780"
+          "line-curated": "#ad4577",
+          "chart-1": "#5d7f8b",
+          "chart-2": "#907c52",
+          "chart-3": "#6d8744",
+          "chart-4": "#97603e",
+          "chart-5": "#85807d",
+          "chart-6": "#566376",
+          "band": "rgba(42, 40, 38, 0.2)",
+          "bar-fill": "#2a7873"
         }
       }
     }
@@ -611,9 +727,9 @@
       "name": "Analog Bar",
       "kind": "custom",
       "refersTo": "analog-bar",
-      "description": "A number with a normal range: track, marked normal band, fill, pointer, labelled limits, digits.",
+      "description": "A number with a normal range: 12px track, full-height normal band, thinner teal-toned fill inside it (full-height state colour when abnormal), pointer, labelled limits, digits.",
       "html": "<div class=\"ds-bar\" role=\"meter\" aria-valuenow=\"97\" aria-valuemin=\"0\" aria-valuemax=\"100\"><div class=\"ds-bar-head\"><span class=\"ds-bar-label\">Quality</span><span class=\"ds-bar-reading\"><span class=\"ds-bar-value\">97</span><span class=\"ds-bar-word\">Normal</span></span></div><div class=\"ds-bar-track\"><span class=\"ds-bar-band\"></span><span class=\"ds-bar-fill\"></span><span class=\"ds-bar-pointer\"></span></div><div class=\"ds-bar-scale\"><span style=\"left:0\">0</span><span style=\"left:95%;transform:translateX(-50%)\">95</span><span style=\"right:0\">100</span></div></div>",
-      "css": ".ds-bar{display:flex;flex-direction:column;gap:4px;font-family:Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums lining-nums} .ds-bar-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px} .ds-bar-label{font-size:14px;font-weight:600;color:var(--text-1, #dde3ea)} .ds-bar-reading{display:inline-flex;align-items:baseline;gap:12px} .ds-bar-value{font-size:15px;font-weight:600;color:var(--text-1, #dde3ea)} .ds-bar-word{font-size:13px;font-weight:500;color:var(--text-3, #8995a5)} .ds-bar-track{position:relative;height:10px;margin-top:4px;background:var(--surface-3, #2b3444);border:1px solid var(--line-strong, #45526a);border-radius:3px} .ds-bar-band{position:absolute;top:0;bottom:0;left:95%;width:5%;background:var(--band, rgba(95,184,176,.28))} .ds-bar-fill{position:absolute;top:0;bottom:0;left:0;width:97%;background:var(--bar-fill, #a9b4c2);opacity:.55} .ds-bar-pointer{position:absolute;top:-4px;bottom:-4px;left:97%;width:2px;margin-left:-1px;background:var(--text-1, #dde3ea)} .ds-bar-scale{position:relative;height:18px;margin-top:4px;font-size:12px;color:var(--text-3, #8995a5)} .ds-bar-scale span{position:absolute;top:0}"
+      "css": ".ds-bar{display:flex;flex-direction:column;gap:4px;font-family:Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums lining-nums} .ds-bar-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px} .ds-bar-label{font-size:14px;font-weight:600;color:var(--text-1, #dde3ea)} .ds-bar-reading{display:inline-flex;align-items:baseline;gap:12px} .ds-bar-value{font-size:15px;font-weight:600;color:var(--text-1, #dde3ea)} .ds-bar-word{font-size:13px;font-weight:500;color:var(--text-3, #8995a5)} .ds-bar-track{position:relative;height:12px;margin-top:4px;background:var(--surface-3, #2b3444);border:1px solid var(--line-strong, #45526a);border-radius:3px} .ds-bar-band{position:absolute;top:0;bottom:0;left:95%;width:5%;background:var(--band, rgba(221,227,234,.2))} .ds-bar-fill{position:absolute;top:3px;bottom:3px;left:0;width:97%;background:var(--bar-fill, #4fa59e)} .ds-bar-abnormal .ds-bar-fill{top:0;bottom:0;background:var(--state-warning, #e0b060)} .ds-bar-pointer{position:absolute;top:-4px;bottom:-4px;left:97%;width:2px;margin-left:-1px;background:var(--text-1, #dde3ea)} .ds-bar-scale{position:relative;height:18px;margin-top:4px;font-size:12px;color:var(--text-2, #a9b4c2)} .ds-bar-scale span{position:absolute;top:0}"
     },
     {
       "name": "Primary Button",
@@ -643,9 +759,9 @@
       "name": "Rail Nav Item (selected)",
       "kind": "nav",
       "refersTo": "nav-item-active",
-      "description": "Side-rail row; selected is a teal tint, teal text and a 2px teal bar at the left edge, with an optional state badge.",
+      "description": "Side-rail row; selected is a teal tint ground with teal text, no side stripe, with an optional state badge.",
       "html": "<nav class=\"ds-nav\" aria-label=\"Pages\"><a class=\"ds-nav-item ds-nav-active\" href=\"#\">Brain</a><a class=\"ds-nav-item\" href=\"#\"><span class=\"ds-nav-label\">Attention</span><span class=\"ds-badge\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\" aria-hidden=\"true\"><polygon points=\"6,1.5 11,10.5 1,10.5\" fill=\"currentColor\"/></svg>2</span></a></nav>",
-      "css": ".ds-nav{display:flex;flex-direction:column;gap:2px;width:208px;padding:8px;background:var(--rail, #161b23);font-family:Barlow,system-ui,sans-serif} .ds-nav-item{position:relative;display:flex;align-items:center;gap:12px;height:36px;padding:0 12px;border-radius:3px;color:var(--text-2, #a9b4c2);font-size:15px;text-decoration:none;transition:background 120ms cubic-bezier(.2,0,0,1),color 120ms cubic-bezier(.2,0,0,1)} .ds-nav-label{flex:1} .ds-nav-item:hover{background:var(--surface-1, #1f2632);color:var(--text-1, #dde3ea)} .ds-nav-item:focus-visible{outline:2px solid var(--accent, #5fb8b0);outline-offset:-2px} .ds-nav-active,.ds-nav-active:hover{background:var(--accent-bg, rgba(95,184,176,.12));color:var(--accent, #5fb8b0);font-weight:500} .ds-nav-active::before{content:'';position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--accent, #5fb8b0)} .ds-badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 4px;color:var(--state-warning, #e0b060);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums lining-nums}"
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:2px;width:208px;padding:8px;background:var(--rail, #161b23);font-family:Barlow,system-ui,sans-serif} .ds-nav-item{position:relative;display:flex;align-items:center;gap:12px;height:36px;padding:0 12px;border-radius:3px;color:var(--text-2, #a9b4c2);font-size:15px;text-decoration:none;transition:background 120ms cubic-bezier(.2,0,0,1),color 120ms cubic-bezier(.2,0,0,1)} .ds-nav-label{flex:1} .ds-nav-item:hover{background:var(--surface-1, #1f2632);color:var(--text-1, #dde3ea)} .ds-nav-item:focus-visible{outline:2px solid var(--accent, #5fb8b0);outline-offset:-2px} .ds-nav-active,.ds-nav-active:hover{background:var(--accent-bg, rgba(95,184,176,.12));color:var(--accent, #5fb8b0);font-weight:500} .ds-badge{display:inline-flex;align-items:center;gap:4px;height:20px;padding:0 4px;color:var(--state-warning, #e0b060);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums lining-nums}"
     },
     {
       "name": "Filter Chip",
@@ -683,7 +799,7 @@
       },
       {
         "name": "The Three Jobs Rule",
-        "body": "Colour does exactly three things: abnormal state, action/selection, source-group identity. A colour that does none of the three is a defect.",
+        "body": "Colour does exactly three things: abnormal state, action/selection, source-group identity. A colour that does none of the three is a defect. The one stated exception is the measured fill of an analog bar, teal-toned so the reading and its normal band can be told apart; abnormal readings take the state colour.",
         "section": "colors"
       },
       {
@@ -693,7 +809,7 @@
       },
       {
         "name": "The Line Colour Identity Rule",
-        "body": "The four line colours name which source group something belongs to and nothing else. They are not state, not decoration, not a second accent.",
+        "body": "The four line colours name which source group something belongs to and nothing else. They are not state, not decoration, not a second accent. Charts elsewhere in the app use the muted chart ramp, not these.",
         "section": "colors"
       },
       {
@@ -703,12 +819,17 @@
       },
       {
         "name": "The Tabular Numerals Rule",
-        "body": "Tabular lining numerals are set on body; any number that aligns in a column or a bar stays tabular.",
+        "body": "Tabular lining numerals are set on `body`; any number that aligns in a column or a bar stays tabular.",
         "section": "typography"
       },
       {
         "name": "The Three Weights Rule",
         "body": "Weights are 400, 500, 600 only. No bold, no light.",
+        "section": "typography"
+      },
+      {
+        "name": "The Twelve Pixel Floor Rule",
+        "body": "Nothing is set below 12px on screen, in HTML or in SVG (SVG text is sized in drawing units so that it stays at or above 12px after scaling).",
         "section": "typography"
       },
       {
@@ -723,26 +844,31 @@
       }
     ],
     "dos": [
-      "Do leave a normal reading neutral (state-normal, grey-white mark, text-2); let abnormal alone take colour.",
-      "Do pair every state with its shape and its word; use a hollow circle and \"not read\" when a value was not observed, never `0` or a guess.",
-      "Do use one alarm line per page, only when abnormal, with at most one action at its right end.",
-      "Do show numbers that have a normal range as analog bars with the band marked, and draw the 24-hour trend only when two real readings exist.",
-      "Do use `Block` with a 1px hairline-strong outline, 4px radius and a condensed-capital header; put counts at the header's right.",
-      "Do raise surfaces by a lightness step plus an outline; express selection and action in teal (outline, tint, 2px bar).",
-      "Do use only tokens from `tokens.css`; set numbers in tabular lining numerals; keep spacing on the 4px grid and weights at 400/500/600.",
-      "Do give every control a visible 2px teal focus ring with a 2px offset, and at least 24px of height.",
-      "Do annotate a reading with where it came from only when it is stale or unread."
+      "**Do** leave a normal reading neutral (state-normal, grey-white mark, text-2); let abnormal alone take colour.",
+      "**Do** pair every state with its shape and its word; use a hollow circle and \"not read\" when a value was not observed, never `0` or a guess.",
+      "**Do** use one alarm line per page, only when abnormal, with at most one action at its right end.",
+      "**Do** show numbers that have a normal range as analog bars with the band marked, and draw the 24-hour trend only when two real readings exist.",
+      "**Do** use `Block` with a 1px hairline-strong outline, 4px radius and a condensed-capital header; put counts at the header's right.",
+      "**Do** raise surfaces by a lightness step plus an outline; express selection and action in teal (outline or tint ground, never a side stripe).",
+      "**Do** use only tokens from `tokens.css`; set numbers in tabular lining numerals; keep spacing on the 4px grid and weights at 400/500/600.",
+      "**Do** give every control a visible 2px teal focus ring with a 2px offset, and at least 24px of height.",
+      "**Do** annotate a reading with where it came from only when it is stale or unread.",
+      "**Do** show a verdict that was never computed from a review as \"not read\"; a default word the server fills in when there is nothing to judge (the Audit scorecard's \"green\" with no review) is not a reading.",
+      "**Do** keep a readout where the eye already is: a readout never travels to its target. Write it in its one fixed home (the caption row under the block title, a mark on the axis), not in a card that follows the pointer.",
+      "**Do** keep a readout clear of the data it describes: a readout never covers the data it describes. Place it beside, above or beneath the plot, or on its scale."
     ],
     "donts": [
-      "Don't use green for \"OK\" or any colour for normal state; the project green is a source-group line colour only.",
-      "Don't use a line colour for state, decoration or a second accent, and don't use teal for state.",
-      "Don't use shadows, gradients, glow, blur, entrance animation or hover lift.",
-      "Don't convey state by colour alone, and don't put text-3 on surface-3.",
-      "Don't nest a block in a block, or build a page as a stack of equal-weight cards.",
-      "Don't use condensed capitals outside block headers, the alarm word and diagram block labels.",
-      "Don't draw fake hardware: no bezels, LEDs, knobs, skeuomorphic gauges or instrument costumes. Other pages do not draw tracks; tracks belong to the Brain page.",
-      "Don't put a green \"all good\" banner or an always-lit dashboard on the screen; absence of an alarm is the message.",
-      "Don't show restricted project content or invent history, times or counts the server did not read."
+      "**Don't** use green for \"OK\" or any colour for normal state; the project green is a source-group line colour only.",
+      "**Don't** use a line colour for state, decoration or a second accent, and don't use teal for state.",
+      "**Don't** use shadows, gradients, glow, blur, entrance animation or hover lift.",
+      "**Don't** let a readout travel (no sliding tooltips, no cards that chase the pointer) and don't let one cover the data it describes (no floating card or guide line across a plot).",
+      "**Don't** mark a selected row or nav item with a side stripe, and don't set any text below 12px.",
+      "**Don't** convey state by colour alone, and don't put text-3 on surface-3.",
+      "**Don't** nest a block in a block, or build a page as a stack of equal-weight cards.",
+      "**Don't** use condensed capitals outside block headers, the alarm word and diagram block labels.",
+      "**Don't** draw fake hardware: no bezels, LEDs, knobs, skeuomorphic gauges or instrument costumes. Other pages do not draw tracks; tracks belong to the Brain page.",
+      "**Don't** put a green \"all good\" banner or an always-lit dashboard on the screen; absence of an alarm is the message.",
+      "**Don't** show restricted project content or invent history, times or counts the server did not read."
     ]
   }
 }

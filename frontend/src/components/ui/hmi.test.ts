@@ -2,6 +2,8 @@
 
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { UI_STATES } from '../../lib/state'
 import type { UiState } from '../../lib/state'
@@ -188,6 +190,31 @@ describe('AnalogBar', () => {
     expect(host.textContent).toContain('critical')
     expect(host.querySelector('svg')?.getAttribute('data-shape')).toBe('square')
     await act(async () => root.unmount())
+  })
+
+  it('in caution or critical the fill is the state colour for its whole length, with no teal under it, and the band stays neutral', async () => {
+    const css = readFileSync(join(__dirname, 'AnalogBar.module.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+    const rule = (selector: string) => {
+      return [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)]
+        .filter((m) => m[1].split(',').some((s) => s.trim() === selector))
+        .map((m) => m[2])
+        .join('\n')
+    }
+    expect(rule(".bar[data-state='warning'] .fill")).toMatch(/background:\s*var\(--state-warning\)/)
+    expect(rule(".bar[data-state='critical'] .fill")).toMatch(/background:\s*var\(--state-critical\)/)
+    // The normal fill is the teal-family token; no abnormal rule mentions it, and none re-colours the band.
+    expect(rule('.fill')).toContain('var(--bar-fill)')
+    for (const state of ['warning', 'critical']) {
+      expect(rule(`.bar[data-state='${state}'] .fill`)).not.toContain('--bar-fill')
+      expect(rule(`.bar[data-state='${state}'] .band`)).toBe('')
+    }
+    expect(rule('.band')).toContain('var(--band)')
+    for (const state of ['warning', 'critical'] as const) {
+      const { host, root } = await render(createElement(AnalogBar, { label: 'Embedded', value: 99.8, min: 0, max: 100, state }))
+      expect((host.firstElementChild as HTMLElement).getAttribute('data-state')).toBe(state)
+      expect(host.querySelectorAll('[class*="fill"]')).toHaveLength(1)
+      await act(async () => root.unmount())
+    }
   })
 
   it('unread shows a hollow circle and "not read": no value, no pointer, no trend', async () => {

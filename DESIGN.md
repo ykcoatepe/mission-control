@@ -27,11 +27,18 @@ colors:
   action-teal-hover: "#7ccbc4"
   action-tint: "rgba(95, 184, 176, 0.12)"
   action-line: "rgba(95, 184, 176, 0.45)"
-  normal-band: "rgba(95, 184, 176, 0.28)"
+  normal-band: "rgba(221, 227, 234, 0.2)"
+  bar-fill: "#4fa59e"
   line-reference: "#6fb1e0"
   line-projects: "#7fc49a"
   line-agent: "#a99be8"
   line-curated: "#e08fb0"
+  chart-1: "#7b95a0"
+  chart-2: "#cbbca7"
+  chart-3: "#8ca36c"
+  chart-4: "#b38068"
+  chart-5: "#b4aeaa"
+  chart-6: "#6a7887"
 typography:
   page-title:
     fontFamily: "Barlow, ui-sans-serif, -apple-system, BlinkMacSystemFont, Helvetica Neue, system-ui, sans-serif"
@@ -224,10 +231,10 @@ Depth is lightness, not light: there are no shadows, gradients, glow or blur. St
 A cool slate palette where the only chroma on screen belongs to something abnormal, something actionable, or one of four source lines. Frontmatter values are Slate dusk (dark, the default). Every colour is a CSS custom property in `frontend/src/styles/tokens.css`; components use tokens only, never literals.
 
 ### Primary
-- **Action Teal** (#5fb8b0): links, the primary button outline and text, focus rings, the selected rail item, selected chips, selected rows. Also the 2px bar at the left edge of the active nav item. Hover lifts to a lighter teal (#7ccbc4). Its tint (12% teal) is the selected ground; its 45% line is the selected border.
+- **Action Teal** (#5fb8b0): links, the primary button outline and text, focus rings, the selected rail item (tint ground, teal text and icon, no side stripe), selected chips, selected rows. Hover lifts to a lighter teal (#7ccbc4). Its tint (12% teal) is the selected ground; its 45% line is the selected border.
 
 ### Secondary
-- **Source Lines** (identity only): **Reference Blue** (#6fb1e0), **Projects Green** (#7fc49a), **Agent Violet** (#a99be8), **Curated Rose** (#e08fb0). They colour a source group's block header, track, tick marks and line-profile stroke, and serve as chart series 1-4. They never carry state. The green is a group identity, not an "OK" signal.
+- **Source Lines** (identity only): **Reference Blue** (#6fb1e0), **Projects Green** (#7fc49a), **Agent Violet** (#a99be8), **Curated Rose** (#e08fb0). They colour a source group's block header, track, tick marks, line-profile stroke and line-profile label, and serve as chart series on the Brain page only (`--series-1..6`). They never carry state. The green is a group identity, not an "OK" signal.
 
 ### Tertiary
 - **Caution Amber** (#e0b060): caution state only. Always accompanied by the triangle mark and the word "Caution". Has a 10% tint ground and a 45% line.
@@ -240,20 +247,22 @@ A cool slate palette where the only chroma on screen belongs to something abnorm
 - **Hairline / Hairline Strong** (#303a4a, #45526a): inner dividers; block, table-header and card outlines.
 - **Neutral Track** (#7d8aa0): the neutral diagram line, and the outline of inputs and buttons (`--control-line`, same value, held at 3:1 or better against the grounds).
 - **Text 1 / 2 / 3** (#dde3ea, #a9b4c2, #8995a5): values and titles; body; labels and metadata (12px and larger only, never on surface-3). **Disabled** (#56617a) and **Inactive** (#56617a) are exempt from contrast because they never carry the only copy of a message.
-- **State Normal** (#c2ccd8): the neutral mark of a healthy reading. **Normal Band** (teal at 28%) marks the acceptable range on an analog bar.
+- **State Normal** (#c2ccd8): the neutral mark of a healthy reading. **Normal Band** (a light neutral at 20%, rgba(221, 227, 234, 0.2)) marks the acceptable range on an analog bar as a lighter strip, distinct from both track and fill.
+- **Bar Fill** (#4fa59e): the fill of an analog bar and of the thin meter, a teal-toned data fill held at 3:1 or better on the track. It is a stated, deliberate exception to "teal means action or selection" (recorded in the tokens.css header and the reference doc): the measured fill is teal-toned, as in the approved reference, so the reading and its normal band can be told apart at a glance. An abnormal reading takes the state colour instead.
+- **Chart Ramp** (#7b95a0, #cbbca7, #8ca36c, #b38068, #b4aeaa, #6a7887; daylight #5d7f8b, #907c52, #6d8744, #97603e, #85807d, #566376): six muted categories (`--chart-1..6`) for every chart outside the Brain page (models, platforms, agents). Kept away from amber, red, the accent and the four line colours by an OKLab distance test; categories only, never state.
 - **Text on Accent** (#0f1d1c): the dark ink on teal fills and on source-group header fills.
 
 ### Soft daylight (light theme)
-The same tokens, redefined under `:root[data-theme='light']` on a warm paper ground: ground #e7e5e0, rail #dcd9d3, surface-1 #f0eee9, surface-2 #e9e6e0, surface-3 #dedad3, hairline #cfcac2, hairline-strong #a9a39a, text #2a2826 / #55504a / #635e59, caution #825000, critical #ac352d, action teal #1b615d, lines #2b76b0 / #2f8558 / #6a55c8 / #b0477a, text on accent #ffffff. Values were darkened from a first draft to reach 4.5:1 on the rail and on their own tints. Full light ramps are in the sidecar.
+The same tokens, redefined under `:root[data-theme='light']` on a warm paper ground: ground #e7e5e0, rail #dcd9d3, surface-1 #f0eee9, surface-2 #e9e6e0, surface-3 #dedad3, hairline #cfcac2, hairline-strong #a9a39a, text #2a2826 / #55504a / #635e59, caution #825000, critical #ac352d, action teal #1b615d, lines #27699c / #2a7a50 / #6a55c8 / #ad4577 (each held at 4.5:1 as 12px label text on surface-1), bar fill #2a7873, normal band a 20% dark neutral, text on accent #ffffff. Values were darkened from a first draft to reach 4.5:1 on the rail and on their own tints. Full light ramps are in the sidecar.
 
 ### Named Rules
 **The Quiet Normal Rule.** A normal reading has no colour. Neutral grey-white mark, neutral text. There is no green "OK" anywhere. If the whole screen is neutral, nothing is wrong.
 
-**The Three Jobs Rule.** Colour does exactly three things: abnormal state, action/selection, source-group identity. A colour that does none of the three is a defect.
+**The Three Jobs Rule.** Colour does exactly three things: abnormal state, action/selection, source-group identity. A colour that does none of the three is a defect. The one stated exception is the measured fill of an analog bar, teal-toned so the reading and its normal band can be told apart; abnormal readings take the state colour.
 
 **The Shape Plus Word Rule.** State is never colour alone. Every state is a shape and a word: normal a small filled circle ("Normal"), caution a triangle ("Caution"), critical a filled square ("Critical"), not read a hollow circle ("Not read"), off a short dash ("Off").
 
-**The Line Colour Identity Rule.** The four line colours name which source group something belongs to and nothing else. They are not state, not decoration, not a second accent.
+**The Line Colour Identity Rule.** The four line colours name which source group something belongs to and nothing else. They are not state, not decoration, not a second accent. Charts elsewhere in the app use the muted chart ramp, not these.
 
 ## Typography
 
@@ -271,7 +280,8 @@ The same tokens, redefined under `:root[data-theme='light']` on a warm paper gro
 - **Lead** (600, 15px): alarm sentence, analog-bar value, nav item label (400).
 - **Body** (400, 14px, 1.45): default text, table cells, buttons (500).
 - **Label** (500, 13px): field and column labels, chips; sentence case, text-2 or text-3.
-- **Micro** (400, 12px): scale limits, trend ends, line-profile labels.
+- **Micro** (400, 12px): scale limits, trend ends, line-profile axis and labels, rail labels. 12px is the smallest text anywhere in the build. The track diagram's rail labels are 13 drawing units, which stay 12px or more on screen because the picture is never scaled below its minimum.
+- **Looked-at id** (500, 14px, 20px line): the full source id shown under the line-profile column being looked at.
 - **Data** (JetBrains Mono, 0.92em): ids and expressions; ligatures off so text reads exactly as stored.
 
 ### Named Rules
@@ -280,6 +290,8 @@ The same tokens, redefined under `:root[data-theme='light']` on a warm paper gro
 **The Tabular Numerals Rule.** Tabular lining numerals are set on `body`; any number that aligns in a column or a bar stays tabular.
 
 **The Three Weights Rule.** Weights are 400, 500, 600 only. No bold, no light.
+
+**The Twelve Pixel Floor Rule.** Nothing is set below 12px on screen, in HTML or in SVG (SVG text is sized in drawing units so that it stays at or above 12px after scaling).
 
 ## Layout
 
@@ -291,7 +303,7 @@ Density is control-room dense: 32px controls (26px small), 36px nav rows, 44px m
 
 ## Elevation & Depth
 
-Flat. There are no shadows, gradients, glow or blur anywhere in the build; the one `box-shadow` in the source is a `none` override on the Recharts tooltip. Depth is a step in lightness: rail ground below page ground below surface-1 (blocks) below surface-2 (dialogs, table headers, panels) below surface-3 (toasts, hover). Overlays use a flat scrim (60% dark in dusk, 32% in daylight) and a 1px outline, not a drop shadow. Z-layers are tokens (sticky 10, drawer 40, overlay 60, palette 80, toast 100).
+Flat. There are no shadows, gradients, glow or blur anywhere in the build; the one `box-shadow` in the source is a `none` override on the Recharts tooltip, whose wrapper also has its position transition switched off (see Motion). Depth is a step in lightness: rail ground below page ground below surface-1 (blocks) below surface-2 (dialogs, table headers, panels) below surface-3 (toasts, hover). Overlays use a flat scrim (60% dark in dusk, 32% in daylight) and a 1px outline, not a drop shadow. Z-layers are tokens (sticky 10, drawer 40, overlay 60, palette 80, toast 100).
 
 ### Named Rules
 **The Lightness Step Rule.** Raise a thing by making its ground one step lighter and giving it a 1px outline, never by shadowing it.
@@ -300,7 +312,7 @@ Flat. There are no shadows, gradients, glow or blur anywhere in the build; the o
 
 ## Shapes
 
-Small, square-shouldered, outlined. Corners are 3px (rows, nav items, kbd, segments), 4px (blocks, buttons, inputs, chips, dialogs, alarm line, toasts) and 6px (the command palette and period controls). The full pill is reserved for the Switch track, spinner and scrollbar thumb. Every container is defined by a 1px hairline-strong outline; the selected item is defined by a teal outline or a teal 2px bar. Source-group blocks take their line colour as the outline and as a filled header. State marks are 12px glyphs on a 12x12 grid (20px in the alarm line). The diagram uses rails (2.5px stroke) with a dotted sleeper pattern, bumper stops, and a squared core frame.
+Small, square-shouldered, outlined. Corners are 3px (rows, nav items, kbd, segments), 4px (blocks, buttons, inputs, chips, dialogs, alarm line, toasts) and 6px (the command palette and period controls). The full pill is reserved for the Switch track, spinner and scrollbar thumb. Every container is defined by a 1px hairline-strong outline; the selected item is defined by a teal outline or a teal tint ground. Source-group blocks take their line colour as the outline and as a filled header. State marks are 12px glyphs on a 12x12 grid (20px in the alarm line). The diagram uses rails whose stroke weight is proportional to the group's share of all pages (2 to 10 drawing units) with a dotted sleeper pattern 5 units wider than the rail, bumper stops, and a squared core frame.
 
 ## Components
 
@@ -326,7 +338,7 @@ Standard web controls, restyled by tokens; nothing mimics hardware.
 One per page, only when something is abnormal, absent otherwise (never a green "all good" banner). A tinted strip (44px minimum) with the state mark at 20px and the state word in condensed capitals at 17px, a divider, the plain sentence (15px/600) with detail (13px text-2), and at most one primary action at the right end. `role="alert"` for critical, `role="status"` for caution.
 
 ### Analog bar (signature)
-For any number with a normal range: a 10px track with a marked normal band (teal at 28%), a fill (neutral, 55% opacity), a 2px pointer taller than the track, labelled limits underneath at 12px, the value as digits, and a 24-hour trend line when two or more real readings exist. Outside the band it turns amber with a triangle and "below normal / above normal". Unread shows a hollow circle and "not read", with no value, pointer or trend. The thin `Meter` (6px) is the band-less variant.
+For any number with a normal range: a 12px track (surface-3, hairline-strong outline) with the normal band as a lighter neutral strip the full height of the track, a thinner fill bar inside it while the reading is normal (3px inset top and bottom, teal-toned, so the band still shows above and below the fill), a 2px pointer taller than the track, and each limit marked by a tick through the track and a little beyond, labelled underneath at 12px in text-2. The value is digits at the right of the label. When two or more real readings exist, the 24-hour trend sits under it: a words column at the left ("24h trend" over the average) and the plot with its highest and lowest values as one block at the right. In caution or critical the fill is the state colour (amber or soft red) for its whole length and the full height of the track, nothing teal under it, with a triangle or square and "below normal / above normal"; the band stays neutral. Unread shows a hollow circle and "not read", with no value, pointer or trend. The thin `Meter` (6px) is the band-less variant on the same fill.
 
 ### Inputs / Fields
 - **Style:** 32px, slate-ground fill, 1px neutral-track outline, 4px radius, 14px text-1; hover brightens the outline to text-3.
@@ -334,7 +346,7 @@ For any number with a normal range: a 10px track with a marked normal band (teal
 - Search input carries a leading icon and a clear control; Esc clears.
 
 ### Navigation
-- **Side rail:** a flat list of 36px rows at 15px, text-2, hairline-free; hover lifts to surface-1; the selected row is a teal tint ground, teal text and icon, weight 500, and a 2px teal bar at the left edge. Lucide icons at one stroke weight. Collapsed, labels hide and tooltips appear on hover and focus; badges sit at the corner in a small outlined chip.
+- **Side rail:** a flat list of 36px rows at 15px, text-2, hairline-free; hover lifts to surface-1; the selected row is a teal tint ground, teal text and icon, weight 500, with no side stripe. Lucide icons at one stroke weight. Collapsed, labels hide and tooltips appear on hover and focus; badges sit at the corner in a small outlined chip.
 - **Nav badge:** the state's mark plus the count (caps at 999+), neutral, amber or soft red. Renders nothing at zero. A count that could not be read is a hollow circle, never a number. It counts only new, actionable, unacknowledged items.
 - **Top bar:** 48px on the rail ground, page title at 21px/600, then three annunciators (mark + name + state word), the command-palette field (280px, "Search or run..."), refresh and theme toggle.
 - **Tabs:** 36px, text-2, selected text-1 with a 2px teal underline.
@@ -346,10 +358,15 @@ A system reading: 12px state mark, name in 600, state word. The mark and word ta
 Dense, sticky header on surface-2 with a hairline-strong underline, 13px/600 text-2 column labels, 14px cells with 8px by 12px padding, hairline row dividers, tabular numerals, row hover to surface-2, selected row in the action tint, dimmed rows by colour (never opacity). Under 700px rows stack.
 
 ### Track diagram (signature)
-The Brain page's centre: four source-group blocks (header in the line colour, rows of sources with their counts), four coloured tracks (2.5px rails with sleeper dots and a bumper) running into a squared GBRAIN CORE block (surface-2, 2px text-2 outline, 21px caps title) with its readings, an embedding-queue siding below drawn as numbered unit cells (active units filled text-2), and four reader blocks in hairline outlines. The selected element takes a 2px teal outline. Under 760px of room the same readings become a list.
+The Brain page's centre: four source-group blocks (header in the line colour, rows of sources with their counts), four coloured tracks into a squared GBRAIN CORE block (surface-2, 2px text-2 outline, 21px caps title) with its readings, an embedding-queue siding below drawn as numbered unit cells (active units filled text-2), and four reader blocks in hairline outlines. A group's rail is as heavy as its share of all pages. Beside each rail, in 13-unit text (12px or more on screen) on a ground-coloured halo, sit its oldest sync age (amber with a triangle when a source is stale, a hollow circle and "not read" when sync times were unread) and, when sources have sync off, a dash mark and "N off". Hovering near a rail (a 16-unit invisible hit stroke) shows its share, oldest sync and sync-off count as a native tooltip. The selected element takes a 2px teal outline. Under 760px of room the same readings become a list.
 
 ### Line profile (signature)
-All sources drawn to scale as 3px vertical lines in their group colour on one baseline, counts above, full source ids standing beneath reading upward; a source with sync off is the same line dashed. Under 900px the lines lie down as 2px bars, one row per source.
+All sources drawn to scale on one baseline as 3px vertical lines in their group colour, in diagram order, beside a labelled scale (ticks in text-2, a hairline axis) on the left. Counts sit above the lines (crowded ones are left out until looked at); one row of short names stands beneath in each group's line colour, and a name that would touch a bigger source's name is left out. A source with sync off is the same line dashed. Looking at a column (hover over any of it, focus, or a tap) thickens its line to about 8px, dims the others, shows its full id larger under it, marks its exact value on the scale at the height of its top (scale values that would collide are put away), and writes its readings (group, pages, chunks, share of all pages, last sync, sync state) in the caption row under the block title, in the same grid cell as the idle sentence so nothing shifts. There is no guide line and no floating card. Under 900px the lines lie down as 2px bars, one row per source, with the caption row carrying the readout.
+
+### Readings row, acknowledge actions, not found
+- **Readings row:** a compact outlined strip (surface-1, hairline, 4px radius) of label and number side by side at body size, no hero numeral; a missing value is an em dash and "not read".
+- **Acknowledge actions:** one shared cell of two small buttons (Acknowledge, then Shelve) with an inline critical-coloured error line; from two new items the alarm line's one action, or the block header's, becomes "Acknowledge all (N)" after a confirmation.
+- **Not found:** an empty state titled "Page not found" with one link back to Brain.
 
 ### Overlays and feedback
 - **Dialog:** surface-2, 1px outline, 4px radius, 20px padding, 420px wide (600 for md), flat scrim; consequential confirmations use `alertdialog`, safest control autofocused. **Drawer** (480 / 720px) holds evidence and detail.
@@ -359,7 +376,7 @@ All sources drawn to scale as 3px vertical lines in their group colour on one ba
 - **Skeleton:** static, no shimmer.
 
 ### Motion
-Motion is a state-change cue only: 120ms (fast) for hover, colour and border, 180ms (base) for bar position and drawer slide, easing `cubic-bezier(0.2, 0, 0, 1)`. No entrance animation on data, no hover lift. Spinners rotate at 800ms. `prefers-reduced-motion` collapses all durations.
+Motion is a state-change cue only: 120ms (fast) for hover, colour and border, 180ms (base) for bar position and drawer slide, easing `cubic-bezier(0.2, 0, 0, 1)`. No entrance animation on data, no hover lift. Spinners rotate at 800ms. Chart tooltips never animate: the Recharts wrapper has its transition off and its animation duration at zero, and the card flips to the other side of the pointer rather than leave the plot. `prefers-reduced-motion` collapses all durations.
 
 ## Do's and Don'ts
 
@@ -369,15 +386,20 @@ Motion is a state-change cue only: 120ms (fast) for hover, colour and border, 18
 - **Do** use one alarm line per page, only when abnormal, with at most one action at its right end.
 - **Do** show numbers that have a normal range as analog bars with the band marked, and draw the 24-hour trend only when two real readings exist.
 - **Do** use `Block` with a 1px hairline-strong outline, 4px radius and a condensed-capital header; put counts at the header's right.
-- **Do** raise surfaces by a lightness step plus an outline; express selection and action in teal (outline, tint, 2px bar).
+- **Do** raise surfaces by a lightness step plus an outline; express selection and action in teal (outline or tint ground, never a side stripe).
 - **Do** use only tokens from `tokens.css`; set numbers in tabular lining numerals; keep spacing on the 4px grid and weights at 400/500/600.
 - **Do** give every control a visible 2px teal focus ring with a 2px offset, and at least 24px of height.
 - **Do** annotate a reading with where it came from only when it is stale or unread.
+- **Do** show a verdict that was never computed from a review as "not read"; a default word the server fills in when there is nothing to judge (the Audit scorecard's "green" with no review) is not a reading.
+- **Do** keep a readout where the eye already is: a readout never travels to its target. Write it in its one fixed home (the caption row under the block title, a mark on the axis), not in a card that follows the pointer.
+- **Do** keep a readout clear of the data it describes: a readout never covers the data it describes. Place it beside, above or beneath the plot, or on its scale.
 
 ### Don't:
 - **Don't** use green for "OK" or any colour for normal state; the project green is a source-group line colour only.
 - **Don't** use a line colour for state, decoration or a second accent, and don't use teal for state.
 - **Don't** use shadows, gradients, glow, blur, entrance animation or hover lift.
+- **Don't** let a readout travel (no sliding tooltips, no cards that chase the pointer) and don't let one cover the data it describes (no floating card or guide line across a plot).
+- **Don't** mark a selected row or nav item with a side stripe, and don't set any text below 12px.
 - **Don't** convey state by colour alone, and don't put text-3 on surface-3.
 - **Don't** nest a block in a block, or build a page as a stack of equal-weight cards.
 - **Don't** use condensed capitals outside block headers, the alarm word and diagram block labels.

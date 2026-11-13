@@ -17,7 +17,11 @@ These twelve rules are binding on every page.
    red = critical, always paired with a shape and a word. (b) Teal = what the
    operator can do (links, primary action, focus) or what is selected. (c) The
    four line colours identify the four GBrain source groups and are used only
-   for that (and as chart series where a chart needs categories). Nothing
+   for that (and as chart series on the Brain page). Charts elsewhere use the
+   separate `--chart-1..6` ramp. One stated exception to (b): the measured fill
+   of an analog bar is teal-toned (`--bar-fill`), as in the approved reference,
+   so a reading and its normal band read apart at a glance; when the reading is
+   abnormal the fill takes the state colour. Nothing
    decorative is coloured.
 3. **State is never colour alone.** Normal = small filled circle (neutral);
    caution = triangle (amber); critical = filled square (soft red); not read =
@@ -158,7 +162,7 @@ context (`PageTitleProvider` in `App.tsx`; `usePageTitle()` reads it, the top ba
 renders it as the single `h1`). It also sets `document.title` to
 `"<title> · Mission Control"`. It then renders only: an optional description +
 actions row, an optional tabs row, and the content, in a max-width frame. The
-shell supplies the page padding (24/32px, 16px on mobile) and scrolling.
+shell supplies the page padding (16px vertical and 24px horizontal, 16px on mobile) and scrolling.
 
 | `Page` prop | Type | Notes |
 | --- | --- | --- |
@@ -180,7 +184,7 @@ Content is a flex column with `--sp-4` gap, so siblings need no margins.
 | `Panel` | same as `Block` without `tone` | The old name of `Block`, kept so existing pages compile. |
 | `AnalogBar` | `label`, `value`, `min`, `max`, `band?: [lo, hi]`, `limits?`, `unit?`, `format?`, `state?`, `trend?: { t, v }[]`, `unread?`, `className?` | Rule 5. `role="meter"` with `aria-valuenow/min/max` and a text alternative ("99, normal 95 – 100, below normal"). Neutral in band; outside the band it takes caution with a triangle and "below/above normal"; `state` overrides. `unread` (or a missing value) shows a hollow circle and "not read", with no value, pointer or trend. The trend appears only with at least two real readings, with their average. Limit labels that would crowd another are dropped; the "Normal: 95 – 100" caption states the band. |
 | `Trend` | `points: { t, v }[]`, `band?`, `height?`, `label?`, `className?` | Inline SVG line, no chart library. Fewer than two usable points draws nothing. |
-| `Meter` | `value`, `max?`, `label`, `state?`, `band?`, `min?`, `unit?`, `format?`, `trend?` | Thin proportion bar (`role="meter"`), neutral fill. With a `band` it is an `AnalogBar`. A missing value draws an empty track. |
+| `Meter` | `value`, `max?`, `label`, `state?`, `band?`, `min?`, `unit?`, `format?`, `trend?` | Thin proportion bar (`role="meter"`), filled with `--bar-fill` (state colour when abnormal). With a `band` it is an `AnalogBar`. A missing value draws an empty track. |
 | `StateMark` | `state: UiState`, `label?`, `className?` | The shapes of rule 3 (inline SVG, `data-shape`). Hidden from assistive tech beside a word; with `label` it is `role="img"`. |
 | `StateDot` | as `StateMark` | Alias of `StateMark`. |
 | `StatePill` | `state`, `label?`, `className?` | Mark plus word. Neutral for normal, not read and off; amber or red for caution and critical. |

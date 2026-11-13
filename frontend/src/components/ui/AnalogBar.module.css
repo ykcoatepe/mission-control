@@ -85,6 +85,14 @@
   transition: width var(--dur-base) var(--ease);
 }
 
+/* Caution or critical: the fill is the state colour for its whole length, nothing teal under it, and it is the
+   full height of the track so it reads as one bar, not a stripe inside the band. The band stays neutral. */
+.bar[data-state='warning'] .fill,
+.bar[data-state='critical'] .fill {
+  top: 0;
+  bottom: 0;
+}
+
 .bar[data-state='warning'] .fill { background: var(--state-warning); }
 .bar[data-state='critical'] .fill { background: var(--state-critical); }
 

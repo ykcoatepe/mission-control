@@ -187,7 +187,17 @@ describe.each(THEMES)('%s theme contrast', (_name, tokens) => {
     const protectedTokens = ['line-reference', 'line-projects', 'line-agent', 'line-curated', 'accent', 'state-warning', 'state-critical']
     for (const [i, colour] of chart.entries()) {
       for (const name of protectedTokens) {
-        expect(oklabDistance(colour, rgb(tokens, name)), `chart-${i + 1} vs ${name}`).toBeGreaterThanOrEqual(0.07)
+        const other = rgb(tokens, name)
+        expect(oklabDistance(colour, other), `chart-${i + 1} vs ${name}`).toBeGreaterThanOrEqual(0.07)
+        // Two clearly coloured tones must also differ in hue; a grey-ish one is told apart by its chroma and lightness instead.
+        if (oklch(colour).c >= 0.05 && oklch(other).c >= 0.05) {
+          expect(hueDistance(colour, other), `chart-${i + 1} hue vs ${name}`).toBeGreaterThanOrEqual(15)
+        }
+      }
+      // The violet and rose of the source groups are the easiest to mistake for a series: held further off.
+      for (const name of ['line-agent', 'line-curated']) {
+        expect(oklabDistance(colour, rgb(tokens, name)), `chart-${i + 1} vs ${name}`).toBeGreaterThanOrEqual(0.1)
+        if (oklch(colour).c >= 0.05) expect(hueDistance(colour, rgb(tokens, name)), `chart-${i + 1} hue vs ${name}`).toBeGreaterThanOrEqual(30)
       }
       for (const [j, other] of chart.entries()) {
         if (j > i) expect(oklabDistance(colour, other), `chart-${i + 1} vs chart-${j + 1}`).toBeGreaterThanOrEqual(0.05)
@@ -196,22 +206,36 @@ describe.each(THEMES)('%s theme contrast', (_name, tokens) => {
   })
 })
 
+/** OKLCH chroma and hue (degrees) of a colour. */
+function oklch(colour: Rgb): { c: number; h: number } {
+  const [, a, b] = oklab(colour)
+  return { c: Math.hypot(a, b), h: ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360 }
+}
+
+/** Angle between two hues, 0 to 180 degrees. */
+function hueDistance(a: Rgb, b: Rgb): number {
+  const d = Math.abs(oklch(a).h - oklch(b).h)
+  return Math.min(d, 360 - d)
+}
+
+/** A colour in OKLab: lightness, then the two colour axes. */
+function oklab([r, g, bl]: Rgb): [number, number, number] {
+  const [R, G, B] = [r, g, bl].map((c) => {
+    const x = c / 255
+    return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4
+  })
+  const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B)
+  const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B)
+  const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B)
+  return [
+    0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
+  ]
+}
+
 /** Distance between two colours in OKLab: how different they look, independent of the contrast ratio. */
 function oklabDistance(a: Rgb, b: Rgb): number {
-  const ok = ([r, g, bl]: Rgb): [number, number, number] => {
-    const [R, G, B] = [r, g, bl].map((c) => {
-      const x = c / 255
-      return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4
-    })
-    const l = Math.cbrt(0.4122214708 * R + 0.5363325363 * G + 0.0514459929 * B)
-    const m = Math.cbrt(0.2119034982 * R + 0.6806995451 * G + 0.1073969566 * B)
-    const s = Math.cbrt(0.0883024619 * R + 0.2817188376 * G + 0.6299787005 * B)
-    return [
-      0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
-      1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
-      0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
-    ]
-  }
-  const [p, q] = [ok(a), ok(b)]
+  const [p, q] = [oklab(a), oklab(b)]
   return Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2])
 }

@@ -1,9 +1,12 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   CORE_X,
   GROUP_W,
   MAX_QUEUE_UNITS,
   READER_X,
+  VIEW_W,
   computeTrackLayout,
   groupHeight,
   moveFocus,
@@ -118,5 +121,21 @@ describe('arrow keys move to the nearest block in that direction', () => {
     expect(moveFocus(items, 'a', 'up')).toBeNull()
     expect(moveFocus(items, 'a', 'left')).toBeNull()
     expect(moveFocus(items, 'missing', 'left')).toBe('a')
+  })
+})
+
+describe('track labels stay readable on an always-on screen', () => {
+  const css = readFileSync(join(__dirname, 'TrackDiagram.module.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+  const rule = (selector: string) => [...css.matchAll(/([^{}]+)\{([^}]*)\}/g)].filter((m) => m[1].trim() === selector).map((m) => m[2]).join('\n')
+  // The wide picture is drawn from this container width up; below it the list takes over.
+  const narrowest = Number(css.match(/@container track \(max-width: (\d+)px\)/)?.[1]) + 1
+  const smallest = narrowest / VIEW_W
+
+  it.each(['.svg .railText', '.svg .readLabel'])('%s is at least 12px on screen at the narrowest wide picture, in text-2', (selector) => {
+    const body = rule(selector)
+    const size = Number(body.match(/font-size:\s*(\d+(?:\.\d+)?)px/)?.[1])
+    expect(size * smallest, `${selector} rendered size`).toBeGreaterThanOrEqual(12)
+    expect(body).toMatch(/fill:\s*var\(--text-2\)/)
+    expect(body).not.toContain('--text-3')
   })
 })
