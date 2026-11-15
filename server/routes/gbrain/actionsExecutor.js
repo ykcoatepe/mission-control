@@ -12,6 +12,7 @@ const {
 } = require('./commandRunner');
 
 const { createExec } = require('../../core/exec');
+const { scrubText } = require('../../core/scrub');
 const GBRAIN_ACTION_EXEC_LANES = Object.freeze({ 'gbrain-action': Object.freeze({ concurrency: 1, maxQueue: 0 }) });
 let defaultActionExec;
 
@@ -29,6 +30,32 @@ function listGBrainActions() {
       .filter(Boolean)
       .join(' && '),
   }));
+}
+
+const FAILURE_OUTPUT_TAIL_CHARS = 600;
+
+// The UI only says "GBrain action failed."; the cause lives in the command's
+// output, and gbrain prints it last (after progress lines). Keep one scrubbed
+// line with that tail in the server log so a failure can be diagnosed later.
+function logActionFailure(logFailure, action, status, item) {
+  const output = [item?.stdout, item?.stderr].filter(Boolean).join('\n').trim();
+  const tail = output.length > FAILURE_OUTPUT_TAIL_CHARS ? output.slice(-FAILURE_OUTPUT_TAIL_CHARS) : output;
+  const line = JSON.stringify({
+    t: new Date().toISOString(),
+    event: 'gbrain_action_failed',
+    action,
+    status,
+    code: Number.isInteger(item?.code) ? item.code : null,
+    signal: item?.signal || null,
+    timedOut: Boolean(item?.timedOut),
+    errorCode: item?.error?.code || null,
+    output: scrubText(tail) || '',
+  });
+  try {
+    (logFailure || ((text) => console.error(text)))(line);
+  } catch {
+    // Logging must never change the action result.
+  }
 }
 
 async function runGBrainAction(action, options = {}) {
@@ -87,6 +114,9 @@ async function runGBrainAction(action, options = {}) {
       .map((item) => !item.ok && !item.stdout && !item.stderr ? item.error : summarizeCommandOutput(item.stdout, item.stderr))
       .join('\n');
     const pending = Boolean(result.pending || followUpResult?.pending);
+    const status = actionOk ? 'completed' : result.quarantined || followUpResult?.quarantined ? 'unavailable'
+      : result.timedOut || followUpResult?.timedOut ? 'timed-out' : 'failed';
+    if (!actionOk) logActionFailure(options.logFailure, action, status, followUpResult && !followUpResult.ok ? followUpResult : result);
 
     return {
       ok: actionOk,
@@ -96,8 +126,7 @@ async function runGBrainAction(action, options = {}) {
       args: definition.args,
       afterSuccessArgs: definition.afterSuccessArgs,
       checkedAt,
-      status: actionOk ? 'completed' : result.quarantined || followUpResult?.quarantined ? 'unavailable'
-        : result.timedOut || followUpResult?.timedOut ? 'timed-out' : 'failed',
+      status,
       pending,
       refreshAfter: definition.refreshAfter,
       summary,
