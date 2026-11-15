@@ -57,3 +57,28 @@ test('a timed-out GBrain action is logged with its status', async () => {
   assert.equal(entry.status, 'timed-out');
   assert.equal(entry.timedOut, true);
 });
+
+test('a credential whose label falls just outside the tail is still redacted', async () => {
+  const lines = [];
+  // The 600-char tail starts inside the value, after "password=".
+  const secret = 'private-credential-value-0123456789abcdefghijklmnopqrstuv';
+  const stderr = `password=${secret}\n${'p'.repeat(575)}`;
+  await runGBrainAction('embed-missing', {
+    confirmed: true,
+    exec: fakeExec({ ok: false, code: 1, stderr }),
+    logFailure: (line) => lines.push(line),
+  });
+  const entry = JSON.parse(lines[0]);
+  assert.doesNotMatch(entry.output, /abcdefghijklmnopqrstuv/);
+});
+
+test('a runner failure keeps its structured error code in the log', async () => {
+  const lines = [];
+  await runGBrainAction('embed-missing', {
+    confirmed: true,
+    exec: fakeExec({ ok: false, code: null, error: { code: 'ENOENT', message: 'Process could not be run' } }),
+    logFailure: (line) => lines.push(line),
+  });
+  const entry = JSON.parse(lines[0]);
+  assert.equal(entry.errorCode, 'ENOENT');
+});

@@ -12,7 +12,7 @@ const {
 } = require('./commandRunner');
 
 const { createExec } = require('../../core/exec');
-const { scrubText } = require('../../core/scrub');
+const { scrubText, SCRUB_MAX_CHARS } = require('../../core/scrub');
 const GBRAIN_ACTION_EXEC_LANES = Object.freeze({ 'gbrain-action': Object.freeze({ concurrency: 1, maxQueue: 0 }) });
 let defaultActionExec;
 
@@ -37,9 +37,13 @@ const FAILURE_OUTPUT_TAIL_CHARS = 600;
 // The UI only says "GBrain action failed."; the cause lives in the command's
 // output, and gbrain prints it last (after progress lines). Keep one scrubbed
 // line with that tail in the server log so a failure can be diagnosed later.
+// Scrub before cutting the tail: a cut between a credential label and its
+// value would hide the label scrubText needs. scrubText keeps only the head
+// of over-long input, so it gets the last SCRUB_MAX_CHARS characters.
 function logActionFailure(logFailure, action, status, item) {
   const output = [item?.stdout, item?.stderr].filter(Boolean).join('\n').trim();
-  const tail = output.length > FAILURE_OUTPUT_TAIL_CHARS ? output.slice(-FAILURE_OUTPUT_TAIL_CHARS) : output;
+  const scrubbed = scrubText(output.length > SCRUB_MAX_CHARS ? output.slice(-SCRUB_MAX_CHARS) : output) || '';
+  const tail = scrubbed.length > FAILURE_OUTPUT_TAIL_CHARS ? scrubbed.slice(-FAILURE_OUTPUT_TAIL_CHARS) : scrubbed;
   const line = JSON.stringify({
     t: new Date().toISOString(),
     event: 'gbrain_action_failed',
@@ -48,8 +52,8 @@ function logActionFailure(logFailure, action, status, item) {
     code: Number.isInteger(item?.code) ? item.code : null,
     signal: item?.signal || null,
     timedOut: Boolean(item?.timedOut),
-    errorCode: item?.error?.code || null,
-    output: scrubText(tail) || '',
+    errorCode: item?.runnerErrorCode || null,
+    output: tail,
   });
   try {
     (logFailure || ((text) => console.error(text)))(line);
@@ -97,7 +101,7 @@ async function runGBrainAction(action, options = {}) {
       const quarantined = ['kill_unverified', 'lane_quarantined'].includes(result.error?.code);
       const reportEligible = !result.error && !result.signal && !result.timedOut && !result.truncated
         && (result.ok || (Number.isInteger(result.code) && result.code >= 0));
-      return { ...result, pending: false, quarantined, reportEligible,
+      return { ...result, pending: false, quarantined, reportEligible, runnerErrorCode: result.error?.code || null,
         error: result.ok ? '' : quarantined ? 'GBrain action lane is quarantined; command exit could not be verified.'
           : result.timedOut ? 'GBrain action timed out.' : 'GBrain action failed.' };
     };
