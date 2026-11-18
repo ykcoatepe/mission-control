@@ -66,9 +66,30 @@ function lookupFallbackPricing(name) {
   return null;
 }
 
+// Claude ids appear both dotted (claude-sonnet-5.5) and hyphenated (claude-sonnet-5-5);
+// cards use the hyphenated form.
+function normalizeRateKey(name) {
+  return modelKey(name).replace(/(claude-[a-z]+-\d+)\.(\d+)/g, '$1-$2');
+}
+
+// First card whose match appears as a whole version: a following digit means a
+// longer version (claude-mythos-5-10 is not claude-mythos-5-1).
+function findApiRateCard(name) {
+  const key = normalizeRateKey(name);
+  for (const rate of API_RATE_CARDS) {
+    for (let at = key.indexOf(rate.match); at !== -1; at = key.indexOf(rate.match, at + 1)) {
+      const rest = key.slice(at + rate.match.length);
+      if (/^\d/.test(rest)) continue;
+      // A short version segment after the match (-10 in claude-mythos-5-10) means the
+      // card is the family's, not this version's own; an 8-digit date suffix is not one.
+      return { rate, family: /^-\d{1,3}(?!\d)/.test(rest) };
+    }
+  }
+  return null;
+}
+
 function lookupApiRateCard(name) {
-  const lower = modelKey(name);
-  return API_RATE_CARDS.find((rate) => lower.includes(rate.match)) || null;
+  return findApiRateCard(name)?.rate || null;
 }
 
 function estimateApiEquivalentCost(item = {}) {
@@ -92,7 +113,8 @@ function estimateApiEquivalentCost(item = {}) {
     };
   }
 
-  const matchedRate = lookupApiRateCard(item.name);
+  const found = findApiRateCard(item.name);
+  const matchedRate = found?.rate || null;
   const input = Math.max(Number(item.input || 0), 0);
   const output = Math.max(Number(item.output || 0), 0);
   const cacheRead = Math.max(Number(item.cacheRead || 0), 0);
@@ -121,7 +143,10 @@ function estimateApiEquivalentCost(item = {}) {
     if (matchedRate) {
       return matchedRate.free
         ? { usd: 0, status: 'estimated', source: 'free_rate_card' }
-        : { usd, status: 'estimated', source: 'official_rate_card' };
+        // A tiered card (price rises above a prompt size) is priced at its base tier;
+        // daily totals cannot show which requests crossed it. A family card stands in
+        // for a version with no card of its own. Both figures are partial.
+        : { usd, status: matchedRate.tiered || found.family ? 'partial' : 'estimated', source: 'official_rate_card' };
     }
     // Unmatched model with real recorded spend: the bill is better evidence
     // than a fabricated default-tier estimate. But when that cost is itself a

@@ -1113,9 +1113,9 @@ export function hasUsableAgentSplitData(data?: Pick<TokenData, 'agents' | 'perio
 // Platforms (usage providers)
 // ---------------------------------------------------------------------------
 
-export type CoverageReason = 'standing_gaps' | 'scan_failed' | 'unresolved_overlap' | 'unread' | 'none'
+export type CoverageReason = 'standing_gaps' | 'scan_failed' | 'fallback_source' | 'unresolved_overlap' | 'unread' | 'none'
 
-const COVERAGE_REASONS: readonly CoverageReason[] = ['standing_gaps', 'scan_failed', 'unresolved_overlap', 'unread', 'none']
+const COVERAGE_REASONS: readonly CoverageReason[] = ['standing_gaps', 'scan_failed', 'fallback_source', 'unresolved_overlap', 'unread', 'none']
 
 export interface ProviderRow {
   id: string
@@ -1165,6 +1165,7 @@ const LINE_NUMBER = (value: number) => value.toLocaleString('en-US')
 function coverageDetailOf(reason: CoverageReason | null, skipped: number | null, oversized: number | null): string | null {
   if (reason === 'none') return null
   if (reason === 'scan_failed') return 'The latest scan failed, so this shows the last good scan.'
+  if (reason === 'fallback_source') return 'Its own logs could not be read, so this comes from a backup source. The split between models is estimated.'
   if (reason === 'unresolved_overlap') return 'Some of this usage may also belong to another platform. That is not settled yet.'
   if (reason === 'standing_gaps') {
     const lines = skipped !== null && skipped > 0 ? skipped : null
@@ -1200,7 +1201,7 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
     // Complete only when the server says `none`; a reason it did not send is unknown, never green.
     const coverage = coverageReason === 'none'
       ? 'complete'
-      : coverageReason === 'standing_gaps' || coverageReason === 'scan_failed' || coverageReason === 'unresolved_overlap'
+      : coverageReason === 'standing_gaps' || coverageReason === 'scan_failed' || coverageReason === 'fallback_source' || coverageReason === 'unresolved_overlap'
         ? 'partial'
         : 'unknown'
     const standing = coverage === 'partial' && coverageReason === 'standing_gaps'
@@ -1208,7 +1209,8 @@ export function providerRows(providers: UsageProvider[] | null | undefined): Pro
     // figures are dashes and its state is the quiet "No usage recorded", not "Ready".
     const noRecords = read && provider.hasRecords === false
     // THE PARTIAL-PLATFORM RULE (stated once, tested in providers.test.ts): a partial platform is a
-    // warning only when the server says a scan failed (`scan_failed`) or an overlap is unresolved
+    // warning only when the server says a scan failed (`scan_failed`), a backup source filled in
+    // (`fallback_source`) or an overlap is unresolved
     // (`unresolved_overlap`), or when the coverage was not reported at all. A standing gap
     // (`standing_gaps`: skipped or oversized log lines that are always there) is a condition, not a
     // fault: calm neutral, never green, with the plain-sentence detail beside it. A stale reading

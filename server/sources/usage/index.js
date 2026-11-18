@@ -36,7 +36,7 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
     let registry;
     if (!providers) {
         const deps = {
-            exec: runner, now, projectRoot, home, env, fs, dataDir
+            exec: runner, now, projectRoot, home, env, fs, dataDir, logger
         };
         providers = PROVIDER_MODULES.map(name => require(`./providers/${name}`).createProvider(deps));
     }
@@ -60,6 +60,9 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         if (!snap.data || !keys.some(key => key >= snap.data.since && key <= snap.data.until)) return 'unread';
         if (snap.meta.error && snap.meta.error.code !== 'cached_usage') return 'scan_failed';
         if (snap.data.unresolvedOverlaps?.some(overlap => keys.includes(overlap.date))) return 'unresolved_overlap';
+        // The provider's own records could not be read and a backup source filled in:
+        // a fault (per-model token classes are estimated), not a standing gap.
+        if (snap.data.coverageReasons?.includes('fallback_source')) return 'fallback_source';
         return snap.data.coverage === 'partial' || !hasCoverage(snap, keys) ? 'standing_gaps' : 'none';
     }
     function providerWindow(snap, keys) {
@@ -228,7 +231,7 @@ function createUsageService({ providers, exec, now = Date.now, fs = fsDefault, d
         return {
             source: 'codexbar', provider: 'both', updatedAt: m.updatedAt, last30DaysCostUSD: has ? last.length ? knownSum(last.map(d => d.totalCost)) : 0 : null, last30DaysTokens: has ? last.reduce((s, d) => s + d.totalTokens, 0) : null, sessionCostUSD: null, sessionTokens: null, totals: {
                 totalCost: t.apiEquivalentUsd, totalTokens: t.tokens, inputTokens: has ? grouped.reduce((s, d) => s + d.inputTokens, 0) : null, outputTokens: has ? grouped.reduce((s, d) => s + d.outputTokens, 0) : null
-            }, daily: grouped, partial: m.partial, stale: failedScanFallback, staleAgeMs: failedScanFallback ? lastGoodScanAgeMs : null, staleReason: failedScanFallback ? 'scan_failed_served_last_good' : null, scanErrorClass: scan.errorClass, codexbarScan: {...scan,lastGoodScanAgeMs}, meta: m
+            }, daily: grouped, partial: m.partial || rows.some(row => price(row, 'codex').status === 'partial'), stale: failedScanFallback, staleAgeMs: failedScanFallback ? lastGoodScanAgeMs : null, staleReason: failedScanFallback ? 'scan_failed_served_last_good' : null, scanErrorClass: scan.errorClass, codexbarScan: {...scan,lastGoodScanAgeMs}, meta: m
         };
     }
     return {

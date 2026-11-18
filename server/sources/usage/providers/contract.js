@@ -50,7 +50,7 @@ function validateObservation(value, { since, until }) {
         if (!counts || COUNTS.some(k=>counts[k]<row[k])) throw unavailable('invalid_ownership');
         for (const k of COUNTS) counts[k]-=row[k];
     }
-    if (value.coverageReasons && (!Array.isArray(value.coverageReasons) || value.coverageReasons.some(reason => !['ownership_pending','producer_partial','scan_truncated','malformed_records','unknown_tokens'].includes(reason)))) throw unavailable('invalid_usage');
+    if (value.coverageReasons && (!Array.isArray(value.coverageReasons) || value.coverageReasons.some(reason => !['ownership_pending','producer_partial','scan_truncated','malformed_records','unknown_tokens','fallback_source'].includes(reason)))) throw unavailable('invalid_usage');
     const coverageReasons = [...new Set(value.coverageReasons || (value.coverage==='partial'?['producer_partial']:[]))];
     if (ownership.length && !coverageReasons.includes('ownership_pending')) coverageReasons.push('ownership_pending');
     for (const field of ['skippedLines', 'oversizedLines']) {

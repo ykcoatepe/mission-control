@@ -134,6 +134,12 @@ describe('providerRows', () => {
     expect(rows[4]).toMatchObject({ uiState: 'warning', coverage: 'unknown', coverageReason: null })
   })
 
+  it('a backup source (fallback_source) is a partial warning with its own sentence, never standing', () => {
+    const [row] = providerRows([provider({ coverage: 'partial', coverageReason: 'fallback_source' })])
+    expect(row).toMatchObject({ uiState: 'warning', stateWord: 'Partial', coverage: 'partial', coverageReason: 'fallback_source', standing: false })
+    expect(row.coverageDetail).toBe('Its own logs could not be read, so this comes from a backup source. The split between models is estimated.')
+  })
+
   it('a coverageReason of unread makes the platform not read, whatever else was sent', () => {
     const [row] = providerRows([provider({ coverageReason: 'unread', tokens: 10 })])
     expect(row).toMatchObject({ read: false, stateWord: 'Not read', tokens: null })

@@ -196,7 +196,7 @@ test('budget changes and rate-review metadata are read from memory on the next G
     budget = { monthly: 10 };
     assert.equal(u.summary().data.budget.usedPct, 50);
     assert.equal(u.costs().budget.monthly, 10);
-    assert.equal(u.summary().meta.rateCardLastReviewed, '2026-09-13');
+    assert.equal(u.summary().meta.rateCardLastReviewed, '2026-11-18');
 });
 test('midnight cannot turn an unobserved new day into zero tokens or zero billed spend', async () => {
     let clock = Date.parse('2026-08-15T23:59:59');
