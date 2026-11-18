@@ -990,12 +990,19 @@ export default function Costs() {
   // The page's one alarm line (HMI rule 4): only a spend over its budget or a scan that failed.
   // A finished month that ran over is history, not something to act on now.
   const overBudget = !viewingPastMonth && budgetRemaining !== null && budgetRemaining < 0
+  // A platform whose own logs failed and a backup source filled in is a failed scan too.
+  const fallbackRow = platformRows.find(row => row.read && row.coverageReason === 'fallback_source')
   const scanFailed = !!codexbarCosts?.stale
     || !!tokenData?.meta?.stale
+    || !!fallbackRow
     || platformRows.some(row => row.read && (row.stateWord === 'Stale' || row.coverageReason === 'scan_failed'))
+  // Reloading cannot fix a backup-source reading (the next scheduled scan can), so it gets no button.
+  const fallbackOnly = !!fallbackRow
   const scanFailedSentence = codexbarCosts?.stale
     ? `The CodexBar estimate is from a scan ${Math.round((codexbarCosts.staleAgeMs || 0) / 60000)} min old.`
-    : 'Showing the last good reading.'
+    : fallbackRow
+      ? `${fallbackRow.label} logs could not be read, so its figures come from a backup source and the split between models is estimated.`
+      : 'Showing the last good reading.'
   let alarm: ReactNode = null
   if (overBudget && budget !== null && monthlyBudgetBase !== null) {
     alarm = (
@@ -1011,7 +1018,7 @@ export default function Costs() {
         state="warning"
         title="The latest usage scan did not complete"
         detail={`${scanFailedSentence} Totals may be out of date.`}
-        action={{ label: 'Scan again', busy: costsQuery.isFetching, onClick: () => { void costsQuery.refetch() } }}
+        action={fallbackOnly ? undefined : { label: 'Scan again', busy: costsQuery.isFetching, onClick: () => { void costsQuery.refetch() } }}
       />
     )
   }

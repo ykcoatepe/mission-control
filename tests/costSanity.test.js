@@ -703,6 +703,6 @@ test('custom/ provider models are local, not cloud-priced', () => {
 require('node:test')('rate-card data preserves every baseline value and review date', () => {
   const crypto = require('node:crypto');
   const { lastReviewed, ...rates } = require('../server/sources/usage/rate-cards.json');
-  assert.equal(lastReviewed, '2026-09-13');
-  assert.equal(crypto.createHash('sha256').update(JSON.stringify(rates)).digest('hex'), 'f69905b85daa1bb131f67e733d23d90465ee6035d9ff614d9371d2f19c5bcd53');
+  assert.equal(lastReviewed, '2026-11-18');
+  assert.equal(crypto.createHash('sha256').update(JSON.stringify(rates)).digest('hex'), 'dd88240ff3f693903a44d83fe32daee174fb58a383095e4e7c72d44c6eeb2585');
 });

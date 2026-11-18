@@ -86,7 +86,7 @@ export interface UsageProvider {
   /** Usage rows exist for the period (a recorded zero-token row counts). False alone does not prove the platform was read. */
   hasRecords?: boolean
   /** Why the records are incomplete: a diagnostic classification, not a state ranking. */
-  coverageReason?: 'standing_gaps' | 'scan_failed' | 'unresolved_overlap' | 'unread' | 'none' | string
+  coverageReason?: 'standing_gaps' | 'scan_failed' | 'fallback_source' | 'unresolved_overlap' | 'unread' | 'none' | string
   /** Producer line counters over its retained history scan; null when the producer supplies none. */
   skippedLines?: number | null
   oversizedLines?: number | null

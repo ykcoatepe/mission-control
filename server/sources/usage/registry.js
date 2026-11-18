@@ -47,7 +47,10 @@ function createUsageRegistry({ providers = [], now = Date.now, fs, dataDir, time
                     if (saved.version === 1 && saved.identity === (provider.identity || provider.id)) {
                         const value = validateObservation(saved.data, { since: saved.data.since, until: saved.data.until });
                         if (now() - Date.parse(value.observedAt) <= 24 * 60 * 60 * 1000) {
-                            restored = { ...value, since: saved.data.since, until: saved.data.until };
+                            // Snapshots saved before the fallback_source reason existed: the
+                            // diagnostics saved with them say the rows came from CodexBar.
+                            const legacyFallback = saved.diagnostics?.usageSource === 'codexbar' && !value.coverageReasons.includes('fallback_source');
+                            restored = { ...value, ...(legacyFallback ? { coverage: 'partial', coverageReasons: [...value.coverageReasons, 'fallback_source'] } : {}), since: saved.data.since, until: saved.data.until };
                             provider.restoreScanStatus?.(saved.diagnostics);
                         }
                     }
